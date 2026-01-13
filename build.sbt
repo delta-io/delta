@@ -1071,25 +1071,19 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
-    libraryDependencies ++= {
-      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
-        Seq(
-          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-          // due to legacy scala.
-          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
-          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-          "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
-          "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
-          "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
-          "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
-          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
-          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
-        )
-      } else {
-        Seq.empty
-      }
-    },
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
+      "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
+      "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
+      "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
+      "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
+      "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
+    ),
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
