@@ -28,13 +28,17 @@ import io.unitycatalog.client.model.TableInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
@@ -43,6 +47,7 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -53,6 +58,8 @@ import scala.collection.immutable.Seq;
  * Catalog.
  */
 public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
+  private static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
+  private static final String V2_ENABLE_MODE_STRICT = "STRICT";
 
   /**
    * Creates a local temporary directory for checkpoint location. Checkpoint must be on local
@@ -133,6 +140,71 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  @ParameterizedTest
+  @MethodSource("allTableTypes")
+  public void testStreamingReadFromTable(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_read_test",
+        "id BIGINT, value STRING",
+        tableType,
+        (tableName) -> {
+          SparkSession spark = spark();
+          Option<String> originalMode = spark.conf().getOption(V2_ENABLE_MODE_KEY);
+          String queryName =
+              "uc_streaming_read_"
+                  + tableType.name().toLowerCase()
+                  + "_"
+                  + UUID.randomUUID().toString().replace("-", "");
+          StreamingQuery query = null;
+          List<List<String>> expected = new ArrayList<>();
+
+          try {
+            SparkSession writerSpark = spark.newSession();
+            restoreV2Mode(writerSpark, originalMode);
+
+            writerSpark
+                .sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName))
+                .collect();
+            expected.add(List.of("0", "seed"));
+
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+
+            Dataset<Row> input =
+                spark.readStream().format("delta").option("startingVersion", "0").table(tableName);
+            query =
+                input
+                    .writeStream()
+                    .format("memory")
+                    .queryName(queryName)
+                    .option("checkpointLocation", createTempCheckpointDir())
+                    .outputMode("append")
+                    .start();
+
+            assertTrue(query.isActive(), "Streaming query should be active");
+
+            for (long i = 1; i < 10; i += 1) {
+              String value = "value_" + i;
+              writerSpark
+                  .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
+                  .collect();
+
+              query.processAllAvailable();
+
+              expected.add(List.of(String.valueOf(i), value));
+              check(queryName, expected);
+            }
+          } finally {
+            if (query != null) {
+              query.stop();
+              query.awaitTermination();
+              assertFalse(query.isActive(), "Streaming query should have stopped");
+            }
+            spark.sql("DROP VIEW IF EXISTS " + queryName);
+            restoreV2Mode(spark, originalMode);
+          }
+        });
+  }
+
   private void assertUCManagedTableVersion(long expectedVersion, String tableName, ApiClient client)
       throws ApiException {
     // Get the table info.
@@ -155,5 +227,13 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     return JavaConverters.asScalaIteratorConverter(Arrays.asList(rows).iterator())
         .asScala()
         .toSeq();
+  }
+
+  private static void restoreV2Mode(SparkSession spark, Option<String> originalMode) {
+    if (originalMode.isDefined()) {
+      spark.conf().set(V2_ENABLE_MODE_KEY, originalMode.get());
+    } else {
+      spark.conf().unset(V2_ENABLE_MODE_KEY);
+    }
   }
 }
