@@ -77,7 +77,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxBytesPerTrigger: max bytes and max files together",
     "startingVersion should work with rate time",
     "maxFilesPerTrigger: metadata checkpoint",
-    "maxBytesPerTrigger: metadata checkpoint"
+    "maxBytesPerTrigger: metadata checkpoint",
+    "Delta sources should verify the protocol reader version"
   )
 
   private lazy val shouldFailTests = Set(
@@ -115,7 +116,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "recreate the reservoir should fail the query",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "Delta sources should verify the protocol reader version",
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
       "non-data operations",
