@@ -20,7 +20,7 @@ import java.util.Optional
 
 import scala.collection.JavaConverters._
 
-import io.delta.kernel.spark.catalog.SparkTable
+import io.delta.spark.internal.v2.catalog.SparkTable
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SparkSession
