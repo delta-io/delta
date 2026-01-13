@@ -189,7 +189,7 @@ public abstract class UnityCatalogSupport {
         "unity",
         UC_STATIC_TOKEN,
         "default",
-        ucBaseTableLocation.getAbsolutePath());
+        "file://" + ucBaseTableLocation.getAbsolutePath());
   }
 
   /** Finds an available port for the UC server. */

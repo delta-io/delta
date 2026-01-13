@@ -142,6 +142,17 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException invalidResolvedVersionRange(
+      String tablePath, long startVersion, long endVersion) {
+    String message =
+        String.format(
+            "%s: Invalid resolved version range: after timestamp resolution, "
+                + "startVersion=%d > endVersion=%d. "
+                + "Please adjust the provided timestamp boundaries.",
+            tablePath, startVersion, endVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
@@ -192,6 +203,17 @@ public final class DeltaErrors {
     String message =
         "This version of Delta Kernel does not support writing to tables with "
             + "column invariants present.";
+    return new KernelException(message);
+  }
+
+  public static KernelException checkpointOnUnpublishedCommits(
+      String tablePath, long version, long maxPublishedVersion) {
+    String message =
+        String.format(
+            "Unable to create checkpoint: Snapshot at at path"
+                + " `%s` with version %d has unpublished commits. "
+                + "Max known published version is %d",
+            tablePath, version, maxPublishedVersion);
     return new KernelException(message);
   }
 

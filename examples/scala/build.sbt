@@ -112,6 +112,15 @@ getDeltaArtifactName := {
   if (deltaVersion.charAt(0).asDigit >= 3) "delta-spark" else "delta-core"
 }
 
+val getSparkPackageSuffix = settingKey[String](
+  s"get package suffix for cross-build artifact name from environment variable SPARK_PACKAGE_SUFFIX. " +
+  s"This is derived from CrossSparkVersions.scala (single source of truth)."
+)
+
+getSparkPackageSuffix := {
+  sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
+}
+
 getIcebergSparkRuntimeArtifactName := {
   val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
     getMajorMinor(getDeltaVersion.value)))
@@ -132,9 +141,17 @@ lazy val java17Settings = Seq(
 def getLibraryDependencies(
     deltaVersion: String,
     deltaArtifactName: String,
-    icebergSparkRuntimeArtifactName: String): Seq[ModuleID] = {
+    icebergSparkRuntimeArtifactName: String,
+    sparkPackageSuffix: String,
+    scalaBinVersion: String): Seq[ModuleID] = {
+  
+  // Package suffix comes from CrossSparkVersions.scala (single source of truth)
+  // e.g., "" for default Spark, "_4.1" for Spark 4.1
+  val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
+  val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
+  
   Seq(
-    "io.delta" %% deltaArtifactName % deltaVersion,
+    deltaCoreDep,
     "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
       getMajorMinor(deltaVersion)
     ),
@@ -148,7 +165,7 @@ def getLibraryDependencies(
       Seq()
     case _ =>
       Seq(
-        "io.delta" %% "delta-iceberg" % deltaVersion,
+        deltaIcebergDep,
         "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
       )
   })
@@ -162,7 +179,9 @@ lazy val root = (project in file("."))
     libraryDependencies ++= getLibraryDependencies(
       getDeltaVersion.value,
       getDeltaArtifactName.value,
-      getIcebergSparkRuntimeArtifactName.value),
+      getIcebergSparkRuntimeArtifactName.value,
+      getSparkPackageSuffix.value,
+      scalaBinaryVersion.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(

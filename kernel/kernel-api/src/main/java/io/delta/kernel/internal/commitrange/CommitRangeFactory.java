@@ -18,7 +18,6 @@ package io.delta.kernel.internal.commitrange;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.DeltaErrorsInternal.*;
 import static io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFilesAsIter;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.CommitRangeBuilder;
@@ -124,11 +123,11 @@ class CommitRangeFactory {
 
   private void validateVersionRange(long startVersion, Optional<Long> endVersionOpt) {
     endVersionOpt.ifPresent(
-        endVersion ->
-            checkArgument(
-                startVersion <= endVersion,
-                String.format(
-                    "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
+        endVersion -> {
+          if (startVersion > endVersion) {
+            throw invalidResolvedVersionRange(tablePath.toString(), startVersion, endVersion);
+          }
+        });
   }
 
   private void logResolvedVersions(long startVersion, Optional<Long> endVersionOpt) {
