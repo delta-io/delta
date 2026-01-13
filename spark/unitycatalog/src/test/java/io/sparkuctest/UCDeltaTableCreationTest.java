@@ -73,8 +73,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       List.of(
           "delta.feature.appendOnly",
           DELTA_CATALOG_MANAGED_KEY,
+          "delta.feature.deletionVectors",
+          "delta.feature.domainMetadata",
           "delta.feature.inCommitTimestamp",
           "delta.feature.invariants",
+          "delta.feature.rowTracking",
+          "delta.feature.v2Checkpoint",
           "delta.feature.vacuumProtocolCheck");
   private static final Map<String, String> EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES =
       EXPECTED_MANAGED_TABLE_FEATURES.stream()
@@ -340,21 +344,35 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
 
-      Map<String, String> expectedOtherProperties =
-          ImmutableMap.of(
-              "delta.enableInCommitTimestamps",
-              "true",
-              "delta.lastUpdateVersion",
-              "0",
-              "delta.minReaderVersion",
-              "3",
-              "delta.minWriterVersion",
-              "7",
-              UC_TABLE_ID_KEY,
-              tableInfo.getTableId(),
+      // CLUSTER BY has two extra properties
+      final Map<String, String> expectedClusteringProperties =
+          withCluster
+              ? ImmutableMap.<String, String>builder()
+                  .put("clusteringColumns", "[[\"" + options.getClusterColumn().get() + "\"]]")
+                  .put("delta.feature.clustering", SUPPORTED)
+                  .build()
+              : ImmutableMap.of();
+      final Map<String, String> expectedOtherProperties =
+          ImmutableMap.<String, String>builder()
+              .put("delta.checkpointPolicy", "v2")
+              .put("delta.enableDeletionVectors", "true")
+              .put("delta.enableInCommitTimestamps", "true")
+              .put("delta.enableRowTracking", "true")
+              .put("delta.lastUpdateVersion", "0")
+              .put("delta.minReaderVersion", "3")
+              .put("delta.minWriterVersion", "7")
+              .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
               // User specified custom table property is also sent.
-              "Foo",
-              "Bar");
+              .put("Foo", "Bar")
+              .putAll(expectedClusteringProperties)
+              .build();
+      // The value of these properties aren't predictable. But at least we confirm their existence.
+      final Set<String> expectedPropertiesWithVariableValue =
+          Set.of(
+              "delta.lastCommitTimestamp",
+              "delta.rowTracking.materializedRowCommitVersionColumnName",
+              "delta.rowTracking.materializedRowIdColumnName");
+
       // This is combination of expectedOtherProperties and
       //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
       Map<String, String> expectedProperties =
@@ -363,10 +381,22 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                   expectedOtherProperties.entrySet().stream())
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
+      // Server has all the expected table properties
       expectedProperties.forEach(
           (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
-      // Lastly the timestamp value is always changing so skip checking its value
-      assertThat(tablePropertiesFromServer).containsKey("delta.lastCommitTimestamp");
+      expectedPropertiesWithVariableValue.forEach(
+          key -> assertThat(tablePropertiesFromServer).containsKey(key));
+
+      // Server doesn't have any unexpected table properties. If anyone introduces a new table
+      // property and this fails, update the list of expected properties.
+      Map<String, String> unexpectedTablePropertiesFromServer =
+          tablePropertiesFromServer.entrySet().stream()
+              .filter(
+                  entry ->
+                      !expectedProperties.containsKey(entry.getKey())
+                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+      assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     }
 
     // Also verify table using DESC EXTENDED

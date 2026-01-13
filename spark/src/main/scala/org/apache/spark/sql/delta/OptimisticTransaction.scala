@@ -585,6 +585,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val protocolBeforeUpdate = protocol
+    // `readVersion == -1` indicates the current transaction is reading from a snapshot
+    // where the table has not existed yet.
+    // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
+    // this is just a double check since we only want to auto-enable QoL features
+    // when creating a new CatalogOwned table through CREATE.
+    if (CatalogOwnedTableUtils.shouldEnableCatalogOwned(
+        spark, propertyOverrides = newMetadataTmp.configuration) &&
+        isCreatingNewTable && this.readVersion == -1) {
+      newMetadataTmp = CatalogOwnedTableUtils.updateMetadataForQoLFeatures(
+        spark,
+        metadata = newMetadataTmp)
+    }
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
