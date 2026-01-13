@@ -62,4 +62,5 @@ jobs:
           fi
       - name: Run unit tests
         run: |
-          python run-tests.py --group flink --coverage --shard ${{ matrix.shard }}
+          python run-tests.py --group flink --coverage
+
