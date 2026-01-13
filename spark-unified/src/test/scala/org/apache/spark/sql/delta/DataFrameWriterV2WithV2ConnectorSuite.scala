@@ -27,13 +27,14 @@ class DataFrameWriterV2WithV2ConnectorSuite
   with V2ForceTest {
 
   /**
-   * Skip tests that require write operations after initial table creation.
+   * Tests that we expect to fail because they require write operations after initial
+   * table creation.
    *
    * Kernel's SparkTable (V2 connector) only implements SupportsRead, not SupportsWrite.
-   * Tests that perform append/replace operations after table creation are skipped.
+   * Tests that perform append/replace operations after table creation are expected to fail.
    */
-  override protected def shouldSkipTest(testName: String): Boolean = {
-    val skippedTests = Set(
+  override protected def shouldFail(testName: String): Boolean = {
+    val shouldFailTests = Set(
       // Append operations - require SupportsWrite
       "Append: basic append",
       "Append: by name not position",
@@ -65,6 +66,6 @@ class DataFrameWriterV2WithV2ConnectorSuite
       "CreateOrReplace: table exists"
     )
 
-    skippedTests.contains(testName)
+    shouldFailTests.contains(testName)
   }
 }

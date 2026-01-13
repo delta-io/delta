@@ -1,17 +1,44 @@
-name: "Delta Spark Latest"
+name: "Delta Spark"
 on: [push, pull_request]
 jobs:
-  test:
-    name: "DSL: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+  # Generate Spark versions matrix from CrossSparkVersions.scala
+  # This ensures the workflow always uses the versions defined in the build
+  generate-matrix:
+    name: "Generate Spark Versions Matrix"
     runs-on: ubuntu-24.04
+    outputs:
+      spark_versions: ${{ steps.generate.outputs.spark_versions }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate Spark versions matrix
+        id: generate
+        run: |
+          # The script automatically generates spark-versions.json from CrossSparkVersions.scala
+          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --all-spark-versions)
+          echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
+          echo "Generated Spark versions: $SPARK_VERSIONS"
+
+  test:
+    name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+    runs-on: ubuntu-24.04
+    needs: generate-matrix
     strategy:
       matrix:
+        # Spark versions are dynamically generated from CrossSparkVersions.scala
+        # DO NOT hardcode versions here - they are automatically loaded from the build configuration
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.spark_versions) }}
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
         shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      SPARK_VERSION: ${{ matrix.spark_version }}
       # Important: This must be the same as the length of shards in matrix
       NUM_SHARDS: 4
     steps:
@@ -25,11 +52,18 @@ jobs:
             !unity/**
             !kernel/**
             !connectors/**
+      - name: Get Spark version details
+        id: spark-details
+        run: |
+          # The script automatically generates spark-versions.json if needed
+          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
+          echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "17"
+          java-version: ${{ steps.spark-details.outputs.jvm_version }}
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
@@ -41,7 +75,7 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
+          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
           sudo apt-get update
@@ -66,7 +100,6 @@ jobs:
           # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
           # the`version.sbt` file.
           pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
-          pipenv run pip install pyspark==4.0.1
           pipenv run pip install flake8==3.9.0
           pipenv run pip install black==23.12.1
           pipenv run pip install importlib_metadata==3.10.0
@@ -94,8 +127,8 @@ jobs:
               python3 ./dev/spark_structured_logging_style.py
           fi
         if: steps.git-diff.outputs.diff
-      - name: Run Scala/Java and Python tests
+      - name: Run Scala/Java tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
-          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }}
+          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
         if: steps.git-diff.outputs.diff

@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.sql.DeltaSparkSessionExtension
 
 import org.apache.spark.SparkConf
@@ -36,7 +36,7 @@ trait DeltaSQLCommandTest extends SharedSparkSession {
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         classOf[DeltaCatalog].getName)
-      .set(DeltaSQLConfV2.V2_ENABLE_MODE.key, v2EnableMode)
+      .set(DeltaSQLConf.V2_ENABLE_MODE.key, v2EnableMode)
   }
 
   /**

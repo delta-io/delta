@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.redirect.RedirectState
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, InvariantViolationException, SchemaUtils, UnsupportedDataTypeInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
+import io.delta.exceptions
 import org.apache.hadoop.fs.{ChecksumException, Path}
 
 import org.apache.spark.{SparkConf, SparkEnv, SparkException}
@@ -1868,6 +1869,17 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CANNOT_VACUUM_LITE")
   }
 
+  def vacuumRetentionPeriodNegative(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE")
+  }
+
+  def vacuumRetentionPeriodTooShort(configuredRetentionHours: Long): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_VACUUM_RETENTION_PERIOD_TOO_SHORT",
+      messageParameters = Array(configuredRetentionHours.toString))
+  }
+
   def updateSchemaMismatchExpression(from: StructType, to: StructType): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UPDATE_SCHEMA_MISMATCH_EXPRESSION",
@@ -2617,37 +2629,69 @@ trait DeltaErrorsBase
       errorClass = "DELTA_FEATURE_CAN_ONLY_DROP_CHECKPOINT_PROTECTION_WITH_HISTORY_TRUNCATION",
       messageParameters = Array.empty)
   }
+
   def concurrentAppendException(
-      conflictingCommit: Option[CommitInfo],
-      partition: String,
-      customRetryMsg: Option[String] = None): io.delta.exceptions.ConcurrentAppendException = {
-    new io.delta.exceptions.ConcurrentAppendException(
-      Array(partition, customRetryMsg.getOrElse("Please try the operation again."),
-        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
-        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
-    )
+      commitInfo: Option[CommitInfo],
+      tableName: String,
+      version: Long,
+      partitionOpt: Option[String]): io.delta.exceptions.ConcurrentAppendException = {
+    val operation = commitInfo.map(_.operation).getOrElse("TRANSACTION")
+    val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+    val subClass = if (partitionOpt.nonEmpty) {
+      "WITH_PARTITION_HINT"
+    } else {
+      "WITHOUT_HINT"
+    }
+    val messageParameters = subClass match {
+      case "WITH_PARTITION_HINT" =>
+        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink)
+      case _ =>
+        Array(operation, tableName, version.toString, docLink)
+    }
+    io.delta.exceptions.ConcurrentAppendException(subClass, messageParameters)
   }
 
   def concurrentDeleteReadException(
-      conflictingCommit: Option[CommitInfo],
-      file: String): io.delta.exceptions.ConcurrentDeleteReadException = {
-    new io.delta.exceptions.ConcurrentDeleteReadException(
-      Array(file,
-        conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
-        DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
-    )
+      commitInfo: Option[CommitInfo],
+      tableName: String,
+      version: Long,
+      partitionOpt: Option[String]): io.delta.exceptions.ConcurrentDeleteReadException = {
+    val operation = commitInfo.map(_.operation).getOrElse("TRANSACTION")
+    val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+    val subClass = if (partitionOpt.nonEmpty) {
+      "WITH_PARTITION_HINT"
+    } else {
+      "WITHOUT_HINT"
+    }
+    val messageParameters = subClass match {
+      case "WITH_PARTITION_HINT" =>
+        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink)
+      case _ =>
+        Array(operation, tableName, version.toString, docLink)
+    }
+    io.delta.exceptions.ConcurrentDeleteReadException(subClass, messageParameters)
   }
 
   def concurrentDeleteDeleteException(
-      conflictingCommit: Option[CommitInfo],
-      file: String): io.delta.exceptions.ConcurrentDeleteDeleteException = {
-    new io.delta.exceptions.ConcurrentDeleteDeleteException(
-      Array(file,
-      conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
-      DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html"))
-    )
+      commitInfo: Option[CommitInfo],
+      tableName: String,
+      version: Long,
+      partitionOpt: Option[String]): io.delta.exceptions.ConcurrentDeleteDeleteException = {
+    val operation = commitInfo.map(_.operation).getOrElse("TRANSACTION")
+    val docLink = DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+    val subClass = if (partitionOpt.nonEmpty) {
+      "WITH_PARTITION_HINT"
+    } else {
+      "WITHOUT_HINT"
+    }
+    val messageParameters = subClass match {
+      case "WITH_PARTITION_HINT" =>
+        Array(operation, tableName, version.toString, partitionOpt.getOrElse(""), docLink)
+      case _ =>
+        Array(operation, tableName, version.toString, docLink)
+    }
+    io.delta.exceptions.ConcurrentDeleteDeleteException(subClass, messageParameters)
   }
-
 
   def concurrentTransactionException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ConcurrentTransactionException = {
@@ -3827,9 +3871,9 @@ trait DeltaErrorsBase
       messageParameters = Array.empty)
   }
 
-  def deltaCannotCreateCatalogOwnedTable(): Throwable = {
+  def deltaCannotCreateCatalogManagedTable(): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION",
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION",
       messageParameters = Array.empty)
   }
 

@@ -48,6 +48,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // TABLE IF NOT EXISTS`.
   val mode: SaveMode
 
+  // Whether the table is UC managed table with catalogManaged feature.
+  val allowCatalogManaged: Boolean
+
   /**
    * Generates a `CatalogTable` with its `locationUri` set appropriately, depending on whether the
    * table already exists or is newly created.
@@ -133,8 +136,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
     if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
-      // In the case we're creating a Delta table on an existing path and adopting the schema
-      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
       val truncationThreshold = spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
       val (truncatedSchema, additionalProperties) = UpdateCatalog.truncateSchemaIfNecessary(
@@ -152,9 +153,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
+      // Setting table properties is required for creating catalogManaged tables.
+      val properties: Map[String, String] =
+        if (allowCatalogManaged) UpdateCatalog.updatedProperties(snapshot) else Map.empty
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = properties,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,

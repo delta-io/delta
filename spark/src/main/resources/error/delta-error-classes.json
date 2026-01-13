@@ -213,9 +213,9 @@
     ],
     "sqlState" : "42809"
   },
-  "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES" : {
+  "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES" : {
     "message" : [
-      "Cannot override or unset in-commit timestamp table properties because this table is catalog-owned. Remove \"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", and \"delta.inCommitTimestampEnablementTimestamp\" from the TBLPROPERTIES clause and then retry the command."
+      "Cannot override or unset in-commit timestamp table properties because this table is catalog-managed. Remove \"delta.enableInCommitTimestamps\", \"delta.inCommitTimestampEnablementVersion\", and \"delta.inCommitTimestampEnablementTimestamp\" from the TBLPROPERTIES clause and then retry the command."
     ],
     "sqlState" : "42616"
   },
@@ -583,20 +583,56 @@
   },
   "DELTA_CONCURRENT_APPEND" : {
     "message" : [
-      "ConcurrentAppendException: Files were added to <partition> by a concurrent update. <retryMsg><conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected. a concurrent <operation> added data to table <tableName> committed at version <version>."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation modified data that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation modified data in the partition <partitionValues> that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_DELETE_DELETE" : {
     "message" : [
-      "ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected, a concurrent <operation> deleted data from table <tableName> (committed at version <version>) that this transaction attempted to delete."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_DELETE_READ" : {
     "message" : [
-      "ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected, a concurrent <operation> deleted data from table <tableName> (committed at version <version>) that this transaction read."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_TRANSACTION" : {
@@ -2824,9 +2860,9 @@
     ],
     "sqlState" : "0AKDC"
   },
-  "DELTA_UNSUPPORTED_CATALOG_OWNED_TABLE_CREATION" : {
+  "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_CREATION" : {
     "message" : [
-      "Creating a catalog owned table using delta is unsupported."
+      "Creating a catalog-managed table using delta is unsupported."
     ],
     "sqlState" : "0AKDC"
   },
@@ -3113,7 +3149,7 @@
   },
   "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" : {
     "message" : [
-      "Running vacuum on catalog owned managed tables is currently not supported."
+      "Running vacuum on catalog-managed tables is currently not supported."
     ],
     "sqlState" : "0AKDC"
   },
@@ -3140,6 +3176,23 @@
       "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match."
     ],
     "sqlState" : "42846"
+  },
+  "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
+    "message" : [
+      "Retention period for Vacuum can't be less than 0 hours."
+    ],
+    "sqlState" : "22003"
+  },
+  "DELTA_VACUUM_RETENTION_PERIOD_TOO_SHORT" : {
+    "message" : [
+      "The specified VACUUM retention period is too low and may corrupt this Delta table if any writes are in progress.",
+      "",
+      "If no operations (insert, upsert, delete, optimize) are running, you can disable this safety check by setting:",
+      "delta.retentionDurationCheck.enabled = false",
+      "",
+      "Otherwise, use a retention period of at least <configuredRetentionHours> hours."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [

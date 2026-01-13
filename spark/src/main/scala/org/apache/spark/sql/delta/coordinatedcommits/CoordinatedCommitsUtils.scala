@@ -193,7 +193,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     ICT_TABLE_PROPERTY_KEYS.foreach { key =>
       if (propKeys.contains(key)) {
         throw new DeltaIllegalArgumentException(
-          "DELTA_CANNOT_MODIFY_CATALOG_OWNED_DEPENDENCIES",
+          "DELTA_CANNOT_MODIFY_CATALOG_MANAGED_DEPENDENCIES",
           messageParameters = Array.empty)
       }
     }

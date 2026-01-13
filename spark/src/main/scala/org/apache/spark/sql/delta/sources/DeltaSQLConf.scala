@@ -667,6 +667,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |structs are expanded.""".stripMargin)
       .fallbackConf(DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)
 
+  val DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS =
+    buildConf("insert.preserveNullSourceStructs")
+      .internal()
+      .doc(
+        """Fixes the null expansion issue by preserving NULL structs in INSERT operations. When set
+          |to true, a NULL struct in the source will be preserved as NULL in the target after
+          |INSERT, rather than being incorrectly expanded to a struct with NULL fields. When set to
+          |false, NULL structs are expanded. This fix addresses null expansion caused by struct
+          |type cast during INSERT operations.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
       .doc(
@@ -1041,13 +1054,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("How many times to try MERGE in case of lost RDD materialized source data")
       .intConf
       .createWithDefault(4)
-
-  val MERGE_MATERIALIZE_SOURCE_EAGER =
-    buildConf("merge.materializeSource.eager")
-      .internal()
-      .doc("Materialize the source eagerly before Job 1")
-      .booleanConf
-      .createWithDefault(true)
 
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
@@ -2005,6 +2011,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK =
+    buildConf("liquid.alterColumnAfter.statsSchemaCheck")
+      .internal()
+      .doc(
+         """
+           |When enabled, validates that clustering columns remain in the stats schema after
+           | a user executes `ALTER TABLE ALTER COLUMN col1 AFTER col2`. The validation checks
+           | that all clustering columns that were in the stats schema before the column reordering
+           | remain in the stats schema after the operation. This ensures that clustering columns
+           | continue to have statistics collected even if their position in the table schema
+           | changes. When disabled, no validation is performed and stats collection may follow
+           | position-based indexing rules (e.g., `dataSkippingNumIndexedCols`), potentially
+           | causing clustering columns to lose stats collection if they move outside the indexed
+           | range.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2 =
     buildConf("changeColumn.checkDependentExpressionsUseV2")
       .internal()
@@ -2924,6 +2948,30 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |instead of normal table loading.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  /**
+   * Controls which connector implementation to use for Delta table operations.
+   *
+   * Valid values:
+   * - NONE: V2 connector is disabled, always use V1 connector (DeltaTableV2) - default
+   * - STRICT: V2 connector is strictly enforced, always use V2 connector (Kernel SparkTable).
+   *           Intended for testing V2 connector capabilities
+   *
+   * V1 vs V2 Connectors:
+   * - V1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   *   uses DeltaLog for metadata management
+   * - V2 Connector (SparkTable): New Kernel-based connector with read-only support,
+   *   uses Kernel's Table API for metadata management
+   */
+  val V2_ENABLE_MODE =
+    buildConf("v2.enableMode")
+      .internal()
+      .doc(
+        "Controls the Delta V2 connector enable mode. " +
+        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
+      .stringConf
+      .checkValues(Set("NONE", "STRICT"))
+      .createWithDefault("NONE")
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

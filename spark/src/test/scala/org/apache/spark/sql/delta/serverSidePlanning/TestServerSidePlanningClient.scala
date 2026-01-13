@@ -20,15 +20,26 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.functions.input_file_name
+import org.apache.spark.sql.sources.Filter
 
 /**
  * Implementation of ServerSidePlanningClient that uses Spark SQL with input_file_name()
  * to discover the list of files in a table. This allows end-to-end testing without
  * a real server that can do server-side planning.
+ *
+ * Also captures filter/projection parameters for test verification via companion object.
  */
 class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanningClient {
 
-  override def planScan(databaseName: String, table: String): ScanPlan = {
+  override def planScan(
+      databaseName: String,
+      table: String,
+      filterOption: Option[Filter] = None,
+      projectionOption: Option[Seq[String]] = None): ScanPlan = {
+    // Capture filter and projection for test verification
+    TestServerSidePlanningClient.capturedFilter = filterOption
+    TestServerSidePlanningClient.capturedProjection = projectionOption
+
     val fullTableName = s"$databaseName.$table"
 
     // Temporarily disable server-side planning to avoid infinite recursion
@@ -77,6 +88,22 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
   }
 
   private def getFileFormat(path: Path): String = "parquet"
+}
+
+/**
+ * Companion object for TestServerSidePlanningClient.
+ * Stores captured pushdown parameters (filter, projection) for test verification.
+ */
+object TestServerSidePlanningClient {
+  private var capturedFilter: Option[Filter] = None
+  private var capturedProjection: Option[Seq[String]] = None
+
+  def getCapturedFilter: Option[Filter] = capturedFilter
+  def getCapturedProjection: Option[Seq[String]] = capturedProjection
+  def clearCaptured(): Unit = {
+    capturedFilter = None
+    capturedProjection = None
+  }
 }
 
 /**

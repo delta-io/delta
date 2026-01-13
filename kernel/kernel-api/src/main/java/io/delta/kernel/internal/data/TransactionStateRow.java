@@ -32,7 +32,7 @@ import java.util.Map;
 import java.util.stream.IntStream;
 
 public class TransactionStateRow extends GenericRow {
-  private static final StructType SCHEMA =
+  public static final StructType SCHEMA =
       new StructType()
           .add("logicalSchemaString", StringType.STRING)
           .add("physicalSchemaString", StringType.STRING)

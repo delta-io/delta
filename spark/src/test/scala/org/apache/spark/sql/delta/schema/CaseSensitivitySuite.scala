@@ -23,10 +23,10 @@ import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql._
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException}

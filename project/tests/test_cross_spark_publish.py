@@ -16,6 +16,7 @@ The script will:
 4. Exit with status 0 on success, 1 on failure
 """
 
+import json
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -34,15 +35,18 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
     "delta-contribs{suffix}_2.13-{version}.jar",
-    # "delta-iceberg{suffix}_2.13-{version}.jar" TODO add back after fixing build
+]
+
+# Spark-related modules that are only compiled with one Spark version 4.0
+# These modules will get a version suffix based on whether 4.0 is the default version.
+SPARK_4_0_ONLY_JAR_TEMPLATES = [
+    "delta-hudi_2.13-{version}.jar",
+    "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)
 # Template format: {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
 NON_SPARK_RELATED_JAR_TEMPLATES = [
-    # Scala modules
-    "delta-hudi_2.13-{version}.jar",
-
     # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",
     "delta-kernel-api-{version}.jar",
@@ -65,21 +69,30 @@ class SparkVersionSpec:
             for jar in SPARK_RELATED_JAR_TEMPLATES
         ]
 
+        # Generate Spark-4.0-only JAR templates with the suffix
+        self.spark_4_0_only_jars = [
+            jar.format(suffix=self.suffix, version="{version}")
+            for jar in SPARK_4_0_ONLY_JAR_TEMPLATES
+        ]
+
         # Non-Spark-related JAR templates are the same for all Spark versions
         self.non_spark_related_jars = list(NON_SPARK_RELATED_JAR_TEMPLATES)
 
     @property
     def all_jars(self) -> List[str]:
         """All JAR templates for this Spark version (Spark-related + non-Spark-related)."""
-        return self.spark_related_jars + self.non_spark_related_jars
+        return self.spark_related_jars + self.non_spark_related_jars + self.spark_4_0_only_jars
 
 
 # Spark versions to test (key = full version string, value = spec with suffix)
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec("")      # Default Spark version without suffix
+    "4.0.1": SparkVersionSpec(""),      # Default Spark version without suffix
+    "4.1.0": SparkVersionSpec("_4.1"),
+    "4.2.0-SNAPSHOT": SparkVersionSpec("_4.2")  # Master/snapshot version
 }
 
 # The default Spark version (no suffix in artifact names)
+# This is intentionally hardcoded here to explicitly test the default version.
 DEFAULT_SPARK = "4.0.1"
 
 
@@ -214,7 +227,9 @@ class CrossSparkPublishTest:
         ):
             return False
 
-        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version)
+        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version) | \
+            substitute_xversion(spark_spec.spark_4_0_only_jars, self.delta_version)
+
         return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
 
     def test_cross_spark_workflow(self) -> bool:
@@ -250,6 +265,7 @@ class CrossSparkPublishTest:
         for spark_spec in SPARK_VERSIONS.values():
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
         expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
+        expected.update(substitute_xversion(SPARK_VERSIONS["4.0.1"].spark_4_0_only_jars, self.delta_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
 
@@ -313,6 +329,202 @@ class CrossSparkPublishTest:
             print(f"Warning: Could not validate Spark versions: {e}\n")
 
 
+class SparkVersionsScriptTest:
+    """Tests for the get_spark_version_info.py script."""
+
+    def __init__(self, delta_root: Path):
+        self.delta_root = delta_root
+        self.json_path = delta_root / "target" / "spark-versions.json"
+        self.script_path = delta_root / "project" / "scripts" / "get_spark_version_info.py"
+
+    def ensure_json_exists(self) -> bool:
+        """Ensure the JSON file exists by running exportSparkVersionsJson."""
+        if not self.json_path.exists():
+            print("  Generating spark-versions.json...")
+            try:
+                subprocess.run(
+                    ["build/sbt", "exportSparkVersionsJson"],
+                    cwd=self.delta_root,
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT
+                )
+            except subprocess.CalledProcessError:
+                print("  ✗ Failed to generate spark-versions.json")
+                return False
+        return True
+
+    def test_json_format(self) -> bool:
+        """Test that the JSON file is well-formed with expected fields."""
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            # Validate it's an array
+            if not isinstance(data, list) or len(data) == 0:
+                print("  ✗ JSON must be a non-empty array")
+                return False
+
+            # Validate each entry has required fields
+            required_fields = ["fullVersion", "shortVersion", "isMaster", "isDefault", "targetJvm", "packageSuffix"]
+            for idx, entry in enumerate(data):
+                for field in required_fields:
+                    if field not in entry:
+                        print(f"  ✗ Entry {idx} missing required field: {field}")
+                        return False
+
+                # Validate field types
+                if not isinstance(entry["fullVersion"], str) or not isinstance(entry["shortVersion"], str) or \
+                   not isinstance(entry["isMaster"], bool) or not isinstance(entry["isDefault"], bool) or \
+                   not isinstance(entry["targetJvm"], str) or not isinstance(entry["packageSuffix"], str):
+                    print(f"  ✗ Entry {idx}: Invalid field types")
+                    return False
+
+            versions_str = ", ".join([entry.get("isMaster") and "master" or entry["shortVersion"] for entry in data])
+            print(f"  ✓ JSON format valid: {len(data)} version(s) [{versions_str}]")
+            return True
+
+        except json.JSONDecodeError as e:
+            print(f"  ✗ Invalid JSON: {e}")
+            return False
+        except Exception as e:
+            print(f"  ✗ Unexpected error: {e}")
+            return False
+
+    def test_all_spark_versions(self) -> bool:
+        """Test that --all-spark-versions produces valid JSON array."""
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            result = subprocess.run(
+                ["python3", str(self.script_path), "--all-spark-versions"],
+                cwd=self.delta_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            matrix_versions = json.loads(result.stdout.strip())
+
+            # Validate it's a non-empty array of strings
+            if not isinstance(matrix_versions, list) or len(matrix_versions) == 0:
+                print("  ✗ Must output a non-empty JSON array")
+                return False
+
+            if not all(isinstance(v, str) for v in matrix_versions):
+                print("  ✗ All matrix entries must be strings")
+                return False
+
+            # Validate consistency with JSON
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            if len(matrix_versions) != len(data):
+                print(f"  ✗ Matrix has {len(matrix_versions)} versions, JSON has {len(data)}")
+                return False
+
+            print(f"  ✓ --all-spark-versions: {matrix_versions}")
+            return True
+
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
+    def test_released_spark_versions(self) -> bool:
+        """Test that --released-spark-versions excludes snapshots."""
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            result = subprocess.run(
+                ["python3", str(self.script_path), "--released-spark-versions"],
+                cwd=self.delta_root,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+
+            released_versions = json.loads(result.stdout.strip())
+
+            # Validate it's an array of strings
+            if not isinstance(released_versions, list):
+                print("  ✗ Must output a JSON array")
+                return False
+
+            if not all(isinstance(v, str) for v in released_versions):
+                print("  ✗ All entries must be strings")
+                return False
+
+            # Load JSON and verify snapshots are excluded
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            expected_count = sum(1 for entry in data if "-SNAPSHOT" not in entry["fullVersion"])
+            if len(released_versions) != expected_count:
+                print(f"  ✗ Expected {expected_count} released versions, got {len(released_versions)}")
+                return False
+
+            # Verify no snapshot versions included
+            for version in released_versions:
+                if "SNAPSHOT" in version.upper():
+                    print(f"  ✗ Released versions should not include snapshots: {version}")
+                    return False
+
+            print(f"  ✓ --released-spark-versions: {released_versions} (snapshots excluded)")
+            return True
+
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
+    def test_get_field(self) -> bool:
+        """Test that --get-field works for various version formats."""
+        if not self.ensure_json_exists():
+            return False
+
+        try:
+            # Load the JSON to know what versions to test
+            with open(self.json_path, 'r') as f:
+                data = json.load(f)
+
+            test_cases = []
+            for entry in data:
+                # Test short version and full version
+                test_cases.append((entry["shortVersion"], "targetJvm", entry["targetJvm"]))
+                test_cases.append((entry["fullVersion"], "fullVersion", entry["fullVersion"]))
+                
+                # Test "master" if applicable
+                if entry["isMaster"]:
+                    test_cases.append(("master", "targetJvm", entry["targetJvm"]))
+
+            all_passed = True
+            for version, field, expected in test_cases:
+                result = subprocess.run(
+                    ["python3", str(self.script_path), "--get-field", version, field],
+                    cwd=self.delta_root,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+
+                actual = json.loads(result.stdout.strip())
+                if actual != expected:
+                    print(f"  ✗ --get-field {version} {field}: expected {expected}, got {actual}")
+                    all_passed = False
+
+            if all_passed:
+                print(f"  ✓ --get-field: Tested {len(test_cases)} cases successfully")
+            return all_passed
+
+        except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            print(f"  ✗ Failed: {e}")
+            return False
+
+
 def main():
     """Main entry point."""
     try:
@@ -326,25 +538,49 @@ def main():
         print("="*70)
         print()
 
-        # Create test object and validate Spark versions
-        test = CrossSparkPublishTest(delta_root)
-        test.validate_spark_versions()
+        # Test the get_spark_version_info.py script first
+        print("\n" + "="*70)
+        print("PART 1: Spark Versions Script Tests")
+        print("="*70)
+        script_test = SparkVersionsScriptTest(delta_root)
+        script_test1_passed = script_test.test_json_format()
+        script_test2_passed = script_test.test_all_spark_versions()
+        script_test3_passed = script_test.test_released_spark_versions()
+        script_test4_passed = script_test.test_get_field()
 
-        # Run all tests
-        test1_passed = test.test_default_publish()
-        test2_passed = test.test_run_only_for_spark_modules()
-        test3_passed = test.test_cross_spark_workflow()
+        # Test cross-Spark build workflow
+        print("\n" + "="*70)
+        print("PART 2: Cross-Spark Build Tests")
+        print("="*70)
+        build_test = CrossSparkPublishTest(delta_root)
+        build_test.validate_spark_versions()
+
+        # Run all build tests
+        build_test1_passed = build_test.test_default_publish()
+        build_test2_passed = build_test.test_run_only_for_spark_modules()
+        build_test3_passed = build_test.test_cross_spark_workflow()
 
         # Summary
         print("\n" + "="*70)
         print("TEST SUMMARY")
         print("="*70)
-        print(f"Default publishM2:                      {'✓ PASSED' if test1_passed else '✗ FAILED'}")
-        print(f"runOnlyForReleasableSparkModules:       {'✓ PASSED' if test2_passed else '✗ FAILED'}")
-        print(f"Cross-Spark Workflow:                   {'✓ PASSED' if test3_passed else '✗ FAILED'}")
+        print("\nPart 1: Spark Versions Script Tests")
+        print(f"  JSON Format:                            {'✓ PASSED' if script_test1_passed else '✗ FAILED'}")
+        print(f"  All Spark Versions Output:              {'✓ PASSED' if script_test2_passed else '✗ FAILED'}")
+        print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
+        print(f"  Get Field Functionality:                {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
+        print("\nPart 2: Cross-Spark Build Tests")
+        print(f"  Default publishM2:                      {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
+        print(f"  runOnlyForReleasableSparkModules:       {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
+        print(f"  Cross-Spark Workflow:                   {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
         print("="*70)
 
-        if test1_passed and test2_passed and test3_passed:
+        all_tests_passed = (
+            script_test1_passed and script_test2_passed and script_test3_passed and script_test4_passed and
+            build_test1_passed and build_test2_passed and build_test3_passed
+        )
+
+        if all_tests_passed:
             print("\n✓ ALL TESTS PASSED")
             sys.exit(0)
         else:

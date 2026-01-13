@@ -1,15 +1,41 @@
 name: "Delta Spark Publishing and Examples"
 on: [push, pull_request]
 jobs:
-  test:
-    name: "DSP&E: Scala ${{ matrix.scala }}"
+  # Generate Spark versions matrix from CrossSparkVersions.scala
+  # This workflow tests against released versions only (no snapshots)
+  generate-matrix:
+    name: "Generate Released Spark Versions Matrix"
     runs-on: ubuntu-24.04
+    outputs:
+      spark_versions: ${{ steps.generate.outputs.spark_versions }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate released Spark versions matrix
+        id: generate
+        run: |
+          # Get only released versions (exclude snapshots)
+          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions)
+          echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
+          echo "Generated released Spark versions: $SPARK_VERSIONS"
+
+  test:
+    name: "DSP&E: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}"
+    runs-on: ubuntu-24.04
+    needs: generate-matrix
     strategy:
       matrix:
+        # Spark versions are dynamically generated - released versions only
+        spark_version: ${{ fromJson(needs.generate-matrix.outputs.spark_versions) }}
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      SPARK_VERSION: ${{ matrix.spark_version }}
     steps:
       - uses: actions/checkout@v3
       - uses: technote-space/get-diff-action@v4
@@ -20,11 +46,20 @@ jobs:
             .github/workflows/**
             !kernel/**
             !connectors/**
+      - name: Get Spark version details
+        id: spark-details
+        run: |
+          # Get JVM version and package suffix for this Spark version
+          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          SPARK_PACKAGE_SUFFIX=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" packageSuffix | jq -r)
+          echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
+          echo "spark_package_suffix=$SPARK_PACKAGE_SUFFIX" >> $GITHUB_OUTPUT
+          echo "Using JVM $JVM_VERSION for Spark ${{ matrix.spark_version }}, package suffix: '$SPARK_PACKAGE_SUFFIX'"
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "17"
+          java-version: ${{ steps.spark-details.outputs.jvm_version }}
       - name: Cache Scala, SBT
         uses: actions/cache@v3
         with:
@@ -36,7 +71,7 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark-examples-scala${{ matrix.scala }}
+          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
           sudo apt-get update
@@ -46,8 +81,11 @@ jobs:
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.
+        # The SPARK_PACKAGE_SUFFIX env var tells examples/scala/build.sbt which artifact naming to use.
+        env:
+          SPARK_PACKAGE_SUFFIX: ${{ steps.spark-details.outputs.spark_package_suffix }}
         run: |
           build/sbt clean
-          build/sbt publishM2
+          build/sbt -DsparkVersion=${{ matrix.spark_version }} publishM2
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
         if: steps.git-diff.outputs.diff

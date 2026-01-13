@@ -31,6 +31,7 @@ import org.apache.spark.sql.connector.catalog.{SupportsRead, Table, TableCapabil
 import org.apache.spark.sql.connector.read._
 import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
@@ -196,16 +197,40 @@ class ServerSidePlannedTable(
 
 /**
  * ScanBuilder that uses ServerSidePlanningClient to plan the scan.
+ * Implements SupportsPushDownFilters to enable WHERE clause pushdown to the server.
+ * Implements SupportsPushDownRequiredColumns to enable column pruning pushdown to the server.
  */
 class ServerSidePlannedScanBuilder(
     spark: SparkSession,
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends ScanBuilder {
+    planningClient: ServerSidePlanningClient)
+  extends ScanBuilder with SupportsPushDownFilters with SupportsPushDownRequiredColumns {
+
+  // Filters that have been pushed down and will be sent to the server
+  private var _pushedFilters: Array[Filter] = Array.empty
+
+  // Required schema (columns to read). Defaults to full table schema.
+  private var _requiredSchema: StructType = tableSchema
+
+  override def pushFilters(filters: Array[Filter]): Array[Filter] = {
+    // Store filters to send to catalog, but return all as residuals.
+    // Since we don't know what the catalog can handle yet, we conservatively claim we handle
+    // none. Even if the catalog applies some filters, Spark will redundantly re-apply them.
+    _pushedFilters = filters
+    filters  // Return all as residuals
+  }
+
+  override def pushedFilters(): Array[Filter] = _pushedFilters
+
+  override def pruneColumns(requiredSchema: StructType): Unit = {
+    _requiredSchema = requiredSchema
+  }
 
   override def build(): Scan = {
-    new ServerSidePlannedScan(spark, databaseName, tableName, tableSchema, planningClient)
+    new ServerSidePlannedScan(
+      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters, _requiredSchema)
   }
 }
 
@@ -217,16 +242,42 @@ class ServerSidePlannedScan(
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient) extends Scan with Batch {
+    planningClient: ServerSidePlanningClient,
+    pushedFilters: Array[Filter],
+    requiredSchema: StructType) extends Scan with Batch {
 
-  override def readSchema(): StructType = tableSchema
+  override def readSchema(): StructType = requiredSchema
 
   override def toBatch: Batch = this
 
-  // Call the server-side planning API once and store the result
-  private val scanPlan = planningClient.planScan(databaseName, tableName)
+  // Convert pushed filters to a single Spark Filter for the API call.
+  // If no filters, pass None. If filters exist, combine them into a single filter.
+  private val combinedFilter: Option[Filter] = {
+    if (pushedFilters.isEmpty) {
+      None
+    } else if (pushedFilters.length == 1) {
+      Some(pushedFilters.head)
+    } else {
+      // Combine multiple filters with And
+      Some(pushedFilters.reduce((left, right) => And(left, right)))
+    }
+  }
+
+  // Only pass projection if columns are actually pruned (not SELECT *)
+  // Extract field names for planning client (server only needs names, not types)
+  private val projectionColumnNames: Option[Seq[String]] = {
+    if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
+      None
+    } else {
+      Some(requiredSchema.fieldNames.toSeq)
+    }
+  }
 
   override def planInputPartitions(): Array[InputPartition] = {
+    // Call the server-side planning API to get the scan plan
+    val scanPlan = planningClient.planScan(
+      databaseName, tableName, combinedFilter, projectionColumnNames)
+
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>
       ServerSidePlannedFileInputPartition(file.filePath, file.fileSizeInBytes, file.fileFormat)
@@ -234,7 +285,7 @@ class ServerSidePlannedScan(
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema)
+    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema, requiredSchema)
   }
 }
 
@@ -249,10 +300,14 @@ case class ServerSidePlannedFileInputPartition(
 /**
  * Factory for creating PartitionReaders that read server-side planned files.
  * Builds reader functions on the driver for Parquet files.
+ *
+ * @param tableSchema The full table schema (all columns in the file)
+ * @param requiredSchema The required schema (columns to read after projection pushdown)
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
-    tableSchema: StructType)
+    tableSchema: StructType,
+    requiredSchema: StructType)
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
@@ -270,11 +325,13 @@ class ServerSidePlannedFilePartitionReaderFactory(
 
   // Pre-build reader function for Parquet on the driver
   // This function will be serialized and sent to executors
+  // tableSchema: All columns in the file (full table schema)
+  // requiredSchema: Columns to actually read (after projection pushdown)
   private val parquetReaderBuilder = new ParquetFileFormat().buildReaderWithPartitionValues(
     sparkSession = spark,
     dataSchema = tableSchema,
     partitionSchema = StructType(Nil),
-    requiredSchema = tableSchema,
+    requiredSchema = requiredSchema,
     filters = Seq.empty,
     options = Map(
       FileFormat.OPTION_RETURNING_BATCH -> "false"

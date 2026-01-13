@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.sources.Filter
 
 /**
  * Simple data class representing a file to scan.
@@ -36,9 +37,10 @@ case class ScanPlan(
 )
 
 /**
- * Interface for planning table scans via server-side planning (e.g., Iceberg REST catalog).
- * This interface is intentionally simple and has no dependencies
- * on Iceberg libraries, allowing it to live in delta-spark module.
+ * Interface for planning table scans via server-side planning.
+ * This interface uses Spark's standard `org.apache.spark.sql.sources.Filter` as the universal
+ * representation for filter pushdown. This keeps the interface catalog-agnostic while allowing
+ * each server-side planning catalog implementation to convert filters to their own native format.
  */
 trait ServerSidePlanningClient {
   /**
@@ -46,9 +48,15 @@ trait ServerSidePlanningClient {
    *
    * @param databaseName The database or schema name
    * @param table The table name
+   * @param filterOption Optional filter expression to push down to server (Spark Filter format)
+   * @param projectionOption Optional projection (column names) to push down to server
    * @return ScanPlan containing files to read
    */
-  def planScan(databaseName: String, table: String): ScanPlan
+  def planScan(
+      databaseName: String,
+      table: String,
+      filterOption: Option[Filter] = None,
+      projectionOption: Option[Seq[String]] = None): ScanPlan
 }
 
 /**

@@ -20,7 +20,7 @@ import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.delta.ConvertSparkTableToDeltaTableV2
-import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -85,8 +85,8 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
       extensions: SparkSessionExtensions): Boolean = {
     extensions.injectResolutionRule { session =>
       val mode = session.conf.get(
-        DeltaSQLConfV2.V2_ENABLE_MODE.key,
-        DeltaSQLConfV2.V2_ENABLE_MODE.defaultValueString)
+        DeltaSQLConf.V2_ENABLE_MODE.key,
+        DeltaSQLConf.V2_ENABLE_MODE.defaultValueString)
 
       if ("STRICT".equals(mode)) {
         // V2 mode: inject conversion rule to convert SparkTable to DeltaTableV2
