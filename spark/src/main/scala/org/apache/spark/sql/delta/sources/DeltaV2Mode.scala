@@ -92,7 +92,8 @@ class DeltaV2Mode(sqlConf: SQLConf) {
     mode match {
       case "STRICT" | "AUTO" =>
         // In sparkV2 modes, trust the schema for Unity Catalog managed tables
-        CatalogTableUtils.isUnityCatalogManagedTableFromProperties(parameters)
+        import scala.jdk.CollectionConverters._
+        CatalogTableUtils.isUnityCatalogManagedTableFromProperties(parameters.asJava)
       case _ =>
         // NONE or unknown: always validate schema via DeltaLog
         false
