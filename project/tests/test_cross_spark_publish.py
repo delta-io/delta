@@ -153,7 +153,7 @@ class CrossSparkPublishTest:
         print(f"  {description}")
         try:
             subprocess.run(command, cwd=self.delta_root, check=True,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                          stdout=subprocess.STDOUT, stderr=subprocess.STDOUT)
             return True
         except subprocess.CalledProcessError:
             print(f"  ✗ Command failed: {' '.join(command)}")
