@@ -35,7 +35,8 @@ import org.apache.spark.sql.types.StructType
 
 class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
-  private def applyRule(plan: StreamingRelation): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan = {
+  private def applyRule(
+      plan: StreamingRelation): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan = {
     new ApplyV2Streaming(spark).apply(plan)
   }
 
