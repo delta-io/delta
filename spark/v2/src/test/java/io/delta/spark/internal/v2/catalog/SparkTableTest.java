@@ -417,21 +417,30 @@ public class SparkTableTest extends SparkDsv2TestBase {
     spark.sql(
         String.format("CREATE TABLE test_catalog2 (id INT) USING delta LOCATION '%s'", path2));
 
-    CatalogTable catalogTable1 =
-        spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1"));
-    CatalogTable catalogTable2 =
-        spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog2"));
     Identifier identifier = Identifier.of(new String[] {"default"}, "test_catalog");
 
-    SparkTable table1 = new SparkTable(identifier, catalogTable1, Collections.emptyMap());
-    SparkTable table2 = new SparkTable(identifier, catalogTable1, Collections.emptyMap());
+    // Create table1 and table2 with separately fetched CatalogTable objects (not same instance)
+    SparkTable table1 =
+        new SparkTable(
+            identifier,
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1")),
+            Collections.emptyMap());
+    SparkTable table2 =
+        new SparkTable(
+            identifier,
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1")),
+            Collections.emptyMap());
 
     // Same identifier, catalogTable, and options should be equal
     assertEquals(table1, table2);
     assertEquals(table1.hashCode(), table2.hashCode());
 
     // Different catalogTable should not be equal
-    SparkTable table3 = new SparkTable(identifier, catalogTable2, Collections.emptyMap());
+    SparkTable table3 =
+        new SparkTable(
+            identifier,
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog2")),
+            Collections.emptyMap());
     assertNotEquals(table1, table3);
     assertNotEquals(table1.hashCode(), table3.hashCode());
 
