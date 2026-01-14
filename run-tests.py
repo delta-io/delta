@@ -53,6 +53,11 @@ def get_args():
         required=False,
         default=None,
         help="Spark version to use (passed as -DsparkVersion to SBT)")
+    parser.add_argument(
+        "--flink-version",
+        required=False,
+        default=None,
+        help="Flink version to use (passed as -DflinkVersion to SBT)")
     return parser.parse_args()
 
 
@@ -65,7 +70,11 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     # Pass Spark version as system property to SBT (must come before commands)
     if spark_version:
         cmd.append(f"-DsparkVersion={spark_version}")
-    
+
+    # Pass Flink version as system property to SBT (must come before commands)
+    if flink_version:
+        cmd.append(f"-DflinkVersion={flink_version}")
+
     cmd.append("clean")
 
     test_cmd = "test"
