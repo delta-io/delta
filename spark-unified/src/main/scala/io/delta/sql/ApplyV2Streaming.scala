@@ -66,8 +66,8 @@ class ApplyV2Streaming(
       return false
     }
 
-    val connectorMode = DeltaV2Mode(session.sessionState.conf)
-    connectorMode.isStreamingReadsEnabled(s.dataSource.catalogTable)
+    val deltaV2Mode = DeltaV2Mode(session.sessionState.conf)
+    deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable)
   }
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {

@@ -113,9 +113,9 @@ class DeltaDataSource
     // Check if we should bypass DeltaLog schema loading for UC-managed tables.
     // DeltaV2Mode checks the parameters map for UC markers and returns true for
     // AUTO/STRICT modes with UC tables.
-    val connectorMode = DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
+    val deltaV2Mode = DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
-        connectorMode.shouldBypassSchemaValidationForStreaming(parameters)) {
+        deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters)) {
       return (shortName(), schema.get)
     }
     val path = parameters.getOrElse("path", {
