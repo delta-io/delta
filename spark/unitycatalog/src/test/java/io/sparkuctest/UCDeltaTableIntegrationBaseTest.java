@@ -170,7 +170,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       TestCode testCode)
       throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String uniqueTableName = tableName + "_" + UUID.randomUUID().toString().replace("-", "");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + uniqueTableName;
 
     // Create th partition cause.
     StringBuilder partitionCause = new StringBuilder();

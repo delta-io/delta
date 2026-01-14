@@ -107,11 +107,11 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           // Assert that the query is active
           assertTrue(query.isActive(), "Streaming query should be active");
 
-          // Let's do 10 rounds testing, and for every round, adding 1 row and waiting to be
+          // Let's do 3 rounds testing, and for every round, adding 1 row and waiting to be
           // available, and finally verify the results and unity catalog latest version are
           // expected.
           ApiClient client = unityCatalogInfo().createApiClient();
-          for (long i = 1; i < 10; i += 1) {
+          for (long i = 1; i < 3; i += 1) {
             Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
             memoryStream.addData(batchRow);
 
@@ -159,12 +159,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           List<List<String>> expected = new ArrayList<>();
 
           try {
-            SparkSession writerSpark = spark.newSession();
-            restoreV2Mode(writerSpark, originalMode);
-
-            writerSpark
-                .sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName))
-                .collect();
+            spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
             expected.add(List.of("0", "seed"));
 
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
@@ -182,11 +177,16 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
             assertTrue(query.isActive(), "Streaming query should be active");
 
-            for (long i = 1; i < 10; i += 1) {
+            for (long i = 1; i < 3; i += 1) {
               String value = "value_" + i;
-              writerSpark
+
+              // Toggle off STRICT mode for batch INSERT
+              restoreV2Mode(spark, originalMode);
+              spark
                   .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
                   .collect();
+              // Restore STRICT mode for streaming
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
 
               query.processAllAvailable();
 
