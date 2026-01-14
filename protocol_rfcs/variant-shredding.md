@@ -37,6 +37,9 @@ typed_value | * | (optional) This can be any Parquet type, representing the data
 
 When Variant Shredding is supported (`writerFeatures` field of a table's `protocol` action contains `variantShredding`), writers:
 - must respect the `delta.enableVariantShredding` table property configuration. If `delta.enableVariantShredding=false`, a column of type `variant` must not be written as a shredded Variant, but as an unshredded Variant. If `delta.enableVariantShredding=true`, the writer can choose to shred a Variant column according to the [Parquet Variant Shredding specification](https://github.com/apache/parquet-format/blob/master/VariantShredding.md)
+- may set the `SHREDDING_STATE` tag to `1` in `AddFile`s.
+- may set the `SHREDDING_STATE` tag to `0` in `AddFile`s corresponding data that does not contain any shredded Variant data. The `SHREDDING_STATE` may not be `0` in an `AddFile` if the data corresponding to it contains any shredded Variant data.
+- may not set the `SHREDDING_STATE` tag in `AddFile`s to any value other than `0` or `1`. It is legal for the writer to not set the `SHREDDING_STATE` tag at all in `AddFile`s.
 
 ## Reader Requirements for Variant Shredding
 
