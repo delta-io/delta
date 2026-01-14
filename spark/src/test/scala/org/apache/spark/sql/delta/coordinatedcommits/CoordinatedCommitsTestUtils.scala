@@ -23,6 +23,7 @@ import scala.collection.mutable
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, Snapshot}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
@@ -110,7 +111,13 @@ trait CatalogOwnedTestBaseSuite
 
   override protected def sparkConf: SparkConf = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+      // Disable QoL features by default in tests to avoid unexpected side effects.
+      // When row tracking is enabled, RowId.extractHighWatermark accesses snapshot.domainMetadata
+      // which triggers computedState, causing setTransactions to be populated in CRC.
+      // Additionally, v2 checkpoints and other QoL features affect metadata expectations in tests.
+      super.sparkConf
+        .set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+        .set(DeltaSQLConf.CATALOG_OWNED_AUTO_ENABLE_QUALITY_OF_LIFE_FEATURES.key, "false")
     } else {
       super.sparkConf
     }
