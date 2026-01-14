@@ -61,7 +61,7 @@ def get_args():
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None, spark_version=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None, spark_version=None, flink_version=None):
     print("##### Running SBT tests #####")
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
@@ -297,4 +297,5 @@ if __name__ == "__main__":
     else:
         scala_version = os.getenv("SCALA_VERSION")
         spark_version = args.spark_version or os.getenv("SPARK_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard, spark_version)
+        flink_version = args.flink_version or os.getenv("FLINK_VERSION")
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard, spark_version, flink_version)
