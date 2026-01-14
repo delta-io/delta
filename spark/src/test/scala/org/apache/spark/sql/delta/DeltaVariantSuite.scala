@@ -512,8 +512,7 @@ class DeltaVariantSuite
   }
 
   Seq("", "NO STATISTICS").foreach { statsClause =>
-    // TODO: these tests need to be fixed for Spark master
-    ignore(s"Convert to Delta from parquet - $statsClause") {
+    test(s"Convert to Delta from parquet - $statsClause") {
       withTempDir { dir =>
         val path = dir.getAbsolutePath
 
