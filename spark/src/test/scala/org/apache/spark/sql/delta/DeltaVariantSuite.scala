@@ -31,6 +31,7 @@ import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.DeltaAnalysisException
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.scalatest.Ignore
@@ -535,22 +536,30 @@ class DeltaVariantSuite
   }
 
   Seq("name", "id").foreach { mode =>
-    // TODO: these tests need to be fixed for Spark master
-    ignore(s"column mapping works - $mode") {
-      withTable("tbl") {
-        sql(s"""CREATE TABLE tbl USING DELTA
-            TBLPROPERTIES ('delta.columnMapping.mode' = '$mode')
+    Seq(false, true).foreach { pushVariantIntoScan =>
+      withSQLConf(
+        SQLConf.PUSH_VARIANT_INTO_SCAN.key -> pushVariantIntoScan.toString
+      ) {
+        test(s"column mapping works - $mode - $pushVariantIntoScan") {
+          withTable("tbl") {
+            sql(s"""CREATE TABLE tbl USING DELTA
+            TBLPROPERTIES (
+              'delta.columnMapping.mode' = '$mode',
+              'delta.enableVariantShredding' = 'true'
+            )
             AS SELECT parse_json(cast(id as string)) v, parse_json(cast(id as string)) v_two
             FROM range(5)""")
-        val expectedAnswer = spark.sql("select v from tbl").collect()
+            val expectedAnswer = spark.sql("select v from tbl").collect()
 
-        sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
-        checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
+            sql("ALTER TABLE tbl RENAME COLUMN v TO new_v")
+            checkAnswer(spark.sql("select new_v from tbl"), expectedAnswer)
 
-        sql("ALTER TABLE tbl DROP COLUMN new_v")
-        // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v` and
-        // `v_two` are initially identical and `v` is dropped, resulting in a single column.
-        checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+            sql("ALTER TABLE tbl DROP COLUMN new_v")
+            // 'SELECT *' from the test table should return the same as `expectedAnswer` because `v`
+            // and `v_two` are initially identical and `v` is dropped, resulting in a single column.
+            checkAnswer(spark.sql("select * from tbl"), expectedAnswer)
+          }
+        }
       }
     }
   }
@@ -686,6 +695,38 @@ class DeltaVariantSuite
       sql("ALTER TABLE tbl ADD CONSTRAINT variantGTEZero CHECK (variant_get(v, '$', 'INT') >= 0)")
       val newLessThanZeroCount = spark.sql("select * from tbl where v::int < 0").count()
       assert(newLessThanZeroCount == 0)
+    }
+  }
+
+  test("column mapping with pushVariantIntoScan") {
+    withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> "true") {
+      withTable("t1") {
+        sql(
+          """create table t1 (v variant) using delta
+            |tblproperties (
+            |  'delta.columnMapping.mode' = 'name',
+            |  'delta.enableVariantShredding' = 'true'
+            |)""".stripMargin)
+        sql("""insert into t1 (v) select parse_json('{"a": 1}')""")
+
+        checkAnswer(sql("select to_json(v) from t1"), Seq(Row("""{"a":1}""")))
+        checkAnswer(sql("select variant_get(v,'$.a','int') from t1"), Seq(Row(1)))
+      }
+
+      // Ensure it also works when the variant is nested in a struct.
+      withTable("t2") {
+        sql(
+          """create table t2 (s struct<v variant>) using delta
+            |tblproperties (
+            |  'delta.columnMapping.mode' = 'name',
+            |  'delta.enableVariantShredding' = 'true'
+            |)""".stripMargin)
+        sql("""insert into t2 (s) select named_struct('v', parse_json('{"a": 2}'))""")
+
+        checkAnswer(sql("select to_json(s) from t2"), Seq(Row("""{"v":{"a":2}}""")))
+        checkAnswer(sql("select to_json(s.v) from t2"), Seq(Row("""{"a":2}""")))
+        checkAnswer(sql("select variant_get(s.v, '$.a', 'int') from t2"), Seq(Row(2)))
+      }
     }
   }
 }

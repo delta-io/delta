@@ -16,10 +16,12 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
+
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.{FileSystem, Path}
 
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{QueryTest, Row, SparkSession}
@@ -27,16 +29,17 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
+import org.apache.spark.sql.delta.util.DeltaFileOperations
 import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.execution.datasources.parquet.{ParquetToSparkSchemaConverter, SparkShreddingUtils}
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.types._
 
 import org.apache.parquet.hadoop.ParquetFileReader
 import org.apache.parquet.hadoop.metadata.ParquetMetadata
 import org.apache.parquet.schema.{GroupType, MessageType, Type}
 import org.scalatest.Ignore
 
-// TODO: Re-enable this test suite after fixing Variant type issues in Spark 4.1.1+
-@Ignore
 class DeltaVariantShreddingSuite
   extends QueryTest
     with SharedSparkSession
@@ -217,6 +220,50 @@ class DeltaVariantShreddingSuite
       )
       assert(!getProtocolForTable("tbl")
         .readerAndWriterFeatures.contains(VariantShreddingPreviewTableFeature))
+    }
+  }
+
+  test("Infer schema for Delta table") {
+    // make sure top level conf has no effect and table property is respected.
+    Seq(false, true).foreach { inferShreddingSchema =>
+      withSQLConf(SQLConf.VARIANT_INFER_SHREDDING_SCHEMA.key -> inferShreddingSchema.toString) {
+        Seq(false, true).foreach { enable =>
+          val tbl = s"tbl_$enable"
+          withTable(tbl) {
+            withTempDir { dir =>
+              val query =
+                """select parse_json('{"a": ' || id || ', "b": "' || id || '"}') as v
+            | from range(0, 3, 1, 1)""".stripMargin
+              val properties = if (enable) {
+                "tblproperties ('delta.enableVariantShredding' = 'true')"
+              } else {
+                ""
+              }
+              spark.sql(
+                s"""
+            | create table $tbl using delta
+            | $properties
+            | location '${dir.getAbsolutePath}'
+            |  as
+            | $query
+            |""".stripMargin)
+              if (enable) {
+                assert(numShreddedFiles(
+                  dir.getAbsolutePath,
+                  validation = { field: GroupType =>
+                    field.getName == "v" && (field.getType("typed_value") match {
+                      case t: GroupType => t.getFields.asScala.map(_.getName).toSet == Set("a", "b")
+                      case _ => false
+                    })
+                  }) == 1)
+              } else {
+                assert(numShreddedFiles(dir.getAbsolutePath) == 0)
+              }
+              checkAnswer(spark.table(tbl), spark.sql(query).collect())
+            }
+          }
+        }
+      }
     }
   }
 

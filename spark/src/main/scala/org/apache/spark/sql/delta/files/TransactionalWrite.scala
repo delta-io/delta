@@ -478,7 +478,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
             key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
               key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
           }.toMap
-      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString)
+      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) +
+        (SQLConf.VARIANT_INFER_SHREDDING_SCHEMA.key ->
+          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata).toString)
 
       try {
         DeltaFileFormatWriter.write(
