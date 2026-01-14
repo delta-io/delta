@@ -25,9 +25,11 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2;
-import org.apache.spark.sql.delta.Relocated;
+import org.apache.spark.sql.delta.RelocatedUtils;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import scala.collection.Iterator;
 
 /**
@@ -39,6 +41,11 @@ import scala.collection.Iterator;
 public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest {
 
   private static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
+
+  @FunctionalInterface
+  private interface ThrowingRunnable {
+    void run() throws Exception;
+  }
 
   /**
    * Checks if a DataFrame's logical plan uses StreamingRelationV2 (V2 streaming path).
@@ -81,7 +88,7 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
                 new scala.PartialFunction<LogicalPlan, LogicalPlan>() {
                   @Override
                   public LogicalPlan apply(LogicalPlan p) {
-                    if (p instanceof Relocated.StreamingRelation) {
+                    if (RelocatedUtils.isStreamingRelation(p)) {
                       return p;
                     }
                     throw new UnsupportedOperationException();
@@ -89,7 +96,7 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
 
                   @Override
                   public boolean isDefinedAt(LogicalPlan p) {
-                    return p instanceof Relocated.StreamingRelation;
+                    return RelocatedUtils.isStreamingRelation(p);
                   }
                 })
             .iterator();
@@ -114,6 +121,53 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
     }
   }
 
+  private void withV2Mode(String mode, ThrowingRunnable runnable) throws Exception {
+    String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
+    try {
+      spark().conf().set(V2_ENABLE_MODE_KEY, mode);
+      runnable.run();
+    } finally {
+      spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
+    }
+  }
+
+  private StreamingQuery startDeltaStream(Dataset<Row> df, String checkpointDir, String outputDir)
+      throws Exception {
+    return df.writeStream()
+        .format("delta")
+        .option("checkpointLocation", checkpointDir)
+        .start(outputDir);
+  }
+
+  private StreamingQuery startMemoryStream(Dataset<Row> df, String checkpointDir, String name)
+      throws Exception {
+    return df.writeStream()
+        .format("memory")
+        .queryName(name)
+        .option("checkpointLocation", checkpointDir)
+        .start();
+  }
+
+  private void assertV2StreamingFailure(StreamingQuery query) {
+    Exception exception =
+        assertThrows(
+            Exception.class,
+            () -> query.processAllAvailable(),
+            "V2 streaming should fail with known limitation");
+
+    assertTrue(
+        exception.getMessage().contains("initialOffset")
+            || (exception.getCause() != null
+                && exception.getCause().getMessage().contains("initialOffset")),
+        "Should fail with initialOffset limitation, but got: " + exception.getMessage());
+  }
+
+  private void cleanupDirs(String... dirs) {
+    for (String dir : dirs) {
+      deleteDirectory(new File(dir));
+    }
+  }
+
   // ==========================================================================
   // AUTO Mode Tests
   // ==========================================================================
@@ -127,166 +181,139 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
         (tableName) -> {
           sql("INSERT INTO %s VALUES (1, 'a')", tableName);
 
-          String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-          String checkpointDir = createCheckpointDir();
-          String outputDir = createTempDir();
-          try {
-            spark().conf().set(V2_ENABLE_MODE_KEY, "AUTO");
+          withV2Mode(
+              "AUTO",
+              () -> {
+                String checkpointDir = createCheckpointDir();
+                String outputDir = createTempDir();
+                try {
+                  // Create streaming read
+                  Dataset<Row> df = spark().readStream().table(tableName);
 
-            // Create streaming read
-            Dataset<Row> df = spark().readStream().table(tableName);
+                  // Verify V2 streaming is used for UC-managed table in AUTO mode
+                  assertTrue(
+                      usesV2Streaming(df),
+                      "AUTO mode should use V2 streaming for UC-managed tables");
 
-            // Verify V2 streaming is used for UC-managed table in AUTO mode
-            assertTrue(
-                usesV2Streaming(df), "AUTO mode should use V2 streaming for UC-managed tables");
-
-            // V2 streaming execution expected to fail with known limitation
-            StreamingQuery query =
-                df.writeStream()
-                    .format("delta")
-                    .option("checkpointLocation", checkpointDir)
-                    .start(outputDir);
-
-            Exception exception =
-                assertThrows(
-                    Exception.class,
-                    () -> query.processAllAvailable(),
-                    "V2 streaming should fail with known limitation");
-
-            assertTrue(
-                exception.getMessage().contains("initialOffset")
-                    || (exception.getCause() != null
-                        && exception.getCause().getMessage().contains("initialOffset")),
-                "Should fail with initialOffset limitation, but got: " + exception.getMessage());
-
-            query.stop();
-
-          } finally {
-            spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-          }
+                  // V2 streaming execution expected to fail with known limitation
+                  StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
+                  assertV2StreamingFailure(query);
+                  query.stop();
+                } finally {
+                  cleanupDirs(checkpointDir, outputDir);
+                }
+              });
         });
   }
 
   @Test
   public void testAutoModeNonUCCatalogTableUsesV1Streaming() throws Exception {
-    String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-    try {
-      spark().conf().set(V2_ENABLE_MODE_KEY, "AUTO");
+    withV2Mode(
+        "AUTO",
+        () -> {
+          String tempDir = createTempDir();
+          String tableName = "default.regular_table";
+          String checkpointDir = createCheckpointDir();
+          String outputDir = createTempDir();
+          try {
+            // Create regular catalog table (no UC properties)
+            sql(
+                "CREATE TABLE %s (id INT, value STRING) USING delta LOCATION '%s'",
+                tableName, tempDir);
+            sql("INSERT INTO %s VALUES (0, 'init')", tableName);
 
-      String tempDir = createTempDir();
-      String tableName = "default.regular_table";
-      String checkpointDir = createCheckpointDir();
-      String outputDir = createTempDir();
-      try {
-        // Create regular catalog table (no UC properties)
-        sql("CREATE TABLE %s (id INT, value STRING) USING delta LOCATION '%s'", tableName, tempDir);
-        sql("INSERT INTO %s VALUES (0, 'init')", tableName);
+            // Create streaming read
+            Dataset<Row> df = spark().readStream().table(tableName);
 
-        // Create streaming read
-        Dataset<Row> df = spark().readStream().table(tableName);
+            // Verify V1 streaming is used (no UC table ID)
+            assertTrue(
+                usesV1Streaming(df), "AUTO mode should use V1 streaming for non-UC catalog tables");
 
-        // Verify V1 streaming is used (no UC table ID)
-        assertTrue(
-            usesV1Streaming(df), "AUTO mode should use V1 streaming for non-UC catalog tables");
+            // Verify V1 streaming execution works
+            StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
+            query.processAllAvailable();
 
-        // Verify V1 streaming execution works
-        StreamingQuery query =
-            df.writeStream()
-                .format("delta")
-                .option("checkpointLocation", checkpointDir)
-                .start(outputDir);
+            // Verify initial data
+            Dataset<Row> result = spark().read().format("delta").load(outputDir);
+            assertEquals(1, result.count(), "Should have 1 row initially");
+            assertEquals(
+                1,
+                result.filter("id = 0 AND value = 'init'").count(),
+                "Should contain initial row");
 
-        query.processAllAvailable();
+            // Add more data
+            sql("INSERT INTO %s VALUES (1, 'a')", tableName);
+            query.processAllAvailable();
 
-        // Verify initial data
-        Dataset<Row> result = spark().read().format("delta").load(outputDir);
-        assertEquals(1, result.count(), "Should have 1 row initially");
-        assertEquals(
-            1, result.filter("id = 0 AND value = 'init'").count(), "Should contain initial row");
+            // Verify new data is read
+            result = spark().read().format("delta").load(outputDir);
+            assertEquals(2, result.count(), "Should have 2 rows after insert");
+            assertEquals(
+                1, result.filter("id = 1 AND value = 'a'").count(), "Should contain new row");
 
-        // Add more data
-        sql("INSERT INTO %s VALUES (1, 'a')", tableName);
-        query.processAllAvailable();
+            query.stop();
 
-        // Verify new data is read
-        result = spark().read().format("delta").load(outputDir);
-        assertEquals(2, result.count(), "Should have 2 rows after insert");
-        assertEquals(1, result.filter("id = 1 AND value = 'a'").count(), "Should contain new row");
-
-        query.stop();
-
-      } finally {
-        sql("DROP TABLE IF EXISTS %s", tableName);
-        deleteDirectory(new File(tempDir));
-        deleteDirectory(new File(checkpointDir));
-        deleteDirectory(new File(outputDir));
-      }
-    } finally {
-      spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-    }
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", tableName);
+            cleanupDirs(tempDir, checkpointDir, outputDir);
+          }
+        });
   }
 
-  @Test
-  public void testAutoModePathBasedTableUsesV1Streaming() throws Exception {
-    String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-    try {
-      spark().conf().set(V2_ENABLE_MODE_KEY, "AUTO");
-
-      String tempDir = createTempDir();
-      String checkpointDir = createCheckpointDir();
-      String outputDir = createTempDir();
-      try {
-        // Create path-based table
-        spark()
-            .range(3)
-            .selectExpr("id", "CAST(id AS STRING) as value")
-            .write()
-            .format("delta")
-            .save(tempDir);
-
-        // Create streaming read from path
-        Dataset<Row> df = spark().readStream().format("delta").load(tempDir);
-
-        // Verify V1 streaming is used (no catalog table)
-        assertTrue(usesV1Streaming(df), "AUTO mode should use V1 streaming for path-based tables");
-
-        // Verify V1 streaming execution works
-        StreamingQuery query =
-            df.writeStream()
+  @ParameterizedTest
+  @ValueSource(strings = {"AUTO", "STRICT", "NONE"})
+  public void testPathBasedTableUsesV1Streaming(String mode) throws Exception {
+    withV2Mode(
+        mode,
+        () -> {
+          String tempDir = createTempDir();
+          String checkpointDir = createCheckpointDir();
+          String outputDir = createTempDir();
+          try {
+            // Create path-based table
+            spark()
+                .range(3)
+                .selectExpr("id", "CAST(id AS STRING) as value")
+                .write()
                 .format("delta")
-                .option("checkpointLocation", checkpointDir)
-                .start(outputDir);
+                .save(tempDir);
 
-        query.processAllAvailable();
+            // Create streaming read from path
+            Dataset<Row> df = spark().readStream().format("delta").load(tempDir);
 
-        // Verify initial data
-        Dataset<Row> result = spark().read().format("delta").load(outputDir);
-        assertEquals(3, result.count(), "Should have 3 rows initially");
+            // Verify V1 streaming is used (no catalog table)
+            assertTrue(
+                usesV1Streaming(df),
+                String.format("%s mode should use V1 streaming for path-based tables", mode));
 
-        // Add more data
-        spark()
-            .range(3, 5)
-            .selectExpr("id", "CAST(id AS STRING) as value")
-            .write()
-            .format("delta")
-            .mode("append")
-            .save(tempDir);
-        query.processAllAvailable();
+            // Verify V1 streaming execution works
+            StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
+            query.processAllAvailable();
 
-        // Verify new data is read
-        result = spark().read().format("delta").load(outputDir);
-        assertEquals(5, result.count(), "Should have 5 rows after append");
+            // Verify initial data
+            Dataset<Row> result = spark().read().format("delta").load(outputDir);
+            assertEquals(3, result.count(), "Should have 3 rows initially");
 
-        query.stop();
+            // Add more data
+            spark()
+                .range(3, 5)
+                .selectExpr("id", "CAST(id AS STRING) as value")
+                .write()
+                .format("delta")
+                .mode("append")
+                .save(tempDir);
+            query.processAllAvailable();
 
-      } finally {
-        deleteDirectory(new File(tempDir));
-        deleteDirectory(new File(checkpointDir));
-        deleteDirectory(new File(outputDir));
-      }
-    } finally {
-      spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-    }
+            // Verify new data is read
+            result = spark().read().format("delta").load(outputDir);
+            assertEquals(5, result.count(), "Should have 5 rows after append");
+
+            query.stop();
+
+          } finally {
+            cleanupDirs(tempDir, checkpointDir, outputDir);
+          }
+        });
   }
 
   // ==========================================================================
@@ -302,155 +329,67 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
         (tableName) -> {
           sql("INSERT INTO %s VALUES (1, 'a')", tableName);
 
-          String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-          try {
-            spark().conf().set(V2_ENABLE_MODE_KEY, "STRICT");
+          withV2Mode(
+              "STRICT",
+              () -> {
+                Dataset<Row> df = spark().readStream().table(tableName);
 
-            Dataset<Row> df = spark().readStream().table(tableName);
+                // Verify V2 streaming is used for UC-managed table in STRICT mode
+                assertTrue(
+                    usesV2Streaming(df),
+                    "STRICT mode should use V2 streaming for UC-managed tables");
 
-            // Verify V2 streaming is used for UC-managed table in STRICT mode
-            assertTrue(
-                usesV2Streaming(df), "STRICT mode should use V2 streaming for UC-managed tables");
-
-            // V2 streaming execution expected to fail with known limitation
-            String checkpointDir = createCheckpointDir();
-            String outputDir = createTempDir();
-            try {
-              StreamingQuery query =
-                  df.writeStream()
-                      .format("delta")
-                      .option("checkpointLocation", checkpointDir)
-                      .start(outputDir);
-
-              Exception exception =
-                  assertThrows(
-                      Exception.class,
-                      () -> query.processAllAvailable(),
-                      "V2 streaming should fail with known limitation");
-
-              assertTrue(
-                  exception.getMessage().contains("initialOffset")
-                      || exception.getCause().getMessage().contains("initialOffset"),
-                  "Should fail with initialOffset limitation, but got: " + exception.getMessage());
-
-              query.stop();
-            } finally {
-              deleteDirectory(new File(checkpointDir));
-              deleteDirectory(new File(outputDir));
-            }
-          } finally {
-            spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-          }
+                // V2 streaming execution expected to fail with known limitation
+                String checkpointDir = createCheckpointDir();
+                String outputDir = createTempDir();
+                try {
+                  StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
+                  assertV2StreamingFailure(query);
+                  query.stop();
+                } finally {
+                  cleanupDirs(checkpointDir, outputDir);
+                }
+              });
         });
   }
 
   @Test
   public void testStrictModeCatalogTableUsesV2StreamingViaDeltaCatalog() throws Exception {
-    String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-    String checkpointDir = createCheckpointDir();
-    try {
-      spark().conf().set(V2_ENABLE_MODE_KEY, "STRICT");
+    withV2Mode(
+        "STRICT",
+        () -> {
+          String checkpointDir = createCheckpointDir();
+          String tempDir = createTempDir();
+          String tableName = "default.strict_test_table";
+          try {
+            // Create table using path-based approach with initial data
+            spark().range(2).toDF("id").write().format("delta").save(tempDir);
 
-      String tempDir = createTempDir();
-      String tableName = "default.strict_test_table";
-      try {
-        // Create table using path-based approach with initial data
-        spark().range(2).toDF("id").write().format("delta").save(tempDir);
+            // Create a catalog table pointing to this location
+            sql("CREATE TABLE %s USING delta LOCATION '%s'", tableName, tempDir);
 
-        // Create a catalog table pointing to this location
-        sql("CREATE TABLE %s USING delta LOCATION '%s'", tableName, tempDir);
+            Dataset<Row> df = spark().readStream().table(tableName);
 
-        Dataset<Row> df = spark().readStream().table(tableName);
+            // In STRICT mode, catalog returns SparkTable, so we use V2 streaming
+            assertTrue(
+                usesV2Streaming(df),
+                "STRICT mode uses V2 streaming for catalog tables "
+                    + "(via DeltaCatalog, not ApplyV2Streaming)");
 
-        // In STRICT mode, catalog returns SparkTable, so we use V2 streaming
-        assertTrue(
-            usesV2Streaming(df),
-            "STRICT mode uses V2 streaming for catalog tables "
-                + "(via DeltaCatalog, not ApplyV2Streaming)");
+            // V2 streaming execution expected to fail with known limitation
+            // Use memory sink to avoid catalog resolution issues with Delta sink in STRICT mode
+            StreamingQuery query = startMemoryStream(df, checkpointDir, "strict_mode_test");
+            assertV2StreamingFailure(query);
+            query.stop();
 
-        // V2 streaming execution expected to fail with known limitation
-        // Use memory sink to avoid catalog resolution issues with Delta sink in STRICT mode
-        StreamingQuery query =
-            df.writeStream()
-                .format("memory")
-                .queryName("strict_mode_test")
-                .option("checkpointLocation", checkpointDir)
-                .start();
-
-        Exception exception =
-            assertThrows(
-                Exception.class,
-                () -> query.processAllAvailable(),
-                "V2 streaming should fail with known limitation");
-
-        assertTrue(
-            exception.getMessage().contains("initialOffset")
-                || (exception.getCause() != null
-                    && exception.getCause().getMessage().contains("initialOffset")),
-            "Should fail with initialOffset limitation, but got: " + exception.getMessage());
-
-        query.stop();
-
-      } finally {
-        sql("DROP TABLE IF EXISTS %s", tableName);
-        deleteDirectory(new File(tempDir));
-        deleteDirectory(new File(checkpointDir));
-      }
-    } finally {
-      spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-    }
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", tableName);
+            cleanupDirs(tempDir, checkpointDir);
+          }
+        });
   }
 
-  @Test
-  public void testStrictModePathBasedTableUsesV1Streaming() throws Exception {
-    String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-    try {
-      spark().conf().set(V2_ENABLE_MODE_KEY, "STRICT");
-
-      String tempDir = createTempDir();
-      String checkpointDir = createCheckpointDir();
-      String outputDir = createTempDir();
-      try {
-        // Create path-based table
-        spark()
-            .range(3)
-            .selectExpr("id", "CAST(id AS STRING) as value")
-            .write()
-            .format("delta")
-            .save(tempDir);
-
-        // Create streaming read from path
-        Dataset<Row> df = spark().readStream().format("delta").load(tempDir);
-
-        // STRICT mode currently uses V1 for path-based tables (no catalog table)
-        assertTrue(
-            usesV1Streaming(df),
-            "STRICT mode should use V1 streaming for path-based tables (no catalog table)");
-
-        // Verify V1 streaming execution works
-        StreamingQuery query =
-            df.writeStream()
-                .format("delta")
-                .option("checkpointLocation", checkpointDir)
-                .start(outputDir);
-
-        query.processAllAvailable();
-
-        // Verify data is read correctly
-        Dataset<Row> result = spark().read().format("delta").load(outputDir);
-        assertEquals(3, result.count(), "Should have 3 rows");
-
-        query.stop();
-
-      } finally {
-        deleteDirectory(new File(tempDir));
-        deleteDirectory(new File(checkpointDir));
-        deleteDirectory(new File(outputDir));
-      }
-    } finally {
-      spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-    }
-  }
+  // STRICT path-based behavior is covered by testPathBasedTableUsesV1Streaming.
 
   // ==========================================================================
   // NONE Mode Tests (Default behavior)
@@ -458,54 +397,44 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
 
   @Test
   public void testNoneModeAllTablesUseV1Streaming() throws Exception {
-    String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-    try {
-      spark().conf().set(V2_ENABLE_MODE_KEY, "NONE");
+    withV2Mode(
+        "NONE",
+        () -> {
+          String tempDir = createTempDir();
+          String tableName = "default.test_table";
+          String checkpointDir = createCheckpointDir();
+          String outputDir = createTempDir();
+          try {
+            sql("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, tempDir);
+            sql("INSERT INTO %s VALUES (1)", tableName);
 
-      String tempDir = createTempDir();
-      String tableName = "default.test_table";
-      String checkpointDir = createCheckpointDir();
-      String outputDir = createTempDir();
-      try {
-        sql("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, tempDir);
-        sql("INSERT INTO %s VALUES (1)", tableName);
+            Dataset<Row> df = spark().readStream().table(tableName);
 
-        Dataset<Row> df = spark().readStream().table(tableName);
+            assertTrue(usesV1Streaming(df), "NONE mode should use V1 streaming for all tables");
 
-        assertTrue(usesV1Streaming(df), "NONE mode should use V1 streaming for all tables");
+            // Verify V1 streaming execution works
+            StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
+            query.processAllAvailable();
 
-        // Verify V1 streaming execution works
-        StreamingQuery query =
-            df.writeStream()
-                .format("delta")
-                .option("checkpointLocation", checkpointDir)
-                .start(outputDir);
+            // Verify initial data
+            Dataset<Row> result = spark().read().format("delta").load(outputDir);
+            assertEquals(1, result.count(), "Should have 1 row initially");
 
-        query.processAllAvailable();
+            // Add more data
+            sql("INSERT INTO %s VALUES (2)", tableName);
+            query.processAllAvailable();
 
-        // Verify initial data
-        Dataset<Row> result = spark().read().format("delta").load(outputDir);
-        assertEquals(1, result.count(), "Should have 1 row initially");
+            // Verify new data is read
+            result = spark().read().format("delta").load(outputDir);
+            assertEquals(2, result.count(), "Should have 2 rows after insert");
 
-        // Add more data
-        sql("INSERT INTO %s VALUES (2)", tableName);
-        query.processAllAvailable();
+            query.stop();
 
-        // Verify new data is read
-        result = spark().read().format("delta").load(outputDir);
-        assertEquals(2, result.count(), "Should have 2 rows after insert");
-
-        query.stop();
-
-      } finally {
-        sql("DROP TABLE IF EXISTS %s", tableName);
-        deleteDirectory(new File(tempDir));
-        deleteDirectory(new File(checkpointDir));
-        deleteDirectory(new File(outputDir));
-      }
-    } finally {
-      spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-    }
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", tableName);
+            cleanupDirs(tempDir, checkpointDir, outputDir);
+          }
+        });
   }
 
   @Test
@@ -517,36 +446,33 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
         (tableName) -> {
           sql("INSERT INTO %s VALUES (1, 'a')", tableName);
 
-          String prevConf = spark().conf().get(V2_ENABLE_MODE_KEY, "NONE");
-          try {
-            spark().conf().set(V2_ENABLE_MODE_KEY, "NONE");
+          withV2Mode(
+              "NONE",
+              () -> {
+                // NONE mode uses V1 streaming, which requires path-based access to UC-managed
+                // tables. This is blocked by UC, so we expect an exception.
+                Exception exception =
+                    assertThrows(
+                        Exception.class,
+                        () -> spark().readStream().table(tableName),
+                        "V1 streaming with UC tables expected to fail with path-based access error");
 
-            // NONE mode uses V1 streaming, which requires path-based access to UC-managed tables.
-            // This is blocked by UC, so we expect an exception.
-            Exception exception =
-                assertThrows(
-                    Exception.class,
-                    () -> spark().readStream().table(tableName),
-                    "V1 streaming with UC tables expected to fail with path-based access error");
-
-            assertTrue(
-                exception
-                        .getMessage()
-                        .contains("DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED")
-                    || (exception.getCause() != null
-                        && exception
-                            .getCause()
+                assertTrue(
+                    exception
                             .getMessage()
-                            .contains("DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED")),
-                "Should fail with catalog-managed table path access error, but got: "
-                    + exception.getMessage());
+                            .contains("DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED")
+                        || (exception.getCause() != null
+                            && exception
+                                .getCause()
+                                .getMessage()
+                                .contains(
+                                    "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED")),
+                    "Should fail with catalog-managed table path access error, but got: "
+                        + exception.getMessage());
 
-            // Note: NONE mode does not support UC-managed tables for streaming because it
-            // requires path-based access which is blocked for UC tables.
-
-          } finally {
-            spark().conf().set(V2_ENABLE_MODE_KEY, prevConf);
-          }
+                // Note: NONE mode does not support UC-managed tables for streaming because it
+                // requires path-based access which is blocked for UC tables.
+              });
         });
   }
 

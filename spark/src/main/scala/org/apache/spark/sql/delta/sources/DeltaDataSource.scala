@@ -110,12 +110,14 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
     // Check if we should bypass DeltaLog schema loading for UC-managed tables.
     // DeltaV2Mode checks the parameters map for UC markers and returns true for
     // AUTO/STRICT modes with UC tables.
-    val deltaV2Mode = DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
+    val deltaV2Mode = new DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
     if (schema.isDefined &&
-        deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters)) {
+        deltaV2Mode.shouldBypassSchemaValidationForStreaming(parameters.asJava)) {
+      require(!CDCReader.isCDCRead(options), "CDC read is not supported for schema bypass.")
       return (shortName(), schema.get)
     }
     val path = parameters.getOrElse("path", {
@@ -158,7 +160,6 @@ class DeltaDataSource
     if (schemaToUse.isEmpty) {
       throw DeltaErrors.schemaNotSetException
     }
-    val options = new CaseInsensitiveStringMap(parameters.asJava)
     if (CDCReader.isCDCRead(options)) {
       (shortName(), CDCReader.cdcReadSchema(schemaToUse))
     } else {

@@ -17,10 +17,12 @@
 package io.delta.sql
 
 import scala.jdk.CollectionConverters._
+import scala.jdk.OptionConverters._
 
 import io.delta.spark.internal.v2.catalog.SparkTable
 import io.delta.spark.internal.v2.utils.ScalaUtils
-import org.apache.spark.sql.delta.sources.{DeltaV2Mode, DeltaSourceUtils}
+import org.apache.spark.sql.delta.DeltaV2Mode
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -52,7 +54,6 @@ class ApplyV2Streaming(
     // Check if this is a Delta streaming relation by examining:
     // 1. The source name (e.g., "delta" from .format("delta"))
     // 2. The catalog table's provider (e.g., "DELTA" from Unity Catalog)
-    // 3. Whether the table is a Unity Catalog managed table
     s.dataSource.catalogTable match {
       case Some(catalogTable) =>
         DeltaSourceUtils.isDeltaDataSourceName(s.sourceName) ||
@@ -66,8 +67,8 @@ class ApplyV2Streaming(
       return false
     }
 
-    val deltaV2Mode = DeltaV2Mode(session.sessionState.conf)
-    deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable)
+    val deltaV2Mode = new DeltaV2Mode(session.sessionState.conf)
+    deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable.toJava)
   }
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
@@ -81,12 +82,17 @@ class ApplyV2Streaming(
         new SparkTable(
           ident,
           catalogTable,
-          ScalaUtils.toJavaMap(catalogTable.properties))
+          // Use user-specified streaming options to override catalog storage properties.
+          // SparkTable handles merging catalogTable storage props internally.
+          ScalaUtils.toJavaMap(s.dataSource.options))
       val catalog = catalogTable.identifier.catalog.map(
         session.sessionState.catalogManager.catalog)
 
 
       StreamingRelationV2(
+        // We rebuild this from the resolved V2 table, so there is no V1 source to carry through.
+        // This is only non-None when StreamingRelationV2 is created by wrapping a V1 streaming
+        // data source; in that case Spark keeps the underlying V1 DataSource instance here.
         source = None,
         sourceName = DeltaSourceUtils.NAME,
         table = table,
@@ -94,6 +100,7 @@ class ApplyV2Streaming(
         output = toAttributes(table.schema),
         catalog = catalog,
         identifier = Some(ident),
+        // Keep this None to force the V2 path; we don't want to fall back to V1 here.
         v1Relation = None)
   }
 }

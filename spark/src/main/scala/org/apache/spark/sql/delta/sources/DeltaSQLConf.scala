@@ -2965,7 +2965,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
    * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
    *   uses Kernel's Table API for metadata management
    *
-   * See [[DeltaV2Mode]] for the centralized logic that interprets this configuration.
+   * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets
+   * this configuration.
    */
   val V2_ENABLE_MODE =
     buildConf("v2.enableMode")
