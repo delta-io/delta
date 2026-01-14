@@ -104,39 +104,51 @@ import Unidoc._
  * Artifact Naming Convention
  * ========================================================
  * 
- * Default Spark version artifacts (no suffix, so does not change with Spark version):
- *   io.delta:delta-spark_2.13:3.4.0
- *   io.delta:delta-connect-server_2.13:3.4.0
- *   io.delta:delta-storage:3.4.0
- *
- * Other Spark version artifacts (with suffix, so changes with Spark version, e.g., for Spark 4.0):
+ * By default, Spark-dependent modules ALWAYS include the Spark version suffix:
  *   io.delta:delta-spark_4.0_2.13:3.4.0
+ *   io.delta:delta-spark_4.1_2.13:3.4.0
  *   io.delta:delta-connect-server_4.0_2.13:3.4.0
- *   io.delta:delta-storage:3.4.0  (no change, Spark-independent)
+ *   io.delta:delta-storage:3.4.0  (Spark-independent, no suffix)
+ *
+ * During release, backward-compatible artifacts are ALSO published (without suffix):
+ *   io.delta:delta-spark_2.13:3.4.0       (backward compatibility)
+ *   io.delta:delta-connect-server_2.13:3.4.0
+ *
+ * This means during release, Spark-dependent modules are published TWICE:
+ *   - With suffix (e.g., delta-spark_4.0_2.13) - the default/normal name
+ *   - Without suffix (e.g., delta-spark_2.13) - for backward compatibility
  *
  * ========================================================
  * Cross-Release Workflow
  * ========================================================
  * 
- * The cross-release workflow publishes artifacts for all Spark versions in two steps:
+ * The cross-release workflow publishes artifacts for all Spark versions:
  *
- * Step 1: Publish ALL modules for the default Spark version
- *   build/sbt publishSigned  (or publishM2 for local testing)
+ * Step 1: Publish ALL modules WITHOUT Spark suffix (backward compatibility)
+ *   build/sbt -DskipSparkSuffix=true publishSigned
+ *   # Publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc.
  *
- * Step 2: Publish ONLY Spark-dependent modules for each non-default Spark version
+ * Step 2: Publish Spark-dependent modules WITH suffix for each non-master Spark version
  *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishSigned"
+ *   build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishSigned"
+ *   # Publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc.
  *
- * This workflow is automated in the release process via crossSparkReleaseSteps().
+ * This workflow is automated via crossSparkReleaseSteps() in the release process.
  * See releaseProcess in build.sbt for integration.
  *
  * Why this approach?
- * - Spark-independent modules (kernel, storage) are built once with default Spark
- * - Spark-dependent modules are built multiple times, once per Spark version
- * - This avoids redundant builds and conflicting artifacts
+ * - Default behavior always includes Spark suffix for clarity
+ * - Release also publishes without suffix for backward compatibility
+ * - Spark-independent modules (kernel, storage) are built once
+ * - Spark-dependent modules are built for each Spark version
+ *
+ * For manual testing during development:
+ *   build/sbt publishM2  # Publishes delta-spark_4.0_2.13 (default, with suffix)
  *
  * For manual release testing:
- *   build/sbt publishM2
+ *   build/sbt -DskipSparkSuffix=true publishM2  # Without suffix (backward compat)
  *   build/sbt -DsparkVersion=4.0 "runOnlyForReleasableSparkModules publishM2"
+ *   build/sbt -DsparkVersion=4.1 "runOnlyForReleasableSparkModules publishM2"
  *   # Verify JARs in ~/.m2/repository/io/delta/
  *
  * ========================================================
@@ -341,15 +353,22 @@ object CrossSparkVersions extends AutoPlugin {
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
   /**
-   * Returns module name with optional Spark version suffix.
-   * Default Spark version: "module-name" (e.g., delta-spark_2.13)
-   * Other Spark versions: "module-name_X.Y" (e.g., delta-spark_4.0_2.13)
+   * Returns module name with Spark version suffix.
+   * 
+   * By default, ALL Spark-dependent modules include the Spark version suffix:
+   *   delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc.
+   *
+   * During release, the `skipSparkSuffix=true` property is used to also publish
+   * backward-compatible artifacts without the suffix (e.g., delta-spark_2.13).
    */
   private def moduleName(baseName: String, sparkVer: String): String = {
     val spec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
       .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
 
-    if (spec.isDefault) {
+    // skipSparkSuffix removes the suffix (used during release for backward compatibility)
+    val skipSparkSuffix = sys.props.getOrElse("skipSparkSuffix", "false").toBoolean
+
+    if (skipSparkSuffix) {
       baseName
     } else {
       s"${baseName}_${spec.shortVersion}"
@@ -437,8 +456,12 @@ object CrossSparkVersions extends AutoPlugin {
    * Generates release steps for cross-Spark publishing.
    *
    * Returns a sequence of release steps that:
-   * 1. Publishes all modules for the default Spark version
-   * 2. Publishes only Spark-dependent modules for other Spark versions
+   * 1. Publishes all modules WITHOUT Spark suffix (backward compatibility)
+   * 2. Publishes Spark-dependent modules WITH Spark suffix for each non-master version
+   *
+   * For example, with Spark versions 4.0 (default) and 4.1:
+   * - Step 1 publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc. (no suffix)
+   * - Step 2 publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc. (with suffix)
    *
    * Usage in build.sbt:
    *   releaseProcess := Seq[ReleaseStep](
@@ -451,31 +474,36 @@ object CrossSparkVersions extends AutoPlugin {
     import sbtrelease.ReleasePlugin.autoImport._
     import sbtrelease.ReleaseStateTransformations._
 
-    // Step 1: Publish all modules for default Spark version
-    val defaultSparkStep: ReleaseStep = releaseStepCommand(task)
+    // Step 1: Publish all modules WITHOUT Spark suffix (backward compatibility)
+    // Uses skipSparkSuffix=true to get artifact names like delta-spark_2.13
+    val backwardCompatStep: ReleaseStep = { (state: State) =>
+      sys.props("skipSparkSuffix") = "true"
+      val result = Command.process(task, state)
+      sys.props.remove("skipSparkSuffix")
+      result
+    }
 
-    // Step 2: Publish only Spark-dependent modules for other Spark versions
-    val otherSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
-      .filter(_ != SparkVersionSpec.DEFAULT)
+    // Step 2: Publish Spark-dependent modules WITH suffix for each non-master Spark version
+    // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
+    val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
+      .filterNot(_.isMaster) // Exclude master/snapshot versions
       .flatMap { spec =>
         Seq[ReleaseStep](
-          // Custom release step that sets system property and runs command
           { (state: State) =>
-            // Set the sparkVersion system property
             sys.props("sparkVersion") = spec.fullVersion
-
-            // Run the runOnlyForReleasableSparkModules command
+            // Normal publish - suffix is added by default
             Command.process(s"runOnlyForReleasableSparkModules $task", state)
           }: ReleaseStep
         )
       }
 
-    defaultSparkStep +: otherSparkSteps
+    backwardCompatStep +: suffixedSparkSteps
   }
 
   override lazy val projectSettings = Seq(
     commands += Command.args("runOnlyForReleasableSparkModules", "<task>") { (state, args) =>
-      // Used mainly for cross-Spark publishing of the Spark-dependent modules
+      // Used for cross-Spark publishing of Spark-dependent modules only.
+      // Runs the specified task only on publishable Spark-dependent projects.
       if (args.isEmpty) {
         sys.error("Usage: runOnlyForReleasableSparkModules <task>\nExample: build/sbt -DsparkVersion=<version> \"runOnlyForReleasableSparkModules publishM2\"")
       }
