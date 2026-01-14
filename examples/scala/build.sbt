@@ -118,7 +118,6 @@ val getSparkPackageSuffix = settingKey[String](
 )
 
 getSparkPackageSuffix := {
-  // Fallback to empty suffix for backward compatibility if SPARK_PACKAGE_SUFFIX is not set
   sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
 }
 
