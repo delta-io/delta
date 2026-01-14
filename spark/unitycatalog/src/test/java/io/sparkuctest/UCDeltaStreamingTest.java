@@ -45,11 +45,6 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-<<<<<<< HEAD
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-=======
->>>>>>> a7a257207 (Use new testAllTableTypes param)
 import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
@@ -77,8 +72,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testStreamingWriteToManagedTable(TableType tableType) throws Exception {
     withNewTable(
         "streaming_write_test",

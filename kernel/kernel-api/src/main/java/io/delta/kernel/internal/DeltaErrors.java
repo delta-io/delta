@@ -206,6 +206,17 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException checkpointOnUnpublishedCommits(
+      String tablePath, long version, long maxPublishedVersion) {
+    String message =
+        String.format(
+            "Unable to create checkpoint: Snapshot at at path"
+                + " `%s` with version %d has unpublished commits. "
+                + "Max known published version is %d",
+            tablePath, version, maxPublishedVersion);
+    return new KernelException(message);
+  }
+
   public static KernelException unsupportedDataType(DataType dataType) {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
   }
