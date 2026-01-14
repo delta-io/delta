@@ -229,6 +229,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     if (closed) {
       throw new IllegalStateException("Can't call `next` on a closed iterator.");
     }
+    if (Thread.currentThread().isInterrupted()) {
+      throw new IllegalStateException("Thread was interrupted");
+    }
 
     if (!hasNext()) {
       throw new NoSuchElementException("No next element");
