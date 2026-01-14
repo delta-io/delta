@@ -528,6 +528,7 @@ object CrossSparkVersions extends AutoPlugin {
       outputFile.getParentFile.mkdirs()
       
       val writer = new PrintWriter(outputFile)
+      // scalastyle:off
       try {
         writer.println("[")
         SparkVersionSpec.ALL_SPECS.zipWithIndex.foreach { case (spec, idx) =>
@@ -542,7 +543,9 @@ object CrossSparkVersions extends AutoPlugin {
           writer.println(s"""    "isMaster": $isMaster,""")
           writer.println(s"""    "isDefault": $isDefault,""")
           writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
-          writer.println(s"""    "packageSuffix": "$packageSuffix"""")
+          writer.println(s"""    "packageSuffix": "$packageSuffix",""")
+          writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
+          writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")
           writer.println(s"""  }$comma""")
         }
         writer.println("]")
@@ -551,6 +554,7 @@ object CrossSparkVersions extends AutoPlugin {
       } finally {
         writer.close()
       }
+      // scalastyle:on
       
       state
     }

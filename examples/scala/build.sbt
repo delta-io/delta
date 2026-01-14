@@ -121,6 +121,15 @@ getSparkPackageSuffix := {
   sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
 }
 
+val supportIceberg = settingKey[String](
+  s"get supportIceberg for cross-build artifact name from environment variable SUPPORT_ICEBERG. " +
+  s"This is derived from CrossSparkVersions.scala (single source of truth)."
+)
+
+supportIceberg := {
+  sys.env.getOrElse("SUPPORT_ICEBERG", "false")
+}
+
 getIcebergSparkRuntimeArtifactName := {
   val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
     getMajorMinor(getDeltaVersion.value)))
