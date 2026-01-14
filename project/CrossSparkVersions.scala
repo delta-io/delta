@@ -184,12 +184,12 @@ import Unidoc._
  *   - isMaster: Whether this is the master/snapshot version
  *   - isDefault: Whether this is the default Spark version
  *   - targetJvm: Target JVM version (e.g., "17")
- *   - packageSuffix: Maven artifact suffix for this version (e.g., "", "_4.1")
+ *   - packageSuffix: Maven artifact suffix for this version (e.g., "_4.0", "_4.1")
  *
  *   Example:
  *     build/sbt exportSparkVersionsJson
  *     # Generates: target/spark-versions.json
- *     # Output: [{"fullVersion": "4.0.1", "shortVersion": "4.0", "isMaster": false, "isDefault": true, "targetJvm": "17", "packageSuffix": ""}, ...]
+ *     # Output: [{"fullVersion": "4.0.1", "shortVersion": "4.0", "isMaster": false, "isDefault": true, "targetJvm": "17", "packageSuffix": "_4.0"}, ...]
  *
  *   Use with Python utilities to extract specific fields:
  *     python3 project/scripts/get_spark_version_info.py --all-spark-versions
@@ -562,8 +562,8 @@ object CrossSparkVersions extends AutoPlugin {
           val comma = if (idx < SparkVersionSpec.ALL_SPECS.size - 1) "," else ""
           val isMaster = SparkVersionSpec.MASTER.contains(spec)
           val isDefault = spec == SparkVersionSpec.DEFAULT
-          // Package suffix is empty for default version, "_<shortVersion>" for others
-          val packageSuffix = if (isDefault) "" else s"_${spec.shortVersion}"
+          // Package suffix always includes Spark version (e.g., "_4.0", "_4.1")
+          val packageSuffix = s"_${spec.shortVersion}"
           writer.println(s"""  {""")
           writer.println(s"""    "fullVersion": "${spec.fullVersion}",""")
           writer.println(s"""    "shortVersion": "${spec.shortVersion}",""")

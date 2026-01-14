@@ -114,11 +114,12 @@ getDeltaArtifactName := {
 
 val getSparkPackageSuffix = settingKey[String](
   s"get package suffix for cross-build artifact name from environment variable SPARK_PACKAGE_SUFFIX. " +
-  s"This is derived from CrossSparkVersions.scala (single source of truth)."
+  s"This is derived from CrossSparkVersions.scala (single source of truth). Defaults to '_4.0' for Spark 4.0."
 )
 
 getSparkPackageSuffix := {
-  sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
+  // Default to "_4.0" for Spark 4.0 - all artifacts now include Spark version suffix
+  sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "_4.0")
 }
 
 val getSupportIceberg = settingKey[String](
