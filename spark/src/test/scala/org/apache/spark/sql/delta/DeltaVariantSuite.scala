@@ -36,8 +36,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.scalatest.Ignore
 
-// TODO: Re-enable this test suite after fixing Variant type issues in Spark 4.1.1+
-@Ignore
 class DeltaVariantSuite
   extends QueryTest
     with SharedSparkSession
