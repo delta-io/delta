@@ -39,9 +39,9 @@ SPARK_RELATED_JAR_TEMPLATES = [
 ]
 
 # Spark-related modules that are only compiled with one Spark version 4.0
-# These modules will get a version suffix based on whether 4.0 is the default version.
+# These modules use sparkDependentSettings so they also get the Spark suffix.
 SPARK_4_0_ONLY_JAR_TEMPLATES = [
-    "delta-hudi_2.13-{version}.jar",
+    "delta-hudi{suffix}_2.13-{version}.jar",
     "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
 
