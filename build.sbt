@@ -65,6 +65,10 @@ val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
 
+// Define the ecosystem support flags.
+val supportIceberg = CrossSparkVersions.getSparkVersionSpec().supportIceberg
+val supportHudi = CrossSparkVersions.getSparkVersionSpec().supportHudi
+
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
 val targetJvm = settingKey[String]("Target JVM version")
@@ -1040,8 +1044,8 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
     commonSettings,
     skipReleaseSettings,
     // Skip compilation when supportIceberg is false
-    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Compile / skip := !supportIceberg,
+    Test / skip := !supportIceberg,
     exportJars := true,
     Compile / unmanagedJars += (iceberg / assembly).value,
     libraryDependencies ++= Seq(
@@ -1075,7 +1079,7 @@ lazy val iceberg = (project in file("iceberg"))
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
     libraryDependencies ++= {
-      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+      if (supportIceberg) {
         Seq(
           // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
           // due to legacy scala.
@@ -1094,11 +1098,11 @@ lazy val iceberg = (project in file("iceberg"))
       }
     },
     // Skip compilation and publishing when supportIceberg is false
-    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    publish / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    publishLocal / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    publishM2 / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Compile / skip := !supportIceberg,
+    Test / skip := !supportIceberg,
+    publish / skip := !supportIceberg,
+    publishLocal / skip := !supportIceberg,
+    publishM2 / skip := !supportIceberg,
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
@@ -1165,11 +1169,11 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     commonSettings,
     skipReleaseSettings,
     // Skip compilation when supportIceberg is false
-    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Compile / skip := !supportIceberg,
+    Test / skip := !supportIceberg,
     // must exclude all dependencies from Iceberg that delta-spark includes
     libraryDependencies ++= {
-      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+      if (supportIceberg) {
         Seq(
           // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
           // due to legacy scala.
@@ -1222,19 +1226,15 @@ lazy val icebergTestsShaded = (project in file("icebergTestsShaded"))
     commonSettings,
     skipReleaseSettings,
     // Skip compilation when supportIceberg is false
-    Compile / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
-    Test / skip := !CrossSparkVersions.getSparkVersionSpec().supportIceberg,
+    Compile / skip := !supportIceberg,
+    Test / skip := !supportIceberg,
     // must exclude all dependencies from Iceberg that delta-spark includes
     libraryDependencies ++= {
-      if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
-        Seq(
-          "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
-            icebergExclusionRules: _*
-          )
+      Seq(
+        "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
+          icebergExclusionRules: _*
         )
-      } else {
-        Seq.empty
-      }
+      )
     },
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
@@ -1423,7 +1423,7 @@ val createTargetClassesDir = taskKey[Unit]("create target classes dir")
 // Don't use these groups for any other projects
 lazy val sparkGroup = {
   val baseProjects = Seq(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, sharing, connectCommon, connectClient, connectServer)
-  val allProjects = if (CrossSparkVersions.getSparkVersionSpec().supportHudi) {
+  val allProjects = if (supportHudi) {
     baseProjects :+ hudi
   } else {
     baseProjects
@@ -1440,7 +1440,7 @@ lazy val sparkGroup = {
 }
 
 lazy val icebergGroup = {
-  val allProjects = if (CrossSparkVersions.getSparkVersionSpec().supportIceberg) {
+  val allProjects = if (supportIceberg) {
     Seq(iceberg, testDeltaIcebergJar)
   } else {
     Seq.empty
