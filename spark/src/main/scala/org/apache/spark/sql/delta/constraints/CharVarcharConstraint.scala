@@ -37,11 +37,11 @@ object CharVarcharConstraint {
   }
 
   private def checkStringLength(expr: Expression, dt: DataType): Option[Expression] = dt match {
-    case VarcharType(length) =>
-      Some(Or(IsNull(expr), LessThanOrEqual(Length(expr), Literal(length))))
+    case vt: VarcharType =>
+      Some(Or(IsNull(expr), LessThanOrEqual(Length(expr), Literal(vt.length))))
 
-    case CharType(length) =>
-      checkStringLength(expr, VarcharType(length))
+    case ct: CharType =>
+      checkStringLength(expr, VarcharType(ct.length))
 
     case StructType(fields) =>
       fields.zipWithIndex.flatMap { case (f, i) =>
