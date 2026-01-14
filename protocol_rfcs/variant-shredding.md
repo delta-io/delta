@@ -40,6 +40,9 @@ When Variant Shredding is supported (`writerFeatures` field of a table's `protoc
 - may set the `SHREDDING_STATE` tag to `1` in `AddFile`s.
 - may set the `SHREDDING_STATE` tag to `0` in `AddFile`s corresponding data that does not contain any shredded Variant data. The `SHREDDING_STATE` may not be `0` in an `AddFile` if the data corresponding to it contains any shredded Variant data.
 - may not set the `SHREDDING_STATE` tag in `AddFile`s to any value other than `0` or `1`. It is legal for the writer to not set the `SHREDDING_STATE` tag at all in `AddFile`s.
+The `SHREDDING_STATE` tag may be present in `AddFile`s in tables not supporting the 
+Variant Shredding feature. Trivially, all values of this tag in these tables would 
+be set to `0`.
 
 ## Reader Requirements for Variant Shredding
 
