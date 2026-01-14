@@ -1168,35 +1168,26 @@ lazy val icebergShaded = (project in file("icebergShaded"))
     name := "iceberg-shaded",
     commonSettings,
     skipReleaseSettings,
-    // Skip compilation when supportIceberg is false
-    Compile / skip := !supportIceberg,
-    Test / skip := !supportIceberg,
     // must exclude all dependencies from Iceberg that delta-spark includes
-    libraryDependencies ++= {
-      if (supportIceberg) {
-        Seq(
-          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-          // due to legacy scala.
-          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
-          "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
-            icebergExclusionRules: _*
-          ),
-          "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
-            icebergExclusionRules: _*
-          ),
-          // the hadoop client and hive metastore versions come from this file in the
-          // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
-          "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
-            hadoopClientExclusionRules: _*
-          ),
-          "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
-            hiveMetastoreExclusionRules: _*
-          )
-        )
-      } else {
-        Seq.empty
-      }
-    },
+    libraryDependencies ++= Seq(
+      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+      // due to legacy scala.
+      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1" % "provided",
+      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      "org.apache.iceberg" % "iceberg-hive-metastore" % icebergShadedVersion excludeAll (
+        icebergExclusionRules: _*
+      ),
+      // the hadoop client and hive metastore versions come from this file in the
+      // iceberg repo of icebergShadedVersion: iceberg/gradle/libs.versions.toml
+      "org.apache.hadoop" % "hadoop-client" % "2.7.3" % "provided" excludeAll (
+        hadoopClientExclusionRules: _*
+      ),
+      "org.apache.hive" % "hive-metastore" % "2.3.8" % "provided" excludeAll (
+        hiveMetastoreExclusionRules: _*
+      )
+    ),
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
@@ -1225,17 +1216,12 @@ lazy val icebergTestsShaded = (project in file("icebergTestsShaded"))
     name := "iceberg-tests-shaded",
     commonSettings,
     skipReleaseSettings,
-    // Skip compilation when supportIceberg is false
-    Compile / skip := !supportIceberg,
-    Test / skip := !supportIceberg,
     // must exclude all dependencies from Iceberg that delta-spark includes
-    libraryDependencies ++= {
-      Seq(
-        "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
-          icebergExclusionRules: _*
-        )
+    libraryDependencies ++= Seq(
+      "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
+        icebergExclusionRules: _*
       )
-    },
+    ),
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
     assembly / assemblyJarName := s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
