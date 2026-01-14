@@ -25,7 +25,7 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2;
-import org.apache.spark.sql.execution.streaming.StreamingRelation;
+import org.apache.spark.sql.delta.Relocated;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.junit.jupiter.api.Test;
 import scala.collection.Iterator;
@@ -81,7 +81,7 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
                 new scala.PartialFunction<LogicalPlan, LogicalPlan>() {
                   @Override
                   public LogicalPlan apply(LogicalPlan p) {
-                    if (p instanceof StreamingRelation) {
+                    if (p instanceof Relocated.StreamingRelation) {
                       return p;
                     }
                     throw new UnsupportedOperationException();
@@ -89,7 +89,7 @@ public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest
 
                   @Override
                   public boolean isDefinedAt(LogicalPlan p) {
-                    return p instanceof StreamingRelation;
+                    return p instanceof Relocated.StreamingRelation;
                   }
                 })
             .iterator();
