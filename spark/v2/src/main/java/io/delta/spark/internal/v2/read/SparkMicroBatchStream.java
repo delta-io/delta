@@ -724,7 +724,7 @@ public class SparkMicroBatchStream
       // commit, downstream would produce incorrect results.
       //
       // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
-      // TODO(#5319): schema tracking
+      // TODO(#5319): don't verify metadata action when schema tracking is enabled
       validateCommit(
           commit,
           version,
@@ -851,6 +851,8 @@ public class SparkMicroBatchStream
    *
    * @param metadata Metadata that contains a potential schema change
    * @param version Version for the metadata action
+   * @param batchStartVersion Starting version of the batch being processed
+   * @param batchEndVersion Ending version of the batch being processed, or null for the latest
    * @param validatedDuringStreamStart Whether this check is being done during stream start.
    */
   private void checkReadIncompatibleSchemaChanges(
