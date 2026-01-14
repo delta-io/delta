@@ -24,6 +24,7 @@ import scala.jdk.CollectionConverters._
 import io.delta.spark.internal.v2.catalog.SparkTable
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
@@ -35,12 +36,11 @@ import org.apache.spark.sql.types.StructType
 
 class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
-  private def applyRule(
-      plan: StreamingRelation): org.apache.spark.sql.catalyst.plans.logical.LogicalPlan = {
+  private def applyRule(plan: StreamingRelation): LogicalPlan = {
     new ApplyV2Streaming(spark).apply(plan)
   }
 
-  private def assertV2(result: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Unit = {
+  private def assertV2(result: LogicalPlan): Unit = {
     result match {
       case StreamingRelationV2(_, _, _: SparkTable, _, _, _, _, v1Relation) =>
         assert(v1Relation.isEmpty)
@@ -49,7 +49,7 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
     }
   }
 
-  private def assertV1(result: org.apache.spark.sql.catalyst.plans.logical.LogicalPlan): Unit = {
+  private def assertV1(result: LogicalPlan): Unit = {
     assert(result.isInstanceOf[StreamingRelation])
     assert(!result.isInstanceOf[StreamingRelationV2])
   }
