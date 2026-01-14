@@ -81,14 +81,14 @@ See the online documentation for the correct usage of this function.
     scala_version = "2.13"
 
     # Determine the Spark major.minor version for artifact name
-    # Artifact names always include Spark version suffix (e.g., delta-spark_4.0_2.13)
+    # Artifact names include Spark version suffix when spark_version is known (e.g., delta-spark_4.0_2.13)
+    # Falls back to no suffix for backward compatibility if spark_version is not specified
     if spark_version:
         spark_major_minor = ".".join(spark_version.split(".")[:2])  # e.g., "4.0" or "4.1"
+        artifact_name = f"delta-spark_{spark_major_minor}_{scala_version}"
     else:
-        # Default to 4.0 if no Spark version specified
-        spark_major_minor = "4.0"
-
-    artifact_name = f"delta-spark_{spark_major_minor}_{scala_version}"
+        # Fallback to artifact without suffix for backward compatibility
+        artifact_name = f"delta-spark_{scala_version}"
 
     maven_artifact = f"io.delta:{artifact_name}:{delta_version}"
 
