@@ -909,12 +909,14 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-      "io.delta" %% "delta-spark" % "4.0.0" % "test",
 
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+      // The delta-spark and spark dependencies are mainly used for catalog-based table creation.
+      // Instead of using the latest snapshot, those are fine to use the released 4.0.0.
+      "io.delta" %% "delta-spark" % "4.0.0" % "test",
+      "org.apache.spark" %% "spark-hive" % "4.0.0" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % "4.0.0" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % "4.0.0" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % "4.0.0" % "test" classifier "tests",
     ),
     MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
