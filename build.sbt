@@ -1043,9 +1043,6 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
     name := "test-delta-iceberg-jar",
     commonSettings,
     skipReleaseSettings,
-    // Skip compilation when supportIceberg is false
-    Compile / skip := !supportIceberg,
-    Test / skip := !supportIceberg,
     exportJars := true,
     Compile / unmanagedJars += (iceberg / assembly).value,
     libraryDependencies ++= Seq(
@@ -1220,7 +1217,7 @@ lazy val icebergTestsShaded = (project in file("icebergTestsShaded"))
     libraryDependencies ++= Seq(
       "org.apache.iceberg" % "iceberg-core" % icebergShadedVersion classifier "tests" excludeAll (
         icebergExclusionRules: _*
-      )
+      ),
     ),
     // Generated shaded Iceberg JARs
     Compile / packageBin := assembly.value,
