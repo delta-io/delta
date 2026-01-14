@@ -42,6 +42,7 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
    * @param optimizationsEnabled whether to enable optimizations (splits, predicate pushdown)
    * @param tablePath table path for deletion vector support
    * @param isCDCRead whether this is a CDC read
+   * @param useMetadataRowIndex V2: explicit control over _metadata.row_index usage for DV filtering
    */
   public DeltaParquetFileFormatV2(
       Protocol protocol,
@@ -50,14 +51,19 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
       boolean nullableRowTrackingGeneratedFields,
       boolean optimizationsEnabled,
       Option<String> tablePath,
-      boolean isCDCRead) {
+      boolean isCDCRead,
+      Option<Boolean> useMetadataRowIndex) {
     super(
         new ProtocolMetadataAdapterV2(protocol, metadata),
         nullableRowTrackingConstantFields,
         nullableRowTrackingGeneratedFields,
         optimizationsEnabled,
         tablePath,
-        isCDCRead);
+        isCDCRead,
+        // Java's Option<Boolean> can't directly pass to Scala's Option[Boolean] parameter,
+        // because Scala compiles Option[Boolean] to Option<Object> in bytecode for primitive
+        // handling.
+        useMetadataRowIndex.map(x -> x));
   }
 
   @Override
