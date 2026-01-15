@@ -19,19 +19,16 @@ package io.sparkuctest;
 import io.delta.tables.DeltaTable;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
 
 /**
  * Read operation test suite for Delta Table operations through Unity Catalog.
  *
- * <p>Covers time travel, change data feed, streaming, and path-based access scenarios. Tests are
- * parameterized to support different table types (EXTERNAL and MANAGED).
+ * <p>Covers time travel, change data feed, and path-based access scenarios. Tests are parameterized
+ * to support different table types (EXTERNAL and MANAGED).
  */
 public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testTimeTravelRead(TableType tableType) throws Exception {
     withNewTable(
         "time_travel_test",
@@ -60,9 +57,8 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
-  public void testChangeDataFeedWithTimestamp(TableType tableType) throws Exception {
+  @TestAllTableTypes
+  public void testChangeDataFeed(TableType tableType) throws Exception {
     withNewTable(
         "cdf_timestamp_test",
         "id INT",
@@ -82,45 +78,23 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
           // Get the timestamp of the second insert (version after first)
           String timestamp = timestampForVersion(tableName, version0 + 1);
 
-          // Query changes from the timestamp of the second insert
-          List<List<String>> cdfResult =
-              sql(
-                  "SELECT id, _change_type FROM table_changes('%s', '%s') ORDER BY id",
-                  tableName, timestamp);
-          check(cdfResult, List.of(List.of("4", "insert"), List.of("5", "insert")));
-        });
-  }
-
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
-  public void testChangeDataFeedWithVersion(TableType tableType) throws Exception {
-    withNewTable(
-        "cdf_version_test",
-        "id INT",
-        null,
-        tableType,
-        "'delta.enableChangeDataFeed'='true'",
-        tableName -> {
-          // Setup initial data
-          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
-
-          // Get current version
-          long currentVersion = currentVersion(tableName);
-
-          // Add more data
-          sql("INSERT INTO %s VALUES (4), (5)", tableName);
-
-          // Query changes from the version after first insert
-          List<List<String>> cdfResult =
+          // Query changes from the version after the 1st insert.
+          check(
               sql(
                   "SELECT id, _change_type FROM table_changes('%s', %d) ORDER BY id",
-                  tableName, currentVersion + 1);
-          check(cdfResult, List.of(List.of("4", "insert"), List.of("5", "insert")));
+                  tableName, version0 + 1),
+              List.of(List.of("4", "insert"), List.of("5", "insert")));
+
+          // Query changes from the timestamp after the 1st insert.
+          check(
+              sql(
+                  "SELECT id, _change_type FROM table_changes('%s', '%s') ORDER BY id",
+                  tableName, timestamp),
+              List.of(List.of("4", "insert"), List.of("5", "insert")));
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testDeltaTableForPath(TableType tableType) throws Exception {
     withNewTable(
         "delta_table_for_path_test",
@@ -134,20 +108,15 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
           List<List<String>> describeResult = sql("DESCRIBE EXTENDED %s", tableName);
 
           // Find the Location row in the describe output
-          String tablePathMutable = null;
-          for (List<String> row : describeResult) {
-            if (row.size() >= 2 && "Location".equals(row.get(0))) {
-              tablePathMutable = row.get(1);
-              break;
-            }
-          }
-
-          if (tablePathMutable == null || tablePathMutable.isEmpty()) {
-            // If location not found, fail the test
-            Assertions.fail("Could not retrieve table location from DESCRIBE EXTENDED");
-          }
-
-          final String tablePath = tablePathMutable;
+          String tablePath =
+              describeResult.stream()
+                  .filter(row -> row.size() >= 2 && "Location".equals(row.get(0)))
+                  .map(row -> row.get(1))
+                  .findFirst()
+                  .orElse(null);
+          Assertions.assertTrue(
+              tablePath != null && !tablePath.isEmpty(),
+              "Could not retrieve table location from DESCRIBE EXTENDED");
 
           // Path-based access isn't supported for catalog-owned (MANAGED) tables.
           if (tableType == TableType.MANAGED) {
@@ -155,14 +124,11 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
             Exception exception =
                 Assertions.assertThrows(
                     Exception.class, () -> sql("SELECT * FROM delta.`%s`", tablePath));
-            String message = exception.getMessage();
             Assertions.assertTrue(
-                message.contains("AccessDeniedException")
-                    || message.toLowerCase().contains("access denied")
-                    || message.toLowerCase().contains("catalog-managed"),
+                exception.getMessage().contains("AccessDeniedException"),
                 () ->
                     "Expected AccessDeniedException for path-based access on managed table, but got: "
-                        + message);
+                        + exception.getMessage());
           } else {
             // For EXTERNAL tables, path-based access should work
             List<List<String>> pathBasedResult =
@@ -189,7 +155,6 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   private String currentTimestamp(String tableName) {
-    // Get current version
     long currentVersion = currentVersion(tableName);
     return timestampForVersion(tableName, currentVersion);
   }
