@@ -13,11 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.utils
+package org.apache.spark.sql.delta.util
 
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.types.StructType
+
+import scala.jdk.CollectionConverters._
 
 /**
  * Helpers for constructing [[CatalogTable]] instances inside Java tests.
@@ -48,9 +50,9 @@ object CatalogTableTestUtils {
       nullStorage: Boolean = false,
       nullStorageProperties: Boolean = false): CatalogTable = {
 
-    val scalaProps = ScalaUtils.toScalaMap(properties)
+    val scalaProps = properties.asScala.toMap
     val scalaStorageProps =
-      if (nullStorageProperties) null else ScalaUtils.toScalaMap(storageProperties)
+      if (nullStorageProperties) null else storageProperties.asScala.toMap
 
     val identifier = catalogName match {
       case Some(catalog) =>
@@ -81,3 +83,5 @@ object CatalogTableTestUtils {
       properties = scalaProps)
   }
 }
+
+
