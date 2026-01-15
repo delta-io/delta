@@ -163,8 +163,8 @@ object TypeWidening {
       // Implementations shouldn't record these type changes in the table metadata per the Delta
       // spec, but in case that happen we really shouldn't block reading the table.
       case (_, TypeChange(_,
-        _: StringType | _: CharType | _: VarcharType,
-        _: StringType | _: CharType | _: VarcharType, _)) =>
+        _: StringType | CharType(_) | VarcharType(_),
+        _: StringType | CharType(_) | VarcharType(_), _)) =>
       case (fieldPath, TypeChange(_, from: AtomicType, to: AtomicType, _))
         if stableFeatureCanReadTypeChange(from, to) =>
         val featureName = if (protocol.isFeatureSupported(TypeWideningPreviewTableFeature)) {
