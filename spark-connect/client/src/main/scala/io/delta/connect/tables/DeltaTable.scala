@@ -566,7 +566,7 @@ class DeltaTable private[tables](
   def merge(source: DataFrame, condition: Column): DeltaMergeBuilder = {
     DeltaMergeBuilder(this, source, condition)
   }
-  
+
   private def executeClone(
       target: String,
       isShallow: Boolean,
@@ -689,7 +689,9 @@ class DeltaTable private[tables](
       isShallow: Boolean,
       replace: Boolean,
       properties: Map[String, String]): DeltaTable = {
-    executeClone(target, isShallow, replace, properties, versionAsOf = Some(version), timestampAsOf = None)
+    executeClone(
+      target, isShallow, replace, properties,
+      versionAsOf = Some(version), timestampAsOf = None)
   }
 
   /**
@@ -1038,13 +1040,13 @@ class DeltaTable private[tables](
 object DeltaTable {
   /**
    * Helper method to get the active SparkSession.
-   * 
+   *
    * @return The active SparkSession if one exists.
    * @throws IllegalArgumentException if no active SparkSession is found.
    */
   private def getActiveSparkSession(): SparkSession = {
     SparkSession.getActiveSession.getOrElse {
-      throw new IllegalArgumentException("Could not find active SparkSession") 
+      throw new IllegalArgumentException("Could not find active SparkSession")
     }
   }
 
@@ -1396,7 +1398,7 @@ object DeltaTable {
     new AnalysisException(
       errorClass = "ALL_PARTITION_COLUMNS_NOT_ALLOWED",
       messageParameters = Map("message" -> message)).copy(
-        message = message, 
+        message = message,
         errorClass = None,
         messageParameters = Map.empty)
   }
