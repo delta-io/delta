@@ -617,8 +617,7 @@ trait DeltaSourceBase extends Source
         newTableId = newMetadata.id, oldTableId = oldMetadata.id)
     }
 
-    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart,
-      batchStartVersion, batchEndVersionOpt)
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart)
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart ||
@@ -706,9 +705,7 @@ trait DeltaSourceBase extends Source
   private def checkNonAdditiveSchemaChanges(
       oldMetadata: Metadata,
       newMetadata: Metadata,
-      validatedDuringStreamStart: Boolean,
-      batchStartVersion: Long,
-      batchEndVersionOpt: Option[Long]): Unit = {
+      validatedDuringStreamStart: Boolean): Unit = {
     val shouldTrackSchema: Boolean =
       if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
         TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
