@@ -71,7 +71,8 @@ public class DeltaLogActionUtils {
     METADATA("metaData", Metadata.FULL_SCHEMA),
     PROTOCOL("protocol", Protocol.FULL_SCHEMA),
     COMMITINFO("commitInfo", CommitInfo.FULL_SCHEMA),
-    CDC("cdc", AddCDCFile.FULL_SCHEMA);
+    CDC("cdc", AddCDCFile.FULL_SCHEMA),
+    TXN("txn", SetTransaction.FULL_SCHEMA);
 
     public final String colName;
     public final StructType schema;
