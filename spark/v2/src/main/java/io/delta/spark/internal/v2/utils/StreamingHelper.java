@@ -25,12 +25,14 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.utils.CloseableIterator;
-import java.util.Optional;
-import java.util.Set;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import java.io.IOException;
+import java.util.*;
 import org.apache.spark.annotation.Experimental;
 
 /**
@@ -63,7 +65,7 @@ public class StreamingHelper {
 
   /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
   public static Optional<AddFile> getDataChangeAdd(ColumnarBatch batch, int rowId) {
-    int addIdx = getFieldIndex(batch, "add");
+    int addIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.ADD.colName);
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
       return Optional.empty();
@@ -82,7 +84,7 @@ public class StreamingHelper {
    * Get RemoveFile action from a batch at the specified row, if present and has dataChange=true.
    */
   public static Optional<RemoveFile> getDataChangeRemove(ColumnarBatch batch, int rowId) {
-    int removeIdx = getFieldIndex(batch, "remove");
+    int removeIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.REMOVE.colName);
     ColumnVector removeVector = batch.getColumnVector(removeIdx);
     if (removeVector.isNullAt(rowId)) {
       return Optional.empty();
@@ -95,6 +97,15 @@ public class StreamingHelper {
 
     RemoveFile removeFile = new RemoveFile(removeFileRow);
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
+  }
+
+  /** Get Metadata action from a batch at the specified row, if present. */
+  public static Optional<Metadata> getMetadata(ColumnarBatch batch, int rowId) {
+    int metadataIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
+    ColumnVector metadataVector = batch.getColumnVector(metadataIdx);
+    Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
+
+    return Optional.ofNullable(metadata);
   }
 
   /**
@@ -121,6 +132,72 @@ public class StreamingHelper {
       Set<DeltaLogActionUtils.DeltaAction> actionSet) {
     return DeltaLogActionUtils.getActionsFromCommitFilesWithProtocolValidation(
         engine, tablePath, commitRange.getDeltaFiles(), actionSet);
+  }
+
+  /**
+   * Collects metadata actions from a commit range, mapping each version to its metadata.
+   *
+   * <p>This method is "unsafe" because it uses {@code getActionsFromRangeUnsafe()} which bypasses
+   * the standard snapshot requirement for protocol validation.
+   *
+   * <p>Returns a map preserving version order (via LinkedHashMap) where each version maps to its
+   * metadata action. Throws an exception if multiple metadata actions are found in the same commit.
+   *
+   * @param startVersion the starting version (inclusive) of the commit range
+   * @param endVersionOpt optional ending version (exclusive) of the commit range
+   * @param snapshotManager the Delta snapshot manager
+   * @param engine the Delta engine
+   * @param tablePath the path to the Delta table
+   * @param actionSet the set of actions to read (should include METADATA)
+   * @return a map from version number to metadata action, in version order
+   */
+  public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
+      long startVersion,
+      Optional<Long> endVersionOpt,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      String tablePath) {
+    CommitRangeImpl commitRange =
+        (CommitRangeImpl) snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
+    // LinkedHashMap to preserve insertion order
+    Map<Long, Metadata> versionToMetadata = new LinkedHashMap<>();
+
+    try (CloseableIterator<CommitActions> commitsIter =
+        getCommitActionsFromRangeUnsafe(
+            engine, commitRange, tablePath, Set.of(DeltaLogActionUtils.DeltaAction.METADATA))) {
+      while (commitsIter.hasNext()) {
+        try (CommitActions commit = commitsIter.next()) {
+          long version = commit.getVersion();
+          try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+            while (actionsIter.hasNext()) {
+              ColumnarBatch batch = actionsIter.next();
+              int numRows = batch.getSize();
+              for (int rowId = 0; rowId < numRows; rowId++) {
+                Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+                if (metadataOpt.isPresent()) {
+                  Metadata metadata = metadataOpt.get();
+                  Metadata existing = versionToMetadata.putIfAbsent(version, metadata);
+                  checkState(
+                      existing == null,
+                      String.format(
+                          "Should not encounter two metadata actions in the same commit of version %d.",
+                          version));
+                }
+              }
+            }
+          } catch (IOException e) {
+            throw new RuntimeException("Failed to process commit at version " + version, e);
+          }
+        }
+      }
+    } catch (RuntimeException e) {
+      throw e; // Rethrow runtime exceptions directly
+    } catch (Exception e) {
+      // CommitActions.close() throws Exception
+      throw new RuntimeException("Failed to process commits", e);
+    }
+
+    return versionToMetadata;
   }
 
   /** Private constructor to prevent instantiation of this utility class. */
