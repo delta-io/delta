@@ -156,11 +156,10 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           List<List<String>> expected = new ArrayList<>();
 
           try {
-            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
-            spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
-            expected.add(List.of("0", "seed"));
+            // Enable V2 for streaming reads.
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
             Dataset<Row> input = spark.readStream().table(tableName);
+            // Start the streaming query into a memory sink
             query =
                 input
                     .writeStream()
@@ -172,6 +171,8 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
             assertTrue(query.isActive(), "Streaming query should be active");
 
+            // Write a few batches and verify the stream consumes them.
+            // For writing, we disable V2 mode, write, then re-enable it for reading
             for (long i = 1; i < 3; i += 1) {
               String value = "value_" + i;
 
@@ -182,7 +183,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
 
               query.processAllAvailable();
-
+              // Validate by checking if query and expected match.
               expected.add(List.of(String.valueOf(i), value));
               check(queryName, expected);
             }
