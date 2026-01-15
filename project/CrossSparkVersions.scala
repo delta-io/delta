@@ -285,10 +285,10 @@ object SparkVersionSpec {
   val DEFAULT = spark40
 
   /** Spark master branch version (optional). Release branches should not build against master */
-  val MASTER: Option[SparkVersionSpec] = None
+  val MASTER: Option[SparkVersionSpec] = Some(spark42Snapshot)
 
   /** All supported Spark versions - internal use only */
-  val ALL_SPECS = Seq(spark40, spark41)
+  val ALL_SPECS = Seq(spark40, spark41, spark42Snapshot)
 }
 
 /** See docs on top of this file */
