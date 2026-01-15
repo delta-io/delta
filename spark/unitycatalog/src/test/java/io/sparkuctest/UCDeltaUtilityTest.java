@@ -16,6 +16,7 @@
 
 package io.sparkuctest;
 
+import java.util.ArrayList;
 import java.util.List;
 import org.assertj.core.api.Assertions;
 
@@ -28,17 +29,44 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
         "id INT, name STRING",
         tableType,
         tableName -> {
-          List<List<String>> results = sql("DESCRIBE HISTORY %s", tableName);
-          Assertions.assertThat(results).hasSize(1);
-          Assertions.assertThat(results.get(0)).isEqualTo(List.of("id", "name"));
+          // Assert the initial history.
+          assertDescribeHistory(tableName, List.of(List.of("0", "CREATE TABLE", "Serializable")));
 
-          // The 1st insert
+          // The 1st operation.
           sql("INSERT INTO %s VALUES (1, 'AAA')", tableName);
           check(tableName, List.of(List.of("1", "AAA")));
+          // Assert the history.
+          assertDescribeHistory(
+              tableName,
+              List.of(
+                  List.of("1", "WRITE", "Serializable"),
+                  List.of("0", "CREATE TABLE", "Serializable")));
 
-          // Get the history again.
-          results = sql("DESCRIBE HISTORY %s", tableName);
-          Assertions.assertThat(results).hasSize(2);
+          // The 2nd operation.
+          sql("UPDATE %s SET name='BBB' WHERE id = 1", tableName, tableName);
+          check(tableName, List.of(List.of("1", "BBB")));
+          // Assert the history
+          assertDescribeHistory(
+              tableName,
+              List.of(
+                  List.of("2", "UPDATE", "Serializable"),
+                  List.of("1", "WRITE", "Serializable"),
+                  List.of("0", "CREATE TABLE", "Serializable")));
         });
+  }
+
+  private void assertDescribeHistory(String tableName, List<List<String>> expected) {
+    List<List<String>> results = sql("DESCRIBE HISTORY %s", tableName);
+
+    // Only assert below columns, since other columns are null or undetermined (such as timestamp).
+    // index  0: version
+    // index  4: operation
+    // index 10: isolationLevel
+    List<List<String>> prunedResults = new ArrayList<>();
+    for (List<String> row : results) {
+      prunedResults.add(List.of(row.get(0), row.get(4), row.get(10)));
+    }
+
+    Assertions.assertThat(prunedResults).isEqualTo(expected);
   }
 }
