@@ -84,7 +84,7 @@ class DeltaRelationPlugin extends RelationPlugin with DeltaPlannerBase {
       case proto.DeltaRelation.RelationTypeCase.MERGE_INTO_TABLE =>
         transformMergeIntoTable(planner, relation.getMergeIntoTable)
       case proto.DeltaRelation.RelationTypeCase.OPTIMIZE_TABLE =>
-        transformOptimizeTable(planner, relation.getOptimizeTable)        
+        transformOptimizeTable(planner, relation.getOptimizeTable)
       case _ =>
         throw InvalidPlanInput(s"Unknown DeltaRelation ${relation.getRelationTypeCase}")
     }
