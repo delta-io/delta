@@ -372,8 +372,8 @@ public class LogSegment {
   }
 
   /**
-   * Creates a new LogSegment by extending this LogSegment with published commits. Used to construct
-   * a post-publish Snapshot from a previous Snapshot.
+   * Creates a new LogSegment that reflects the published commits. Used to construct a post-publish
+   * Snapshot from a previous Snapshot.
    *
    * @return A new LogSegment with published commits
    */
