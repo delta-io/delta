@@ -51,9 +51,9 @@ jobs:
         run: |
           # Get JVM version, package suffix, iceberg support for this Spark version
           build/sbt exportSparkVersionsJson
-          JVM_VERSION=$(cat target/spark-versions.json | jq -r '.[] | select(.fullVersion == "${{ matrix.spark_version }}") | .targetJvm')
-          SPARK_PACKAGE_SUFFIX=$(cat target/spark-versions.json | jq -r '.[] | select(.fullVersion == "${{ matrix.spark_version }}") | .packageSuffix')
-          SUPPORT_ICEBERG=$(cat target/spark-versions.json | jq -r '.[] | select(.fullVersion == "${{ matrix.spark_version }}") | .supportIceberg')
+          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          SPARK_PACKAGE_SUFFIX=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" packageSuffix | jq -r)
+          SUPPORT_ICEBERG=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" supportIceberg | jq -r)
           echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
           echo "spark_package_suffix=$SPARK_PACKAGE_SUFFIX" >> $GITHUB_OUTPUT
           echo "support_iceberg=$SUPPORT_ICEBERG" >> $GITHUB_OUTPUT
