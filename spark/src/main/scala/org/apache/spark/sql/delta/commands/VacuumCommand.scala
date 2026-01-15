@@ -47,6 +47,7 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
 import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock, Utils}
+import org.apache.spark.SparkContext
 
 /**
  * Vacuums the table by clearing all untracked files and folders within this table.
@@ -489,6 +490,17 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
 trait VacuumCommandImpl extends DeltaCommand {
 
+  @transient private lazy val sc: SparkContext = SparkContext.getOrCreate()
+
+  lazy val metrics = Map[String, SQLMetric](
+    "numFilesToDelete" -> createMetric(sc, "number of files to deleted"),
+    "sizeOfDataToDelete" -> createMetric(sc, "The total amount of data to be deleted in bytes"),
+    "numDeletedFiles" -> createMetric(sc, "number of files deleted"),
+    "numVacuumedDirectories" ->
+      createMetric(sc, "number of directories vacuumed"),
+    "status" -> createMetric(sc, "status of vacuum")
+  )
+
   private val supportedFsForLogging = Seq(
     "wasbs", "wasbss", "abfs", "abfss", "adl", "gs", "file", "hdfs"
   )
@@ -552,11 +564,6 @@ trait VacuumCommandImpl extends DeltaCommand {
       val checkEnabled =
         spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED)
       val txn = table.startTransaction()
-      val metrics = Map[String, SQLMetric](
-        "numFilesToDelete" -> createMetric(spark.sparkContext, "number of files to deleted"),
-        "sizeOfDataToDelete" -> createMetric(spark.sparkContext,
-          "The total amount of data to be deleted in bytes")
-      )
       metrics("numFilesToDelete").set(diff.count())
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
       txn.registerSQLMetrics(spark, metrics)
@@ -566,6 +573,7 @@ trait VacuumCommandImpl extends DeltaCommand {
         defaultRetentionMillis
       ))
       setCommitClock(deltaLog, version)
+      sendDriverMetrics(spark, metrics)
     }
   }
 
@@ -593,13 +601,7 @@ trait VacuumCommandImpl extends DeltaCommand {
         // Populate top level metrics.
         commandMetrics.get("numDeletedFiles").foreach(_.set(filesDeleted.get))
         commandMetrics.get("numVacuumedDirectories").foreach(_.set(dirCounts.get))
-        // Additionally, create a separate metrics map in case the commandMetrics is empty.
-        val metrics = Map[String, SQLMetric](
-          "numDeletedFiles" -> createMetric(spark.sparkContext, "number of files deleted."),
-          "numVacuumedDirectories" ->
-            createMetric(spark.sparkContext, "num of directories vacuumed."),
-          "status" -> createMetric(spark.sparkContext, "status of vacuum")
-        )
+
         metrics("numDeletedFiles").set(filesDeleted.get)
         metrics("numVacuumedDirectories").set(dirCounts.get)
         txn.registerSQLMetrics(spark, metrics)
@@ -608,6 +610,7 @@ trait VacuumCommandImpl extends DeltaCommand {
         status
       ))
       setCommitClock(deltaLog, version)
+      sendDriverMetrics(spark, metrics)
     }
 
     if (filesDeleted.nonEmpty) {
