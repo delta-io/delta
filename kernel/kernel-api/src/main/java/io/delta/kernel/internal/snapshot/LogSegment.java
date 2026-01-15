@@ -31,6 +31,7 @@ import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.utils.FileStatus;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -368,6 +369,28 @@ public class LogSegment {
         lastAddedDelta.getFileStatus(),
         lastSeenChecksum, // Keep existing lastSeenChecksum
         maxPublishedDeltaVersion); // Keep existing maxPublishedDeltaVersion
+  }
+
+  /**
+   * Creates a new LogSegment by extending this LogSegment with published commits. Used to construct
+   * a post-publish Snapshot from a previous Snapshot.
+   *
+   * @return A new LogSegment with published commits
+   */
+  public LogSegment newAsPublished() {
+    FileStatus lastDeltaFileStatus = FileStatus.of(FileNames.deltaFile(logPath, version));
+    long deltaStartVersion = this.checkpointVersionOpt.map(i -> i + 1).orElse(0L);
+    return new LogSegment(
+        logPath,
+        version,
+        LongStream.rangeClosed(deltaStartVersion, version)
+            .mapToObj(v -> FileStatus.of(FileNames.deltaFile(logPath, v)))
+            .collect(Collectors.toList()),
+        getCompactions(),
+        getCheckpoints(),
+        lastDeltaFileStatus,
+        getLastSeenChecksum(),
+        Optional.of(version));
   }
 
   @Override
