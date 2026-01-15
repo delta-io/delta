@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ import java.util.Map;
 public interface DeltaCatalog extends Serializable {
 
   /**
-   * Init the catalog instance and make it ready for use. Should be called at least once before the
+   * Init the catalog instance and make it ready for use. Must be called at least once before the
    * catalog can be safely used. Calling open on an already opened table has no effect.
    */
   default void open() {}
@@ -106,8 +106,8 @@ public interface DeltaCatalog extends Serializable {
     /** The logical identifier used to resolve the table. */
     String tableId;
 
-    /** A stable UUID that uniquely identifies the table. */
-    String uuid;
+    /** A usually non-readable string that catalog internally uses to locate the table. */
+    String internalId;
 
     /** The normalized physical location of the table. */
     URI tablePath;

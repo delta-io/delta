@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -86,7 +86,7 @@ public interface DeltaTable extends Serializable, AutoCloseable {
   List<String> getPartitionColumns();
 
   /**
-   * Init the table instance and make it ready for use. Should be called at least once before the
+   * Init the table instance and make it ready for use. Must be called at least once before the
    * table can be safely used. Calling open on an already opened table has no effect.
    */
   void open();

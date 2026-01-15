@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -110,7 +110,7 @@ public class CredentialManager {
   Map<String, String> getCredentials() {
     Map<String, String> cached = cachedCredentials.get();
     if (cached != null) return cached;
-    Map<String, String> newCredentials = this.credSupplier.get();
+    Map<String, String> newCredentials = credSupplier.get();
     if (cachedCredentials.compareAndSet(null, newCredentials)) {
       scheduleNextRefresh(newCredentials);
       return newCredentials;
@@ -134,9 +134,9 @@ public class CredentialManager {
       refreshExecutors.schedule(
           () -> {
             Map<String, String> existingCredential = cachedCredentials.get();
-            Map<String, String> refreshedCredential = this.credSupplier.get();
+            Map<String, String> refreshedCredential = credSupplier.get();
             if (cachedCredentials.compareAndSet(existingCredential, refreshedCredential)) {
-              this.refreshCallback.run();
+              refreshCallback.run();
               scheduleNextRefresh(refreshedCredential);
             }
           },

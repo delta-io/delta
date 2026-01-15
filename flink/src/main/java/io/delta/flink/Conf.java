@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,25 +46,25 @@ public final class Conf {
 
   private static final Logger LOG = LoggerFactory.getLogger(Conf.class);
 
-  public static String SINK_RETRY_MAX_ATTEMPT = "sink.retry.max-attempt";
+  public static final String SINK_RETRY_MAX_ATTEMPT = "sink.retry.max-attempt";
   // The i-th retry will have a delay of `delay-ms * (2 ^ i)`
-  public static String SINK_RETRY_DELAY_MS = "sink.retry.delay-ms";
+  public static final String SINK_RETRY_DELAY_MS = "sink.retry.delay-ms";
   // Retry will stop if the delay exceeds max-delay
-  public static String SINK_RETRY_MAX_DELAY_MS = "sink.retry.max-delay-ms";
+  public static final String SINK_RETRY_MAX_DELAY_MS = "sink.retry.max-delay-ms";
 
-  public static String SINK_WRITER_NUM_CONCURRENT_FILE = "sink.writer.num-concurrent-file";
+  public static final String SINK_WRITER_NUM_CONCURRENT_FILE = "sink.writer.num-concurrent-file";
 
-  public static String TABLE_THREAD_POOL_SIZE = "table.thread-pool-size";
+  public static final String TABLE_THREAD_POOL_SIZE = "table.thread-pool-size";
 
-  public static String TABLE_CACHE_ENABLE = "table.cache.enable";
-  public static String TABLE_CACHE_SIZE = "table.cache.size";
-  public static String TABLE_CACHE_EXPIRE_MS = "table.cache.expire-ms";
+  public static final String TABLE_CACHE_ENABLE = "table.cache.enable";
+  public static final String TABLE_CACHE_SIZE = "table.cache.size";
+  public static final String TABLE_CACHE_EXPIRE_MS = "table.cache.expire-ms";
 
-  public static String DELTA_CHECKPOINT_FREQUENCY = "delta.checkpoint.frequency";
+  public static final String DELTA_CHECKPOINT_FREQUENCY = "delta.checkpoint.frequency";
 
-  public static String CREDENTIALS_REFRESH_THREAD_POOL_SIZE =
+  public static final String CREDENTIALS_REFRESH_THREAD_POOL_SIZE =
       "credentials.refresh.thread-pool-size";
-  public static String CREDENTIALS_REFRESH_AHEAD_MS = "credentials.refresh.ahead-ms";
+  public static final String CREDENTIALS_REFRESH_AHEAD_MS = "credentials.refresh.ahead-ms";
 
   private static final String CONFIG_FILE = "delta-flink.properties";
   private static final Conf INSTANCE = new Conf();

@@ -52,7 +52,7 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-flink-${{ matrix.flink_version }}-scala${{ env.SCALA_VERSION }}
+          key: sbt-flink-${{ matrix.flink_version }}
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
@@ -62,5 +62,5 @@ jobs:
           fi
       - name: Run unit tests
         run: |
-          python run-tests.py --group flink --coverage --flink-version ${{ matrix.flink_version }}
+          build/sbt -DflinkVersion=${{ matrix.flink_version }} flinkGroup/test
 
