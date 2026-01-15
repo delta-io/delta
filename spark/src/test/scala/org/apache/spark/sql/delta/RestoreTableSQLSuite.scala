@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode}
 
 import org.apache.spark.sql.{AnalysisException, DataFrame}
 

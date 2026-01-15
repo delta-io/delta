@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedCommitCoordinatorProvider
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils

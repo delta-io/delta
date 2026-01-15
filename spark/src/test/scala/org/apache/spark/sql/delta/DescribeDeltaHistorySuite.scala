@@ -21,6 +21,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
+import org.apache.spark.sql.delta.dml.merge.MergeIntoMetricsBase
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

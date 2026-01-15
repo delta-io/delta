@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, Snapshot}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}

@@ -21,9 +21,11 @@ import java.time.LocalDate
 
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, Metadata, Protocol, RemoveFile, SetTransaction, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION
+import org.apache.spark.sql.delta.columnmapping.DeltaColumnMappingTestUtils
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsTestUtils
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.FileNames.{isCheckpointFile, unsafeDeltaFile}

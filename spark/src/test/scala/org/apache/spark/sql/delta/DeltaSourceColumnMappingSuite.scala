@@ -22,6 +22,7 @@ import java.util.UUID
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaColumnMappingTestUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}

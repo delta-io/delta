@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 
 class CoordinatedCommitsEnablementSuite

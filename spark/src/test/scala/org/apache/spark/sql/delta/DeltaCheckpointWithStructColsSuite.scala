@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaColumnMappingTestUtils}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest

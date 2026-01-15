@@ -29,4 +29,8 @@
 package org.apache.spark.sql.delta.generatedsuites
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
+
 class DeltaInsertIntoImplicitCastSuite extends DeltaInsertIntoImplicitCastTests
