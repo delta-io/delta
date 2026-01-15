@@ -58,6 +58,7 @@ import scala.collection.immutable.Seq;
 public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
   private static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
   private static final String V2_ENABLE_MODE_STRICT = "STRICT";
+  private static final String V2_ENABLE_MODE_NONE = "NONE";
 
   /**
    * Creates a local temporary directory for checkpoint location. Checkpoint must be on local
@@ -155,9 +156,11 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           List<List<String>> expected = new ArrayList<>();
 
           try {
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
+            spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
+            expected.add(List.of("0", "seed"));
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
-
-            Dataset<Row> input = spark.readStream().format("delta").table(tableName);
+            Dataset<Row> input = spark.readStream().table(tableName);
             query =
                 input
                     .writeStream()
@@ -172,12 +175,10 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             for (long i = 1; i < 3; i += 1) {
               String value = "value_" + i;
 
-              // Toggle off STRICT mode for batch INSERT
-              restoreV2Mode(spark, originalMode);
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
               spark
                   .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
                   .collect();
-              // Restore STRICT mode for streaming
               spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
 
               query.processAllAvailable();
