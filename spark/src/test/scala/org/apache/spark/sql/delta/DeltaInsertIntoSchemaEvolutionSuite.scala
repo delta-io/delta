@@ -63,12 +63,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             .add("c", IntegerType))
       } else {
         ExpectedResult.Failure(ex => {
-          checkErrorMatchPVals(
-            ex,
-            "_LEGACY_ERROR_TEMP_DELTA_0007",
-            parameters = Map(
-              "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-            ))
+          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
       excludeInserts = Set(
@@ -97,12 +92,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             .add("c", IntegerType))
       } else {
         ExpectedResult.Failure(ex => {
-          checkErrorMatchPVals(
-            ex,
-            "_LEGACY_ERROR_TEMP_DELTA_0007",
-            parameters = Map(
-              "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-            ))
+          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
       includeInserts = insertsByPosition + StreamingInsert,
@@ -171,12 +161,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             ))
       } else {
         ExpectedResult.Failure(ex => {
-          checkErrorMatchPVals(
-            ex,
-            "_LEGACY_ERROR_TEMP_DELTA_0007",
-            parameters = Map(
-              "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-            ))
+          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
       confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
@@ -233,12 +218,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             ))
       } else {
         ExpectedResult.Failure(ex => {
-          checkErrorMatchPVals(
-            ex,
-            "_LEGACY_ERROR_TEMP_DELTA_0007",
-            parameters = Map(
-              "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-            ))
+          checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
       includeInserts = insertsSQL ++ insertsByPosition + StreamingInsert -- Seq(

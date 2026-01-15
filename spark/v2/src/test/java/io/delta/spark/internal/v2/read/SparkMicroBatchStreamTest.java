@@ -90,12 +90,44 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testInitialOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.initialOffset());
+  public void testInitialOffset_withInitialSnapshot(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_initial_snapshot_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Insert some data to create versions
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 3,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ false);
+
+    // Create stream without startingVersion (emptyDeltaOptions)
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Get the latest version
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+
+    // Call initialOffset - should create initial snapshot at latest version
+    Offset initialOffset = stream.initialOffset();
+    assertNotNull(initialOffset, "Initial offset should not be null");
+
+    DeltaSourceOffset deltaOffset = (DeltaSourceOffset) initialOffset;
     assertEquals(
-        "initialOffset with initial snapshot is not supported yet", exception.getMessage());
+        latestVersion,
+        deltaOffset.reservoirVersion(),
+        "Initial offset should be at latest version");
+    assertEquals(
+        DeltaSourceOffset.BASE_INDEX(),
+        deltaOffset.index(),
+        "Initial offset should start at BASE_INDEX");
+    assertTrue(
+        deltaOffset.isInitialSnapshot(), "Initial offset should be marked as initial snapshot");
   }
 
   @Test
@@ -238,6 +270,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /** Provides test parameters for the initialOffset parity test. */
   private static Stream<Arguments> initialOffsetParameters() {
     return Stream.of(
+        // Initial snapshot cases (no startingVersion)
+        Arguments.of(null, ReadLimitConfig.noLimit(), "InitialSnapshot_NoLimit"),
+        Arguments.of(null, ReadLimitConfig.maxFiles(5), "InitialSnapshot_MaxFiles"),
+        Arguments.of(null, ReadLimitConfig.maxBytes(1000), "InitialSnapshot_MaxBytes"),
+        // Specific version cases
         Arguments.of("0", ReadLimitConfig.noLimit(), "NoLimit1"),
         Arguments.of("1", ReadLimitConfig.noLimit(), "NoLimit2"),
         Arguments.of("3", ReadLimitConfig.noLimit(), "NoLimit3"),
@@ -257,6 +294,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /**
    * Parameterized test that verifies parity between DSv1 DeltaSource.getFileChanges and DSv2
    * SparkMicroBatchStream.getFileChanges using Delta Kernel APIs.
+   *
+   * <p>Tests both regular delta log streaming and initial snapshot scenarios.
    *
    * <p>TODO(#5319): consider adding a test similar to SparkGoldenTableTest.java.
    *
@@ -332,6 +371,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /** Provides test parameters for the parameterized getFileChanges test. */
   private static Stream<Arguments> getFileChangesParameters() {
     boolean notInitialSnapshot = false;
+    boolean isInitialSnapshot = true;
     long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
     long END_INDEX = DeltaSourceOffset.END_INDEX();
     Optional<Long> noEndVersion = Optional.empty();
@@ -375,8 +415,66 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             "With EndVersion 4"),
 
         // Empty Range
+        Arguments.of(2L, 50L, notInitialSnapshot, Optional.of(2L), Optional.of(40L), "Empty Range"),
+
+        // Initial Snapshot: snapshot only (no subsequent delta changes to combine)
         Arguments.of(
-            2L, 50L, notInitialSnapshot, Optional.of(2L), Optional.of(40L), "Empty Range"));
+            0L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            noEndVersion,
+            noEndIndex,
+            "InitialSnapshot_Version0_NoDelta"),
+        Arguments.of(
+            2L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            noEndVersion,
+            noEndIndex,
+            "InitialSnapshot_Version2_NoDelta"),
+
+        // Initial Snapshot: snapshot + delta changes (tests combine logic)
+        // Note: These assume the table has 5 versions (latest=5), so snapshot at version 0-2 will
+        // have delta changes to combine
+        Arguments.of(
+            0L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(5L),
+            Optional.of(END_INDEX),
+            "InitialSnapshot_Version0_WithDelta_ToEnd"),
+        Arguments.of(
+            1L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(3L),
+            Optional.of(END_INDEX),
+            "InitialSnapshot_Version1_WithDelta_ToVersion3"),
+        Arguments.of(
+            2L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(4L),
+            noEndIndex,
+            "InitialSnapshot_Version2_WithDelta_ToVersion4"),
+
+        // Initial Snapshot: with specific endIndex
+        Arguments.of(
+            0L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(2L),
+            Optional.of(5L),
+            "InitialSnapshot_Version0_WithEndIndex"),
+
+        // Initial Snapshot: at latest version (latestVersion == fromVersion, no delta to combine)
+        Arguments.of(
+            5L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            noEndVersion,
+            noEndIndex,
+            "InitialSnapshot_LatestVersion_NoDelta"));
   }
 
   // ================================================================================================
@@ -387,11 +485,13 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    * Test that verifies parity between DSv1 DeltaSource.getFileChangesWithRateLimit and DSv2
    * SparkMicroBatchStream.getFileChangesWithRateLimit.
    *
-   * <p>TODO(#5318): test initial snapshot once we fully support it.
+   * <p>Tests both regular delta log streaming and initial snapshot scenarios with rate limiting.
    */
   @ParameterizedTest
   @MethodSource("getFileChangesWithRateLimitParameters")
   public void testGetFileChangesWithRateLimit(
+      long fromVersion,
+      boolean isInitialSnapshot,
       Optional<Integer> maxFiles,
       Optional<Long> maxBytes,
       String testDescription,
@@ -419,9 +519,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChangesWithRateLimit(
-            /* fromVersion= */ 0L,
-            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ false,
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            isInitialSnapshot,
             ScalaUtils.toScalaOption(dsv1Limits));
     List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
@@ -441,10 +541,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChangesWithRateLimit(
-            /* fromVersion= */ 0L,
-            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ false,
-            dsv2Limits)) {
+            fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot, dsv2Limits)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
@@ -455,18 +552,49 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   /** Provides test parameters for the parameterized getFileChangesWithRateLimit test. */
   private static Stream<Arguments> getFileChangesWithRateLimitParameters() {
+    boolean notInitialSnapshot = false;
+    boolean isInitialSnapshot = true;
     Optional<Integer> noMaxFiles = Optional.empty();
     Optional<Long> noMaxBytes = Optional.empty();
 
+    // Arguments: (fromVersion, isInitialSnapshot, maxFiles, maxBytes, testDescription)
     return Stream.of(
-        // No rate limits
-        Arguments.of(noMaxFiles, noMaxBytes, "No limits"),
-        // MaxFiles only
-        Arguments.of(Optional.of(5), noMaxBytes, "MaxFiles"),
-        // MaxBytes only
-        Arguments.of(noMaxFiles, Optional.of(5000L), "MaxBytes"),
-        // Both limits
-        Arguments.of(Optional.of(10), Optional.of(10000L), "MaxFiles and MaxBytes"));
+        // Regular delta log streaming (not initial snapshot)
+        Arguments.of(0L, notInitialSnapshot, noMaxFiles, noMaxBytes, "DeltaLog_NoLimits"),
+        Arguments.of(0L, notInitialSnapshot, Optional.of(5), noMaxBytes, "DeltaLog_MaxFiles"),
+        Arguments.of(0L, notInitialSnapshot, noMaxFiles, Optional.of(5000L), "DeltaLog_MaxBytes"),
+        Arguments.of(
+            0L,
+            notInitialSnapshot,
+            Optional.of(10),
+            Optional.of(10000L),
+            "DeltaLog_MaxFilesAndMaxBytes"),
+
+        // Initial snapshot with rate limiting
+        Arguments.of(
+            0L, isInitialSnapshot, noMaxFiles, noMaxBytes, "InitialSnapshot_Version0_NoLimits"),
+        Arguments.of(
+            0L, isInitialSnapshot, Optional.of(5), noMaxBytes, "InitialSnapshot_Version0_MaxFiles"),
+        Arguments.of(
+            0L,
+            isInitialSnapshot,
+            noMaxFiles,
+            Optional.of(5000L),
+            "InitialSnapshot_Version0_MaxBytes"),
+        Arguments.of(
+            0L,
+            isInitialSnapshot,
+            Optional.of(10),
+            Optional.of(10000L),
+            "InitialSnapshot_Version0_MaxFilesAndMaxBytes"),
+        Arguments.of(
+            2L, isInitialSnapshot, Optional.of(5), noMaxFiles, "InitialSnapshot_Version2_MaxFiles"),
+        Arguments.of(
+            2L,
+            isInitialSnapshot,
+            noMaxFiles,
+            Optional.of(3000L),
+            "InitialSnapshot_Version2_MaxBytes"));
   }
 
   private void compareFileChanges(
