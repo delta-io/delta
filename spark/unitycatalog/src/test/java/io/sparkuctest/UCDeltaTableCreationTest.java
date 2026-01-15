@@ -45,10 +45,9 @@ import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.api.TestFactory;
 
 /** Test suite for creating UC Delta Tables. */
 public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
@@ -226,8 +225,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
-  private static Stream<Arguments> tableCreationParameters() {
-    List<Arguments> args = new ArrayList<>();
+  @TestFactory
+  public Stream<DynamicTest> testCreateTable() {
+    int counter = 0;
+    List<DynamicTest> tests = new ArrayList<>();
     for (TableType tableType : TableType.values()) {
       for (boolean withPartition : List.of(true, false)) {
         for (boolean withCluster : List.of(true, false)) {
@@ -237,21 +238,33 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           }
           for (boolean withAsSelect : List.of(true, false)) {
             for (boolean replaceTable : List.of(true, false)) {
-              args.add(
-                  Arguments.of(tableType, withPartition, withCluster, withAsSelect, replaceTable));
+              String displayName =
+                  String.format(
+                      "tableType=%s, withPartition=%s, withCluster=%s, withAsSelect=%s, replaceTable=%s",
+                      tableType, withPartition, withCluster, withAsSelect, replaceTable);
+              counter++;
+              int finalCounter = counter;
+              tests.add(
+                  DynamicTest.dynamicTest(
+                      displayName,
+                      () ->
+                          runTableCreationTest(
+                              finalCounter,
+                              tableType,
+                              withPartition,
+                              withCluster,
+                              withAsSelect,
+                              replaceTable)));
             }
           }
         }
       }
     }
-    return args.stream();
+    return tests.stream();
   }
 
-  @ParameterizedTest(
-      name =
-          "[{index}] {0}, withPartition={1}, withCluster={2}, withAsSelect={3}, replaceTable={4}")
-  @MethodSource("tableCreationParameters")
-  public void testCreateTable(
+  private void runTableCreationTest(
+      int count,
       TableType tableType,
       boolean withPartition,
       boolean withCluster,
@@ -263,7 +276,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // Test with unity catalog only (spark_catalog is not configured as UC catalog)
     final String catalogName = uc.catalogName();
     final String schemaName = uc.schemaName();
-    String tableName = "test_delta_table";
+    String tableName = "test_delta_table_" + count;
 
     TableSetupOptions options =
         new TableSetupOptions()
