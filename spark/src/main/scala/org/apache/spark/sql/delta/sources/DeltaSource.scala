@@ -658,21 +658,21 @@ trait DeltaSourceBase extends Source
         schemaReadOptions)
 
       if (!isCompatible) {
-          recordDeltaEvent(
-            deltaLog,
-            "delta.streaming.source.schemaChanged",
-            data = Map(
-              "currentVersion" -> snapshotAtSourceInit.version,
-              "newVersion" -> version,
-              "retryable" -> isRetryable,
-              "backfilling" -> backfilling,
-              "readChangeDataFeed" -> options.readChangeFeed,
-              "typeWideningEnabled" -> typeWideningEnabled,
-              "enableSchemaTrackingForTypeWidening" -> enableSchemaTrackingForTypeWidening,
-              "containsWideningTypeChanges" ->
-                TypeWidening.containsWideningTypeChanges(schema, schemaChange)
-            )
+        recordDeltaEvent(
+          deltaLog,
+          "delta.streaming.source.schemaChanged",
+          data = Map(
+            "currentVersion" -> snapshotAtSourceInit.version,
+            "newVersion" -> version,
+            "retryable" -> isRetryable,
+            "backfilling" -> backfilling,
+            "readChangeDataFeed" -> options.readChangeFeed,
+            "typeWideningEnabled" -> typeWideningEnabled,
+            "enableSchemaTrackingForTypeWidening" -> enableSchemaTrackingForTypeWidening,
+            "containsWideningTypeChanges" ->
+              TypeWidening.containsWideningTypeChanges(schema, schemaChange)
           )
+        )
 
         throw DeltaErrors.schemaChangedException(
           schema,
