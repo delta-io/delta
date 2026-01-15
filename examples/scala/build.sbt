@@ -158,8 +158,8 @@ def getLibraryDependencies(
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
   val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
   val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
-  
-  Seq(
+
+  val baseDeps = Seq(
     deltaCoreDep,
     "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
       getMajorMinor(deltaVersion)
@@ -168,16 +168,25 @@ def getLibraryDependencies(
       getMajorMinor(deltaVersion)
     ),
     "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
-  ) ++ (getMajorMinor(deltaVersion) match {
-    case (major, _) if major >= 4 =>
-      // Don't include the iceberg dependencies for 4.0.0rc1
-      Seq()
-    case _ =>
-      Seq(
-        deltaIcebergDep,
-        "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
-      )
-  })
+  )
+
+  // Include Iceberg dependencies only if supportIceberg is enabled
+  val icebergDeps = if (supportIceberg.value == "true") {
+    getMajorMinor(deltaVersion) match {
+      case (major, _) if major >= 4 =>
+        // Don't include the iceberg dependencies for 4.0.0rc1 and later
+        Seq.empty
+      case _ =>
+        Seq(
+          deltaIcebergDep,
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
+        )
+    }
+  } else {
+    Seq.empty
+  }
+
+  baseDeps ++ icebergDeps
 }
 
 lazy val root = (project in file("."))
@@ -197,5 +206,13 @@ lazy val root = (project in file("."))
       "-deprecation",
       "-feature"
     ),
+    // Conditionally exclude IcebergCompatV2.scala when supportIceberg is "false"
+    Compile / unmanagedSources / excludeFilter := {
+      if (supportIceberg.value == "false") {
+        HiddenFileFilter || "IcebergCompatV2.scala"
+      } else {
+        HiddenFileFilter
+      }
+    },
     java17Settings
   )
