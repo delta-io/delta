@@ -88,9 +88,9 @@ public class Checkpoint {
   }
 
   /**
-   * Assume that a V2 checkpoint with sidecar already exists
-   * [TODO] Evolve existing checkpoints to V2 checkpoint when possible
-   * */
+   * Assume that a V2 checkpoint with sidecar already exists [TODO] Evolve existing checkpoints to
+   * V2 checkpoint when possible
+   */
   public void write() throws IOException {
     transactionIds.clear();
     Path logPath = snapshot.getLogPath();
@@ -201,13 +201,13 @@ public class Checkpoint {
             true /* overwrite */);
   }
 
-    /**
-     * Filter the records that is not null at the given column, and count the num
-     * of return rows.
-     * @param notNullName the column to be filtered as not null
-     * @param counter line counter. null if no need to count
-     * @return mapping function to perform the filtering
-     */
+  /**
+   * Filter the records that is not null at the given column, and count the num of return rows.
+   *
+   * @param notNullName the column to be filtered as not null
+   * @param counter line counter. null if no need to count
+   * @return mapping function to perform the filtering
+   */
   private Function<ColumnarBatch, FilteredColumnarBatch> filterActions(
       String notNullName, AtomicInteger counter) {
     return (columnarBatch) -> {

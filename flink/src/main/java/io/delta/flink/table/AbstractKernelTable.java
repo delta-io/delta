@@ -167,6 +167,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
   protected final List<MetricListener> metricListeners;
   protected final List<TableEventListener> eventListeners;
 
+  // Engine is not serializable, it will be lazily re-created
   protected transient volatile Engine engine;
 
   // These fields are not serializable. They will be reinitialized in {@link #open}
@@ -196,8 +197,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
     addEventListener(new ChecksumListener());
     addEventListener(new CheckpointListener());
-
-    open();
   }
 
   public AbstractKernelTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
@@ -631,7 +630,14 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   public void onPostCommit(Snapshot snapshot) {
-    eventListeners.forEach(listener -> listener.onPostCommit(this, snapshot));
+    eventListeners.forEach(
+        listener -> {
+          try {
+            listener.onPostCommit(this, snapshot);
+          } catch (Exception e) {
+            LOG.error("Suppressed exception from listener", e);
+          }
+        });
   }
 
   /** Callback invoked when retry need to refresh credentials (credential exception) */

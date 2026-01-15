@@ -46,6 +46,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val committer = new DeltaCommitter.Builder()
         .withDeltaTable(table)
@@ -95,6 +96,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val committer = new DeltaCommitter.Builder()
         .withDeltaTable(table)
@@ -148,6 +150,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       createNonEmptyTable(engine, dir.getAbsolutePath, anotherSchema, Seq("v1"))
 
@@ -194,6 +197,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         anotherSchema,
         List().asJava)
+      table.open()
 
       createNonEmptyTable(engine, dir.getAbsolutePath, anotherSchema, Seq())
 
@@ -234,6 +238,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val committer = new DeltaCommitter.Builder()
         .withDeltaTable(table)

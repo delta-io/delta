@@ -47,6 +47,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List.empty[String].asJava)
+      table.open()
 
       val sinkWriter = new DeltaSinkWriter.Builder()
         .withJobId("test-job")
@@ -86,6 +87,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val sinkWriter = new DeltaSinkWriter.Builder()
         .withJobId("test-job")
@@ -135,6 +137,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val sinkWriter = new DeltaSinkWriter.Builder()
         .withDeltaTable(table)
@@ -180,6 +183,7 @@ class DeltaSinkWriterSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val sinkWriter = new DeltaSinkWriter.Builder()
         .withJobId("test-job")

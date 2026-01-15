@@ -16,6 +16,8 @@
 
 package io.delta.flink.table
 
+import java.net.URI
+
 import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 
 import io.delta.kernel.types._
@@ -24,7 +26,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class UnityCatalogSuite extends AnyFunSuite {
 
-  val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
+  val CATALOG_ENDPOINT = URI.create("https://e2-dogfood.staging.cloud.databricks.com/")
   val CATALOG_TOKEN = ""
 
   ignore("create table") {

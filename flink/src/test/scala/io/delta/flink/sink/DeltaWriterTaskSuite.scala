@@ -49,6 +49,8 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
+
       val partitionValues = Map("part" -> Literal.ofString("p0")).asJava
 
       val conf = new DeltaSinkConf(schema, Map.empty[String, String].asJava)

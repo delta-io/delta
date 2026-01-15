@@ -60,6 +60,8 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         Seq.empty[String].asJava)
+      table.open()
+
       val serialized: Array[Byte] = InstantiationUtil.serializeObject(table)
       val copy = InstantiationUtil.deserializeObject(serialized, getClass.getClassLoader)
         .asInstanceOf[AbstractKernelTable]
@@ -79,6 +81,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List.empty[String].asJava)
+      table.open()
 
       val actions = (0 until 5).map { i =>
         dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
@@ -116,6 +119,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val actions = (0 until 5).map { i =>
         dummyAddFileRow(schema, 10 + i, Map("part" -> Literal.ofString("p" + i)))
@@ -155,6 +159,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List.empty[String].asJava)
+      table.open()
 
       createNonEmptyTable(
         DefaultEngine.create(new Configuration()),
@@ -199,6 +204,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       createNonEmptyTable(
         DefaultEngine.create(new Configuration()),
@@ -245,6 +251,8 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
+
       table.refresh()
 
       assert(table.snapshot().isEmpty)
@@ -263,6 +271,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       createNonEmptyTable(
         DefaultEngine.create(new Configuration()),
@@ -301,6 +310,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           snapshot
         }
       }
+      table.open()
 
       // With cache, load will not be called again
       table.setCacheManager(new NoCacheManager)
@@ -368,6 +378,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           retryCounter += 1
         }
       }
+      testHadoopTable.open()
       // Disable cache for retry to work
       testHadoopTable.setCacheManager(new NoCacheManager)
 
@@ -424,6 +435,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           retryCounter += 1
         }
       }
+      testHadoopTable.open()
       testHadoopTable.setCacheManager(new NoCacheManager)
       testHadoopTable.refresh()
       assert(retryCounter == 1)
@@ -459,6 +471,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           retryCounter += 1
         }
       }
+      testHadoopTable.open()
       // Disable cache for retry to work
       testHadoopTable.setCacheManager(new NoCacheManager)
 
@@ -479,6 +492,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         Seq.empty[String].asJava)
+      table.open()
 
       val numColumns = 2
       val columnVectors = new Array[ColumnVector](numColumns)

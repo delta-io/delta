@@ -17,8 +17,6 @@
 package io.delta.flink.table;
 
 import java.io.Serializable;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
@@ -58,12 +56,6 @@ public class TableConf implements Serializable {
           .defaultValue(false)
           .withDescription("Whether to generate checksum files for commits on this table.");
 
-  public static final ConfigOption<String> CATALOG_ENDPOINT =
-      ConfigOptions.key("catalog.endpoint").stringType().noDefaultValue();
-
-  public static final ConfigOption<String> CATALOG_TOKEN =
-      ConfigOptions.key("catalog.token").stringType().noDefaultValue();
-
   private final Map<String, String> raw;
   private final Configuration cfg;
 
@@ -78,7 +70,7 @@ public class TableConf implements Serializable {
    * @param conf raw configuration map; must not be null
    */
   public TableConf(Map<String, String> conf) {
-    this.raw = Collections.unmodifiableMap(new HashMap<>(Objects.requireNonNull(conf, "conf")));
+    this.raw = Map.copyOf(Objects.requireNonNull(conf, "conf"));
     this.cfg = Configuration.fromMap(this.raw);
 
     validate();
@@ -135,14 +127,6 @@ public class TableConf implements Serializable {
     if (p <= 0.0) return false;
     if (p >= 1.0) return true;
     return randgen.nextDouble() < p;
-  }
-
-  public String getCatalogEndpoint() {
-    return cfg.get(CATALOG_ENDPOINT);
-  }
-
-  public String getCatalogToken() {
-    return cfg.get(CATALOG_TOKEN);
   }
 
   private void validate() {

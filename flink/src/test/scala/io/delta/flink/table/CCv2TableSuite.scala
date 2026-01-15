@@ -33,7 +33,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class CCv2TableSuite extends AnyFunSuite with TestHelper {
 
-  val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
+  val CATALOG_ENDPOINT = URI.create("https://e2-dogfood.staging.cloud.databricks.com/")
   val CATALOG_TOKEN = "<PAT>"
   val TABLE_ID = "main.hao.writetest"
 
@@ -41,9 +41,10 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
     val table = new CCv2Table(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
-      Map(
-        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+      Map.empty[String, String].asJava,
+      CATALOG_ENDPOINT,
+      CATALOG_TOKEN)
+    table.open()
 
     assert(table.getId == "main.hao.writetest")
     assert(table.getTablePath == URI.create("s3://us-west-2-extstaging-managed-" +
@@ -56,9 +57,10 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
     val table = new CCv2Table(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
-      Map(
-        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+      Map.empty[String, String].asJava,
+      CATALOG_ENDPOINT,
+      CATALOG_TOKEN)
+    table.open()
 
     for (i <- 0 until 100) {
       val values = (0 until 10)
@@ -90,9 +92,9 @@ class CCv2TableSuite extends AnyFunSuite with TestHelper {
     val table = new CCv2Table(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
-      Map(
-        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+      Map.empty[String, String].asJava,
+      CATALOG_ENDPOINT,
+      CATALOG_TOKEN)
 
     checkSerializability(table)
   }

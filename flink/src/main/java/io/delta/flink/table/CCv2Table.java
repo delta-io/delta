@@ -23,8 +23,10 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import io.unitycatalog.client.auth.TokenProvider;
+import java.net.URI;
 import java.util.Map;
 import java.util.Optional;
+import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,11 +47,16 @@ public class CCv2Table extends AbstractKernelTable {
 
   private static Logger LOG = LoggerFactory.getLogger(CCv2Table.class);
 
-  public static final String CATALOG_ENDPOINT = "catalog.endpoint";
-  public static final String CATALOG_TOKEN = "catalog.token";
+  private final URI endpoint;
+  private final String token;
 
-  public CCv2Table(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
+  public CCv2Table(
+      DeltaCatalog catalog, String tableId, Map<String, String> conf, URI endpoint, String token) {
     super(catalog, tableId, conf);
+    Preconditions.checkNotNull(endpoint);
+    Preconditions.checkNotNull(token);
+    this.endpoint = endpoint;
+    this.token = token;
   }
 
   protected transient UCCatalogManagedClient ccv2Client;
@@ -57,12 +64,9 @@ public class CCv2Table extends AbstractKernelTable {
   @Override
   public void open() {
     if (ccv2Client == null) {
-      String endpointUri = conf.getCatalogEndpoint();
-      String token = conf.getCatalogToken();
-
       UCClient storageClient =
           new UCTokenBasedRestClient(
-              endpointUri, TokenProvider.create(Map.of("type", "static", "token", token)));
+              endpoint.toString(), TokenProvider.create(Map.of("type", "static", "token", token)));
       ccv2Client = new UCCatalogManagedClient(storageClient);
     }
     super.open();

@@ -36,7 +36,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class HadoopTableSuite extends AnyFunSuite with TestHelper {
 
-  val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
+  val CATALOG_ENDPOINT = URI.create("https://e2-dogfood.staging.cloud.databricks.com/")
   val CATALOG_TOKEN = "<PAT>"
   val TABLE_ID = "main.hao.writetest"
 
@@ -52,6 +52,7 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       for (i <- 0 until 10) {
         val actions = (0 until 5).map { i =>
@@ -82,6 +83,7 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
       Map.empty[String, String].asJava,
       schema,
       List("part").asJava)
+    table.open()
 
     for (i <- 0 until 10) {
       val actions = (0 until 5).map { i =>
@@ -104,9 +106,8 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
     val table = new HadoopTable(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
-      Map(
-        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+      Map.empty[String, String].asJava)
+    table.open()
 
     val values = (0 until 100)
     val colVector = new ColumnVector() {
@@ -141,6 +142,7 @@ class HadoopTableSuite extends AnyFunSuite with TestHelper {
       val hadoopTable = new HadoopTable(
         URI.create("file:///Users/hajiang/test/big_table"),
         Map.empty[String, String].asJava)
+      hadoopTable.open()
       val p1 = System.currentTimeMillis()
       phase1 += p1 - start
       hadoopTable.refresh()

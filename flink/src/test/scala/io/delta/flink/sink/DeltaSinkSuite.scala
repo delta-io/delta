@@ -18,9 +18,10 @@ package io.delta.flink.sink
 
 import java.util
 
-import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala, SeqHasAsJava}
+import scala.jdk.CollectionConverters.{CollectionHasAsScala, IteratorHasAsScala, MapHasAsJava, SeqHasAsJava}
 
 import io.delta.flink.TestHelper
+import io.delta.flink.table.{CCv2Table, HadoopTable, UnityCatalog}
 import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.internal.ScanImpl
@@ -137,5 +138,22 @@ class DeltaSinkSuite extends AnyFunSuite with TestHelper {
         .asInstanceOf[DeltaSink]
       assert(copy != null)
     }
+  }
+
+  test("sink builder") {
+    val sink1 = DeltaSink.builder().withConfigurations(
+      Map("type" -> "hadoop", "hadoop.table-path" -> "file:///table-path").asJava).build()
+    assert(sink1.getTable.isInstanceOf[HadoopTable])
+    assert(sink1.getTable.asInstanceOf[HadoopTable].getTablePath.toString == "file:///table-path")
+
+    val sink2 = DeltaSink.builder().withConfigurations(
+      Map(
+        "type" -> "unitycatalog",
+        "unitycatalog.table-id" -> "ab.cd.ef",
+        "unitycatalog.endpoint" -> "https://abc.com/def",
+        "unitycatalog.token" -> "wow").asJava).build()
+    assert(sink2.getTable.isInstanceOf[CCv2Table])
+    assert(sink2.getTable.asInstanceOf[CCv2Table].getCatalog.isInstanceOf[UnityCatalog])
+
   }
 }

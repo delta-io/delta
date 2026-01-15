@@ -17,16 +17,17 @@
 package io.delta.flink.sink;
 
 import io.delta.flink.table.*;
-import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.StructType;
 import java.net.URI;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import jdk.jfr.Experimental;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.connector.sink2.*;
+import org.apache.flink.configuration.ConfigOption;
+import org.apache.flink.configuration.ConfigOptions;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.core.io.SimpleVersionedSerializer;
 import org.apache.flink.streaming.api.connector.sink2.*;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -192,15 +193,33 @@ public class DeltaSink
   }
 
   public static class Builder {
+    private enum TableType {
+      hadoop,
+      unitycatalog,
+      ucpath
+    }
+
+    private static final ConfigOption<TableType> TYPE =
+        ConfigOptions.key("type").enumType(TableType.class).defaultValue(TableType.hadoop);
+    private static final ConfigOption<String> HADOOP_TABLE_PATH =
+        ConfigOptions.key("hadoop.table-path").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_TABLE_ID =
+        ConfigOptions.key("unitycatalog.table-id").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_ENDPOINT =
+        ConfigOptions.key("unitycatalog.endpoint").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_TOKEN =
+        ConfigOptions.key("unitycatalog.token").stringType().noDefaultValue();
+
     private DeltaTable deltaTable;
+    private TableType tableType = TableType.hadoop;
     // For file-based tables
     private String tablePath;
     private RowType flinkSchema;
     private List<String> partitionColNames;
     // For catalog-based tables
     private String tableId;
-    private String catalogEndpoint;
-    private String catalogToken;
+    private URI endpoint;
+    private String token;
     private Map<String, String> configurations;
 
     private Builder() {}
@@ -210,9 +229,9 @@ public class DeltaSink
       return this;
     }
 
-    // For file-based tables
     public Builder withTablePath(String tablePath) {
       this.tablePath = tablePath;
+      this.tableType = TableType.hadoop;
       return this;
     }
 
@@ -229,21 +248,30 @@ public class DeltaSink
     // For catalog-based tables
     public Builder withTableId(String tableId) {
       this.tableId = tableId;
+      this.tableType = TableType.unitycatalog;
       return this;
     }
 
-    public Builder withCatalogEndpoint(String catalogEndpoint) {
-      this.catalogEndpoint = catalogEndpoint;
+    public Builder withEndpoint(String catalogEndpoint) {
+      this.endpoint = URI.create(catalogEndpoint);
       return this;
     }
 
-    public Builder withCatalogToken(String catalogToken) {
-      this.catalogToken = catalogToken;
+    public Builder withToken(String catalogToken) {
+      this.token = catalogToken;
       return this;
     }
 
     public Builder withConfigurations(Map<String, String> configurations) {
       this.configurations = configurations;
+      Configuration extract = Configuration.fromMap(configurations);
+
+      // Extract everything from configurations
+      this.tableType = extract.get(TYPE);
+      this.tablePath = extract.get(HADOOP_TABLE_PATH);
+      this.tableId = extract.get(UNITYCATALOG_TABLE_ID);
+      this.endpoint = URI.create(extract.get(UNITYCATALOG_ENDPOINT));
+      this.token = extract.get(UNITYCATALOG_TOKEN);
       return this;
     }
 
@@ -255,25 +283,33 @@ public class DeltaSink
       DeltaSinkConf sinkConf = new DeltaSinkConf(flinkSchema, configurations);
       StructType sinkSchema = sinkConf.getSinkSchema();
       if (deltaTable == null) {
-        // Can use only one from tablePath or tableId
-        Preconditions.checkArgument(
-            (tablePath != null) ^ (tableId != null), "Use either tablePath or tableId");
-        if (tablePath != null) {
-          // File-based table
-          deltaTable =
-              new HadoopTable(URI.create(tablePath), configurations, sinkSchema, partitionColNames);
-        } else {
-          // Catalog-based table
-          Objects.requireNonNull(catalogEndpoint);
-          Objects.requireNonNull(catalogToken);
-          Map<String, String> finalConf = new HashMap<>(configurations);
-          finalConf.put(CCv2Table.CATALOG_ENDPOINT, catalogEndpoint);
-          finalConf.put(CCv2Table.CATALOG_TOKEN, catalogToken);
-          // TODO Support separated endpoints for catalog and table
-          DeltaCatalog restCatalog = new UnityCatalog("main", catalogEndpoint, catalogToken);
-          deltaTable = new CCv2Table(restCatalog, tableId, finalConf);
+        switch (tableType) {
+          case hadoop:
+            Objects.requireNonNull(tablePath);
+            deltaTable =
+                new HadoopTable(
+                    URI.create(tablePath), configurations, sinkSchema, partitionColNames);
+          case unitycatalog:
+            {
+              Objects.requireNonNull(endpoint);
+              Objects.requireNonNull(token);
+              // TODO Support separated endpoints for catalog and table
+              DeltaCatalog restCatalog = new UnityCatalog("main", endpoint, token);
+              deltaTable = new CCv2Table(restCatalog, tableId, configurations, endpoint, token);
+            }
+          case ucpath:
+            {
+              Objects.requireNonNull(endpoint);
+              Objects.requireNonNull(token);
+              // TODO Support separated endpoints for catalog and table
+              DeltaCatalog restCatalog = new UnityCatalog("main", endpoint, token);
+              deltaTable = new HadoopTable(restCatalog, tableId, configurations);
+            }
+          default:
+            throw new IllegalArgumentException("unreachable");
         }
       }
+      deltaTable.open();
       return new DeltaSink(deltaTable, sinkConf);
     }
   }

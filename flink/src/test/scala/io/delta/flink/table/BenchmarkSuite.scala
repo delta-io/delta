@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory
 
 class BenchmarkSuite extends AnyFunSuite with TestHelper {
 
-  val CATALOG_ENDPOINT = "https://e2-dogfood.staging.cloud.databricks.com/"
+  val CATALOG_ENDPOINT = URI.create("https://e2-dogfood.staging.cloud.databricks.com/")
   val CATALOG_TOKEN = "<PAT>"
 
   ignore("benchmark the local fs write") {
@@ -48,6 +48,7 @@ class BenchmarkSuite extends AnyFunSuite with TestHelper {
         Map.empty[String, String].asJava,
         schema,
         List("part").asJava)
+      table.open()
 
       val statsListener = new StatsListener
       table.addMetricListener(statsListener)
@@ -84,9 +85,8 @@ class BenchmarkSuite extends AnyFunSuite with TestHelper {
     val table = new HadoopTable(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
-      Map(
-        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+      Map.empty[String, String].asJava)
+    table.open()
 
     val statsListener = new StatsListener
     table.addMetricListener(statsListener)
@@ -122,9 +122,9 @@ class BenchmarkSuite extends AnyFunSuite with TestHelper {
     val table = new CCv2Table(
       new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN),
       TABLE_ID,
-      Map(
-        CCv2Table.CATALOG_ENDPOINT -> CATALOG_ENDPOINT,
-        CCv2Table.CATALOG_TOKEN -> CATALOG_TOKEN).asJava)
+      Map.empty[String, String].asJava,
+      CATALOG_ENDPOINT,
+      CATALOG_TOKEN)
 
     val statsListener = new StatsListener
     table.addMetricListener(statsListener)

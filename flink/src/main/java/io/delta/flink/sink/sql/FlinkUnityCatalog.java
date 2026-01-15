@@ -19,6 +19,7 @@ package io.delta.flink.sink.sql;
 import io.delta.flink.table.ExceptionUtils;
 import io.delta.flink.table.UnityCatalog;
 import io.unitycatalog.client.model.SchemaInfo;
+import java.net.URI;
 import java.util.List;
 import org.apache.flink.table.catalog.*;
 import org.apache.flink.table.catalog.exceptions.*;
@@ -32,7 +33,7 @@ public class FlinkUnityCatalog extends AbstractCatalog {
 
   public FlinkUnityCatalog(String name, String defaultDatabase, String endpoint, String token) {
     super(name, defaultDatabase);
-    this.deltaCatalog = new UnityCatalog(getName(), endpoint, token);
+    this.deltaCatalog = new UnityCatalog(getName(), URI.create(endpoint), token);
   }
 
   @Override

@@ -138,9 +138,9 @@ public class UnityCatalog implements DeltaCatalog {
    * @param endpoint the catalog REST endpoint URI as a string
    * @param token a bearer token used to authenticate REST requests
    */
-  public UnityCatalog(String name, String endpoint, String token) {
+  public UnityCatalog(String name, URI endpoint, String token) {
     this.name = name;
-    this.endpoint = URI.create(endpoint);
+    this.endpoint = endpoint;
     this.token = token;
   }
 
