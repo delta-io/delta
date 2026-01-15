@@ -395,6 +395,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                   entry ->
                       !expectedProperties.containsKey(entry.getKey())
                           && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+              // With newer Spark version it may contain a "table_type" property.
+              .filter(entry -> !entry.getKey().equals("table_type"))
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     }
