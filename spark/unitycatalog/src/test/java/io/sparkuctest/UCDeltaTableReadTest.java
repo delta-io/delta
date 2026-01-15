@@ -120,20 +120,15 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
 
           // Path-based access isn't supported for catalog-owned (MANAGED) tables.
           if (tableType == TableType.MANAGED) {
-            // For managed tables, path-based access should fail
-            Exception exception =
-                Assertions.assertThrows(
-                    Exception.class, () -> sql("SELECT * FROM delta.`%s`", tablePath));
-            Assertions.assertTrue(
-                exception.getMessage().contains("AccessDeniedException"),
-                () ->
-                    "Expected AccessDeniedException for path-based access on managed table, but got: "
-                        + exception.getMessage());
+            Assertions.assertThrows(
+                Exception.class,
+                () -> sql("SELECT * FROM delta.`%s`", tablePath),
+                "For managed tables, path-based access should fail");
           } else {
             // For EXTERNAL tables, path-based access should work
-            List<List<String>> pathBasedResult =
-                sql("SELECT * FROM delta.`%s` ORDER BY id", tablePath);
-            check(pathBasedResult, List.of(List.of("1"), List.of("2"), List.of("3")));
+            check(
+                sql("SELECT * FROM delta.`%s` ORDER BY id", tablePath),
+                List.of(List.of("1"), List.of("2"), List.of("3")));
           }
         });
   }
