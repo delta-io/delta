@@ -124,7 +124,7 @@ object SuiteGeneratorConfig {
       importer"org.apache.spark.sql.delta._",
       importer"org.apache.spark.sql.delta.dml.delete._",
       importer"org.apache.spark.sql.delta.dml.merge._",
-      importer"org.apache.spark.sql.delta.dml.update._",
+      importer"org.apache.spark.sql.delta.dml.update._"
     )
 
     // Common test imports - BASE_DML plus frequently used packages
@@ -133,7 +133,7 @@ object SuiteGeneratorConfig {
       importer"org.apache.spark.sql.delta.columnmapping._",
       importer"org.apache.spark.sql.delta.deletionvectors._",
       importer"org.apache.spark.sql.delta.rowid._",
-      importer"org.apache.spark.sql.delta.rowtracking._",
+      importer"org.apache.spark.sql.delta.rowtracking._"
     )
 
     // Additional imports that can be added to the common sets
