@@ -157,8 +157,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           try {
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
 
-            Dataset<Row> input =
-                spark.readStream().format("delta").table(tableName);
+            Dataset<Row> input = spark.readStream().format("delta").table(tableName);
             query =
                 input
                     .writeStream()
