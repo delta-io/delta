@@ -16,53 +16,47 @@
 package io.delta.spark.internal.v2.read.deletionvector;
 
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.List;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
-import org.apache.spark.sql.types.StructField;
-import org.apache.spark.sql.types.StructType;
 import scala.Function1;
 import scala.collection.Iterator;
-import scala.jdk.javaapi.CollectionConverters;
 import scala.runtime.AbstractFunction1;
 
-/**
- * Wraps a base reader function to apply deletion vector filtering.
- *
- * <p>Filters deleted rows using Scala Iterator's filter() and projects out the DV column using
- * map() with Spark's ProjectingInternalRow.
- *
- * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
- */
+/** Extends original reader function for handling dv related business logic. */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
-  private final int dvColumnIndex;
-  private final StructType inputSchema;
+  private final DvSchemaContext dvSchemaContext;
 
   private DeletionVectorReadFunction(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      int dvColumnIndex,
-      StructType inputSchema) {
+      DvSchemaContext dvSchemaContext) {
     this.baseReadFunc = baseReadFunc;
-    this.dvColumnIndex = dvColumnIndex;
-    this.inputSchema = inputSchema;
+    this.dvSchemaContext = dvSchemaContext;
   }
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    ProjectingInternalRow projection = buildProjection(inputSchema, dvColumnIndex);
+    int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
+    // Use pre-computed ordinals from DvSchemaContext
+    ProjectingInternalRow projection =
+        ProjectingInternalRow.apply(
+            dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());
 
+    // Use Scala's filter/map since Spark returns scala.collection.Iterator (not
+    // java.util.Iterator).
     // filter: keep non-deleted rows (DV column == 0)
     // map: project out DV column using Spark's ProjectingInternalRow
     return baseReadFunc
         .apply(file)
         .filter(
+            // Must use Object: Java generics are invariant, so AbstractFunction1<_, Boolean>
+            // cannot be passed to Scala's filter() which expects Function1[_, Boolean] (erased to
+            // Object)
             new AbstractFunction1<InternalRow, Object>() {
               @Override
               public Object apply(InternalRow row) {
@@ -79,28 +73,10 @@ public class DeletionVectorReadFunction
             });
   }
 
-  /** Build ProjectingInternalRow that skips the DV column. */
-  private static ProjectingInternalRow buildProjection(StructType inputSchema, int excludeIndex) {
-    List<StructField> outputFields = new ArrayList<>();
-    List<Integer> colOrdinals = new ArrayList<>();
-
-    for (int i = 0; i < inputSchema.fields().length; i++) {
-      if (i != excludeIndex) {
-        outputFields.add(inputSchema.fields()[i]);
-        colOrdinals.add(i);
-      }
-    }
-
-    StructType outputSchema = new StructType(outputFields.toArray(new StructField[0]));
-    return ProjectingInternalRow.apply(
-        outputSchema, CollectionConverters.asScala(colOrdinals).toSeq());
-  }
-
   /** Factory method to wrap a reader function with DV filtering. */
   public static DeletionVectorReadFunction wrap(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      int dvColumnIndex,
-      StructType inputSchema) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvColumnIndex, inputSchema);
+      DvSchemaContext dvSchemaContext) {
+    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext);
   }
 }
