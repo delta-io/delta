@@ -157,6 +157,12 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
             expected.add(List.of("0", "seed"));
+            // For managed tables, wait for UC to backfill staged commits before switching to V2.
+            // This avoids a race condition where V2 streaming reads try to access staged commit
+            // files that have already been backfilled/moved by UC.
+            if (tableType == TableType.MANAGED) {
+              Thread.sleep(500);
+            }
             // Enable V2 for streaming reads.
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
             Dataset<Row> input = spark.readStream().table(tableName);
@@ -181,6 +187,10 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               spark
                   .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
                   .collect();
+              // For managed tables, wait for UC to backfill staged commits before switching to V2.
+              if (tableType == TableType.MANAGED) {
+                Thread.sleep(500);
+              }
               spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
 
               query.processAllAvailable();
