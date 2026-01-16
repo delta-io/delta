@@ -379,8 +379,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                 DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testCreateOrReplaceTable(TableType tableType) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
@@ -410,8 +409,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
     String schema =
         // Numeric types
@@ -493,8 +491,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testTableWithComplexTypes(TableType tableType) throws Exception {
     String schema =
         "id INT, arr ARRAY<INT>, "
@@ -530,8 +527,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
-  @ParameterizedTest
-  @MethodSource("allTableTypes")
+  @TestAllTableTypes
   public void testTableWithNotNullConstraints(TableType tableType) throws Exception {
     withNewTable(
         "not_null_table",
