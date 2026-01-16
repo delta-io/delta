@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.read.deletionvector;
 import java.io.Serializable;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.types.StructType;
 import scala.Function1;
 import scala.collection.Iterator;
 import scala.runtime.AbstractFunction1;
@@ -36,26 +37,31 @@ public class DeletionVectorReadFunction
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
   private final int dvColumnIndex;
   private final int totalColumns;
+  private final StructType inputSchema;
 
   private DeletionVectorReadFunction(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
       int dvColumnIndex,
-      int totalColumns) {
+      int totalColumns,
+      StructType inputSchema) {
     this.baseReadFunc = baseReadFunc;
     this.dvColumnIndex = dvColumnIndex;
     this.totalColumns = totalColumns;
+    this.inputSchema = inputSchema;
   }
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    return new DeletedRowFilterIterator(baseReadFunc.apply(file), dvColumnIndex, totalColumns);
+    return new DeletedRowFilterIterator(
+        baseReadFunc.apply(file), dvColumnIndex, totalColumns, inputSchema);
   }
 
   /** Factory method to wrap a reader function with DV filtering. */
   public static DeletionVectorReadFunction wrap(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
       int dvColumnIndex,
-      int totalColumns) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvColumnIndex, totalColumns);
+      int totalColumns,
+      StructType inputSchema) {
+    return new DeletionVectorReadFunction(baseReadFunc, dvColumnIndex, totalColumns, inputSchema);
   }
 }
