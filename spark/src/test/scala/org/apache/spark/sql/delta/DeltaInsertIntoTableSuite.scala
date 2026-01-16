@@ -330,13 +330,7 @@ class DeltaInsertIntoSQLSuite
           .format("delta")
           .insertInto(tableName)
       }
-      checkErrorMatchPVals(
-        exception = err,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(err, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       // insert data with schema evolution
       withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
@@ -407,13 +401,7 @@ class DeltaInsertIntoSQLSuite
       val e = intercept[AnalysisException] {
         sql("INSERT INTO target SELECT * FROM source")
       }
-      checkErrorMatchPVals(
-        exception = e,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(e, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
@@ -448,13 +436,7 @@ class DeltaInsertIntoSQLSuite
       val e = intercept[AnalysisException] {
         sql("INSERT INTO target SELECT * FROM source")
       }
-      checkErrorMatchPVals(
-        exception = e,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(e, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
