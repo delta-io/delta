@@ -501,7 +501,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
-    CloseableIterator<FileReadResult> dataIter;
+    CloseableIterator<FileReadResult> dataIter = null;
     try {
       dataIter = readJsonCommitFile(nextFile);
     } catch (UncheckedIOException e) {
