@@ -121,12 +121,12 @@ getSparkPackageSuffix := {
   sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
 }
 
-val supportIceberg = settingKey[String](
+val getSupportIceberg = settingKey[String](
   s"get supportIceberg for cross-build artifact name from environment variable SUPPORT_ICEBERG. " +
   s"This is derived from CrossSparkVersions.scala (single source of truth)."
 )
 
-supportIceberg := {
+getSupportIceberg := {
   sys.env.getOrElse("SUPPORT_ICEBERG", "false")
 }
 
@@ -152,7 +152,8 @@ def getLibraryDependencies(
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String,
     sparkPackageSuffix: String,
-    scalaBinVersion: String): Seq[ModuleID] = {
+    scalaBinVersion: String,
+    supportIceberg: String): Seq[ModuleID] = {
   
   // Package suffix comes from CrossSparkVersions.scala (single source of truth)
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
@@ -171,7 +172,7 @@ def getLibraryDependencies(
   )
 
   // Include Iceberg dependencies only if supportIceberg is enabled
-  val icebergDeps = if (supportIceberg.value == "true") {
+  val icebergDeps = if (supportIceberg == "true") {
     getMajorMinor(deltaVersion) match {
       case (major, _) if major >= 4 =>
         // Don't include the iceberg dependencies for 4.0.0rc1 and later
@@ -199,7 +200,8 @@ lazy val root = (project in file("."))
       getDeltaArtifactName.value,
       getIcebergSparkRuntimeArtifactName.value,
       getSparkPackageSuffix.value,
-      scalaBinaryVersion.value),
+      scalaBinaryVersion.value,
+      getSupportIceberg.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
@@ -208,7 +210,7 @@ lazy val root = (project in file("."))
     ),
     // Conditionally exclude IcebergCompatV2.scala when supportIceberg is "false"
     Compile / unmanagedSources / excludeFilter := {
-      if (supportIceberg.value == "false") {
+      if (getSupportIceberg.value == "false") {
         HiddenFileFilter || "IcebergCompatV2.scala"
       } else {
         HiddenFileFilter
