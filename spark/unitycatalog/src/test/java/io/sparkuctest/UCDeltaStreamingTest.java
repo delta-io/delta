@@ -56,6 +56,7 @@ import scala.collection.immutable.Seq;
  * Catalog.
  */
 public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
+  
   /**
    * Creates a local temporary directory for checkpoint location. Checkpoint must be on local
    * filesystem since Spark doesn't have direct cloud storage credentials (credentials are managed
