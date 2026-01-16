@@ -29,11 +29,14 @@ class DeltaAnalysisException(
     errorClass: String,
     messageParameters: Array[String],
     cause: Option[Throwable] = None,
-    origin: Option[Origin] = None)
+    origin: Option[Origin] = None,
+    precomputedMessage: Option[String] = None,
+    precomputedMessageParametersMap: Option[java.util.Map[String, String]] = None)
   extends AnalysisException(
-    message = DeltaThrowableHelper.getMessage(errorClass, messageParameters),
-    messageParameters = DeltaThrowableHelper
-      .getMessageParameters(errorClass, errorSubClass = null, messageParameters).asScala.toMap,
+    message = precomputedMessage.getOrElse(
+      DeltaThrowableHelper.getMessage(errorClass, messageParameters)),
+    messageParameters = precomputedMessageParametersMap.getOrElse(DeltaThrowableHelper
+      .getMessageParameters(errorClass, errorSubClass = null, messageParameters)).asScala.toMap,
     errorClass = Some(errorClass),
     line = origin.flatMap(_.line),
     startPosition = origin.flatMap(_.startPosition),
@@ -43,10 +46,28 @@ class DeltaAnalysisException(
   def getMessageParametersArray: Array[String] = messageParameters
   override def getErrorClass: String = errorClass
   override def getMessageParameters: java.util.Map[String, String] =
-    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    precomputedMessageParametersMap.getOrElse(
+      DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+    )
   override def withPosition(origin: Origin): AnalysisException =
-    new DeltaAnalysisException(errorClass, messageParameters, cause, Some(origin))
+    new DeltaAnalysisException(errorClass, messageParameters, cause, Some(origin),
+      precomputedMessage, precomputedMessageParametersMap)
 }
+
+class DeltaAnalysisExceptionWithSubErrors(
+    errorClass: String,
+    messageParameters: Array[String],
+    subErrors: Seq[(String, Array[String])])
+  extends DeltaAnalysisException(
+    errorClass = errorClass,
+    messageParameters = messageParameters,
+    cause = None,
+    origin = None,
+    precomputedMessage = Some(
+      DeltaThrowableHelper.getMessageWithSubErrors(errorClass, messageParameters, subErrors)),
+    precomputedMessageParametersMap = Some(
+      DeltaThrowableHelper.getMainErrorMessageParameters(errorClass, messageParameters))
+  )
 
 class DeltaIllegalArgumentException(
     errorClass: String,

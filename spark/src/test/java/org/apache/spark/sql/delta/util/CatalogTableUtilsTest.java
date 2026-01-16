@@ -13,54 +13,56 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.utils;
+package org.apache.spark.sql.delta.util;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.junit.jupiter.api.Test;
+import org.junit.Test;
 import scala.Option;
 
 /** Tests for {@link CatalogTableUtils}. */
-class CatalogTableUtilsTest {
+public class CatalogTableUtilsTest {
 
   @Test
-  void testIsCatalogManaged_CatalogFlagEnabled_ReturnsTrue() {
+  public void testIsCatalogManaged_CatalogFlagEnabled_ReturnsTrue() {
     CatalogTable table =
         catalogTable(
             Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertTrue(
-        CatalogTableUtils.isCatalogManaged(table), "Catalog-managed flag should enable detection");
+        "Catalog-managed flag should enable detection",
+        CatalogTableUtils.isCatalogManaged(table));
   }
 
   @Test
-  void testIsCatalogManaged_PreviewFlagEnabled_ReturnsTrue() {
+  public void testIsCatalogManaged_PreviewFlagEnabled_ReturnsTrue() {
     CatalogTable table =
         catalogTable(
             Collections.emptyMap(),
             Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "SuPpOrTeD"));
 
     assertTrue(
-        CatalogTableUtils.isCatalogManaged(table),
-        "Preview flag should enable detection ignoring case");
+        "Preview flag should enable detection ignoring case",
+        CatalogTableUtils.isCatalogManaged(table));
   }
 
   @Test
-  void testIsCatalogManaged_NoFlags_ReturnsFalse() {
+  public void testIsCatalogManaged_NoFlags_ReturnsFalse() {
     CatalogTable table = catalogTable(Collections.emptyMap(), Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isCatalogManaged(table), "No catalog flags should disable detection");
+        "No catalog flags should disable detection",
+        CatalogTableUtils.isCatalogManaged(table));
   }
 
   @Test
-  void testIsUnityCatalogManaged_FlagAndIdPresent_ReturnsTrue() {
+  public void testIsUnityCatalogManaged_FlagAndIdPresent_ReturnsTrue() {
     CatalogTable table =
         catalogTable(
             Collections.emptyMap(),
@@ -71,67 +73,67 @@ class CatalogTableUtilsTest {
                 "abc-123"));
 
     assertTrue(
-        CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Unity Catalog detection should require flag and identifier");
+        "Unity Catalog detection should require flag and identifier",
+        CatalogTableUtils.isUnityCatalogManagedTable(table));
   }
 
   @Test
-  void testIsUnityCatalogManaged_MissingId_ReturnsFalse() {
+  public void testIsUnityCatalogManaged_MissingId_ReturnsFalse() {
     CatalogTable table =
         catalogTable(
             Collections.emptyMap(), Map.of(CatalogTableUtils.FEATURE_CATALOG_MANAGED, "supported"));
 
     assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Missing table identifier should break Unity detection");
+        "Missing table identifier should break Unity detection",
+        CatalogTableUtils.isUnityCatalogManagedTable(table));
   }
 
   @Test
-  void testIsUnityCatalogManaged_PreviewFlagMissingId_ReturnsFalse() {
+  public void testIsUnityCatalogManaged_PreviewFlagMissingId_ReturnsFalse() {
     CatalogTable table =
         catalogTable(
             Collections.emptyMap(),
             Map.of(CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW, "supported"));
 
     assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Preview flag without ID should not be considered Unity managed");
+        "Preview flag without ID should not be considered Unity managed",
+        CatalogTableUtils.isUnityCatalogManagedTable(table));
   }
 
   @Test
-  void testIsCatalogManaged_NullStorage_ReturnsFalse() {
+  public void testIsCatalogManaged_NullStorage_ReturnsFalse() {
     CatalogTable table = catalogTableWithNullStorage(Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isCatalogManaged(table),
-        "Null storage should not be considered catalog managed");
+        "Null storage should not be considered catalog managed",
+        CatalogTableUtils.isCatalogManaged(table));
   }
 
   @Test
-  void testIsUnityCatalogManaged_NullStorage_ReturnsFalse() {
+  public void testIsUnityCatalogManaged_NullStorage_ReturnsFalse() {
     CatalogTable table = catalogTableWithNullStorage(Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Null storage should not be considered Unity managed");
+        "Null storage should not be considered Unity managed",
+        CatalogTableUtils.isUnityCatalogManagedTable(table));
   }
 
   @Test
-  void testIsCatalogManaged_NullStorageProperties_ReturnsFalse() {
+  public void testIsCatalogManaged_NullStorageProperties_ReturnsFalse() {
     CatalogTable table = catalogTableWithNullStorageProperties(Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isCatalogManaged(table),
-        "Null storage properties should not be considered catalog managed");
+        "Null storage properties should not be considered catalog managed",
+        CatalogTableUtils.isCatalogManaged(table));
   }
 
   @Test
-  void testIsUnityCatalogManaged_NullStorageProperties_ReturnsFalse() {
+  public void testIsUnityCatalogManaged_NullStorageProperties_ReturnsFalse() {
     CatalogTable table = catalogTableWithNullStorageProperties(Collections.emptyMap());
 
     assertFalse(
-        CatalogTableUtils.isUnityCatalogManagedTable(table),
-        "Null storage properties should not be considered Unity managed");
+        "Null storage properties should not be considered Unity managed",
+        CatalogTableUtils.isUnityCatalogManagedTable(table));
   }
 
   private static CatalogTable catalogTable(
@@ -169,3 +171,4 @@ class CatalogTableUtilsTest {
         true /* nullStorageProperties */);
   }
 }
+

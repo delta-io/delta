@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.checksum.ChecksumWriter;
@@ -293,6 +294,17 @@ public class SnapshotImpl implements Snapshot {
       default:
         throw new IllegalStateException("Unknown checksum write mode: " + mode);
     }
+  }
+
+  public void writeCheckpoint(Engine engine) throws IOException {
+    // Refuse to create a checkpoint if the table is CatalogManaged but the current snapshot is not
+    // published
+    if (TableFeatures.isCatalogManagedSupported(protocol)
+        && getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L) < version) {
+      throw DeltaErrors.checkpointOnUnpublishedCommits(
+          getPath(), version, getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L));
+    }
+    Checkpointer.checkpoint(engine, System::currentTimeMillis, this);
   }
 
   ///////////////////

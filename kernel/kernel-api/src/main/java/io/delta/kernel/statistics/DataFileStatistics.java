@@ -380,7 +380,8 @@ public class DataFileStatistics {
     // Variant stats in JSON are Z85 encoded strings, all other stats should match the field type
     DataType expectedLiteralType =
         field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
-    if (literal.getDataType() == null || !literal.getDataType().equals(expectedLiteralType)) {
+    if (literal.getDataType() == null
+        || !expectedLiteralType.isWriteCompatible(literal.getDataType())) {
       throw DeltaErrors.statsTypeMismatch(
           field.getName(), expectedLiteralType, literal.getDataType());
     }

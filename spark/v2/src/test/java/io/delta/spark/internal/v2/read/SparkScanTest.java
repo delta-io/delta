@@ -315,4 +315,79 @@ public class SparkScanTest extends SparkDsv2TestBase {
             + "Supported options are: [startingVersion, maxFilesPerTrigger, maxBytesPerTrigger].",
         exception.getMessage());
   }
+
+  // ================================================================================================
+  // Tests for equals and hashCode
+  // ================================================================================================
+
+  @Test
+  public void testEqualsAndHashCode() {
+    // Create two scans from the same table with same options
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Same table, same options should be equal
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDifferentOptions() {
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    Map<String, String> differentOptions = new HashMap<>();
+    differentOptions.put("customOption", "value");
+    CaseInsensitiveStringMap optionsMap = new CaseInsensitiveStringMap(differentOptions);
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(optionsMap);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Different options should not be equal and hashCodes should differ
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithSameFilters() {
+    // Both scans with equivalent filters created separately (not same instance)
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(
+        new org.apache.spark.sql.sources.Filter[] {
+          new org.apache.spark.sql.sources.EqualTo("city", "hz")
+        });
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(
+        new org.apache.spark.sql.sources.Filter[] {
+          new org.apache.spark.sql.sources.EqualTo("city", "hz")
+        });
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Same options and equivalent filters should be equal
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDifferentFilters() {
+    // Scan without filters
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    // Scan with filters pushed
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(
+        new org.apache.spark.sql.sources.Filter[] {
+          new org.apache.spark.sql.sources.EqualTo("city", "hz")
+        });
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // Same options but different filters should not be equal and hashCodes should differ
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
 }
