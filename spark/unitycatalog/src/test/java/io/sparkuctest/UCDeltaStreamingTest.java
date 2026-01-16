@@ -157,8 +157,8 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
             expected.add(List.of("0", "seed"));
-            
-	    // Enable V2 for streaming reads.
+
+            // Enable V2 for streaming reads.
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
             Dataset<Row> input = spark.readStream().table(tableName);
             // Start the streaming query into a memory sink
