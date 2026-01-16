@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
 import java.util.Collections;
@@ -41,6 +42,7 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     public final CommitBoundary startBoundary;
     public Optional<CommitBoundary> endBoundaryOpt = Optional.empty();
     public List<ParsedLogData> logDatas = Collections.emptyList();
+    public Optional<Long> maxCatalogVersion = Optional.empty();
 
     public Context(String unresolvedPath, CommitBoundary startBoundary) {
       this.unresolvedPath = requireNonNull(unresolvedPath, "unresolvedPath is null");
@@ -67,6 +69,13 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
   @Override
   public CommitRangeBuilderImpl withLogData(List<ParsedLogData> logData) {
     ctx.logDatas = requireNonNull(logData, "logData is null");
+    return this;
+  }
+
+  @Override
+  public CommitRangeBuilderImpl withMaxCatalogVersion(long version) {
+    checkArgument(version >= 0, "maxCatalogVersion must be >= 0, but got: %d", version);
+    ctx.maxCatalogVersion = Optional.of(version);
     return this;
   }
 
@@ -102,8 +111,82 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
       // Mixed types are allowed but will need runtime resolution
     }
 
+    // Validate max catalog version constraints if provided
+    if (ctx.maxCatalogVersion.isPresent()) {
+      long maxVersion = ctx.maxCatalogVersion.get();
+
+      // Validate start boundary against max catalog version
+      if (ctx.startBoundary.isVersion()) {
+        checkArgument(
+            ctx.startBoundary.getVersion() <= maxVersion,
+            String.format(
+                "startVersion (%d) must be <= maxCatalogVersion (%d)",
+                ctx.startBoundary.getVersion(), maxVersion));
+      } else if (ctx.startBoundary.isTimestamp()) {
+        long latestSnapshotVersion =
+            ((SnapshotImpl) ctx.startBoundary.getLatestSnapshot()).getVersion();
+        checkArgument(
+            latestSnapshotVersion == maxVersion,
+            String.format(
+                "When using timestamp boundaries with maxCatalogVersion, the provided "
+                    + "snapshot version (%d) must equal maxCatalogVersion (%d)",
+                latestSnapshotVersion, maxVersion));
+      }
+
+      // Validate end boundary against max catalog version
+      if (ctx.endBoundaryOpt.isPresent()) {
+        CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
+        if (endBoundary.isVersion()) {
+          checkArgument(
+              endBoundary.getVersion() <= maxVersion,
+              String.format(
+                  "endVersion (%d) must be <= maxCatalogVersion (%d)",
+                  endBoundary.getVersion(), maxVersion));
+        } else if (endBoundary.isTimestamp()) {
+          long latestSnapshotVersion =
+              ((SnapshotImpl) endBoundary.getLatestSnapshot()).getVersion();
+          checkArgument(
+              latestSnapshotVersion == maxVersion,
+              String.format(
+                  "When using timestamp boundaries with maxCatalogVersion, the provided "
+                      + "snapshot version (%d) must equal maxCatalogVersion (%d)",
+                  latestSnapshotVersion, maxVersion));
+        }
+      }
+
+      // Validate logData ends with maxCatalogVersion when no end boundary is provided
+      if (!ctx.endBoundaryOpt.isPresent() && !ctx.logDatas.isEmpty()) {
+        long lastLogDataVersion = ctx.logDatas.get(ctx.logDatas.size() - 1).getVersion();
+        checkArgument(
+            lastLogDataVersion == maxVersion,
+            String.format(
+                "When maxCatalogVersion is specified without an end boundary, the last "
+                    + "logData version (%d) must equal maxCatalogVersion (%d)",
+                lastLogDataVersion, maxVersion));
+      }
+    }
+
     // Validate logData input
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
+
+    // Validate that when endVersion is provided with logData, logData must cover the range
+    // This is especially important for catalog-managed tables where the catalog must provide
+    // sufficient ratified commits to cover the requested range.
+    if (ctx.endBoundaryOpt.isPresent() && !ctx.logDatas.isEmpty()) {
+      CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
+      if (endBoundary.isVersion()) {
+        long endVersion = endBoundary.getVersion();
+        long lastLogDataVersion = ctx.logDatas.get(ctx.logDatas.size() - 1).getVersion();
+        checkArgument(
+            lastLogDataVersion >= endVersion,
+            String.format(
+                "When endVersion is specified with logData, the last logData version (%d) "
+                    + "must be >= endVersion (%d) to cover the requested range",
+                lastLogDataVersion, endVersion));
+      }
+      // Note: For timestamp boundaries, we can't validate at build time since the timestamp
+      // needs to be resolved to a version first in CommitRangeFactory
+    }
   }
 }
