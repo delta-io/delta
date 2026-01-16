@@ -510,7 +510,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       // try falling back to the published (backfilled) commit file.
       // This handles the race condition where UC returns a staged commit path
       // but the file has been backfilled and deleted before we read it.
-      if (isStagedDeltaFile(nextFile.getPath()) && isFileNotFoundException(e)) {
+      if (isStagedDeltaFile(nextFile.getPath()) && (e.getCause() instanceof FileNotFoundException)) {
         Path logPath = new Path(nextFile.getPath()).getParent().getParent();
         String publishedPath = deltaFile(logPath, fileVersion);
         logger.info(
@@ -543,11 +543,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         "Reading JSON log file `%s` with readSchema=%s",
         file,
         deltaReadSchema);
-  }
-
-  /** Checks if the given UncheckedIOException wraps a FileNotFoundException. */
-  private static boolean isFileNotFoundException(UncheckedIOException e) {
-    return e.getCause() instanceof FileNotFoundException;
   }
 
   /**
