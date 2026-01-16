@@ -21,6 +21,7 @@ import org.apache.spark.sql.catalyst.util.MapData;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.Decimal;
 import org.apache.spark.unsafe.types.CalendarInterval;
+import org.apache.spark.unsafe.types.GeometryVal;
 import org.apache.spark.unsafe.types.UTF8String;
 import org.apache.spark.unsafe.types.VariantVal;
 
@@ -127,6 +128,11 @@ public class ProjectedInternalRow extends InternalRow {
   @Override
   public CalendarInterval getInterval(int ordinal) {
     return delegate.getInterval(mapIndex(ordinal));
+  }
+
+  @Override
+  public GeometryVal getGeometry(int ordinal) {
+    return delegate.getGeometry(mapIndex(ordinal));
   }
 
   @Override
