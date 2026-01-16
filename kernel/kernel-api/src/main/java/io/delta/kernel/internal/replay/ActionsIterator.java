@@ -501,25 +501,25 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
-    CloseableIterator<FileReadResult> dataIter = null;
-    FileStatus fileToRead = nextFile;
+    CloseableIterator<FileReadResult> dataIter;
     try {
-      dataIter = readJsonCommitFile(fileToRead);
+      dataIter = readJsonCommitFile(nextFile);
     } catch (UncheckedIOException e) {
       // If reading a staged commit file fails with FileNotFoundException,
       // try falling back to the published (backfilled) commit file.
       // This handles the race condition where UC returns a staged commit path
       // but the file has been backfilled and deleted before we read it.
-      if (isStagedDeltaFile(nextFile.getPath()) && (e.getCause() instanceof FileNotFoundException)) {
+      if (isStagedDeltaFile(nextFile.getPath())
+          && (e.getCause() instanceof FileNotFoundException)) {
         Path logPath = new Path(nextFile.getPath()).getParent().getParent();
         String publishedPath = deltaFile(logPath, fileVersion);
         logger.info(
             "Staged commit file {} not found, falling back to published commit file {}",
             nextFile.getPath(),
             publishedPath);
-        fileToRead =
+        FileStatus fallbackFile =
             FileStatus.of(publishedPath, nextFile.getSize(), nextFile.getModificationTime());
-        dataIter = readJsonCommitFile(fileToRead);
+        dataIter = readJsonCommitFile(fallbackFile);
       } else {
         throw e;
       }
@@ -529,7 +529,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         dataIter,
         false /* isFromCheckpoint */,
         fileVersion,
-        Optional.of(fileToRead.getModificationTime()) /* timestamp */);
+        Optional.of(nextFile.getModificationTime()) /* timestamp */);
   }
 
   /** Reads a JSON commit file and returns an iterator of FileReadResult. */
