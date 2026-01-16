@@ -15,37 +15,53 @@
  */
 package io.delta.spark.internal.v2.read.deletionvector;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.NoSuchElementException;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.collection.Iterator;
 import scala.jdk.javaapi.CollectionConverters;
+import scala.runtime.AbstractFunction1;
 
 /**
- * Iterator that filters deleted rows and projects out the DV column.
- *
- * <p>Uses Spark's {@link ProjectingInternalRow} to avoid data copy.
+ * Utility to create deletion vector filtering iterator using Scala Iterator's filter() and map().
  *
  * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
  */
-public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeable {
+public class DeletedRowFilterIterator {
 
-  private final Iterator<InternalRow> baseIter;
-  private final int dvColumnIndex;
-  private final ProjectingInternalRow projection;
-  private InternalRow nextRow = null;
+  private DeletedRowFilterIterator() {}
 
-  public DeletedRowFilterIterator(
+  /**
+   * Create a filtering iterator that removes deleted rows and projects out the DV column.
+   *
+   * <p>Uses Scala Iterator's filter() and map() for clean functional composition.
+   */
+  public static Iterator<InternalRow> create(
       Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns, StructType inputSchema) {
-    this.baseIter = baseIter;
-    this.dvColumnIndex = dvColumnIndex;
-    this.projection = buildProjection(inputSchema, dvColumnIndex);
+
+    ProjectingInternalRow projection = buildProjection(inputSchema, dvColumnIndex);
+
+    // filter: keep non-deleted rows (DV column == 0)
+    // map: project out DV column
+    return baseIter
+        .filter(
+            new AbstractFunction1<InternalRow, Object>() {
+              @Override
+              public Object apply(InternalRow row) {
+                return row.getByte(dvColumnIndex) == 0;
+              }
+            })
+        .map(
+            new AbstractFunction1<InternalRow, InternalRow>() {
+              @Override
+              public InternalRow apply(InternalRow row) {
+                projection.project(row);
+                return projection;
+              }
+            });
   }
 
   /** Build ProjectingInternalRow that skips the DV column. */
@@ -63,35 +79,5 @@ public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeabl
     StructType outputSchema = new StructType(outputFields.toArray(new StructField[0]));
     return ProjectingInternalRow.apply(
         outputSchema, CollectionConverters.asScala(colOrdinals).toSeq());
-  }
-
-  @Override
-  public void close() throws IOException {
-    if (baseIter instanceof Closeable) {
-      ((Closeable) baseIter).close();
-    }
-  }
-
-  @Override
-  public boolean hasNext() {
-    while (nextRow == null && baseIter.hasNext()) {
-      InternalRow row = baseIter.next();
-      if (row.getByte(dvColumnIndex) == 0) {
-        projection.project(row);
-        nextRow = projection;
-        return true;
-      }
-    }
-    return nextRow != null;
-  }
-
-  @Override
-  public InternalRow next() {
-    if (nextRow == null && !hasNext()) {
-      throw new NoSuchElementException();
-    }
-    InternalRow result = nextRow;
-    nextRow = null;
-    return result;
   }
 }
