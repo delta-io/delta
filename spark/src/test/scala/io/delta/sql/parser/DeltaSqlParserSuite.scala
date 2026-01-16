@@ -555,7 +555,7 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
       "'/path' '/to' '/table'"
     )
 
-    partedPathes.foreach { path => 
+    partedPathes.foreach { path =>
       // CLONE LOCATION
       val cloneCmd = parser.parsePlan(
         s"CREATE TABLE t1 SHALLOW CLONE source LOCATION $path")
