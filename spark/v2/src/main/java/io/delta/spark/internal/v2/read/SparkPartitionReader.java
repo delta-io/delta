@@ -26,14 +26,13 @@ import scala.collection.Iterator;
 
 public class SparkPartitionReader<T> implements PartitionReader<T> {
   // Function that produces an Iterator for a given file.
-  // May return RecordReaderIterator (standard) or DeletionVectorFilterIterator (with DV).
   private final Function1<PartitionedFile, Iterator<InternalRow>> readFunc;
   private final FilePartition partition;
 
   // Index of the next file to read within the partition.
   private int currentFileIndex = 0;
 
-  // Current iterator - may be RecordReaderIterator or DeletionVectorFilterIterator.
+  // Current iterator for the file being read.
   private Iterator<T> currentIterator = null;
 
   public SparkPartitionReader(
