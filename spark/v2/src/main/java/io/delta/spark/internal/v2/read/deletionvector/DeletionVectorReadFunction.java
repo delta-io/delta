@@ -52,7 +52,7 @@ public class DeletionVectorReadFunction
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    return new DeletedRowFilterIterator(
+    return DeletedRowFilterIterator.create(
         baseReadFunc.apply(file), dvColumnIndex, totalColumns, inputSchema);
   }
 
