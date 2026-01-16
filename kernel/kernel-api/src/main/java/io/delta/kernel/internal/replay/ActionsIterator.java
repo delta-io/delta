@@ -504,6 +504,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     CloseableIterator<FileReadResult> dataIter = null;
     try {
       dataIter = readJsonCommitFile(nextFile);
+      return combine(
+          dataIter,
+          false /* isFromCheckpoint */,
+          fileVersion,
+          Optional.of(nextFile.getModificationTime()) /* timestamp */);
     } catch (UncheckedIOException e) {
       // If reading a staged commit file fails with FileNotFoundException,
       // try falling back to the published (backfilled) commit file.
@@ -520,16 +525,19 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         FileStatus fallbackFile =
             FileStatus.of(publishedPath, nextFile.getSize(), nextFile.getModificationTime());
         dataIter = readJsonCommitFile(fallbackFile);
+        return combine(
+            dataIter,
+            false /* isFromCheckpoint */,
+            fileVersion,
+            Optional.of(nextFile.getModificationTime()) /* timestamp */);
       } else {
+        Utils.closeCloseablesSilently(dataIter);
         throw e;
       }
+    } catch (Exception e) {
+      Utils.closeCloseablesSilently(dataIter);
+      throw e;
     }
-
-    return combine(
-        dataIter,
-        false /* isFromCheckpoint */,
-        fileVersion,
-        Optional.of(nextFile.getModificationTime()) /* timestamp */);
   }
 
   /** Reads a JSON commit file and returns an iterator of FileReadResult. */
