@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, OptimisticTransaction, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, ColumnMappingTableFeature, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, IdMapping, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -41,6 +41,7 @@ import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.connector.catalog.CatalogPlugin
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.util.Utils
 
 object CatalogOwnedTableUtils extends DeltaLogging {
@@ -174,6 +175,135 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case _ =>
         None
     }
+  }
+
+  /**
+   * The "Quality of Life" table features that will be enabled automatically
+   * when creating CatalogOwned tables.
+   * Note that we also include the properties (i.e., DeltaConfig and target value)
+   * used to determine whether the table features and the corresponding
+   * properties/metadata have been enabled or not.
+   */
+  val QOL_TABLE_FEATURES_AND_PROPERTIES: Seq[(TableFeature, DeltaConfig[_], String)] =
+    qolTableFeatureAndProperties
+
+  def qolTableFeatureAndProperties: Seq[(TableFeature, DeltaConfig[_], String)] =
+    Seq(
+      (DeletionVectorsTableFeature, DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION, "true"),
+      (V2CheckpointTableFeature, DeltaConfigs.CHECKPOINT_POLICY, CheckpointPolicy.V2.name),
+      // we have two separate flags control whether to enable RowTracking / ColumnMapping
+      // or not in this list.
+      // See [[DeltaSQLConf.CATALOG_OWNED_AUTO_ENABLE_QOL_FEATURES_EXCLUDE_ROW_TRACKING]] and
+      // [[DeltaSQLConf.CATALOG_OWNED_AUTO_ENABLE_QOL_FEATURES_EXCLUDE_COLUMN_MAPPING]]
+      // for details.
+      (RowTrackingFeature, DeltaConfigs.ROW_TRACKING_ENABLED, "true"),
+      (ColumnMappingTableFeature, DeltaConfigs.COLUMN_MAPPING_MODE,
+        NameMapping.name)
+    )
+
+  /**
+   * Return true if we should enable CatalogOwned either via default spark
+   * session configuration during creating a new table,
+   * or via the explicit table property overrides.
+   */
+  def shouldEnableCatalogOwned(
+      spark: SparkSession,
+      propertyOverrides: Map[String, String],
+      isCreatingNew: Boolean = true): Boolean = {
+    // Check explicit property overrides when creating a new or upgrading an existing table.
+    val isExplicitlyEnablingCO = TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
+      configs = propertyOverrides).contains(CatalogOwnedTableFeature)
+
+    // Check default spark session configuration only when creating a new table.
+    val isEnablingCOByDefault =
+      isCreatingNew && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+
+    isExplicitlyEnablingCO || isEnablingCOByDefault
+  }
+
+  /**
+   * Checks if a QoL feature is globally excluded via Spark configuration.
+   * These exclusions can be overridden
+   *
+   * Note: Visible only for testing.
+   */
+  private[delta] def isExcludedBySparkConfig(
+      feature: TableFeature,
+      spark: SparkSession): Boolean = {
+    feature match {
+      case RowTrackingFeature if spark.conf.get(
+        DeltaSQLConf.CATALOG_OWNED_AUTO_ENABLE_QOL_FEATURES_EXCLUDE_ROW_TRACKING) => true
+      case ColumnMappingTableFeature if spark.conf.get(
+        DeltaSQLConf.CATALOG_OWNED_AUTO_ENABLE_QOL_FEATURES_EXCLUDE_COLUMN_MAPPING) => true
+      case _ => false
+    }
+  }
+
+  /**
+   * Checks if a configuration is already set in metadata or Spark defaults.
+   * Ensures we don't override user preferences.
+   */
+  private def isAlreadyConfigured(
+      config: DeltaConfig[_],
+      configuration: Map[String, String],
+      spark: SparkSession): Boolean = {
+    configuration.contains(config.key) ||
+      spark.sessionState.conf.contains(config.defaultTablePropertyKey)
+  }
+
+  /**
+   * Determines which QoL configurations should be added.
+   * See [[shouldAddQoLFeature]] for the evaluation logic.
+   */
+  private def getQoLConfigsToAdd(
+      spark: SparkSession,
+      configuration: Map[String, String]): Map[String, String] = {
+    QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+      case (feature, config, targetValue) if
+          shouldAddQoLFeature(
+            feature,
+            config,
+            spark,
+            configuration) =>
+        config.key -> targetValue
+    }.toMap
+  }
+
+  /**
+   * Evaluates whether a QoL feature should be enabled.
+   * Note: Visible only for testing.
+   */
+  private[delta] def shouldAddQoLFeature(
+      feature: TableFeature,
+      config: DeltaConfig[_],
+      spark: SparkSession,
+      configuration: Map[String, String]): Boolean = {
+    !isAlreadyConfigured(config, configuration, spark) &&
+      !isExcludedBySparkConfig(feature, spark)
+  }
+
+  /**
+   * Updates table metadata with appropriate QoL features for CatalogManaged tables.
+   *
+   * Main entry point for QoL feature enablement during table creation.
+   * See [[getQoLConfigsToAdd]] for the logic that determines which features are added.
+   *
+   * @param spark SparkSession for configuration
+   * @param metadata Table metadata to update
+   * @return Updated metadata with QoL features, or original if globally disabled
+   */
+  def updateMetadataForQoLFeatures(
+      spark: SparkSession,
+      metadata: Metadata): Metadata = {
+    if (!spark.conf.get(DeltaSQLConf.CATALOG_OWNED_AUTO_ENABLE_QUALITY_OF_LIFE_FEATURES)) {
+      return metadata
+    }
+    metadata.copy(
+      configuration = metadata.configuration ++
+        getQoLConfigsToAdd(
+          spark,
+          metadata.configuration)
+    )
   }
 
   val ICT_TABLE_PROPERTY_CONFS = Seq(

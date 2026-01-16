@@ -2862,6 +2862,44 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .createWithDefault(true)
 
   ///////////
+  // CATALOG MANAGED - QOL FEATURES
+  ///////////
+  val CATALOG_OWNED_AUTO_ENABLE_QUALITY_OF_LIFE_FEATURES =
+    buildConf("catalogOwned.autoEnableQualityOfLifeFeatures.enable")
+      .internal()
+      .doc("When set to true, every newly created `catalogManaged` tables will automatically " +
+        "enable the following quality of life features as well: `columnMapping`, " +
+        "`v2Checkpoint`, `deletionVectors`, and `rowTracking`. Note that `rowTracking` " +
+        "and `columnMapping` are only enabled when the corresponding flags: " +
+        "\"catalogOwned.autoEnableQualityOfLifeFeatures.excludeRowTracking\", " +
+        "\"catalogOwned.autoEnableQualityOfLifeFeatures.excludeColumnMapping\" " +
+        "are set to false.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val CATALOG_OWNED_AUTO_ENABLE_QOL_FEATURES_EXCLUDE_ROW_TRACKING =
+    buildConf("catalogOwned.autoEnableQualityOfLifeFeatures.excludeRowTracking")
+      .internal()
+      .doc("When set to false, if \"catalogOwned.autoEnableQualityOfLifeFeatures.enable\" " +
+        "is also set to true, then every newly created `catalogManaged` tables will " +
+        "automatically enable the `rowTracking` feature. When set to true, the " +
+        "`rowTracking` feature will be excluded from the list of quality of life features " +
+        "that are automatically enabled.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val CATALOG_OWNED_AUTO_ENABLE_QOL_FEATURES_EXCLUDE_COLUMN_MAPPING =
+    buildConf("catalogOwned.autoEnableQualityOfLifeFeatures.excludeColumnMapping")
+      .internal()
+      .doc("When set to false, if \"catalogOwned.autoEnableQualityOfLifeFeatures.enable\" " +
+        "is also set to true, then every newly created `catalogManaged` tables will " +
+        "automatically enable the `columnMapping` feature. When set to true, the " +
+        "`columnMapping` feature will be excluded from the list of quality of life features " +
+        "that are automatically enabled.")
+      .booleanConf
+      .createWithDefault(true)
+
+  ///////////
   // TESTING
   ///////////
   val DELTA_POST_COMMIT_HOOK_THROW_ON_ERROR =
