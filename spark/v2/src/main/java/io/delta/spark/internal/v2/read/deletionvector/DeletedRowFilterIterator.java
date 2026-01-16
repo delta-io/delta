@@ -19,11 +19,12 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.NoSuchElementException;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import scala.collection.Iterator;
 
 /**
  * Iterator that filters deleted rows and projects out the DV column.
+ *
+ * <p>Uses {@link ProjectedInternalRow} to avoid data copy (inspired by Iceberg).
  *
  * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
  */
@@ -31,14 +32,13 @@ public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeabl
 
   private final Iterator<InternalRow> baseIter;
   private final int dvColumnIndex;
-  private final int outputColumnCount;
   private InternalRow nextRow = null;
 
   public DeletedRowFilterIterator(
       Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns) {
     this.baseIter = baseIter;
     this.dvColumnIndex = dvColumnIndex;
-    this.outputColumnCount = totalColumns - 1;
+    // totalColumns not used in row-based filtering; kept for API consistency with PR3
   }
 
   @Override
@@ -70,20 +70,8 @@ public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeabl
     return result;
   }
 
-  /**
-   * Project out DV column from row.
-   *
-   * <p>Note: row.get(i, null) with null dataType returns the raw object without type conversion.
-   * This is safe here since we're just copying values to a new row.
-   */
+  /** Project out DV column from row without copying data. */
   private InternalRow projectRow(InternalRow row) {
-    Object[] values = new Object[outputColumnCount];
-    int outIdx = 0;
-    for (int i = 0; i <= outputColumnCount; i++) {
-      if (i != dvColumnIndex) {
-        values[outIdx++] = row.get(i, null);
-      }
-    }
-    return new GenericInternalRow(values);
+    return new ProjectedInternalRow(row, dvColumnIndex);
   }
 }
