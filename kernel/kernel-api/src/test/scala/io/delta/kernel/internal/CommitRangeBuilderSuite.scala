@@ -949,7 +949,8 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
   }
 
   test(
-    "withMaxCatalogVersion: start timestamp boundary requires snapshot version = maxCatalogVersion") {
+    "withMaxCatalogVersion: start timestamp boundary requires snapshot version = " +
+      "maxCatalogVersion") {
     val fileList = deltaFileStatuses(0L to 10L)
     val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
 
