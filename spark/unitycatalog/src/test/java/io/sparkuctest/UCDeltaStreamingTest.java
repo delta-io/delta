@@ -56,10 +56,6 @@ import scala.collection.immutable.Seq;
  * Catalog.
  */
 public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
-  private static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
-  private static final String V2_ENABLE_MODE_STRICT = "STRICT";
-  private static final String V2_ENABLE_MODE_NONE = "NONE";
-
   /**
    * Creates a local temporary directory for checkpoint location. Checkpoint must be on local
    * filesystem since Spark doesn't have direct cloud storage credentials (credentials are managed
