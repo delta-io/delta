@@ -35,6 +35,7 @@ import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
@@ -501,29 +502,52 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
     CloseableIterator<FileReadResult> dataIter = null;
+    FileStatus fileToRead = nextFile;
     try {
-      dataIter =
-          wrapEngineExceptionThrowsIO(
-              () ->
-                  engine
-                      .getJsonHandler()
-                      .readJsonFiles(
-                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
-                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
-              "Reading JSON log file `%s` with readSchema=%s",
-              nextFile,
-              deltaReadSchema);
-      return combine(
-          dataIter,
-          false /* isFromCheckpoint */,
-          fileVersion,
-          Optional.of(nextFile.getModificationTime()) /* timestamp */);
-    } catch (Exception e) {
-      if (dataIter != null) {
-        Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
+      dataIter = readJsonCommitFile(fileToRead);
+    } catch (UncheckedIOException e) {
+      // If reading a staged commit file fails with FileNotFoundException,
+      // try falling back to the published (backfilled) commit file.
+      // This handles the race condition where UC returns a staged commit path
+      // but the file has been backfilled and deleted before we read it.
+      if (isStagedDeltaFile(nextFile.getPath()) && isFileNotFoundException(e)) {
+        Path logPath = new Path(nextFile.getPath()).getParent().getParent();
+        String publishedPath = deltaFile(logPath, fileVersion);
+        logger.info(
+            "Staged commit file {} not found, falling back to published commit file {}",
+            nextFile.getPath(),
+            publishedPath);
+        fileToRead =
+            FileStatus.of(publishedPath, nextFile.getSize(), nextFile.getModificationTime());
+        dataIter = readJsonCommitFile(fileToRead);
+      } else {
+        throw e;
       }
-      throw e;
     }
+
+    return combine(
+        dataIter,
+        false /* isFromCheckpoint */,
+        fileVersion,
+        Optional.of(fileToRead.getModificationTime()) /* timestamp */);
+  }
+
+  /** Reads a JSON commit file and returns an iterator of FileReadResult. */
+  private CloseableIterator<FileReadResult> readJsonCommitFile(FileStatus file) throws IOException {
+    return wrapEngineExceptionThrowsIO(
+        () ->
+            engine
+                .getJsonHandler()
+                .readJsonFiles(singletonCloseableIterator(file), deltaReadSchema, Optional.empty())
+                .map(batch -> new FileReadResult(batch, file.getPath())),
+        "Reading JSON log file `%s` with readSchema=%s",
+        file,
+        deltaReadSchema);
+  }
+
+  /** Checks if the given UncheckedIOException wraps a FileNotFoundException. */
+  private static boolean isFileNotFoundException(UncheckedIOException e) {
+    return e.getCause() instanceof FileNotFoundException;
   }
 
   /**
