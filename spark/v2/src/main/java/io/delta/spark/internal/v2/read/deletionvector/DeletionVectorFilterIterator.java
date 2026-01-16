@@ -27,12 +27,12 @@ import scala.collection.Iterator;
  *
  * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
  */
-public class DeletionVectorFilterIterator implements Iterator<Object>, Closeable {
+public class DeletionVectorFilterIterator implements Iterator<InternalRow>, Closeable {
 
   private final Iterator<InternalRow> baseIter;
   private final int dvColumnIndex;
   private final int outputColumnCount;
-  private Object nextItem = null;
+  private InternalRow nextRow = null;
 
   public DeletionVectorFilterIterator(
       Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns) {
@@ -50,28 +50,23 @@ public class DeletionVectorFilterIterator implements Iterator<Object>, Closeable
 
   @Override
   public boolean hasNext() {
-    while (nextItem == null && baseIter.hasNext()) {
-      Object item = baseIter.next();
-      if (item instanceof InternalRow) {
-        InternalRow row = (InternalRow) item;
-        if (row.getByte(dvColumnIndex) == 0) {
-          nextItem = projectRow(row);
-          return true;
-        }
-      } else {
-        throw new IllegalStateException("Unexpected type: " + item.getClass().getName());
+    while (nextRow == null && baseIter.hasNext()) {
+      InternalRow row = baseIter.next();
+      if (row.getByte(dvColumnIndex) == 0) {
+        nextRow = projectRow(row);
+        return true;
       }
     }
-    return nextItem != null;
+    return nextRow != null;
   }
 
   @Override
-  public Object next() {
-    if (nextItem == null && !hasNext()) {
+  public InternalRow next() {
+    if (nextRow == null && !hasNext()) {
       throw new NoSuchElementException();
     }
-    Object result = nextItem;
-    nextItem = null;
+    InternalRow result = nextRow;
+    nextRow = null;
     return result;
   }
 
