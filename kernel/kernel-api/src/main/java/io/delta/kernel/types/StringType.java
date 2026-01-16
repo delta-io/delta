@@ -79,6 +79,11 @@ public class StringType extends BasePrimitiveType {
     return dataType instanceof StringType;
   }
 
+  /** @return true if this StringType uses the default Spark UTF8_BINARY collation. */
+  public boolean isUTF8BinaryCollated() {
+    return collationIdentifier.isSparkUTF8BinaryCollation();
+  }
+
   @Override
   public boolean equals(Object o) {
     if (!(o instanceof StringType)) {
@@ -87,5 +92,15 @@ public class StringType extends BasePrimitiveType {
 
     StringType that = (StringType) o;
     return collationIdentifier.equals(that.collationIdentifier);
+  }
+
+  /** @return string representation of the StringType. */
+  @Override
+  public String toString() {
+    if (isUTF8BinaryCollated()) {
+      return super.toString();
+    } else {
+      return String.format("string collate %s", collationIdentifier.getName());
+    }
   }
 }
