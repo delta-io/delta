@@ -244,11 +244,9 @@ public class PartitionUtils {
     if (tableSupportsDV) {
       int dvColumnIndex =
           augmentedReadDataSchema.fieldIndex(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME());
-      int totalColumns = augmentedReadDataSchema.fields().length + partitionSchema.fields().length;
       // Full input schema: data columns (with DV column) + partition columns
       StructType fullInputSchema = augmentedReadDataSchema.merge(partitionSchema);
-      readFunc =
-          DeletionVectorReadFunction.wrap(readFunc, dvColumnIndex, totalColumns, fullInputSchema);
+      readFunc = DeletionVectorReadFunction.wrap(readFunc, dvColumnIndex, fullInputSchema);
     }
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);

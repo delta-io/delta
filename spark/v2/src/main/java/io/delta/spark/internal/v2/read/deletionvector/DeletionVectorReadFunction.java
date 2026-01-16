@@ -16,18 +16,25 @@
 package io.delta.spark.internal.v2.read.deletionvector;
 
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import scala.Function1;
 import scala.collection.Iterator;
+import scala.jdk.javaapi.CollectionConverters;
 import scala.runtime.AbstractFunction1;
 
 /**
  * Wraps a base reader function to apply deletion vector filtering.
  *
- * <p>Returns a {@link DeletedRowFilterIterator} that filters deleted rows and removes the DV column
- * from output.
+ * <p>Filters deleted rows using Scala Iterator's filter() and projects out the DV column using
+ * map() with Spark's ProjectingInternalRow.
+ *
+ * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
  */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
@@ -36,32 +43,64 @@ public class DeletionVectorReadFunction
 
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
   private final int dvColumnIndex;
-  private final int totalColumns;
   private final StructType inputSchema;
 
   private DeletionVectorReadFunction(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
       int dvColumnIndex,
-      int totalColumns,
       StructType inputSchema) {
     this.baseReadFunc = baseReadFunc;
     this.dvColumnIndex = dvColumnIndex;
-    this.totalColumns = totalColumns;
     this.inputSchema = inputSchema;
   }
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    return DeletedRowFilterIterator.create(
-        baseReadFunc.apply(file), dvColumnIndex, totalColumns, inputSchema);
+    ProjectingInternalRow projection = buildProjection(inputSchema, dvColumnIndex);
+
+    // filter: keep non-deleted rows (DV column == 0)
+    // map: project out DV column using Spark's ProjectingInternalRow
+    return baseReadFunc
+        .apply(file)
+        .filter(
+            new AbstractFunction1<InternalRow, Object>() {
+              @Override
+              public Object apply(InternalRow row) {
+                return row.getByte(dvColumnIndex) == 0;
+              }
+            })
+        .map(
+            new AbstractFunction1<InternalRow, InternalRow>() {
+              @Override
+              public InternalRow apply(InternalRow row) {
+                projection.project(row);
+                return projection;
+              }
+            });
+  }
+
+  /** Build ProjectingInternalRow that skips the DV column. */
+  private static ProjectingInternalRow buildProjection(StructType inputSchema, int excludeIndex) {
+    List<StructField> outputFields = new ArrayList<>();
+    List<Integer> colOrdinals = new ArrayList<>();
+
+    for (int i = 0; i < inputSchema.fields().length; i++) {
+      if (i != excludeIndex) {
+        outputFields.add(inputSchema.fields()[i]);
+        colOrdinals.add(i);
+      }
+    }
+
+    StructType outputSchema = new StructType(outputFields.toArray(new StructField[0]));
+    return ProjectingInternalRow.apply(
+        outputSchema, CollectionConverters.asScala(colOrdinals).toSeq());
   }
 
   /** Factory method to wrap a reader function with DV filtering. */
   public static DeletionVectorReadFunction wrap(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
       int dvColumnIndex,
-      int totalColumns,
       StructType inputSchema) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvColumnIndex, totalColumns, inputSchema);
+    return new DeletionVectorReadFunction(baseReadFunc, dvColumnIndex, inputSchema);
   }
 }
