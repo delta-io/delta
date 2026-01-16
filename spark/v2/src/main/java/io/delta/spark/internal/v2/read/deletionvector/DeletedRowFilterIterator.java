@@ -17,14 +17,20 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.NoSuchElementException;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.ProjectingInternalRow;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 import scala.collection.Iterator;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * Iterator that filters deleted rows and projects out the DV column.
  *
- * <p>Uses {@link ProjectedInternalRow} to avoid data copy (inspired by Iceberg).
+ * <p>Uses Spark's {@link ProjectingInternalRow} to avoid data copy.
  *
  * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
  */
@@ -32,13 +38,31 @@ public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeabl
 
   private final Iterator<InternalRow> baseIter;
   private final int dvColumnIndex;
+  private final ProjectingInternalRow projection;
   private InternalRow nextRow = null;
 
   public DeletedRowFilterIterator(
-      Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns) {
+      Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns, StructType inputSchema) {
     this.baseIter = baseIter;
     this.dvColumnIndex = dvColumnIndex;
-    // totalColumns not used in row-based filtering; kept for API consistency with PR3
+    this.projection = buildProjection(inputSchema, dvColumnIndex);
+  }
+
+  /** Build ProjectingInternalRow that skips the DV column. */
+  private static ProjectingInternalRow buildProjection(StructType inputSchema, int excludeIndex) {
+    List<StructField> outputFields = new ArrayList<>();
+    List<Integer> colOrdinals = new ArrayList<>();
+
+    for (int i = 0; i < inputSchema.fields().length; i++) {
+      if (i != excludeIndex) {
+        outputFields.add(inputSchema.fields()[i]);
+        colOrdinals.add(i);
+      }
+    }
+
+    StructType outputSchema = new StructType(outputFields.toArray(new StructField[0]));
+    return ProjectingInternalRow.apply(
+        outputSchema, CollectionConverters.asScala(colOrdinals).toSeq());
   }
 
   @Override
@@ -53,7 +77,8 @@ public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeabl
     while (nextRow == null && baseIter.hasNext()) {
       InternalRow row = baseIter.next();
       if (row.getByte(dvColumnIndex) == 0) {
-        nextRow = projectRow(row);
+        projection.project(row);
+        nextRow = projection;
         return true;
       }
     }
@@ -68,10 +93,5 @@ public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeabl
     InternalRow result = nextRow;
     nextRow = null;
     return result;
-  }
-
-  /** Project out DV column from row without copying data. */
-  private InternalRow projectRow(InternalRow row) {
-    return new ProjectedInternalRow(row, dvColumnIndex);
   }
 }
