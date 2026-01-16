@@ -25,8 +25,8 @@ import scala.runtime.AbstractFunction1;
 /**
  * Wraps a base reader function to apply deletion vector filtering.
  *
- * <p>Returns a {@link DeletionVectorFilterIterator} that filters deleted rows and removes the DV
- * column from output.
+ * <p>Returns a {@link DeletedRowFilterIterator} that filters deleted rows and removes the DV column
+ * from output.
  */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
@@ -48,7 +48,7 @@ public class DeletionVectorReadFunction
 
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    return new DeletionVectorFilterIterator(baseReadFunc.apply(file), dvColumnIndex, totalColumns);
+    return new DeletedRowFilterIterator(baseReadFunc.apply(file), dvColumnIndex, totalColumns);
   }
 
   /** Factory method to wrap a reader function with DV filtering. */

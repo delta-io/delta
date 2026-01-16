@@ -27,14 +27,14 @@ import scala.collection.Iterator;
  *
  * <p>This implementation handles row-based reading only. For vectorized reading support, see PR3.
  */
-public class DeletionVectorFilterIterator implements Iterator<InternalRow>, Closeable {
+public class DeletedRowFilterIterator implements Iterator<InternalRow>, Closeable {
 
   private final Iterator<InternalRow> baseIter;
   private final int dvColumnIndex;
   private final int outputColumnCount;
   private InternalRow nextRow = null;
 
-  public DeletionVectorFilterIterator(
+  public DeletedRowFilterIterator(
       Iterator<InternalRow> baseIter, int dvColumnIndex, int totalColumns) {
     this.baseIter = baseIter;
     this.dvColumnIndex = dvColumnIndex;
