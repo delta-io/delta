@@ -370,7 +370,6 @@ object AllowedUserProvidedExpressions {
     // Comparison functions
     expression[ILike]("ilike"),
 
-
     // Try arithmetic functions
     expression[TryAdd]("try_add"),
     expression[TrySubtract]("try_subtract"),
@@ -380,6 +379,6 @@ object AllowedUserProvidedExpressions {
     // Try parsing/conversion functions
     expression[TryToBinary]("try_to_binary"),
     expression[TryToNumber]("try_to_number"),
-    expression[ToNumber]("to_number"),
+    expression[ToNumber]("to_number")
   )
 }
