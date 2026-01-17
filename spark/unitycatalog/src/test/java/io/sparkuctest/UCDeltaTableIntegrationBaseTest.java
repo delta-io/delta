@@ -16,6 +16,12 @@
 
 package io.sparkuctest;
 
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -28,6 +34,9 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DynamicContainer;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
 
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
@@ -40,12 +49,38 @@ import org.junit.jupiter.api.BeforeAll;
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
 
+  public static final List<TableType> ALL_TABLE_TYPES =
+      List.of(TableType.EXTERNAL, TableType.MANAGED);
+
   /**
-   * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
-   * different table types.
+   * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
+   *
+   * <pre>{@code
+   * @TestAllTableTypes
+   * public void testAdvancedInsertOperations(TableType tableType)
+   * }</pre>
    */
-  protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
+  @Target(ElementType.METHOD)
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface TestAllTableTypes {}
+
+  /** Generate dynamic tests for all methods with @TestAllTableTypes to run with ALL_TABLE_TYPES. */
+  @TestFactory
+  Stream<DynamicContainer> allTableTypesTestsFactory() {
+    List<Method> methods =
+        Stream.of(this.getClass().getDeclaredMethods())
+            .filter(m -> m.isAnnotationPresent(TestAllTableTypes.class))
+            .collect(Collectors.toList());
+    List<DynamicContainer> containers = new ArrayList<>();
+    for (Method method : methods) {
+      List<DynamicTest> tests = new ArrayList<>();
+      for (TableType tableType : ALL_TABLE_TYPES) {
+        String testName = String.format("%s(%s)", method.getName(), tableType);
+        tests.add(DynamicTest.dynamicTest(testName, () -> method.invoke(this, tableType)));
+      }
+      containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
+    }
+    return containers.stream();
   }
 
   private SparkSession sparkSession;
