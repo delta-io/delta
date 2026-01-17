@@ -142,39 +142,41 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
   }
 
   test("shouldUseServerSidePlanning() decision logic") {
-    // Case 1: Force flag enabled -> should always use server-side planning
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      forceServerSidePlanning = true),
-      "Should use server-side planning when force flag is true")
+    // Test production mode: skipUCRequirementForTests = false
+    // Logic: (isUnityCatalog && !hasCredentials) && enableServerSidePlanning
+    for (isUC <- Seq(true, false)) {
+      for (hasCreds <- Seq(true, false)) {
+        for (enableSSP <- Seq(true, false)) {
+          val description = s"Production: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
+          val expected = (isUC && !hasCreds) && enableSSP
+          val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
+            isUnityCatalog = isUC,
+            hasCredentials = hasCreds,
+            enableServerSidePlanning = enableSSP,
+            skipUCRequirementForTests = false
+          )
+          assert(result == expected, s"$description -> expected $expected but got $result")
+        }
+      }
+    }
 
-    // Case 2: Unity Catalog without credentials -> should use server-side planning
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = true,
-      hasCredentials = false,
-      forceServerSidePlanning = false),
-      "Should use server-side planning for UC table without credentials")
-
-    // Case 3: Unity Catalog with credentials -> should NOT use server-side planning
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = true,
-      hasCredentials = true,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for UC table with credentials")
-
-    // Case 4: Non-UC catalog -> should NOT use server-side planning
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for non-UC catalog")
-
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = false,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for non-UC catalog (even without credentials)")
+    // Test test mode: skipUCRequirementForTests = true
+    // Logic: true && enableServerSidePlanning = enableServerSidePlanning
+    for (isUC <- Seq(true, false)) {
+      for (hasCreds <- Seq(true, false)) {
+        for (enableSSP <- Seq(true, false)) {
+          val description = s"Test mode: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
+          val expected = enableSSP
+          val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
+            isUnityCatalog = isUC,
+            hasCredentials = hasCreds,
+            enableServerSidePlanning = enableSSP,
+            skipUCRequirementForTests = true
+          )
+          assert(result == expected, s"$description -> expected $expected but got $result")
+        }
+      }
+    }
   }
 
   test("ServerSidePlannedTable is read-only") {
