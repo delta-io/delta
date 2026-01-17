@@ -1,0 +1,12 @@
+# CODEOWNERS file for Delta Lake
+# This file defines code owners who must approve changes to specific files/directories.
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Build configuration files and directories
+/build/                         @tdas
+/build.sbt                      @tdas
+/project/                       @tdas
+/version.sbt                    @tdas
+
+# All files in the root directory
+/*                              @tdas

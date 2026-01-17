@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
@@ -552,10 +552,11 @@ class CheckConstraintsSuite extends QueryTest
           "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
         checkError(
           exception = intercept[AnalysisException] {
-            sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 CHECK (id < year(current_date()))")
+            sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 " +
+              s"CHECK (id > (SELECT max(id) FROM $testTable))")
           },
           "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT",
-          parameters = Map("expression" -> "current_date()")
+          parameters = Map("expression" -> "scalarsubquery()")
         )
       }
     }
