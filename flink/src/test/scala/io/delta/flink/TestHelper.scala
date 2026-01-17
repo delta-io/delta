@@ -103,11 +103,15 @@ trait TestHelper {
       tablePath: String,
       schema: StructType,
       partitionCols: Seq[String] = Seq.empty,
-      numRows: Long = 0): Optional[Snapshot] = {
-    val txn = TableManager.buildCreateTableTransaction(tablePath, schema, "dummy")
-      .withDataLayoutSpec(DataLayoutSpec.partitioned(
+      numRows: Long = 0,
+      properties: Map[String, String] = Map.empty): Optional[Snapshot] = {
+    val txnBuilder = TableManager.buildCreateTableTransaction(tablePath, schema, "dummy")
+      .withTableProperties(properties.asJava)
+    if (partitionCols.nonEmpty) {
+      txnBuilder.withDataLayoutSpec(DataLayoutSpec.partitioned(
         partitionCols.map(new Column(_)).toList.asJava))
-      .build(engine)
+    }
+    val txn = txnBuilder.build(engine)
 
     val partitionMap = partitionCols.map { colName =>
       (colName, dummyRandomLiteral(schema.get(colName).getDataType))
