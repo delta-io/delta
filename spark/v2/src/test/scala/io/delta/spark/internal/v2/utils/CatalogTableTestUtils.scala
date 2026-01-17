@@ -81,4 +81,3 @@ object CatalogTableTestUtils {
       properties = scalaProps)
   }
 }
-

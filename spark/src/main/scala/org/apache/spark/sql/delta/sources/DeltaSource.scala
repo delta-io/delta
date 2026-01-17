@@ -629,7 +629,7 @@ trait DeltaSourceBase extends Source
         metadata.schema
       }
 
-      val schemaReadOptions = DeltaSourceUtils.SchemaReadOptions(
+      val schemaReadOptions = DeltaStreamUtils.SchemaReadOptions(
         allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
           allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
         allowUnsafeStreamingReadOnPartitionColumnChanges =
@@ -651,7 +651,7 @@ trait DeltaSourceBase extends Source
       val oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
       else oldMetadata.partitionColumns
 
-      val (isCompatible, isRetryable) = DeltaSourceUtils.validateBasicSchemaChanges(
+      val (isCompatible, isRetryable) = DeltaStreamUtils.validateBasicSchemaChanges(
         schemaChange, schema,
         newPartitionColumns, oldPartitionColumns,
         backfilling,
@@ -664,7 +664,7 @@ trait DeltaSourceBase extends Source
           data = Map(
             "currentVersion" -> snapshotAtSourceInit.version,
             "newVersion" -> version,
-            "retryable" -> isRetryable.get,
+            "retryable" -> isRetryable,
             "backfilling" -> backfilling,
             "readChangeDataFeed" -> options.readChangeFeed,
             "typeWideningEnabled" -> typeWideningEnabled,
@@ -708,7 +708,7 @@ trait DeltaSourceBase extends Source
       validatedDuringStreamStart: Boolean): Unit = {
     val shouldTrackSchema: Boolean =
       if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
-          TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
+        TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
         // If schema tracking is enabled for type widening, we will detect widening type changes and
         // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
         // DROP/RENAME for column mapping.
