@@ -503,7 +503,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       return readCommitFile(fileVersion, nextFile, nextFile.getPath(), timestamp);
     } catch (KernelEngineException e) {
       if (isStagedDeltaFile(nextFile.getPath())) {
-        return readPublishedCommitWithRetry(fileVersion, nextFile, timestamp, e);
+        if (hasFileNotFoundCause(e)) {
+          return readPublishedCommitWithRetry(fileVersion, nextFile, timestamp, e);
+        }
+        throw e;
+      }
+      if (hasFileNotFoundCause(e)) {
+        return readCommitFileWithRetry(fileVersion, nextFile, timestamp, e);
       }
       throw e;
     }
@@ -564,6 +570,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     publishedPath, stagedFile.getPath()),
                 e);
       } catch (KernelEngineException e) {
+        if (!hasFileNotFoundCause(e)) {
+          throw e;
+        }
         lastException = e;
       }
 
@@ -580,6 +589,44 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     throw lastException;
   }
 
+  private CloseableIterator<ActionWrapper> readCommitFileWithRetry(
+      long fileVersion,
+      FileStatus fileToRead,
+      Optional<Long> timestamp,
+      KernelEngineException initialFailure)
+      throws IOException {
+    String filePath = fileToRead.getPath();
+    KernelEngineException lastException = initialFailure;
+    for (int attempt = 1; attempt <= PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS; attempt++) {
+      try {
+        FileStatus refreshedFile = engine.getFileSystemClient().getFileStatus(filePath);
+        return readCommitFile(fileVersion, refreshedFile, filePath, timestamp);
+      } catch (IOException e) {
+        if (!isFileNotFoundException(e)) {
+          throw e;
+        }
+        lastException =
+            new KernelEngineException(
+                String.format("read commit file '%s' after it was missing", filePath), e);
+      } catch (KernelEngineException e) {
+        if (!hasFileNotFoundCause(e)) {
+          throw e;
+        }
+        lastException = e;
+      }
+
+      if (attempt < PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS) {
+        try {
+          Thread.sleep(PUBLISHED_COMMIT_FALLBACK_BASE_SLEEP_MS * attempt);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException("Thread was interrupted", ie);
+        }
+      }
+    }
+    throw lastException;
+  }
+
   private static boolean isFileNotFoundException(Throwable throwable) {
     if (throwable instanceof java.io.FileNotFoundException) {
       return true;
@@ -587,6 +634,17 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     String className = throwable.getClass().getName();
     return className.endsWith("FileNotFoundException")
         || className.endsWith("PathNotFoundException");
+  }
+
+  private static boolean hasFileNotFoundCause(Throwable throwable) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (isFileNotFoundException(current)) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 
   /**
