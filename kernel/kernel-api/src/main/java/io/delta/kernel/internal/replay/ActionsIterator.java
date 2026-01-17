@@ -27,6 +27,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
@@ -55,6 +56,8 @@ import org.slf4j.LoggerFactory;
  */
 public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   private static final Logger logger = LoggerFactory.getLogger(ActionsIterator.class);
+  private static final int PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS = 3;
+  private static final long PUBLISHED_COMMIT_FALLBACK_BASE_SLEEP_MS = 50L;
   private final Engine engine;
 
   private final Optional<Predicate> checkpointPredicate;
@@ -495,6 +498,20 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private CloseableIterator<ActionWrapper> readCommitOrCompactionFile(
       long fileVersion, FileStatus nextFile) throws IOException {
+    Optional<Long> timestamp = Optional.of(nextFile.getModificationTime());
+    try {
+      return readCommitFile(fileVersion, nextFile, nextFile.getPath(), timestamp);
+    } catch (KernelEngineException e) {
+      if (isStagedDeltaFile(nextFile.getPath())) {
+        return readPublishedCommitWithRetry(fileVersion, nextFile, timestamp, e);
+      }
+      throw e;
+    }
+  }
+
+  private CloseableIterator<ActionWrapper> readCommitFile(
+      long fileVersion, FileStatus fileToRead, String logicalFilePath, Optional<Long> timestamp)
+      throws IOException {
     // We can not read multiple JSON files in parallel (like the checkpoint files),
     // because each one has a different version, and we need to associate the
     // version with actions read from the JSON file for further optimizations later
@@ -508,22 +525,68 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                   engine
                       .getJsonHandler()
                       .readJsonFiles(
-                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
-                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
+                          singletonCloseableIterator(fileToRead), deltaReadSchema, Optional.empty())
+                      .map(batch -> new FileReadResult(batch, logicalFilePath)),
               "Reading JSON log file `%s` with readSchema=%s",
-              nextFile,
+              fileToRead,
               deltaReadSchema);
-      return combine(
-          dataIter,
-          false /* isFromCheckpoint */,
-          fileVersion,
-          Optional.of(nextFile.getModificationTime()) /* timestamp */);
+      return combine(dataIter, false /* isFromCheckpoint */, fileVersion, timestamp);
     } catch (Exception e) {
       if (dataIter != null) {
         Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
       }
       throw e;
     }
+  }
+
+  private CloseableIterator<ActionWrapper> readPublishedCommitWithRetry(
+      long fileVersion,
+      FileStatus stagedFile,
+      Optional<Long> timestamp,
+      KernelEngineException stagedFailure)
+      throws IOException {
+    Path logPath = new Path(stagedFile.getPath()).getParent().getParent();
+    String publishedPath = deltaFile(logPath, fileVersion);
+
+    KernelEngineException lastException = stagedFailure;
+    for (int attempt = 1; attempt <= PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS; attempt++) {
+      try {
+        FileStatus publishedFile = engine.getFileSystemClient().getFileStatus(publishedPath);
+        return readCommitFile(fileVersion, publishedFile, stagedFile.getPath(), timestamp);
+      } catch (IOException e) {
+        if (!isFileNotFoundException(e)) {
+          throw e;
+        }
+        lastException =
+            new KernelEngineException(
+                String.format(
+                    "read published commit file '%s' after staged commit '%s' was missing",
+                    publishedPath, stagedFile.getPath()),
+                e);
+      } catch (KernelEngineException e) {
+        lastException = e;
+      }
+
+      if (attempt < PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS) {
+        try {
+          Thread.sleep(PUBLISHED_COMMIT_FALLBACK_BASE_SLEEP_MS * attempt);
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException("Thread was interrupted", ie);
+        }
+      }
+    }
+
+    throw lastException;
+  }
+
+  private static boolean isFileNotFoundException(Throwable throwable) {
+    if (throwable instanceof java.io.FileNotFoundException) {
+      return true;
+    }
+    String className = throwable.getClass().getName();
+    return className.endsWith("FileNotFoundException")
+        || className.endsWith("PathNotFoundException");
   }
 
   /**

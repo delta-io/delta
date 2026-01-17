@@ -127,10 +127,15 @@ public class UCCatalogManagedClient {
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
                 final long maxUcTableVersion = response.getLatestTableVersion();
+                final Optional<Long> maxCatalogVersionOpt =
+                    maxUcTableVersion >= 0 ? Optional.of(maxUcTableVersion) : Optional.empty();
 
-                versionOpt.ifPresent(
-                    version ->
-                        validateTimeTravelVersionNotPastMax(ucTableId, version, maxUcTableVersion));
+                if (maxCatalogVersionOpt.isPresent()) {
+                  versionOpt.ifPresent(
+                      version ->
+                          validateTimeTravelVersionNotPastMax(
+                              ucTableId, version, maxCatalogVersionOpt.get()));
+                }
 
                 final List<ParsedLogData> logData =
                     getSortedKernelParsedDeltaDataFromRatifiedCommits(
@@ -157,17 +162,20 @@ public class UCCatalogManagedClient {
                                             ucTableId,
                                             tablePath,
                                             logData,
-                                            maxUcTableVersion));
+                                            maxCatalogVersionOpt));
                         snapshotBuilder =
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
 
-                      Snapshot snapshot =
+                      snapshotBuilder =
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
-                              .withLogData(logData)
-                              .withMaxCatalogVersion(maxUcTableVersion)
-                              .build(engine);
+                              .withLogData(logData);
+                      if (maxCatalogVersionOpt.isPresent()) {
+                        snapshotBuilder =
+                            snapshotBuilder.withMaxCatalogVersion(maxCatalogVersionOpt.get());
+                      }
+                      Snapshot snapshot = snapshotBuilder.build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
                     });
@@ -283,14 +291,19 @@ public class UCCatalogManagedClient {
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
     final long ucTableVersion = response.getLatestTableVersion();
-    validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
+    final Optional<Long> maxCatalogVersionOpt =
+        ucTableVersion >= 0 ? Optional.of(ucTableVersion) : Optional.empty();
+    if (maxCatalogVersionOpt.isPresent()) {
+      validateVersionBoundariesExist(
+          ucTableId, startVersionOpt, endVersionOpt, maxCatalogVersionOpt.get());
+    }
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
     final Lazy<Snapshot> latestSnapshot =
         new Lazy<>(
             () ->
                 loadLatestSnapshotForTimestampResolution(
-                    engine, ucTableId, tablePath, logData, ucTableVersion));
+                    engine, ucTableId, tablePath, logData, maxCatalogVersionOpt));
 
     return timeUncheckedOperation(
         logger,
@@ -503,17 +516,21 @@ public class UCCatalogManagedClient {
       String ucTableId,
       String tablePath,
       List<ParsedLogData> logData,
-      long ucTableVersion) {
+      Optional<Long> maxCatalogVersionOpt) {
     // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
     return timeUncheckedOperation(
         logger,
         "TableManager.loadSnapshot at latest for time-travel query",
         ucTableId,
-        () ->
-            TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
-                .withLogData(logData)
-                .withMaxCatalogVersion(ucTableVersion)
-                .build(engine));
+        () -> {
+          SnapshotBuilder snapshotBuilder =
+              TableManager.loadSnapshot(tablePath)
+                  .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                  .withLogData(logData);
+          if (maxCatalogVersionOpt.isPresent()) {
+            snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(maxCatalogVersionOpt.get());
+          }
+          return snapshotBuilder.build(engine);
+        });
   }
 }
