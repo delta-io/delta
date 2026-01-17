@@ -525,7 +525,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
             publishedPath);
         FileStatus fallbackFile =
             FileStatus.of(publishedPath, nextFile.getSize(), nextFile.getModificationTime());
-        dataIter = readJsonCommitFile(fallbackFile);
+        // Retry with backoff since the backfill may still be in progress
+        // (staged file deleted but published file not yet created)
+        dataIter = readJsonCommitFileWithRetry(fallbackFile);
         return combine(
             dataIter,
             false /* isFromCheckpoint */,
@@ -552,6 +554,41 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         "Reading JSON log file `%s` with readSchema=%s",
         file,
         deltaReadSchema);
+  }
+
+  /**
+   * Reads a JSON commit file with retry logic for handling the backfill race condition. During
+   * backfill, there's a brief window where the staged commit is deleted but the published commit
+   * isn't created yet. This method retries with exponential backoff to wait for the file.
+   */
+  private CloseableIterator<FileReadResult> readJsonCommitFileWithRetry(FileStatus file)
+      throws IOException {
+    int maxRetries = 5;
+    long delayMs = 100;
+    for (int attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return readJsonCommitFile(file);
+      } catch (KernelEngineException e) {
+        if (attempt < maxRetries - 1 && hasFileNotFoundCause(e)) {
+          logger.info(
+              "Published commit file {} not found (attempt {}), retrying in {}ms",
+              file.getPath(),
+              attempt + 1,
+              delayMs);
+          try {
+            Thread.sleep(delayMs);
+          } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            throw e;
+          }
+          delayMs *= 2; // exponential backoff
+        } else {
+          throw e;
+        }
+      }
+    }
+    // Should not reach here, but satisfy compiler
+    throw new IOException("Failed to read commit file after retries: " + file.getPath());
   }
 
   /** Checks if an exception has a file-not-found cause anywhere in its cause chain. */
