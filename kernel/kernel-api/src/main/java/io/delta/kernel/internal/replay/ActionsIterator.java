@@ -39,6 +39,7 @@ import io.delta.kernel.utils.FileStatus;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.file.NoSuchFileException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -515,7 +516,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       // try falling back to the published (backfilled) commit file.
       // This handles the race condition where UC returns a staged commit path
       // but the file has been backfilled and deleted before we read it.
-      if (isStagedDeltaFile(nextFile.getPath()) && hasCause(e, FileNotFoundException.class)) {
+      if (isStagedDeltaFile(nextFile.getPath()) && hasFileNotFoundCause(e)) {
         Path logPath = new Path(nextFile.getPath()).getParent().getParent();
         String publishedPath = deltaFile(logPath, fileVersion);
         logger.info(
@@ -553,11 +554,11 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         deltaReadSchema);
   }
 
-  /** Checks if an exception has a cause of the given type anywhere in its cause chain. */
-  private static boolean hasCause(Throwable e, Class<? extends Throwable> causeClass) {
+  /** Checks if an exception has a file-not-found cause anywhere in its cause chain. */
+  private static boolean hasFileNotFoundCause(Throwable e) {
     Throwable cause = e.getCause();
     while (cause != null) {
-      if (causeClass.isInstance(cause)) {
+      if (cause instanceof FileNotFoundException || cause instanceof NoSuchFileException) {
         return true;
       }
       cause = cause.getCause();
