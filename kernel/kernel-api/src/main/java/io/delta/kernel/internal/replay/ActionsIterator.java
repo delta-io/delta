@@ -27,6 +27,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
@@ -509,13 +510,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
           false /* isFromCheckpoint */,
           fileVersion,
           Optional.of(nextFile.getModificationTime()) /* timestamp */);
-    } catch (UncheckedIOException e) {
+    } catch (KernelEngineException e) {
       // If reading a staged commit file fails with FileNotFoundException,
       // try falling back to the published (backfilled) commit file.
       // This handles the race condition where UC returns a staged commit path
       // but the file has been backfilled and deleted before we read it.
-      if (isStagedDeltaFile(nextFile.getPath())
-          && (e.getCause() instanceof FileNotFoundException)) {
+      if (isStagedDeltaFile(nextFile.getPath()) && hasCause(e, FileNotFoundException.class)) {
         Path logPath = new Path(nextFile.getPath()).getParent().getParent();
         String publishedPath = deltaFile(logPath, fileVersion);
         logger.info(
@@ -551,6 +551,18 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         "Reading JSON log file `%s` with readSchema=%s",
         file,
         deltaReadSchema);
+  }
+
+  /** Checks if an exception has a cause of the given type anywhere in its cause chain. */
+  private static boolean hasCause(Throwable e, Class<? extends Throwable> causeClass) {
+    Throwable cause = e.getCause();
+    while (cause != null) {
+      if (causeClass.isInstance(cause)) {
+        return true;
+      }
+      cause = cause.getCause();
+    }
+    return false;
   }
 
   /**
