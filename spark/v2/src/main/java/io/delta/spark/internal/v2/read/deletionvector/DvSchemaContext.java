@@ -17,11 +17,13 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
-import scala.collection.immutable.Seq;
-import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * Schema context for deletion vector processing in the V2 connector.
@@ -36,29 +38,54 @@ public class DvSchemaContext implements Serializable {
   private final int dvColumnIndex;
   private final int inputColumnCount;
   private final StructType outputSchema;
-  private final Seq<Object> outputColumnOrdinals;
+  private final int[] excludedColumnIndices;
+  private final List<Integer> outputColumnOrdinals;
 
   /**
    * Create a DV schema context.
    *
    * @param readDataSchema original data schema without DV column
    * @param partitionSchema partition columns schema
+   * @param useMetadataRowIndex whether to use _metadata.row_index for DV filtering
    */
-  public DvSchemaContext(StructType readDataSchema, StructType partitionSchema) {
+  public DvSchemaContext(
+      StructType readDataSchema, StructType partitionSchema, boolean useMetadataRowIndex) {
+    // Build schema: add row_index column (if using metadata) then is_row_deleted column
+    StructType schemaBuilder = readDataSchema;
+    int rowIndexColumnIndex = -1;
+    if (useMetadataRowIndex) {
+      // Add temporary row index column that Parquet reader will populate from _metadata.row_index
+      rowIndexColumnIndex = schemaBuilder.fields().length;
+      schemaBuilder =
+          schemaBuilder.add(
+              ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME(), DataTypes.LongType);
+    }
     this.schemaWithDvColumn =
-        readDataSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+        schemaBuilder.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
     this.dvColumnIndex =
         schemaWithDvColumn.fieldIndex(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME());
     this.inputColumnCount = schemaWithDvColumn.fields().length + partitionSchema.fields().length;
     this.outputSchema = readDataSchema.merge(partitionSchema, /* handleDuplicateColumns= */ false);
-    // Pre-compute output column ordinals: all indices except dvColumnIndex
-    List<Object> ordinals = new ArrayList<>(inputColumnCount - 1);
+
+    // Columns to exclude from projection: row_index (if present) and is_row_deleted
+    if (useMetadataRowIndex) {
+      this.excludedColumnIndices = new int[] {rowIndexColumnIndex, dvColumnIndex};
+    } else {
+      this.excludedColumnIndices = new int[] {dvColumnIndex};
+    }
+
+    // Pre-compute output column ordinals: all indices except excluded columns
+    Set<Integer> excludeSet = new HashSet<>();
+    for (int idx : excludedColumnIndices) {
+      excludeSet.add(idx);
+    }
+    List<Integer> ordinals = new ArrayList<>(inputColumnCount - excludedColumnIndices.length);
     for (int i = 0; i < inputColumnCount; i++) {
-      if (i != dvColumnIndex) {
+      if (!excludeSet.contains(i)) {
         ordinals.add(i);
       }
     }
-    this.outputColumnOrdinals = CollectionConverters.asScala(ordinals).toList();
+    this.outputColumnOrdinals = ordinals;
   }
 
   /** Returns schema with the __delta_internal_is_row_deleted column added. */
@@ -78,8 +105,13 @@ public class DvSchemaContext implements Serializable {
     return outputSchema;
   }
 
-  /** Returns pre-computed output column ordinals for ProjectingInternalRow. */
-  public Seq<Object> getOutputColumnOrdinals() {
+  /** Returns indices of columns to exclude from output (row_index if present, is_row_deleted). */
+  public int[] getExcludedColumnIndices() {
+    return excludedColumnIndices;
+  }
+
+  /** Returns pre-computed output column ordinals (indices of columns to include in output). */
+  public List<Integer> getOutputColumnOrdinals() {
     return outputColumnOrdinals;
   }
 }

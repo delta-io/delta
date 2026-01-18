@@ -41,6 +41,7 @@ import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
@@ -199,9 +200,15 @@ public class PartitionUtils {
     boolean isTableSupportDv =
         protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
             && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
+
+    // Read useMetadataRowIndex config - controls file splitting for DV tables
+    // When true: use _metadata.row_index, enable file splitting (optimizationsEnabled=true)
+    // When false: generate row index manually, disable file splitting (optimizationsEnabled=false)
+    boolean useMetadataRowIndex =
+        (Boolean) sqlConf.getConf(DeltaSQLConf$.MODULE$.DELETION_VECTORS_USE_METADATA_ROW_INDEX());
     Optional<DvSchemaContext> dvContext =
         isTableSupportDv
-            ? Optional.of(new DvSchemaContext(readDataSchema, partitionSchema))
+            ? Optional.of(new DvSchemaContext(readDataSchema, partitionSchema, useMetadataRowIndex))
             : Optional.empty();
     StructType finalReadDataSchema =
         dvContext.map(DvSchemaContext::getSchemaWithDvColumn).orElse(readDataSchema);
@@ -215,12 +222,11 @@ public class PartitionUtils {
                 FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
 
-    // TODO(https://github.com/delta-io/delta/issues/5859): Enable file splitting for DV tables
-    boolean optimizationsEnabled = !isTableSupportDv;
-
-    // TODO(https://github.com/delta-io/delta/issues/5859): Support _metadata.row_index for DV
-    Option<Boolean> useMetadataRowIndex =
-        isTableSupportDv ? Option.apply(Boolean.FALSE) : Option.empty();
+    // When useMetadataRowIndex is true, enable file splitting (optimizationsEnabled=true)
+    // When false, disable file splitting to generate row index manually
+    boolean optimizationsEnabled = !isTableSupportDv || useMetadataRowIndex;
+    Option<Boolean> useMetadataRowIndexOpt =
+        isTableSupportDv ? Option.apply(useMetadataRowIndex) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         new DeltaParquetFileFormatV2(
             protocol,
@@ -230,7 +236,7 @@ public class PartitionUtils {
             optimizationsEnabled,
             Option.apply(tablePath),
             /* isCDCRead */ false,
-            useMetadataRowIndex);
+            useMetadataRowIndexOpt);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(

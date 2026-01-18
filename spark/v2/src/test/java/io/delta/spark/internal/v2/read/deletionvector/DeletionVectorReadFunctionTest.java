@@ -73,7 +73,8 @@ public class DeletionVectorReadFunctionTest {
     inputRows.add(createRow(2, "bob", (byte) 1)); // deleted
     inputRows.add(createRow(3, "charlie", (byte) 0)); // not deleted
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DvSchemaContext context =
+        new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
@@ -91,7 +92,8 @@ public class DeletionVectorReadFunctionTest {
     List<InternalRow> inputRows = new ArrayList<>();
     inputRows.add(createRow(1, "alice", (byte) 0));
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DvSchemaContext context =
+        new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
@@ -112,7 +114,8 @@ public class DeletionVectorReadFunctionTest {
     inputRows.add(createRow(1, "alice", (byte) 1));
     inputRows.add(createRow(2, "bob", (byte) 1));
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DvSchemaContext context =
+        new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
@@ -130,7 +133,8 @@ public class DeletionVectorReadFunctionTest {
     inputRows.add(createRow(2, "bob", (byte) 0));
     inputRows.add(createRow(3, "charlie", (byte) 0));
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DvSchemaContext context =
+        new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
@@ -145,7 +149,8 @@ public class DeletionVectorReadFunctionTest {
     // Input: empty
     List<InternalRow> inputRows = new ArrayList<>();
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DvSchemaContext context =
+        new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
