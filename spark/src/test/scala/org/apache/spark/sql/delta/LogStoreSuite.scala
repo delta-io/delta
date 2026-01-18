@@ -224,22 +224,6 @@ trait GCSLogStoreSuiteBase extends LogStoreSuiteBase {
 }
 
 ////////////////////////////////
-// Concrete child test suites //
-////////////////////////////////
-
-class HDFSLogStoreSuite extends HDFSLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[HDFSLogStore].getName
-}
-
-class AzureLogStoreSuite extends AzureLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[AzureLogStore].getName
-}
-
-class LocalLogStoreSuite extends LocalLogStoreSuiteBase {
-  override val logStoreClassName: String = classOf[LocalLogStore].getName
-}
-
-////////////////////////////////
 // File System Helper Classes //
 ////////////////////////////////
 
@@ -333,14 +317,11 @@ class PublicHDFSLogStoreSuite extends PublicLogStoreSuite with HDFSLogStoreSuite
     classOf[io.delta.storage.HDFSLogStore].getName
 }
 
-class PublicS3SingleDriverLogStoreSuite
-  extends PublicLogStoreSuite
+class PublicS3SingleDriverLogStoreSuite extends PublicLogStoreSuite
   with S3SingleDriverLogStoreSuiteBase {
 
   override protected val publicLogStoreClassName: String =
     classOf[io.delta.storage.S3SingleDriverLogStore].getName
-
-  override protected def canInvalidateCache: Boolean = false
 }
 
 class PublicAzureLogStoreSuite extends PublicLogStoreSuite with AzureLogStoreSuiteBase {
