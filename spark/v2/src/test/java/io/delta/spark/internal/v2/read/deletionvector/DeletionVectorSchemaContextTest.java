@@ -17,10 +17,16 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 public class DeletionVectorSchemaContextTest {
 
@@ -30,27 +36,64 @@ public class DeletionVectorSchemaContextTest {
   private static final StructType PARTITION_SCHEMA =
       new StructType().add("date", DataTypes.StringType);
 
-  @Test
-  void testWithFullSchemas() {
+  @ParameterizedTest(name = "useMetadataRowIndex={0}")
+  @CsvSource({"false, 3, 2", "true, 4, 3"})
+  void testSchemaWithDvColumn(
+      boolean useMetadataRowIndex, int expectedFieldCount, int expectedDvIndex) {
     DeletionVectorSchemaContext context =
-        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, useMetadataRowIndex);
 
-    StructType expectedSchemaWithDv =
-        DATA_SCHEMA.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
-    assertEquals(expectedSchemaWithDv, context.getSchemaWithDvColumn());
-    assertEquals(2, context.getDvColumnIndex());
-    // Input: 2 data + 1 DV + 1 partition = 4.
-    assertEquals(4, context.getInputColumnCount());
-    StructType expectedOutputSchema =
+    StructType schemaWithDv = context.getSchemaWithDvColumn();
+    assertEquals(expectedFieldCount, schemaWithDv.fields().length);
+    assertEquals("id", schemaWithDv.fields()[0].name());
+    assertEquals("name", schemaWithDv.fields()[1].name());
+
+    if (useMetadataRowIndex) {
+      assertEquals(
+          ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME(), schemaWithDv.fields()[2].name());
+    }
+    assertEquals(
+        DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME(),
+        schemaWithDv.fields()[expectedDvIndex].name());
+  }
+
+  @ParameterizedTest(name = "useMetadataRowIndex={0}")
+  @CsvSource({"false, 4", "true, 5"})
+  void testInputColumnCount(boolean useMetadataRowIndex, int expectedCount) {
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, useMetadataRowIndex);
+    assertEquals(expectedCount, context.getInputColumnCount());
+  }
+
+  @ParameterizedTest(name = "useMetadataRowIndex={0}")
+  @CsvSource({"false, '0,1,3'", "true, '0,1,4'"})
+  void testOutputColumnOrdinals(boolean useMetadataRowIndex, String expectedOrdinalsStr) {
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, useMetadataRowIndex);
+
+    List<Integer> expected =
+        Arrays.stream(expectedOrdinalsStr.split(","))
+            .map(String::trim)
+            .map(Integer::parseInt)
+            .collect(Collectors.toList());
+    assertEquals(expected, context.getOutputColumnOrdinalsAsList());
+  }
+
+  @Test
+  void testOutputSchema() {
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
+
+    StructType expectedSchema =
         DATA_SCHEMA.merge(PARTITION_SCHEMA, /* handleDuplicateColumns= */ false);
-    assertEquals(expectedOutputSchema, context.getOutputSchema());
+    assertEquals(expectedSchema, context.getOutputSchema());
   }
 
   @Test
   void testEmptyPartitionSchema() {
-    StructType emptyPartition = new StructType();
+    StructType emptyPartitionSchema = new StructType();
     DeletionVectorSchemaContext context =
-        new DeletionVectorSchemaContext(DATA_SCHEMA, emptyPartition);
+        new DeletionVectorSchemaContext(DATA_SCHEMA, emptyPartitionSchema, /* useMetadataRowIndex= */ false);
 
     StructType expectedSchemaWithDv =
         DATA_SCHEMA.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
@@ -63,12 +106,12 @@ public class DeletionVectorSchemaContextTest {
 
   @Test
   void testEmptyDataSchema() {
-    StructType emptyData = new StructType();
+    StructType emptyDataSchema = new StructType();
     DeletionVectorSchemaContext context =
-        new DeletionVectorSchemaContext(emptyData, PARTITION_SCHEMA);
+        new DeletionVectorSchemaContext(emptyDataSchema, PARTITION_SCHEMA, /* useMetadataRowIndex= */ false);
 
     StructType expectedSchemaWithDv =
-        emptyData.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+        emptyDataSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
     assertEquals(expectedSchemaWithDv, context.getSchemaWithDvColumn());
     assertEquals(0, context.getDvColumnIndex());
     // Input: 1 DV + 1 partition = 2.
@@ -87,7 +130,9 @@ public class DeletionVectorSchemaContextTest {
     IllegalArgumentException exception =
         assertThrows(
             IllegalArgumentException.class,
-            () -> new DeletionVectorSchemaContext(schemaWithDv, new StructType()));
+            () ->
+                new DeletionVectorSchemaContext(
+                    schemaWithDv, new StructType(), /* useMetadataRowIndex= */ false));
 
     assertTrue(
         exception.getMessage().contains(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME()));

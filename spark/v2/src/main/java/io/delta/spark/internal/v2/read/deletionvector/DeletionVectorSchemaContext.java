@@ -16,8 +16,11 @@
 package io.delta.spark.internal.v2.read.deletionvector;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.types.StructType;
 import scala.collection.immutable.Seq;
 
@@ -35,15 +38,18 @@ public class DeletionVectorSchemaContext implements Serializable {
   private final int inputColumnCount;
   private final StructType outputSchema;
   private final Seq<Object> outputColumnOrdinals;
+  private final List<Integer> outputColumnOrdinalsList;
 
   /**
    * Create a DV schema context for encapsulating schema info and indices needed for DV filtering.
    *
    * @param readDataSchema original data schema without DV column
    * @param partitionSchema partition columns schema
+   * @param useMetadataRowIndex whether to include _metadata.row_index for file splitting support
    * @throws IllegalArgumentException if readDataSchema already contains the DV column
    */
-  public DeletionVectorSchemaContext(StructType readDataSchema, StructType partitionSchema) {
+  public DeletionVectorSchemaContext(
+      StructType readDataSchema, StructType partitionSchema, boolean useMetadataRowIndex) {
     // Validate that readDataSchema doesn't already contain the DV column to ensure the DV column
     // is added only once. While Delta uses the "__delta_internal_" prefix as a naming convention
     // for internal columns (listed in DeltaColumnMapping.DELTA_INTERNAL_COLUMNS), there's no
@@ -54,21 +60,47 @@ public class DeletionVectorSchemaContext implements Serializable {
       throw new IllegalArgumentException(
           "readDataSchema already contains the deletion vector column: " + dvColumnName);
     }
+
+    // Build schema: data columns + (optional row_index) + DV column
+    StructType schemaBuilder = readDataSchema;
+    if (useMetadataRowIndex) {
+      schemaBuilder = schemaBuilder.add(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME(), "long");
+    }
     this.schemaWithDvColumn =
-        readDataSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+        schemaBuilder.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+
     this.dvColumnIndex =
         schemaWithDvColumn.fieldIndex(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME());
     this.inputColumnCount = schemaWithDvColumn.fields().length + partitionSchema.fields().length;
     this.outputSchema = readDataSchema.merge(partitionSchema, /* handleDuplicateColumns= */ false);
-    // Pre-compute output column ordinals: all indices except dvColumnIndex.
-    int[] ordinals = new int[inputColumnCount - 1];
-    int idx = 0;
-    for (int i = 0; i < inputColumnCount; i++) {
-      if (i != dvColumnIndex) {
-        ordinals[idx++] = i;
-      }
+
+    // Pre-compute output column ordinals: data columns + partition columns (skip row_index and DV)
+    List<Integer> ordinals = new ArrayList<>();
+    int partitionStartIdx = schemaWithDvColumn.fields().length;
+
+    // Add data column indices (0 to readDataSchema.length - 1)
+    for (int i = 0; i < readDataSchema.fields().length; i++) {
+      ordinals.add(i);
     }
-    this.outputColumnOrdinals = scala.Predef.wrapIntArray(ordinals).toSeq();
+    // Add partition column indices
+    for (int i = 0; i < partitionSchema.fields().length; i++) {
+      ordinals.add(partitionStartIdx + i);
+    }
+
+    this.outputColumnOrdinalsList = ordinals;
+    int[] ordinalsArray = ordinals.stream().mapToInt(Integer::intValue).toArray();
+    this.outputColumnOrdinals = scala.Predef.wrapIntArray(ordinalsArray).toSeq();
+  }
+
+  /**
+   * Create a DV schema context without row_index support (for basic DV reads).
+   *
+   * @param readDataSchema original data schema without DV column
+   * @param partitionSchema partition columns schema
+   * @throws IllegalArgumentException if readDataSchema already contains the DV column
+   */
+  public DeletionVectorSchemaContext(StructType readDataSchema, StructType partitionSchema) {
+    this(readDataSchema, partitionSchema, /* useMetadataRowIndex= */ false);
   }
 
   /** Returns schema with the __delta_internal_is_row_deleted column added. */
@@ -91,5 +123,10 @@ public class DeletionVectorSchemaContext implements Serializable {
   /** Returns pre-computed output column ordinals for ProjectingInternalRow. */
   public Seq<Object> getOutputColumnOrdinals() {
     return outputColumnOrdinals;
+  }
+
+  /** Returns pre-computed output column ordinals as a Java List (for testing). */
+  public List<Integer> getOutputColumnOrdinalsAsList() {
+    return outputColumnOrdinalsList;
   }
 }
