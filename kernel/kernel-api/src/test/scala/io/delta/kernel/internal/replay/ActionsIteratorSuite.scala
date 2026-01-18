@@ -22,8 +22,7 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.{ColumnarBatch, ColumnVector, Row}
 import io.delta.kernel.engine._
 import io.delta.kernel.expressions.Predicate
-import io.delta.kernel.test.BaseMockJsonHandler
-import io.delta.kernel.test.MockEngineUtils
+import io.delta.kernel.test.{BaseMockFileSystemClient, BaseMockJsonHandler, MockEngineUtils}
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 
@@ -43,27 +42,34 @@ class ActionsIteratorSuite extends AnyFunSuite with MockEngineUtils {
   test("ActionsIterator readCommitOrCompactionFile resource cleanup") {
     var iteratorClosed = false
 
-    val engine = mockEngine(jsonHandler = new BaseMockJsonHandler {
-      override def readJsonFiles(
-          fileIter: CloseableIterator[FileStatus],
-          physicalSchema: StructType,
-          predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
-
-        // Return an empty iterator that tracks closure
-        new CloseableIterator[ColumnarBatch] {
-          override def hasNext(): Boolean =
-            throw new NoSuchElementException("This is a test exception")
-          override def next(): ColumnarBatch =
-            throw new UnsupportedOperationException("Not needed for this test")
-          override def close(): Unit = iteratorClosed = true
-        }
-      }
-    })
-
     val testFile = FileStatus.of(
       "/path/to/00000000000000000000.json",
       100L,
       System.currentTimeMillis())
+
+    val engine = mockEngine(
+      jsonHandler = new BaseMockJsonHandler {
+        override def readJsonFiles(
+            fileIter: CloseableIterator[FileStatus],
+            physicalSchema: StructType,
+            predicate: Optional[Predicate]): CloseableIterator[ColumnarBatch] = {
+
+          // Return an empty iterator that tracks closure
+          new CloseableIterator[ColumnarBatch] {
+            override def hasNext(): Boolean =
+              throw new NoSuchElementException("This is a test exception")
+            override def next(): ColumnarBatch =
+              throw new UnsupportedOperationException("Not needed for this test")
+            override def close(): Unit = iteratorClosed = true
+          }
+        }
+      },
+      // Provide a mock file system client that returns the test file status
+      // (needed because readCommitFileWithRetry refreshes file status)
+      fileSystemClient = new BaseMockFileSystemClient {
+        override def getFileStatus(path: String): FileStatus = testFile
+      })
+
     val files = Collections.singletonList(testFile)
     val schema = new StructType()
 

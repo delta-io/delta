@@ -38,6 +38,7 @@ import io.delta.storage.LogStore;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Default implementation of {@link JsonHandler} based on Hadoop APIs. */
 public class DefaultJsonHandler implements JsonHandler {
@@ -48,6 +49,8 @@ public class DefaultJsonHandler implements JsonHandler {
 
   private final FileIO fileIO;
   private final int maxBatchSize;
+  private static final Set<String> interruptLoggedThreads =
+      Collections.newSetFromMap(new ConcurrentHashMap<>());
 
   public DefaultJsonHandler(FileIO fileIO) {
     this.fileIO = fileIO;
@@ -96,6 +99,17 @@ public class DefaultJsonHandler implements JsonHandler {
 
       @Override
       public boolean hasNext() {
+        if (Thread.currentThread().isInterrupted()) {
+          String threadName = Thread.currentThread().getName();
+          if (interruptLoggedThreads.add(threadName)) {
+            System.out.println(
+                "DEBUG DefaultJsonHandler.hasNext: thread interrupted before read thread="
+                    + threadName);
+            for (StackTraceElement element : Thread.currentThread().getStackTrace()) {
+              System.out.println("  at " + element);
+            }
+          }
+        }
         if (nextLine != null) {
           return true; // we have un-consumed last read line
         }
@@ -113,6 +127,31 @@ public class DefaultJsonHandler implements JsonHandler {
           }
           return nextLine != null;
         } catch (IOException ex) {
+          boolean isLastCheckpoint =
+              currentFile != null && currentFile.getPath().endsWith("_last_checkpoint");
+          boolean isFileNotFound =
+              ex instanceof FileNotFoundException
+                  || ex.getClass().getName().endsWith("FileNotFoundException");
+          boolean isInterruptedIo =
+              ex instanceof java.nio.channels.ClosedByInterruptException
+                  || ex instanceof InterruptedIOException;
+          if (!(isLastCheckpoint && isFileNotFound)) {
+            String threadInfo =
+                isInterruptedIo
+                    ? " thread="
+                        + Thread.currentThread().getName()
+                        + " interrupted="
+                        + Thread.currentThread().isInterrupted()
+                    : "";
+            System.out.println(
+                "DEBUG DefaultJsonHandler.hasNext: IOException file="
+                    + (currentFile != null ? currentFile.getPath() : "null")
+                    + " exception="
+                    + ex.getClass().getName()
+                    + " message="
+                    + ex.getMessage()
+                    + threadInfo);
+          }
           throw new KernelEngineException(
               format("Error reading JSON file: %s", currentFile.getPath()), ex);
         }
