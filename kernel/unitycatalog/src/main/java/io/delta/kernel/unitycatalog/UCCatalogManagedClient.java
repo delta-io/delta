@@ -57,6 +57,8 @@ import org.slf4j.LoggerFactory;
 @Experimental
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
+  private static final int UC_GET_COMMITS_RETRY_MAX_ATTEMPTS = 5;
+  private static final long UC_GET_COMMITS_RETRY_BASE_SLEEP_MS = 100L;
 
   public static final String UC_PROPERTY_NAMESPACE_PREFIX = "io.unitycatalog.";
 
@@ -126,20 +128,25 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long maxUcTableVersion = response.getLatestTableVersion();
-                final Optional<Long> maxCatalogVersionOpt =
-                    maxUcTableVersion >= 0 ? Optional.of(maxUcTableVersion) : Optional.empty();
+                final GetCommitsResponse resolvedResponse =
+                    response.getLatestTableVersion() >= 0
+                        ? response
+                        : retryGetCommitsForLatestVersion(ucTableId, tablePath, versionOpt);
 
-                if (maxCatalogVersionOpt.isPresent()) {
-                  versionOpt.ifPresent(
-                      version ->
-                          validateTimeTravelVersionNotPastMax(
-                              ucTableId, version, maxCatalogVersionOpt.get()));
+                final long maxUcTableVersion = resolvedResponse.getLatestTableVersion();
+                if (maxUcTableVersion < 0) {
+                  throw new IllegalStateException(
+                      String.format(
+                          "[%s] UC returned no ratified commits after retries", ucTableId));
                 }
+
+                versionOpt.ifPresent(
+                    version ->
+                        validateTimeTravelVersionNotPastMax(ucTableId, version, maxUcTableVersion));
 
                 final List<ParsedLogData> logData =
                     getSortedKernelParsedDeltaDataFromRatifiedCommits(
-                        ucTableId, response.getCommits());
+                        ucTableId, resolvedResponse.getCommits());
 
                 return metricsCollector.kernelSnapshotBuildTimer.timeChecked(
                     () -> {
@@ -162,7 +169,7 @@ public class UCCatalogManagedClient {
                                             ucTableId,
                                             tablePath,
                                             logData,
-                                            maxCatalogVersionOpt));
+                                            Optional.of(maxUcTableVersion)));
                         snapshotBuilder =
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
@@ -170,11 +177,8 @@ public class UCCatalogManagedClient {
                       snapshotBuilder =
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
-                              .withLogData(logData);
-                      if (maxCatalogVersionOpt.isPresent()) {
-                        snapshotBuilder =
-                            snapshotBuilder.withMaxCatalogVersion(maxCatalogVersionOpt.get());
-                      }
+                              .withLogData(logData)
+                              .withMaxCatalogVersion(maxUcTableVersion);
                       Snapshot snapshot = snapshotBuilder.build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
@@ -431,6 +435,36 @@ public class UCCatalogManagedClient {
         response.getLatestTableVersion());
 
     return response;
+  }
+
+  private GetCommitsResponse retryGetCommitsForLatestVersion(
+      String ucTableId, String tablePath, Optional<Long> versionOpt) {
+    GetCommitsResponse response = null;
+    for (int attempt = 1; attempt <= UC_GET_COMMITS_RETRY_MAX_ATTEMPTS; attempt++) {
+      response = getRatifiedCommitsFromUC(ucTableId, tablePath, versionOpt);
+      if (response.getLatestTableVersion() >= 0) {
+        return response;
+      }
+      if (attempt < UC_GET_COMMITS_RETRY_MAX_ATTEMPTS && !sleepBeforeRetry(attempt)) {
+        break;
+      }
+      logger.info(
+          "[{}] UC returned no ratified commits (latestTableVersion=-1). Retry {}/{}",
+          ucTableId,
+          attempt,
+          UC_GET_COMMITS_RETRY_MAX_ATTEMPTS);
+    }
+    return response;
+  }
+
+  private static boolean sleepBeforeRetry(int attempt) {
+    try {
+      Thread.sleep(UC_GET_COMMITS_RETRY_BASE_SLEEP_MS * attempt);
+      return true;
+    } catch (InterruptedException ie) {
+      Thread.currentThread().interrupt();
+      return false;
+    }
   }
 
   private void validateTimeTravelVersionNotPastMax(
