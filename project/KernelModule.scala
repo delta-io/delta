@@ -263,11 +263,5 @@ object KernelModule {
         }
       ).configureUnidoc("Delta Kernel")
   }
-
-  // Need javaOnlyReleaseSettings from build.sbt - this is a placeholder that will be
-  // overridden by the actual releaseSettings in build.sbt
-  private lazy val javaOnlyReleaseSettings: Seq[Setting[_]] = Seq(
-    crossPaths := false,
-    autoScalaLibrary := false,
-  )
+  // Note: javaOnlyReleaseSettings is imported from CommonSettings
 }
