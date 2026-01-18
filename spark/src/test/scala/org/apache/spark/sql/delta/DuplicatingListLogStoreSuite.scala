@@ -19,8 +19,8 @@ package org.apache.spark.sql.delta
 import java.io.{File}
 import java.nio.charset.StandardCharsets
 
+import io.delta.storage.HDFSLogStore
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.{HDFSLogStore}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import com.google.common.io.Files
@@ -30,16 +30,17 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
 
-class DuplicatingListLogStore(sparkConf: SparkConf, defaultHadoopConf: Configuration)
-  extends HDFSLogStore(sparkConf, defaultHadoopConf) {
+class DuplicatingListLogStore(defaultHadoopConf: Configuration)
+  extends HDFSLogStore(defaultHadoopConf) {
 
-  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
-    val list = super.listFrom(path, hadoopConf).toSeq
+  override def listFrom(path: Path, hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
+    import scala.collection.JavaConverters._
+    val list = super.listFrom(path, hadoopConf).asScala.toSeq
     // The first listing if directory will be listed twice to mimic the WASBS Log Store
     if (!list.isEmpty && list.head.isDirectory) {
-      (Seq(list.head) ++ list).toIterator
+      (Seq(list.head) ++ list).toIterator.asJava
     } else {
-      list.toIterator
+      list.toIterator.asJava
     }
   }
 }
