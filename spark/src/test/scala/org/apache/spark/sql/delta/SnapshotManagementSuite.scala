@@ -26,7 +26,7 @@ import org.apache.spark.sql.delta.DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_N
 import org.apache.spark.sql.delta.DeltaTestUtils.{verifyBackfilled, verifyUnbackfilled, BOOLEAN_DOMAIN}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTestBaseSuite, CommitCoordinatorBuilder, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, InMemoryCommitCoordinator}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.LocalLogStore
+import io.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.storage.LogStore.logStoreClassConfKey
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -681,14 +681,15 @@ class SnapshotManagementWithCatalogManagedBatch100Suite extends SnapshotManageme
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
-class CountDownLatchLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-    extends LocalLogStore(sparkConf, hadoopConf) {
-  override def listFrom(path: Path, hadoopConf: Configuration): Iterator[FileStatus] = {
-    val files = super.listFrom(path, hadoopConf).toSeq
+class CountDownLatchLogStore(hadoopConf: Configuration)
+    extends LocalLogStore(hadoopConf) {
+  override def listFrom(path: Path, hadoopConf: Configuration): java.util.Iterator[FileStatus] = {
+    import scala.collection.JavaConverters._
+    val files = super.listFrom(path, hadoopConf).asScala.toSeq
     if (ConcurrentBackfillCommitCoordinatorClient.beginConcurrentBackfills) {
       CountDownLatchLogStore.listFromCalled.countDown()
     }
-    files.iterator
+    files.iterator.asJava
   }
 }
 object CountDownLatchLogStore {
