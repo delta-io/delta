@@ -63,6 +63,18 @@ public class StreamingHelper {
 
   /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
   public static Optional<AddFile> getDataChangeAdd(ColumnarBatch batch, int rowId) {
+    return getAdd(batch, rowId, /* checkDataChange= */ true);
+  }
+
+  /**
+   * Get AddFile action from a batch at the specified row, if present. For initial snapshots, all
+   * files should be included regardless of dataChange flag.
+   */
+  public static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
+    return getAdd(batch, rowId, /* checkDataChange= */ false);
+  }
+
+  private static Optional<AddFile> getAdd(ColumnarBatch batch, int rowId, boolean checkDataChange) {
     int addIdx = getFieldIndex(batch, "add");
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
@@ -75,7 +87,10 @@ public class StreamingHelper {
         String.format("Failed to extract AddFile struct from batch at rowId=%d.", rowId));
 
     AddFile addFile = new AddFile(addFileRow);
-    return addFile.getDataChange() ? Optional.of(addFile) : Optional.empty();
+    if (checkDataChange) {
+      return addFile.getDataChange() ? Optional.of(addFile) : Optional.empty();
+    }
+    return Optional.of(addFile);
   }
 
   /**

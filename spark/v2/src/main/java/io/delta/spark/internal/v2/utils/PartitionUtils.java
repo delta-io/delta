@@ -19,14 +19,19 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.MapValue;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
+import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
+import io.delta.spark.internal.v2.read.deletionvector.DvSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.paths.SparkPath;
@@ -34,6 +39,9 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowIndexFilterType;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.datasources.PartitioningUtils;
@@ -50,6 +58,8 @@ import scala.jdk.javaapi.CollectionConverters;
 
 /** Utility class for partition-related operations shared across Delta Kernel Spark components. */
 public class PartitionUtils {
+
+  private PartitionUtils() {}
 
   /**
    * Calculate the maximum split bytes for file partitioning, considering total bytes and file
@@ -140,9 +150,10 @@ public class PartitionUtils {
 
     // Preferred node locations are not used.
     String[] preferredLocations = new String[0];
-    // Constant metadata columns are not used.
+
+    // Build metadata map with DV info if present
     scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
+        buildDvMetadata(addFile.getDeletionVector());
 
     return new PartitionedFile(
         partitionRow,
@@ -161,6 +172,14 @@ public class PartitionUtils {
    * <p>Uses DeltaParquetFileFormatV2 which supports column mapping, deletion vectors, and other
    * Delta features through the ProtocolMetadataAdapterV2.
    *
+   * <p>For tables with deletion vectors enabled, this method:
+   *
+   * <ol>
+   *   <li>Adds __delta_internal_is_row_deleted column to read schema
+   *   <li>Creates a reader that generates the is_row_deleted column using DV bitmap
+   *   <li>Wraps the reader to filter out deleted rows and remove internal columns
+   * </ol>
+   *
    * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
    */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
@@ -175,8 +194,28 @@ public class PartitionUtils {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     Protocol protocol = snapshotImpl.getProtocol();
     Metadata metadata = snapshotImpl.getMetadata();
-    String tablePath = snapshotImpl.getDataPath().toUri().toString();
+    // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues
+    // This matches V1 connector behavior in PreprocessTableWithDVs.scala
+    String tablePath = snapshotImpl.getDataPath().toString();
 
+    // Create DV context if table supports deletion vectors
+    boolean isTableSupportDv =
+        protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
+            && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
+
+    // Read useMetadataRowIndex config - controls file splitting for DV tables
+    // When true: use _metadata.row_index, enable file splitting (optimizationsEnabled=true)
+    // When false: generate row index manually, disable file splitting (optimizationsEnabled=false)
+    boolean useMetadataRowIndex =
+        (Boolean) sqlConf.getConf(DeltaSQLConf$.MODULE$.DELETION_VECTORS_USE_METADATA_ROW_INDEX());
+    Optional<DvSchemaContext> dvContext =
+        isTableSupportDv
+            ? Optional.of(new DvSchemaContext(readDataSchema, partitionSchema, useMetadataRowIndex))
+            : Optional.empty();
+    StructType finalReadDataSchema =
+        dvContext.map(DvSchemaContext::getSchemaWithDvColumn).orElse(readDataSchema);
+
+    // Vectorized reader is supported for DV tables using ColumnVectorWithFilter
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
@@ -185,27 +224,55 @@ public class PartitionUtils {
                 FileFormat$.MODULE$.OPTION_RETURNING_BATCH(),
                 String.valueOf(enableVectorizedReader)));
 
-    // Use DeltaParquetFileFormatV2 to support column mapping and other Delta features
+    // When useMetadataRowIndex is true, enable file splitting (optimizationsEnabled=true)
+    // When false, disable file splitting to generate row index manually
+    boolean optimizationsEnabled = !isTableSupportDv || useMetadataRowIndex;
+    Option<Boolean> useMetadataRowIndexOpt =
+        isTableSupportDv ? Option.apply(useMetadataRowIndex) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
         new DeltaParquetFileFormatV2(
             protocol,
             metadata,
             /* nullableRowTrackingConstantFields */ false,
             /* nullableRowTrackingGeneratedFields */ false,
-            /* optimizationsEnabled */ true,
+            optimizationsEnabled,
             Option.apply(tablePath),
-            /* isCDCRead */ false);
+            /* isCDCRead */ false,
+            useMetadataRowIndexOpt);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
             SparkSession.active(),
             dataSchema,
             partitionSchema,
-            readDataSchema,
+            finalReadDataSchema,
             CollectionConverters.asScala(Arrays.asList(dataFilters)).toSeq(),
             optionsWithVectorizedReading,
             hadoopConf);
 
+    // Wrap reader to filter deleted rows and remove internal columns if DV is enabled
+    if (dvContext.isPresent()) {
+      readFunc = DeletionVectorReadFunction.wrap(readFunc, dvContext.get());
+    }
+
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  }
+
+  /**
+   * Build metadata map for PartitionedFile containing DV descriptor if present.
+   *
+   * <p>The metadata is used by DeltaParquetFileFormat to generate the is_row_deleted column.
+   */
+  private static scala.collection.immutable.Map<String, Object> buildDvMetadata(
+      Optional<DeletionVectorDescriptor> dvOpt) {
+    Map<String, Object> metadata = new HashMap<>();
+    if (dvOpt.isPresent()) {
+      metadata.put(
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
+          dvOpt.get().serializeToBase64());
+      metadata.put(
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
+    }
+    return scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
   }
 }
