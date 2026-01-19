@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import java.io.File
+
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -23,7 +25,8 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.FileNames
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.functions.{col, lit, struct}
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
@@ -313,6 +316,367 @@ class DeltaCheckpointWithStructColsSuite
     unexpected.foreach { colName =>
       assert(!addColumns.contains(colName), s"$colName shouldn't be part of the " +
         "schema because it is of null type.")
+    }
+  }
+
+  test("unpartitioned table - check stats") {
+    val df = spark.range(10).withColumn("part", ('id / 2).cast("int"))
+
+    val structStatsColumns = Seq(
+      "stats_parsed.numRecords" -> LongType,
+      "stats_parsed.minValues.id" -> LongType,
+      "stats_parsed.maxValues.id" -> LongType,
+      "stats_parsed.nullCount.id" -> LongType,
+      "stats_parsed.minValues.part" -> IntegerType,
+      "stats_parsed.maxValues.part" -> IntegerType,
+      "stats_parsed.nullCount.part" -> LongType)
+
+    checkpointSchemaForTable(df)(
+      checkpointingFns = checkpointFnsWithStructAndJsonStats,
+      expectedCols = structStatsColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = true, Nil)
+      }
+    )
+
+    checkpointSchemaForTable(df)(
+      checkpointingFns = checkpointFnsWithStructWithoutJsonStats,
+      expectedCols = structStatsColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = false, Nil)
+      }
+    )
+
+    checkpointSchemaForTable(df)(
+      checkpointingFns = checkpointFnsWithoutStructWithJsonStats,
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(
+          addColumns,
+          statsAsJsonExists = true,
+          unexpected = Seq(Checkpoints.STRUCT_PARTITIONS_COL_NAME) ++ structStatsColumns.map(_._1))
+      }
+    )
+
+    checkpointSchemaForTable(df)(
+      checkpointingFns = Seq(checkpointWithoutStats),
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = false, structStatsColumns.map(_._1))
+      }
+    )
+  }
+
+  test("use kill switch to disable stats as struct in checkpoint") {
+    withSQLConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED.key -> "true") {
+      val df = spark.range(10).withColumn("part", ('id / 2).cast("int"))
+
+      val structStatsColumns = Seq(
+        "stats_parsed.numRecords",
+        "stats_parsed.minValues.id",
+        "stats_parsed.maxValues.id",
+        "stats_parsed.nullCount.id",
+        "stats_parsed.minValues.part",
+        "stats_parsed.maxValues.part",
+        "stats_parsed.nullCount.part")
+
+      checkpointSchemaForTable(df)(
+        checkpointingFns = checkpointFnsWithStructAndJsonStats,
+        expectedCols = Nil,
+        additionalValidationFn = addColumns => {
+          checkFields(
+            addColumns,
+            statsAsJsonExists = true,
+            unexpected = structStatsColumns
+          )
+        }
+      )
+    }
+  }
+
+  test("partitioned table - check stats") {
+    val df = spark.range(10).withColumn("part", ('id / 2).cast("int"))
+
+    val structStatsColumns = Seq(
+      "stats_parsed.numRecords" -> LongType,
+      "stats_parsed.minValues.id" -> LongType,
+      "stats_parsed.maxValues.id" -> LongType,
+      "stats_parsed.nullCount.id" -> LongType)
+
+    // partitioned by "part"
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = checkpointFnsWithStructAndJsonStats,
+      expectedCols = structStatsColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = true, Nil)
+      }
+    )
+
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = checkpointFnsWithStructWithoutJsonStats,
+      expectedCols = structStatsColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = false, Nil)
+      }
+    )
+
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = checkpointFnsWithoutStructWithJsonStats,
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(
+          addColumns,
+          statsAsJsonExists = true,
+          structStatsColumns.map(_._1))
+      }
+    )
+
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = Seq(checkpointWithoutStats),
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = false, structStatsColumns.map(_._1))
+      }
+    )
+  }
+
+  test("nested fields, dots, and boolean types") {
+    val df = spark.range(10).withColumn("part", ('id / 2).cast("int"))
+      .withColumn("struct", struct($"id", $"part", $"id".as("with.dot")))
+      .withColumn("bool", lit(true))
+
+    val structColumns = Seq(
+      "partitionValues_parsed.part" -> IntegerType,
+      "stats_parsed.numRecords" -> LongType,
+      "stats_parsed.minValues.id" -> LongType,
+      "stats_parsed.maxValues.id" -> LongType,
+      "stats_parsed.nullCount.id" -> LongType,
+      "stats_parsed.minValues.struct.id" -> LongType,
+      "stats_parsed.maxValues.struct.id" -> LongType,
+      "stats_parsed.nullCount.struct.id" -> LongType,
+      "stats_parsed.minValues.struct.part" -> IntegerType,
+      "stats_parsed.maxValues.struct.part" -> IntegerType,
+      "stats_parsed.nullCount.struct.part" -> LongType,
+      "stats_parsed.minValues.struct.`with.dot`" -> LongType,
+      "stats_parsed.maxValues.struct.`with.dot`" -> LongType,
+      "stats_parsed.nullCount.struct.`with.dot`" -> LongType,
+      "stats_parsed.nullCount.bool" -> LongType)
+
+    val unexpectedCols = Seq(
+      "stats_parsed.minValues.bool",
+      "stats_parsed.maxValues.bool"
+    )
+
+    // partitioned by "part"
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = checkpointFnsWithStructAndJsonStats,
+      expectedCols = structColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = true, unexpectedCols)
+      }
+    )
+
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = checkpointFnsWithStructWithoutJsonStats,
+      expectedCols = structColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = false, unexpectedCols)
+      }
+    )
+
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = checkpointFnsWithoutStructWithJsonStats,
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(
+          addColumns,
+          statsAsJsonExists = true,
+          unexpectedCols ++ structColumns.map(_._1))
+      }
+    )
+
+    checkpointSchemaForTable(df, "part")(
+      checkpointingFns = Seq(checkpointWithoutStats),
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(
+          addColumns,
+          statsAsJsonExists = false,
+          unexpectedCols ++ structColumns.map(_._1))
+      }
+    )
+  }
+
+  test("special characters - check stats") {
+    val weirdName1 = "part%!@#_$%^&*-"
+    val weirdName2 = "part?_.+<>|/"
+    val df = spark.range(10)
+      .withColumn(weirdName1, ('id / 2).cast("int"))
+      .withColumn(weirdName2, ('id / 3).cast("int"))
+      .withColumn("struct", struct($"id", col(weirdName1), $"id".as(weirdName2)))
+
+    val structColumns = Seq(
+      "stats_parsed.numRecords" -> LongType,
+      "stats_parsed.minValues.id" -> LongType,
+      "stats_parsed.maxValues.id" -> LongType,
+      "stats_parsed.nullCount.id" -> LongType,
+      "stats_parsed.minValues.struct.id" -> LongType,
+      "stats_parsed.maxValues.struct.id" -> LongType,
+      "stats_parsed.nullCount.struct.id" -> LongType,
+      s"stats_parsed.minValues.struct.$weirdName1" -> IntegerType,
+      s"stats_parsed.maxValues.struct.$weirdName1" -> IntegerType,
+      s"stats_parsed.nullCount.struct.$weirdName1" -> LongType,
+      s"stats_parsed.minValues.struct.`$weirdName2`" -> LongType,
+      s"stats_parsed.maxValues.struct.`$weirdName2`" -> LongType,
+      s"stats_parsed.nullCount.struct.`$weirdName2`" -> LongType,
+      s"partitionValues_parsed.$weirdName1" -> IntegerType,
+      s"partitionValues_parsed.`$weirdName2`" -> IntegerType)
+
+    // partitioned by weirdName1, weirdName2
+    checkpointSchemaForTable(df, weirdName1, weirdName2)(
+      checkpointingFns = checkpointFnsWithStructAndJsonStats,
+      expectedCols = structColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = true, Nil)
+      }
+    )
+
+    checkpointSchemaForTable(df, weirdName1, weirdName2)(
+      checkpointingFns = checkpointFnsWithStructWithoutJsonStats,
+      expectedCols = structColumns,
+      additionalValidationFn = addColumns => {
+        checkFields(addColumns, statsAsJsonExists = false, Nil)
+      }
+    )
+
+    checkpointSchemaForTable(df, weirdName1, weirdName2)(
+      checkpointingFns = checkpointFnsWithoutStructWithJsonStats,
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(
+          addColumns,
+          statsAsJsonExists = true,
+          structColumns.map(_._1))
+      }
+    )
+
+    checkpointSchemaForTable(df, weirdName1, weirdName2)(
+      checkpointingFns = Seq(checkpointWithoutStats),
+      expectedCols = Nil,
+      additionalValidationFn = addColumns => {
+        checkFields(
+          addColumns,
+          statsAsJsonExists = false,
+          structColumns.map(_._1))
+      }
+    )
+  }
+
+  test("no data column stats collected + unpartitioned") {
+    val df = spark.range(10).withColumn("part", ('id / 2).cast("int"))
+      .withColumn("struct", struct($"id", $"part", $"id".as("with.dot")))
+      .withColumn("bool", lit(true))
+
+    val expectedColumns = Seq("stats_parsed.numRecords" -> LongType)
+
+    val unexpected = Seq(
+      "stats_parsed.minValues",
+      "stats_parsed.maxValues",
+      "stats_parsed.nullCount",
+      "stats_parsed.minValues.id",
+      "stats_parsed.maxValues.id",
+      "stats_parsed.nullCount.id",
+      "stats_parsed.minValues.struct.id",
+      "stats_parsed.maxValues.struct.id",
+      "stats_parsed.nullCount.struct.id",
+      "stats_parsed.minValues.struct.part",
+      "stats_parsed.maxValues.struct.part",
+      "stats_parsed.nullCount.struct.part",
+      "stats_parsed.minValues.struct.`with.dot`",
+      "stats_parsed.maxValues.struct.`with.dot`",
+      "stats_parsed.nullCount.struct.`with.dot`",
+      "stats_parsed.nullCount.bool",
+      "stats_parsed.minValues.bool",
+      "stats_parsed.maxValues.bool",
+      "partitionValues_parsed")
+
+    withSQLConf(s"${DeltaConfigs.sqlConfPrefix}dataSkippingNumIndexedCols" -> "0") {
+      checkpointSchemaForTable(df)(
+        checkpointingFns = checkpointFnsWithStructAndJsonStats,
+        expectedCols = expectedColumns,
+        additionalValidationFn = addColumns => {
+          // None of the stats column should exist instead of numRecords
+          checkFields(addColumns, statsAsJsonExists = true, unexpected)
+        }
+      )
+
+      checkpointSchemaForTable(df)(
+        checkpointingFns = checkpointFnsWithStructWithoutJsonStats,
+        expectedCols = expectedColumns,
+        additionalValidationFn = addColumns => {
+          // None of the stats column should exist instead of numRecords
+          checkFields(addColumns, statsAsJsonExists = false, unexpected)
+        }
+      )
+
+      checkpointSchemaForTable(df)(
+        checkpointingFns = checkpointFnsWithoutStructWithJsonStats,
+        expectedCols = Nil,
+        additionalValidationFn = addColumns => {
+          checkFields(
+            addColumns,
+            statsAsJsonExists = true,
+            unexpected :+ "stats_parsed.numRecords")
+        }
+      )
+
+      checkpointSchemaForTable(df)(
+        checkpointingFns = Seq(checkpointWithoutStats),
+        expectedCols = Nil,
+        additionalValidationFn = addColumns => {
+          checkFields(
+            addColumns,
+            statsAsJsonExists = false,
+            unexpected :+ "stats_parsed.numRecords")
+        }
+      )
+    }
+  }
+
+  test("checkpoint read succeeds with column pruning disabled") {
+    withTempDir { dir =>
+      // Populate the table with three commits, take a checkpoint at v1, and delete v0. Otherwise,
+      // if the bug we test for caused snapshot construction to fail, Delta would silently retry
+      // without the checkpoint, and the test would always appear to succeed.
+      spark.range(1000).write.format("delta").save(dir.getCanonicalPath)
+      spark.range(1000).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      deltaLog.checkpoint()
+      spark.range(1000).write.format("delta").mode("append").save(dir.getCanonicalPath)
+      val firstCommit = deltaLog.store
+        .listFrom(FileNames.listingPrefix(deltaLog.logPath, 0), deltaLog.newDeltaHadoopConf())
+        .find(f => FileNames.isDeltaFile(f.getPath) && FileNames.deltaVersion(f.getPath) == 0)
+      assert(new File(firstCommit.get.getPath.toUri).delete())
+      DeltaLog.clearCache()
+
+      // Trigger both metadata reconstruction and state reconstruction queries with column pruning
+      // disabled. We must also disable reading metadata from .crc file, for the former case.
+      withSQLConf(
+        SQLConf.OPTIMIZER_EXCLUDED_RULES.key ->
+          org.apache.spark.sql.catalyst.optimizer.ColumnPruning.ruleName,
+        DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED.key -> "false") {
+
+        // NOTE: Just creating the snapshot should already trigger metadata reconstruction, but we
+        // still access it directly just to be extra sure.
+        logInfo("About to create a new snapshot")
+        val snapshot = DeltaLog.forTable(spark, dir).snapshot
+        logInfo("About to access metadata")
+        snapshot.metadata
+        logInfo("About to access withStats")
+        snapshot.withStats.count()
+        logInfo("About to trigger state reconstrution")
+        snapshot.stateDF
+      }
     }
   }
 }
