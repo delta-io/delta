@@ -1444,7 +1444,8 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-planner-loader" % flinkVersion.value % Test,
       "org.apache.flink" % "flink-table-runtime" % flinkVersion.value % Test,
       "org.apache.flink" % "flink-test-utils-junit" % flinkVersion.value % Test,
-      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test"
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
+      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
     )
   )
 

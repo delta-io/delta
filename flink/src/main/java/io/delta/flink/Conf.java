@@ -60,8 +60,6 @@ public final class Conf {
   public static String TABLE_CACHE_SIZE = "table.cache.size";
   public static String TABLE_CACHE_EXPIRE_MS = "table.cache.expire-ms";
 
-  public static String DELTA_CHECKPOINT_FREQUENCY = "delta.checkpoint.frequency";
-
   public static String CREDENTIALS_REFRESH_THREAD_POOL_SIZE =
       "credentials.refresh.thread-pool-size";
   public static String CREDENTIALS_REFRESH_AHEAD_MS = "credentials.refresh.ahead-ms";
@@ -115,10 +113,6 @@ public final class Conf {
 
   public long getTableCacheExpireInMs() {
     return Long.parseLong(getOrDefault(TABLE_CACHE_EXPIRE_MS, "300000"));
-  }
-
-  public double getDeltaCheckpointFrequency() {
-    return Double.parseDouble(getOrDefault(DELTA_CHECKPOINT_FREQUENCY, "0"));
   }
 
   public int getCredentialsRefreshThreadPoolSize() {

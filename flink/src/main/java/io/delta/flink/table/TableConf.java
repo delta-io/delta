@@ -17,9 +17,11 @@
 package io.delta.flink.table;
 
 import java.io.Serializable;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.stream.Collectors;
 import org.apache.flink.configuration.ConfigOption;
 import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
@@ -53,8 +55,11 @@ public class TableConf implements Serializable {
   public static final ConfigOption<Boolean> CHECKSUM_ENABLED =
       ConfigOptions.key("checksum.enable")
           .booleanType()
-          .defaultValue(false)
+          .defaultValue(true)
           .withDescription("Whether to generate checksum files for commits on this table.");
+
+  private static final Map<String, String> DEFAULT_CONFS =
+      Map.of("delta.feature.v2Checkpoint", "supported");
 
   private final Map<String, String> raw;
   private final Configuration cfg;
@@ -70,8 +75,8 @@ public class TableConf implements Serializable {
    * @param conf raw configuration map; must not be null
    */
   public TableConf(Map<String, String> conf) {
-    this.raw = Map.copyOf(Objects.requireNonNull(conf, "conf"));
-    this.cfg = Configuration.fromMap(this.raw);
+    raw = Map.copyOf(Objects.requireNonNull(conf, "conf"));
+    cfg = Configuration.fromMap(raw);
 
     validate();
   }
@@ -79,13 +84,18 @@ public class TableConf implements Serializable {
   /**
    * Configuration to be persisted in the catalog.
    *
-   * <p>This returns a subset of options that are intended to be stored with the table definition so
-   * that behavior is consistent across jobs and clusters.
+   * <p>This returns a subset of options that are intended to be stored with the table definition.
+   * Now it includes configuration starts with "delta."
    *
    * @return a map of catalog-persisted configuration entries
    */
   public Map<String, String> catalogConf() {
-    return Map.of();
+    Map<String, String> merged = new HashMap<>(DEFAULT_CONFS);
+    merged.putAll(
+        raw.entrySet().stream()
+            .filter(entry -> entry.getKey().startsWith("delta."))
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
+    return merged;
   }
 
   /**

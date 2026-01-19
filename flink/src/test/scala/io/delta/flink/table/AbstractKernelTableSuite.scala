@@ -29,8 +29,10 @@ import io.delta.kernel.data.{ColumnVector, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.Literal
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.actions.{AddFile, SingleAction}
 import io.delta.kernel.internal.util.Utils
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, DataFileStatus}
 
@@ -66,6 +68,35 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
       val copy = InstantiationUtil.deserializeObject(serialized, getClass.getClassLoader)
         .asInstanceOf[AbstractKernelTable]
       assert(copy != null)
+    }
+  }
+
+  test("table stored conf into delta logs") {
+    withTempDir { dir =>
+      val schema = new StructType().add("id", IntegerType.INTEGER)
+
+      val table = new HadoopTableForTest(
+        dir.toURI,
+        Map(
+          "delta.enableDeletionVectors" -> "true",
+          "showme" -> "themoney",
+          "something" -> "fornothing").asJava,
+        schema,
+        Seq.empty[String].asJava)
+      table.open()
+
+      table.commit(
+        CloseableIterable.inMemoryIterable(
+          singletonCloseableIterator(dummyAddFileRow(schema, 1, Map.empty[String, Literal]))),
+        "app",
+        100L,
+        Map.empty[String, String].asJava)
+      val snapshot = table.snapshot().get()
+      assert(snapshot.getTableProperties.get("delta.enableDeletionVectors") == "true")
+      assert(!snapshot.getTableProperties.containsKey("showme"))
+      assert(!snapshot.getTableProperties.containsKey("something"))
+      assert(snapshot.asInstanceOf[SnapshotImpl].getProtocol
+        .getWriterFeatures.contains("v2Checkpoint"))
     }
   }
 
@@ -233,7 +264,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           // There should be 6 files to scan
           assert(6 == actions.size)
           val parts = actions.map(_.getPartitionValues.getValues.getString(0)).toSet
-          assert(Set("p0", "p1", "p2", "p3", "p4").forall(parts.contains(_)))
+          assert(Set("p0", "p1", "p2", "p3", "p4").forall(parts.contains))
           assert(90 == actions.map(_.getNumRecords.get.longValue()).sum)
         })
     }
@@ -373,7 +404,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           result
         }
 
-        override def reloadSnapshot() {
+        override def reloadSnapshot(): Unit = {
           // This should be called once
           retryCounter += 1
         }
@@ -430,7 +461,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           result
         }
 
-        override def refreshCredential() {
+        override def refreshCredential(): Unit = {
           // This should be called once
           retryCounter += 1
         }
@@ -466,7 +497,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
           result
         }
 
-        override def refreshCredential() {
+        override def refreshCredential(): Unit = {
           // This should be called once
           retryCounter += 1
         }

@@ -127,13 +127,11 @@ public class DeltaWriterTask {
     final String pathSuffix = String.format("%s-%d-%d", jobId, subtaskId, attemptNumber);
     final CloseableIterator<Row> actions =
         deltaTable.writeParquet(pathSuffix, logicalData, partitionValues);
-    final WriterResultContext context = new WriterResultContext(highWatermark, lowWatermark);
+    final WriterResultContext context = new WriterResultContext(lowWatermark, highWatermark);
     final Collection<DeltaWriterResult> output =
         actions.map(row -> new DeltaWriterResult(List.of(row), context)).toInMemoryList();
     resultBuffer.addAll(output);
 
-    this.highWatermark = -1L;
-    this.lowWatermark = Long.MAX_VALUE;
     buffer.clear();
   }
 
@@ -362,6 +360,20 @@ public class DeltaWriterTask {
     }
 
     @Override
+    public byte getByte(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(ByteType.BYTE);
+      return extract(rowId).getByte(index);
+    }
+
+    @Override
+    public short getShort(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(ShortType.SHORT);
+      return extract(rowId).getShort(index);
+    }
+
+    @Override
     public int getInt(int rowId) {
       checkValidRowId(rowId);
       if (getDataType().equivalent(IntegerType.INTEGER)
@@ -486,6 +498,20 @@ public class DeltaWriterTask {
       checkValidRowId(rowId);
       checkValidDataType(FloatType.FLOAT);
       return data.getFloat(rowId);
+    }
+
+    @Override
+    public byte getByte(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(ByteType.BYTE);
+      return data.getByte(rowId);
+    }
+
+    @Override
+    public short getShort(int rowId) {
+      checkValidRowId(rowId);
+      checkValidDataType(ShortType.SHORT);
+      return data.getShort(rowId);
     }
 
     @Override

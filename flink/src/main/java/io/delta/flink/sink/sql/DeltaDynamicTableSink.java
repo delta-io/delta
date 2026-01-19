@@ -85,7 +85,7 @@ public class DeltaDynamicTableSink implements DynamicTableSink, SupportsPartitio
       deltaSink =
           DeltaSink.builder()
               .withFlinkSchema(rowType)
-              .withTableId(tableId.asSummaryString())
+              .withTableName(tableId.asSummaryString())
               .withEndpoint(options.get(FlinkUnityCatalogFactory.ENDPOINT.key()))
               .withToken(options.get(FlinkUnityCatalogFactory.TOKEN.key()))
               .withConfigurations(options)

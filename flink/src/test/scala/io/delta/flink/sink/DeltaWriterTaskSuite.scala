@@ -815,15 +815,15 @@ class DeltaWriterTaskSuite extends AnyFunSuite with TestHelper {
 
       val expectedFileCount = rowCount / rollSize + 1
       assert(expectedFileCount == results.size())
-      assert(results.asScala.flatMap { result =>
+      assert(results.asScala.zipWithIndex.flatMap { case (result, idx) =>
         assert(1 == result.getDeltaActions.size())
         val action = result.getDeltaActions.get(0)
         val addFile = new AddFile(action.getStruct(SingleAction.ADD_FILE_ORDINAL))
         val fullPath = dir.toPath.resolve(addFile.getPath).toAbsolutePath
 
-        assert(
-          result.getContext.getHighWatermark - result.getContext.getLowWatermark ==
-            (addFile.getNumRecords.get() - 1) * 100)
+        assert(result.getContext.getHighWatermark ==
+          Math.min((rowCount - 1) * 100, (((idx + 1) * rollSize) - 1) * 100))
+        assert(result.getContext.getLowWatermark == 0)
 
         // check the Parquet file content
         val rows = readParquet(fullPath, schema)

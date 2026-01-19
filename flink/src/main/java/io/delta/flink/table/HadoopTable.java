@@ -63,7 +63,7 @@ public class HadoopTable extends AbstractKernelTable {
     this(catalog, tableId, conf, null, null);
   }
 
-  HadoopTable(
+  public HadoopTable(
       DeltaCatalog catalog,
       String tableId,
       Map<String, String> conf,

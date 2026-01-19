@@ -79,10 +79,7 @@ public class DeltaWriterResultAggregator
 
     DeltaWriterResult merged =
         results.stream()
-            .collect(
-                DeltaWriterResult::new,
-                    DeltaWriterResult::merge,
-                    DeltaWriterResult::merge);
+            .collect(DeltaWriterResult::new, DeltaWriterResult::merge, DeltaWriterResult::merge);
 
     DeltaCommittable committable =
         new DeltaCommittable(

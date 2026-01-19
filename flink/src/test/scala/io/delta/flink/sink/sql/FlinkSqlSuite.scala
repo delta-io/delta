@@ -24,7 +24,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class FlinkSqlSuite extends AnyFunSuite with TestHelper {
 
-  test("load hadoop table") {
+  test("load into hadoop table") {
     withTempDir { dir =>
       val settings = EnvironmentSettings.newInstance.inStreamingMode.build
       val tEnv = TableEnvironment.create(settings)
@@ -73,7 +73,7 @@ class FlinkSqlSuite extends AnyFunSuite with TestHelper {
     }
   }
 
-  test("load partitioned hadoop table") {
+  test("load into partitioned hadoop table") {
     withTempDir { dir =>
       val settings = EnvironmentSettings.newInstance.inStreamingMode.build
       val tEnv = TableEnvironment.create(settings)
@@ -122,6 +122,104 @@ class FlinkSqlSuite extends AnyFunSuite with TestHelper {
           }.toSet)
           assert(16 == addfiles.map { a => a.getPartitionValues.getValues.getString(0) }.toSet.size)
         })
+    }
+  }
+
+  test("load into table with many types") {
+    withTempDir { dir =>
+      val settings = EnvironmentSettings.newInstance.inStreamingMode.build
+      val tEnv = TableEnvironment.create(settings)
+      val numRecords = 1000
+      tEnv.executeSql(
+        s"""
+           CREATE TABLE src (
+              c_tinyint    TINYINT,
+              c_smallint   SMALLINT,
+              c_int        INT,
+              c_bigint     BIGINT,
+              c_decimal    DECIMAL(18, 6),
+              c_float      FLOAT,
+              c_double     DOUBLE,
+              c_bool       BOOLEAN,
+              c_char       CHAR(8),
+              c_varchar    VARCHAR(32),
+              c_string     STRING,
+              c_binary     BINARY(8),
+              c_varbinary  VARBINARY(16),
+              c_bytes      BYTES,
+              c_date       DATE,
+              c_time       TIME(0)
+           ) WITH (
+              'connector' = 'datagen',
+              'number-of-rows' = '$numRecords',
+              'rows-per-second' = '500',
+              'fields.c_tinyint.min' = '0',
+              'fields.c_tinyint.max' = '100',
+              'fields.c_smallint.min' = '0',
+              'fields.c_smallint.max' = '1000',
+              'fields.c_int.min' = '0',
+              'fields.c_int.max' = '100000',
+              'fields.c_bigint.min' = '0',
+              'fields.c_bigint.max' = '1000000000',
+              'fields.c_decimal.min' = '0',
+              'fields.c_decimal.max' = '999999',
+              'fields.c_float.min' = '0',
+              'fields.c_float.max' = '100',
+              'fields.c_double.min' = '0',
+              'fields.c_double.max' = '1000',
+              'fields.c_bool.kind' = 'random',
+              'fields.c_varchar.length' = '16',
+              'fields.c_string.length' = '24',
+              'fields.c_varbinary.length' = '16',
+              'fields.c_bytes.length' = '12'
+           )""".stripMargin)
+
+      tEnv.executeSql(
+        s"""
+          CREATE TEMPORARY TABLE sink (
+            c_tinyint    TINYINT,
+            c_smallint   SMALLINT,
+            c_int        INT,
+              c_bigint     BIGINT,
+              c_decimal    DECIMAL(18, 6),
+              c_float      FLOAT,
+              c_double     DOUBLE,
+              c_bool       BOOLEAN,
+              c_char       CHAR(8),
+              c_varchar    VARCHAR(32),
+              c_string     STRING,
+              c_binary     BINARY(8),
+              c_varbinary  VARBINARY(16),
+              c_bytes      BYTES,
+              c_date       DATE,
+              c_time       TIME(0)
+          ) WITH (
+            'connector' = 'delta',
+            'table_path' = '${dir.getPath}',
+            'uid' = 'someuid'
+          )
+        """.stripMargin)
+
+      tEnv.executeSql(
+        """INSERT INTO sink SELECT
+          | c_tinyint,
+          | c_smallint,
+          | c_int,
+          | c_bigint,
+          | c_decimal,
+          | c_float,
+          | c_double,
+          | c_bool,
+          | c_char,
+          | c_varchar,
+          | c_string,
+          | c_binary,
+          | c_varbinary,
+          | c_bytes,
+          | c_date,
+          | c_time
+          | FROM src""".stripMargin).await()
+
     }
   }
 

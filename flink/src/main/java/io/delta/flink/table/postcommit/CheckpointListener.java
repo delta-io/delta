@@ -16,17 +16,30 @@
 
 package io.delta.flink.table.postcommit;
 
+import io.delta.flink.kernel.Checkpoint;
 import io.delta.flink.table.AbstractKernelTable;
 import io.delta.flink.table.TableEventListener;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 
 public class CheckpointListener implements TableEventListener {
 
   @Override
   public void onPostCommit(AbstractKernelTable source, Snapshot snapshot) {
     if (source.getConf().shouldCreateCheckpoint()) {
-      source.executeWithTiming(
-          "commit.checkpoint", () -> snapshot.writeCheckpoint(source.getEngine()));
+      if (snapshot instanceof SnapshotImpl
+          && ((SnapshotImpl) snapshot)
+              .getProtocol()
+              .getWriterFeatures()
+              .contains(TableFeatures.CHECKPOINT_V2_RW_FEATURE.featureName())) {
+        // Use v2 incremental checkpoint when possible
+        source.executeWithTiming(
+            "commit.checkpoint", () -> new Checkpoint(source.getEngine(), snapshot).write());
+      } else {
+        source.executeWithTiming(
+            "commit.checkpoint", () -> snapshot.writeCheckpoint(source.getEngine()));
+      }
     }
   }
 }

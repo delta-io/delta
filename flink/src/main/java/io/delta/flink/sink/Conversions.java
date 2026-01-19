@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -62,7 +62,13 @@ public class Conversions {
       switch (typeRoot) {
         case BOOLEAN:
           return io.delta.kernel.types.BooleanType.BOOLEAN;
+        case TINYINT:
+          return io.delta.kernel.types.ByteType.BYTE;
+        case SMALLINT:
+          return io.delta.kernel.types.ShortType.SHORT;
         case INTEGER:
+        case INTERVAL_YEAR_MONTH:
+        case TIME_WITHOUT_TIME_ZONE:
           return io.delta.kernel.types.IntegerType.INTEGER;
         case VARCHAR:
         case CHAR:
@@ -71,6 +77,7 @@ public class Conversions {
         case VARBINARY:
           return io.delta.kernel.types.BinaryType.BINARY;
         case BIGINT:
+        case INTERVAL_DAY_TIME:
           return io.delta.kernel.types.LongType.LONG;
         case DOUBLE:
           return io.delta.kernel.types.DoubleType.DOUBLE;
@@ -135,6 +142,8 @@ public class Conversions {
       final DataType dataType = field.getDataType();
       if (dataType.equivalent(io.delta.kernel.types.IntegerType.INTEGER)) {
         return Literal.ofInt(rowData.getInt(colIdx));
+      } else if (dataType.equivalent(io.delta.kernel.types.ByteType.BYTE)) {
+        return Literal.ofByte(rowData.getByte(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.LongType.LONG)) {
         return Literal.ofLong(rowData.getLong(colIdx));
       } else if (dataType.equivalent(io.delta.kernel.types.StringType.STRING)) {
@@ -164,7 +173,7 @@ public class Conversions {
     /**
      * Convert a Flink Timestamp Data to Kernel timestamp ( microseconds )
      *
-     * @param input
+     * @param input Flink timestamp Data
      * @return the microseconds
      */
     public static long timestamp(TimestampData input) {
@@ -172,6 +181,7 @@ public class Conversions {
     }
   }
 
+  /** Convert Flink data to Java objects */
   public static class FlinkToJava {
     public static Map<String, Object> partitionValues(
         RowType rowType, Collection<String> partitionColNames, RowData rowData) {
@@ -196,10 +206,17 @@ public class Conversions {
         case VARBINARY:
           return new String(
               Base64.getEncoder().encode(rowData.getBinary(colIdx)), StandardCharsets.UTF_8);
+        case TINYINT:
+          return rowData.getByte(colIdx);
+        case SMALLINT:
+          return rowData.getShort(colIdx);
         case INTEGER:
         case DATE:
+        case INTERVAL_YEAR_MONTH:
+        case TIME_WITHOUT_TIME_ZONE:
           return rowData.getInt(colIdx);
         case BIGINT:
+        case INTERVAL_DAY_TIME:
         case TIMESTAMP_WITH_LOCAL_TIME_ZONE:
         case TIMESTAMP_WITHOUT_TIME_ZONE:
           return rowData.getLong(colIdx);

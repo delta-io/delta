@@ -30,8 +30,8 @@ public class ChecksumListener implements TableEventListener {
   @Override
   public void onPostCommit(AbstractKernelTable source, Snapshot snapshot) {
     if (source.getConf().isChecksumEnabled()) {
-      // Write checksum synchronously
-      source.withTiming(
+      // Write checksum asynchronously
+      source.executeWithTiming(
           "commit.checksum",
           () -> {
             try {

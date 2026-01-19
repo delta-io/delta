@@ -257,7 +257,7 @@ class DeltaCommitterSuite extends AnyFunSuite with TestHelper {
           "test-opr",
           1000L,
           actions,
-          new WriterResultContext(200, 100))
+          new WriterResultContext(100, 200))
         new MockCommitRequest(committable)
       })
 

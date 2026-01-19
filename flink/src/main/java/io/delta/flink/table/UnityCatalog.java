@@ -270,7 +270,11 @@ public class UnityCatalog implements DeltaCatalog {
           String schemaName;
           String tableName;
           if (namespaces.length == 3) {
-            Preconditions.checkArgument(namespaces[0].equals(getName()));
+            Preconditions.checkArgument(
+                namespaces[0].equals(getName()),
+                String.format(
+                    "table's catalog name %s must match catalog's name %s",
+                    namespaces[0], getName()));
             schemaName = namespaces[1];
             tableName = namespaces[2];
           } else {

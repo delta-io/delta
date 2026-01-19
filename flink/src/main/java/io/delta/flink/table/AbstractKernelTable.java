@@ -359,7 +359,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
                                   .map(Column::new)
                                   .collect(Collectors.toList())));
                     }
-                    txnBuilder.withTableProperties(properties);
+                    Map<String, String> baseProp = new HashMap<>(conf.catalogConf());
+                    baseProp.putAll(properties);
+                    txnBuilder.withTableProperties(baseProp);
                     txn = txnBuilder.build(localEngine);
                   }
 

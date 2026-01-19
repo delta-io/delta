@@ -184,9 +184,8 @@ public class DeltaSink
   }
 
   @Override
-  public void addPostCommitTopology(DataStream<CommittableMessage<DeltaCommittable>> committables) {
-
-  }
+  public void addPostCommitTopology(
+      DataStream<CommittableMessage<DeltaCommittable>> committables) {}
 
   public static Builder builder() {
     return new Builder();
@@ -202,9 +201,11 @@ public class DeltaSink
     private static final ConfigOption<TableType> TYPE =
         ConfigOptions.key("type").enumType(TableType.class).defaultValue(TableType.hadoop);
     private static final ConfigOption<String> HADOOP_TABLE_PATH =
-        ConfigOptions.key("hadoop.table-path").stringType().noDefaultValue();
-    private static final ConfigOption<String> UNITYCATALOG_TABLE_ID =
-        ConfigOptions.key("unitycatalog.table-id").stringType().noDefaultValue();
+        ConfigOptions.key("hadoop.table_path").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_NAME =
+        ConfigOptions.key("unitycatalog.name").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_TABLE_NAME =
+        ConfigOptions.key("unitycatalog.table_name").stringType().noDefaultValue();
     private static final ConfigOption<String> UNITYCATALOG_ENDPOINT =
         ConfigOptions.key("unitycatalog.endpoint").stringType().noDefaultValue();
     private static final ConfigOption<String> UNITYCATALOG_TOKEN =
@@ -217,7 +218,8 @@ public class DeltaSink
     private RowType flinkSchema;
     private List<String> partitionColNames;
     // For catalog-based tables
-    private String tableId;
+    private String catalogName = "main";
+    private String tableName;
     private URI endpoint;
     private String token;
     private Map<String, String> configurations;
@@ -246,8 +248,8 @@ public class DeltaSink
     }
 
     // For catalog-based tables
-    public Builder withTableId(String tableId) {
-      this.tableId = tableId;
+    public Builder withTableName(String tableName) {
+      this.tableName = tableName;
       this.tableType = TableType.unitycatalog;
       return this;
     }
@@ -267,11 +269,16 @@ public class DeltaSink
       Configuration extract = Configuration.fromMap(configurations);
 
       // Extract everything from configurations
-      this.tableType = extract.get(TYPE);
-      this.tablePath = extract.get(HADOOP_TABLE_PATH);
-      this.tableId = extract.get(UNITYCATALOG_TABLE_ID);
-      this.endpoint = URI.create(extract.get(UNITYCATALOG_ENDPOINT));
-      this.token = extract.get(UNITYCATALOG_TOKEN);
+      this.tableType = extract.get(TYPE, null);
+      this.tablePath = extract.get(HADOOP_TABLE_PATH, null);
+      this.catalogName = extract.get(UNITYCATALOG_NAME, "main");
+      this.tableName = extract.get(UNITYCATALOG_TABLE_NAME, null);
+
+      String endpoint = extract.get(UNITYCATALOG_ENDPOINT, null);
+      if (Objects.nonNull(endpoint)) {
+        this.endpoint = URI.create(endpoint);
+      }
+      this.token = extract.get(UNITYCATALOG_TOKEN, null);
       return this;
     }
 
@@ -297,8 +304,16 @@ public class DeltaSink
               Objects.requireNonNull(endpoint);
               Objects.requireNonNull(token);
               // TODO Support separated endpoints for catalog and table
-              DeltaCatalog restCatalog = new UnityCatalog("main", endpoint, token);
-              deltaTable = new CCv2Table(restCatalog, tableId, configurations, endpoint, token);
+              DeltaCatalog restCatalog = new UnityCatalog(catalogName, endpoint, token);
+              deltaTable =
+                  new CCv2Table(
+                      restCatalog,
+                      tableName,
+                      configurations,
+                      sinkSchema,
+                      partitionColNames,
+                      endpoint,
+                      token);
               break;
             }
           case ucpath:
@@ -306,8 +321,10 @@ public class DeltaSink
               Objects.requireNonNull(endpoint);
               Objects.requireNonNull(token);
               // TODO Support separated endpoints for catalog and table
-              DeltaCatalog restCatalog = new UnityCatalog("main", endpoint, token);
-              deltaTable = new HadoopTable(restCatalog, tableId, configurations);
+              DeltaCatalog restCatalog = new UnityCatalog(catalogName, endpoint, token);
+              deltaTable =
+                  new HadoopTable(
+                      restCatalog, tableName, configurations, sinkSchema, partitionColNames);
               break;
             }
           default:

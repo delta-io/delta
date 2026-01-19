@@ -18,12 +18,14 @@ package io.delta.flink.table;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import io.unitycatalog.client.auth.TokenProvider;
 import java.net.URI;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.flink.util.Preconditions;
@@ -52,7 +54,18 @@ public class CCv2Table extends AbstractKernelTable {
 
   public CCv2Table(
       DeltaCatalog catalog, String tableId, Map<String, String> conf, URI endpoint, String token) {
-    super(catalog, tableId, conf);
+    this(catalog, tableId, conf, null, null, endpoint, token);
+  }
+
+  public CCv2Table(
+      DeltaCatalog catalog,
+      String tableId,
+      Map<String, String> conf,
+      StructType schema,
+      List<String> partitionColumns,
+      URI endpoint,
+      String token) {
+    super(catalog, tableId, conf, schema, partitionColumns);
     Preconditions.checkNotNull(endpoint);
     Preconditions.checkNotNull(token);
     this.endpoint = endpoint;

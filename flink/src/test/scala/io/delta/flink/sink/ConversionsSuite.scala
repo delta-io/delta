@@ -21,7 +21,9 @@ import scala.jdk.CollectionConverters.SeqHasAsJava
 import io.delta.kernel.{types => ktypes}
 
 import org.apache.flink.table.types.logical._
+import org.apache.flink.table.types.logical.DayTimeIntervalType.DayTimeResolution
 import org.apache.flink.table.types.logical.RowType.RowField
+import org.apache.flink.table.types.logical.YearMonthIntervalType.YearMonthResolution
 import org.scalatest.funsuite.AnyFunSuite
 
 class ConversionsSuite extends AnyFunSuite {
@@ -31,16 +33,22 @@ class ConversionsSuite extends AnyFunSuite {
   test("primitive types") {
     val flinkSchema = row(
       f("b", new BooleanType),
+      f("ti", new TinyIntType),
+      f("sm", new SmallIntType),
       f("i", new IntType),
       f("l", new BigIntType),
       f("f", new FloatType),
       f("d", new DoubleType),
       f("s", new VarCharType(VarCharType.MAX_LENGTH)),
       f("bin", new VarBinaryType(VarBinaryType.MAX_LENGTH)),
-      f("dec", new DecimalType(10, 2)))
+      f("dec", new DecimalType(10, 2)),
+      f("iym", new YearMonthIntervalType(YearMonthResolution.YEAR_TO_MONTH, 4)),
+      f("idt", new DayTimeIntervalType(DayTimeResolution.DAY, 3, 6)))
 
     val expected = new ktypes.StructType()
       .add("b", ktypes.BooleanType.BOOLEAN, true)
+      .add("ti", ktypes.ByteType.BYTE, true)
+      .add("sm", ktypes.ShortType.SHORT, true)
       .add("i", ktypes.IntegerType.INTEGER, true)
       .add("l", ktypes.LongType.LONG, true)
       .add("f", ktypes.FloatType.FLOAT, true)
@@ -48,6 +56,8 @@ class ConversionsSuite extends AnyFunSuite {
       .add("s", ktypes.StringType.STRING, true)
       .add("bin", ktypes.BinaryType.BINARY, true)
       .add("dec", new ktypes.DecimalType(10, 2), true)
+      .add("iym", ktypes.IntegerType.INTEGER, true)
+      .add("idt", ktypes.LongType.LONG, true)
 
     val actual = Conversions.FlinkToDelta.schema(flinkSchema)
     assert(expected.equivalent(actual))
