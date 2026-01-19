@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
 import org.apache.spark.sql.delta.schema._
+import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{
@@ -478,7 +479,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
             key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
               key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
           }.toMap
-      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString)
+      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) ++
+        VariantShreddingShims.getVariantInferShreddingSchemaOptions(
+          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata))
 
       try {
         DeltaFileFormatWriter.write(

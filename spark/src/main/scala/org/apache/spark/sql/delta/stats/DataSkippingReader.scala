@@ -43,6 +43,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
+import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
@@ -129,7 +130,12 @@ private [sql] object DataSkippingPredicate {
 object SkippingEligibleColumn {
   def unapply(arg: Expression): Option[(Seq[String], DataType)] = {
     // Only atomic types are eligible for skipping, and args should always be resolved by now.
-    val eligible = arg.resolved && arg.dataType.isInstanceOf[AtomicType]
+    // When `pushVariantIntoScan` is true, Variants in the read schema are transformed into Structs
+    // to facilitate shredded reads. Therefore, filters like `v is not null` where `v` is a variant
+    // column look like the filters on struct data. `VariantMetadata.isVariantStruct` helps in
+    // distinguishing between "true structs" and "variant structs".
+    val eligible = arg.resolved && (arg.dataType.isInstanceOf[AtomicType] ||
+      VariantMetadata.isVariantStruct(arg.dataType))
     if (eligible) searchChain(arg).map(_ -> arg.dataType) else None
   }
 
