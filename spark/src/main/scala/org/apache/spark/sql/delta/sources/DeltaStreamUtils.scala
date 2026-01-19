@@ -65,6 +65,7 @@ object DeltaStreamUtils {
    * This class encapsulates various flags and settings that control how Delta streaming handles
    * schema changes and compatibility checks.
    *
+   * TODO(#5318): Remove this config when schema tracking is enabled in v2
    * @param allowUnsafeStreamingReadOnColumnMappingSchemaChanges
    *        Flag that allows user to force enable unsafe streaming read on Delta table with
    *        column mapping enabled AND drop/rename actions.
@@ -94,23 +95,42 @@ object DeltaStreamUtils {
       forceEnableUnsafeReadOnNullabilityChange: Boolean,
       isStreamingFromColumnMappingTable: Boolean,
       typeWideningEnabled: Boolean,
-      enableSchemaTrackingForTypeWidening: Boolean)
+      enableSchemaTrackingForTypeWidening: Boolean
+  )
+
+  sealed trait SchemaCompatibilityResult
+  object SchemaCompatibilityResult {
+    // Indicates that the schema change is compatible and can be applied safely
+    case object Compatible extends SchemaCompatibilityResult
+    // Indicates that the schema change is incompatible and would break the query,
+    // but the change can be applied by recovering the query
+    case object RetryableIncompatible extends SchemaCompatibilityResult
+    // Indicates that the schema change is incompatible and would break the query,
+    // but the change cannot be applied by recovering the query
+    case object NonRetryableIncompatible extends SchemaCompatibilityResult
+
+    def isCompatible(result: SchemaCompatibilityResult): Boolean =
+      result == Compatible
+
+    def isRetryableIncompatible(result: SchemaCompatibilityResult): Boolean =
+      result == RetryableIncompatible
+  }
 
   /**
    * Validate schema compatibility between data schema and read schema. Checks for read
    * compatibility considering nullability, type widening, missing columns, and partition changes.
    *
-   * Returns (isCompatible, isRetryable) where isRetryable is None if validation succeeded.
+   * Returns SchemaCompatibilityResult
    */
-  def validateBasicSchemaChanges(
+  def checkSchemaChangesWhenNoSchemaTracking(
       dataSchema: StructType,
       readSchema: StructType,
       newPartitionColumns: Seq[String],
       oldPartitionColumns: Seq[String],
       backfilling: Boolean,
-      readOptions: SchemaReadOptions): (Boolean, Option[Boolean]) = {
-    // We forbid the case when the the schemaChange is nullable while the read schema is NOT
-    // nullable, or in other words, `schema` should not tighten nullability from `schemaChange`,
+      readOptions: SchemaReadOptions): SchemaCompatibilityResult = {
+    // We forbid the case when the data schema is nullable while the read schema is NOT
+    // nullable, or in other words, `readSchema` should not tighten nullability from `dataSchema`,
     // because we don't ever want to read back any nulls when the read schema is non-nullable.
     val shouldForbidTightenNullability = !readOptions.forceEnableUnsafeReadOnNullabilityChange
     // If schema tracking is disabled for type widening, we allow widening type changes to go
@@ -118,54 +138,60 @@ object DeltaStreamUtils {
     // will cause the stream to fail with a retryable exception, and the stream will restart using
     // the new schema.
     val allowWideningTypeChanges = readOptions.typeWideningEnabled &&
-      !readOptions.enableSchemaTrackingForTypeWidening
+        !readOptions.enableSchemaTrackingForTypeWidening
     // If a user is streaming from a column mapping table and enable the unsafe flag to ignore
     // column mapping schema changes, we can allow the standard check to allow missing columns
-    // from the read schema in the schema change, because the only case that happens is when
+    // from the read schema in the data schema, because the only case that happens is when
     // user rename/drops column but they don't care so they enabled the flag to unblock.
     // This is only allowed when we are "backfilling", i.e. the stream progress is older than
     // the analyzed table version. Any schema change past the analysis should still throw
     // exception, because additive schema changes MUST be taken into account.
     val shouldAllowMissingColumns = readOptions.isStreamingFromColumnMappingTable &&
-      readOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges && backfilling
+        readOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges && backfilling
+    // When backfilling after a type change, allow processing the data using the new, wider
+    // type.
+    var typeWideningMode = if (allowWideningTypeChanges && backfilling) {
+      TypeWideningMode.AllTypeWidening
+    } else {
+      TypeWideningMode.NoTypeWidening
+    }
 
     if (!SchemaUtils.isReadCompatible(
       existingSchema = dataSchema,
       readSchema = readSchema,
       forbidTightenNullability = shouldForbidTightenNullability,
       allowMissingColumns = shouldAllowMissingColumns,
-      // When backfilling after a type change, allow processing the data using the new, wider
-      // type.
-      typeWideningMode = if (allowWideningTypeChanges && backfilling) {
-        TypeWideningMode.AllTypeWidening
-      } else {
-        TypeWideningMode.NoTypeWidening
-      },
+      typeWideningMode = typeWideningMode,
       newPartitionColumns = newPartitionColumns,
       oldPartitionColumns = oldPartitionColumns
     )) {
+      // Check for widening type changes that would succeed on retry when we backfill batches.
+      typeWideningMode = if (allowWideningTypeChanges) {
+        TypeWideningMode.AllTypeWidening
+      } else {
+        TypeWideningMode.NoTypeWidening
+      }
       // Only schema change later than the current read snapshot/schema can be retried, in other
       // words, backfills could never be retryable, because we have no way to refresh
       // the latest schema to "catch up" when the schema change happens before than current read
       // schema version.
       // If not backfilling, we do another check to determine retryability, in which we assume
-      // we will be reading using this later `schemaChange` back on the current outdated `schema`,
-      // and if it works (including that `schemaChange` should not tighten the nullability
-      // constraint from `schema`), it is a retryable exception.
+      // we will be reading using this later `dataSchema` back on the current outdated `readSchema`,
+      // and if it works (including that `dataSchema` should not tighten the nullability
+      // constraint from `readSchema`), it is a retryable exception.
       val retryable = !backfilling && SchemaUtils.isReadCompatible(
         existingSchema = readSchema,
         readSchema = dataSchema,
         forbidTightenNullability = shouldForbidTightenNullability,
-        // Check for widening type changes that would succeed on retry when we backfill batches.
-        typeWideningMode = if (allowWideningTypeChanges) {
-          TypeWideningMode.AllTypeWidening
-        } else {
-          TypeWideningMode.NoTypeWidening
-        }
+        typeWideningMode = typeWideningMode
       )
-      (false, Some(retryable))
+      if (retryable) {
+        SchemaCompatibilityResult.RetryableIncompatible
+      } else {
+        SchemaCompatibilityResult.NonRetryableIncompatible
+      }
     } else {
-      (true, None)
+      SchemaCompatibilityResult.Compatible
     }
   }
 }
