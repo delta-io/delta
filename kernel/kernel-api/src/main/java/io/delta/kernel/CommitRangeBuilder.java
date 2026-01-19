@@ -54,13 +54,44 @@ public interface CommitRangeBuilder {
    * <p><strong>Note:</strong> If no end boundary is provided via {@link
    * #withEndBoundary(CommitBoundary)}, or a timestamp-based end boundary is provided, the provided
    * log data must include all available ratified commits. If a version-based end boundary is
-   * provided, the log data can omit commits with versions {@code >} endVersion.
+   * provided, the log data must include commits up to at least the end version (i.e., the tail of
+   * the log data must have a version greater than or equal to the end version).
    *
    * @param logData the list of pre-parsed log data, must not be null
    * @return this builder instance configured with the specified log data
    */
   // TODO: should we change this to take in a ParsedDeltaData instead?
   CommitRangeBuilder withLogData(List<ParsedLogData> logData);
+
+  /**
+   * Specifies the maximum table version known by the catalog.
+   *
+   * <p>This method is used by catalog implementations for catalog-managed Delta tables to indicate
+   * the latest ratified version of the table. This ensures that any commit range operations respect
+   * the catalog's view of the table state.
+   *
+   * <p>Important: This method is required for catalog-managed tables and must not be used for
+   * file-system managed tables.
+   *
+   * <p>When specified, the following additional constraints are enforced:
+   *
+   * <ul>
+   *   <li>If {@link #withStartBoundary(CommitBoundary)} is used with a version, the requested
+   *       version must be less than or equal to the max catalog version.
+   *   <li>If {@link #withEndBoundary(CommitBoundary)} is used with a version, the requested version
+   *       must be less than or equal to the max catalog version.
+   *   <li>If {@link #withStartBoundary(CommitBoundary)} or {@link #withEndBoundary(CommitBoundary)}
+   *       is used with a timestamp, the provided latest snapshot must have a version equal to the
+   *       max catalog version.
+   *   <li>If {@link #withLogData(List)} is provided and no end boundary is specified (resolving to
+   *       latest), the log data must end with the max catalog version.
+   * </ul>
+   *
+   * @param version the maximum table version known by the catalog (must be {@code >= 0})
+   * @return a new builder instance with the specified max catalog version
+   * @throws IllegalArgumentException if version is negative
+   */
+  CommitRangeBuilder withMaxCatalogVersion(long version);
 
   /**
    * Builds and returns a {@link CommitRange} instance with the configured specifications.
