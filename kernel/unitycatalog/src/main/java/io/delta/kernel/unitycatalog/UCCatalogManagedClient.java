@@ -162,12 +162,18 @@ public class UCCatalogManagedClient {
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
 
-                      Snapshot snapshot =
+                      snapshotBuilder =
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
-                              .withLogData(logData)
-                              .withMaxCatalogVersion(maxUcTableVersion)
-                              .build(engine);
+                              .withLogData(logData);
+
+                      // Only set maxCatalogVersion if UC has ratified commits.
+                      // -1 means no commits ratified by UC (e.g., EXTERNAL tables).
+                      if (maxUcTableVersion >= 0) {
+                        snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(maxUcTableVersion);
+                      }
+
+                      Snapshot snapshot = snapshotBuilder.build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
                     });
@@ -509,11 +515,19 @@ public class UCCatalogManagedClient {
         logger,
         "TableManager.loadSnapshot at latest for time-travel query",
         ucTableId,
-        () ->
-            TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
-                .withLogData(logData)
-                .withMaxCatalogVersion(ucTableVersion)
-                .build(engine));
+        () -> {
+          SnapshotBuilder builder =
+              TableManager.loadSnapshot(tablePath)
+                  .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                  .withLogData(logData);
+
+          // Only set maxCatalogVersion if UC has ratified commits.
+          // -1 means no commits ratified by UC (e.g., EXTERNAL tables).
+          if (ucTableVersion >= 0) {
+            builder = builder.withMaxCatalogVersion(ucTableVersion);
+          }
+
+          return builder.build(engine);
+        });
   }
 }
