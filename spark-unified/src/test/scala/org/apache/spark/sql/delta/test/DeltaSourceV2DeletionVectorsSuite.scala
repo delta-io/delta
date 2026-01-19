@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.sql.delta.{DeltaSourceDeletionVectorTests, DeltaSourceSuiteBase, PersistentDVEnabled}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
  * Test suite that runs DeltaSourceDeletionVectorTests using the V2 connector.
@@ -28,6 +29,14 @@ class DeltaSourceV2DeletionVectorsSuite extends DeltaSourceSuiteBase
   with V2ForceTest {
 
   override protected def useDsv2: Boolean = true
+
+  // Override executeSql to use V1 connector for write operations (DELETE/INSERT)
+  // V2 connector doesn't support write operations yet
+  override protected def executeSql(sqlText: String): Unit = {
+    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
+      sql(sqlText)
+    }
+  }
 
   private lazy val shouldPassTests = Set(
     "allow to delete files before starting a streaming query",

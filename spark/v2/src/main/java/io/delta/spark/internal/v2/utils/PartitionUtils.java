@@ -194,7 +194,9 @@ public class PartitionUtils {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     Protocol protocol = snapshotImpl.getProtocol();
     Metadata metadata = snapshotImpl.getMetadata();
-    String tablePath = snapshotImpl.getDataPath().toUri().toString();
+    // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues
+    // This matches V1 connector behavior in PreprocessTableWithDVs.scala
+    String tablePath = snapshotImpl.getDataPath().toString();
 
     // Create DV context if table supports deletion vectors
     boolean isTableSupportDv =

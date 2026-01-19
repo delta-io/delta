@@ -21,6 +21,7 @@ import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
@@ -348,7 +349,9 @@ public class SparkMicroBatchStream
     Seq<FilePartition> filePartitions =
         FilePartition$.MODULE$.getFilePartitions(
             spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+    InputPartition[] result =
+        JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+    return result;
   }
 
   @Override
@@ -762,9 +765,15 @@ public class SparkMicroBatchStream
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
-        ColumnarBatch batch = filteredBatch.getData();
-        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          StreamingHelper.getDataChangeAdd(batch, rowId).ifPresent(addFiles::add);
+        // getScanFiles returns rows with schema {add: struct, tableRoot: string}
+        // Extract AddFile directly from each row
+        try (CloseableIterator<Row> rowIter = filteredBatch.getRows()) {
+          while (rowIter.hasNext()) {
+            Row scanFileRow = rowIter.next();
+            // addFile struct is at index 0 in scan file schema
+            Row addFileRow = scanFileRow.getStruct(0);
+            addFiles.add(new AddFile(addFileRow));
+          }
         }
       }
     } catch (IOException e) {
