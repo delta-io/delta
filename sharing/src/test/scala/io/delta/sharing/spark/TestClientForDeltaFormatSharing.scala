@@ -30,7 +30,8 @@ import io.delta.sharing.client.model.{
   DeltaTableFiles,
   DeltaTableMetadata,
   SingleAction,
-  Table
+  Table,
+  TemporaryCredentials
 }
 
 import org.apache.spark.SparkEnv
@@ -269,6 +270,12 @@ private[spark] class TestClientForDeltaFormatSharing(
       lines = linesBuilder.result(),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
+  }
+
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
   }
 
   override def getForStreaming(): Boolean = forStreaming
