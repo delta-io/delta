@@ -2873,7 +2873,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
   val DELTA_STATS_LIMIT_PER_VARIANT =
     buildConf("stats.limitPerVariant")
-    .internal("The maximum number of data skipping stats to collect from each Variant column")
+    .internal()
+    .doc("The maximum number of data skipping stats to collect from each Variant column")
     .intConf
     .createWithDefault(10)
 

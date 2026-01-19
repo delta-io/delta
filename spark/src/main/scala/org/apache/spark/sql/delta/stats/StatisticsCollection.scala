@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.stats
 import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
-import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 import scala.language.existentials
 
@@ -265,11 +264,11 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
-        case (c, SkippingEligibleDataType(_: VariantType), true) =>
-          val variantUdf =
-            DeltaUDF.stringFromVariant(
-              StatisticsCollectionEdge.trimAndEncodeVariant(variantFieldsLimit) _)
-          variantUdf(Column(MinVariantStats(c.expr)))
+        // case (c, SkippingEligibleDataType(_: VariantType), true) =>
+        //   val variantUdf =
+        //     DeltaUDF.stringFromVariant(
+        //       StatisticsCollectionEdge.trimAndEncodeVariant(variantFieldsLimit) _)
+        //   variantUdf(Column(MinVariantStats(c.expr)))
 
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
@@ -282,11 +281,11 @@ trait StatisticsCollection extends DeltaLogging {
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
-        case (c, SkippingEligibleDataType(_: VariantType), true) =>
-          val variantUdf =
-            DeltaUDF.stringFromVariant(
-              StatisticsCollectionEdge.trimAndEncodeVariant(variantFieldsLimit) _)
-          variantUdf(Column(MaxVariantStats(c.expr)))
+        // case (c, SkippingEligibleDataType(_: VariantType), true) =>
+        //   val variantUdf =
+        //     DeltaUDF.stringFromVariant(
+        //       StatisticsCollectionEdge.trimAndEncodeVariant(variantFieldsLimit) _)
+        //   variantUdf(Column(MaxVariantStats(c.expr)))
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>

@@ -22,10 +22,10 @@ import java.io.Closeable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.expressions.ReplaceVariantZ85WithVariantVal
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -46,6 +46,7 @@ import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType, VariantType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
@@ -167,7 +168,7 @@ object SkippingEligibleDataType {
   def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
     case _: VariantType =>
-      SQLConf.get.getConf(DatabricksSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS)
+      SQLConf.get.getConf(DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS)
     case _ => false
   }
 
@@ -266,7 +267,9 @@ trait DataSkippingReaderBase
 
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
-    allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
+    val parsedStats = from_json(col("stats"), statsSchema)
+    val decodedStats = Column(ReplaceVariantZ85WithVariantVal(parsedStats.expr))
+    allFiles.withColumn("stats", decodedStats)
   }
 
   private lazy val withStatsCache =
