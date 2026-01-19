@@ -74,10 +74,14 @@ singleStatement
 statement
     : VACUUM (path=STRING | table=qualifiedName)
         vacuumModifiers                                                 #vacuumTable
-    | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
+    | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)
+        clause=temporalClause?                                          #describeDeltaDetail
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
     | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
+    | (DESC | DESCRIBE) TABLE? EXTENDED?
+        (path=STRING | table=qualifiedName)
+        clause=temporalClause                                           #describeDeltaTable
     | CONVERT TO DELTA table=qualifiedName
         (NO STATISTICS)? (PARTITIONED BY '(' colTypeList ')')?          #convert
     | RESTORE TABLE? table=qualifiedName TO?
@@ -258,7 +262,7 @@ exprToken
 nonReserved
     : VACUUM | FULL | LITE | USING | INVENTORY | RETAIN | HOURS | DRY | RUN
     | CONVERT | TO | DELTA | PARTITIONED | BY
-    | DESC | DESCRIBE | LIMIT | DETAIL
+    | DESC | DESCRIBE | LIMIT | DETAIL | EXTENDED
     | GENERATE | FOR | TABLE | CHECK | EXISTS | OPTIMIZE | FULL
     | IDENTITY | SYNC | COLUMN | CHANGE
     | REORG | APPLY | PURGE | UPGRADE | UNIFORM | ICEBERG_COMPAT_VERSION
@@ -294,6 +298,7 @@ DOT: '.';
 DROP: 'DROP';
 DRY: 'DRY';
 EXISTS: 'EXISTS';
+EXTENDED: 'EXTENDED';
 FALSE: 'FALSE';
 FEATURE: 'FEATURE';
 FOR: 'FOR';

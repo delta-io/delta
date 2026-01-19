@@ -63,7 +63,9 @@ trait DeltaTableOperations extends AnalysisHelper { self: io.delta.tables.DeltaT
   protected def executeDetails(
       path: String,
       tableIdentifier: Option[TableIdentifier]): DataFrame = withActiveSession(sparkSession) {
-    val details = DescribeDeltaDetailCommand(Option(path), tableIdentifier, self.deltaLog.options)
+    val details = DescribeDeltaDetailCommand(
+      Option(path), tableIdentifier, self.deltaLog.options, None
+    )
     toDataset(sparkSession, details)
   }
 
