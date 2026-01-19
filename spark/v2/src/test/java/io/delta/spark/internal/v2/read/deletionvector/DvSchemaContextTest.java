@@ -20,13 +20,15 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class DvSchemaContextTest {
 
@@ -36,8 +38,12 @@ public class DvSchemaContextTest {
   private static final StructType PARTITION_SCHEMA =
       new StructType().add("date", DataTypes.StringType);
 
+  static Stream<Arguments> schemaWithDvColumnArgs() {
+    return Stream.of(Arguments.of(false, 3, 2), Arguments.of(true, 4, 3));
+  }
+
   @ParameterizedTest(name = "useMetadataRowIndex={0}")
-  @CsvSource({"false, 3, 2", "true, 4, 3"})
+  @MethodSource("schemaWithDvColumnArgs")
   void testSchemaWithDvColumn(
       boolean useMetadataRowIndex, int expectedFieldCount, int expectedDvIndex) {
     DvSchemaContext context =
@@ -57,16 +63,24 @@ public class DvSchemaContextTest {
         schemaWithDv.fields()[expectedDvIndex].name());
   }
 
+  static Stream<Arguments> inputColumnCountArgs() {
+    return Stream.of(Arguments.of(false, 4), Arguments.of(true, 5));
+  }
+
   @ParameterizedTest(name = "useMetadataRowIndex={0}")
-  @CsvSource({"false, 4", "true, 5"})
+  @MethodSource("inputColumnCountArgs")
   void testInputColumnCount(boolean useMetadataRowIndex, int expectedCount) {
     DvSchemaContext context =
         new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, useMetadataRowIndex);
     assertEquals(expectedCount, context.getInputColumnCount());
   }
 
+  static Stream<Arguments> outputColumnOrdinalsArgs() {
+    return Stream.of(Arguments.of(false, "0,1,3"), Arguments.of(true, "0,1,4"));
+  }
+
   @ParameterizedTest(name = "useMetadataRowIndex={0}")
-  @CsvSource({"false, '0,1,3'", "true, '0,1,4'"})
+  @MethodSource("outputColumnOrdinalsArgs")
   void testOutputColumnOrdinals(boolean useMetadataRowIndex, String expectedOrdinalsStr) {
     DvSchemaContext context =
         new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA, useMetadataRowIndex);
