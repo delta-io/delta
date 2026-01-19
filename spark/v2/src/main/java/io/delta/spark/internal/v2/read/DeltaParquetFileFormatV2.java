@@ -31,17 +31,7 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
   private static final long serialVersionUID = 1L;
 
   /**
-   * Creates a DeltaParquetFileFormatV2.
-   *
-   * @param protocol Kernel's Protocol
-   * @param metadata Kernel's Metadata
-   * @param nullableRowTrackingConstantFields if true, row tracking constant fields (e.g., base row
-   *     ID, default row commit version) will be created as nullable in the schema
-   * @param nullableRowTrackingGeneratedFields if true, row tracking generated fields will be
-   *     created as nullable in the schema
-   * @param optimizationsEnabled whether to enable optimizations (splits, predicate pushdown)
-   * @param tablePath table path for deletion vector support
-   * @param isCDCRead whether this is a CDC read
+   * @param useMetadataRowIndex V2: explicit control over _metadata.row_index usage for DV filtering
    */
   public DeltaParquetFileFormatV2(
       Protocol protocol,
@@ -50,14 +40,17 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
       boolean nullableRowTrackingGeneratedFields,
       boolean optimizationsEnabled,
       Option<String> tablePath,
-      boolean isCDCRead) {
+      boolean isCDCRead,
+      Option<Boolean> useMetadataRowIndex) {
     super(
         new ProtocolMetadataAdapterV2(protocol, metadata),
         nullableRowTrackingConstantFields,
         nullableRowTrackingGeneratedFields,
         optimizationsEnabled,
         tablePath,
-        isCDCRead);
+        isCDCRead,
+        // Option.map() is type-safe: converts Option<Boolean> to Option<Object>
+        useMetadataRowIndex.map(x -> (Object) x));
   }
 
   @Override
