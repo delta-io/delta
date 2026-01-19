@@ -94,6 +94,72 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("CREATE TABLE with check constraint referencing non-existent column fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_invalid_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.invalid' = 'non_existent_column > 0')
+                 |""".stripMargin)
+          },
+          "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+          parameters = Map("colName" -> "`non_existent_column`")
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with non-boolean check constraint fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_non_boolean_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.nonbool' = 'id + 1')
+                 |""".stripMargin)
+          },
+          "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+          parameters = Map(
+            "name" -> "nonbool",
+            "expr" -> "(id + 1)"
+          )
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with valid check constraint succeeds") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_valid_constraint"
+      withTable(tableName) {
+        sql(
+          s"""
+             |CREATE TABLE $tableName (
+             |id INT,
+             |value STRING
+             |) USING DELTA
+             |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
+             |""".stripMargin)
+      }
+    }
+  }
+
   test("constraint must be boolean") {
     withTestTable { table =>
       checkError(

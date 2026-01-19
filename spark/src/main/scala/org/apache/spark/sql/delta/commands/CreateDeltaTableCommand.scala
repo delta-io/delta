@@ -21,6 +21,8 @@ import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.constraints.Constraints
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
@@ -481,6 +483,14 @@ case class CreateDeltaTableCommand(
         actionsToCommit
     }
 
+    // Validate check constraints for CREATE/REPLACE TABLE
+    val checkConstraints = Constraints.getAll(txn.metadata, sparkSession)
+    Constraints.validateCheckConstraints(
+      sparkSession,
+      checkConstraints,
+      txn.deltaLog,
+      txn.metadata.schema
+    )
     val changedMetadata = txn.metadata != txn.snapshot.metadata
     val changedProtocol = txn.protocol != txn.snapshot.protocol
     if (actionsToCommit.nonEmpty || changedMetadata || changedProtocol) {
