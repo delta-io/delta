@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.delta.DeltaOptions
 
 object CreateDeltaTableLikeShims {
@@ -33,8 +34,9 @@ object CreateDeltaTableLikeShims {
    *
    * TODO: Shim no longer needed once spark-4.0 is removed.
    */
-  def isV1WriterSaveAsTableOverwrite(options: DeltaOptions): Boolean = {
+  def isV1WriterSaveAsTableOverwrite(options: DeltaOptions, mode: SaveMode): Boolean = {
     Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
+      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + ".")) &&
+    mode == SaveMode.Overwrite
   }
 }

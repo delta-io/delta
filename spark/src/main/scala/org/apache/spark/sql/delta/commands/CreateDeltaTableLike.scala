@@ -176,6 +176,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
    */
   protected def isV1WriterSaveAsTableOverwrite: Boolean = {
     val options = new DeltaOptions(table.storage.properties, conf)
-    CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(options)
+    CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(options, mode)
   }
 }
