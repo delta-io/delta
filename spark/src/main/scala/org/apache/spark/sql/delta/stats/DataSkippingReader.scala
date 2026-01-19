@@ -46,7 +46,7 @@ import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType, VariantType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -166,6 +166,8 @@ object SkippingEligibleDataType {
   // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
   def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
+    case _: VariantType =>
+      SQLConf.get.getConf(DatabricksSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS)
     case _ => false
   }
 

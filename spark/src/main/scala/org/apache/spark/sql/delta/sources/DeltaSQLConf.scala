@@ -2861,6 +2861,22 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(true)
 
+  val COLLECT_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.collectVariantDataSkippingStats")
+    .internal()
+    .doc(
+      """
+        |If enabled, Spark writes to Delta will collect data skipping stats for Variant columns."""
+        .stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
+  val DELTA_STATS_LIMIT_PER_VARIANT =
+    buildConf("stats.limitPerVariant")
+    .internal("The maximum number of data skipping stats to collect from each Variant column")
+    .intConf
+    .createWithDefault(10)
+
   ///////////
   // TESTING
   ///////////

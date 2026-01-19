@@ -40,6 +40,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.delta.stats.StatisticsCollection.getIndexedColumns
 import org.apache.spark.sql.delta.util.DeltaSqlParserUtils
+import org.apache.spark.sql.delta.util.Codec.Base85Codec
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.sql._
@@ -245,6 +246,8 @@ trait StatisticsCollection extends DeltaLogging {
    * collect the NULL_COUNT stats for it as the number of rows.
    */
   lazy val statsCollector: Column = {
+    val variantFieldsLimit =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT)
     val stringPrefix =
       spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
@@ -262,6 +265,12 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
+        case (c, SkippingEligibleDataType(_: VariantType), true) =>
+          val variantUdf =
+            DeltaUDF.stringFromVariant(
+              StatisticsCollectionEdge.trimAndEncodeVariant(variantFieldsLimit) _)
+          variantUdf(Column(MinVariantStats(c.expr)))
+
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
           min(c)
@@ -272,6 +281,12 @@ trait StatisticsCollection extends DeltaLogging {
           val udfTruncateMax =
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
+
+        case (c, SkippingEligibleDataType(_: VariantType), true) =>
+          val variantUdf =
+            DeltaUDF.stringFromVariant(
+              StatisticsCollectionEdge.trimAndEncodeVariant(variantFieldsLimit) _)
+          variantUdf(Column(MaxVariantStats(c.expr)))
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>
