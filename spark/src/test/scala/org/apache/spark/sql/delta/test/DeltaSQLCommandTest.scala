@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.sql.DeltaSparkSessionExtension
 
 import org.apache.spark.SparkConf
@@ -35,5 +36,12 @@ trait DeltaSQLCommandTest extends SharedSparkSession {
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         classOf[DeltaCatalog].getName)
+      .set(DeltaSQLConf.V2_ENABLE_MODE.key, v2EnableMode)
   }
+
+  /**
+   * Override this method in test suites to disable STRICT mode if needed.
+   * Default is STRICT (SparkTable with conversion to DeltaTableV2).
+   */
+  protected def v2EnableMode: String = "STRICT"
 }

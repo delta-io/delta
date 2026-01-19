@@ -80,7 +80,23 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   @Override
   public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
-        () -> new SparkTable(ident, catalogTable, new HashMap<>()),
+        () -> {
+          // If the table is catalog-owned (coordinated commits), fallback to V1 connector
+          // because SparkTable doesn't support maxCatalogVersion yet.
+          if (isCatalogOwned(catalogTable)) {
+            return super.loadCatalogTable(ident, catalogTable);
+          }
+          try {
+            return new SparkTable(ident, catalogTable, new HashMap<>());
+          } catch (IllegalArgumentException e) {
+            // Catch "Must provide maxCatalogVersion for catalogManaged tables"
+            // This happens if the property exists in the Delta Log but not in the CatalogTable
+            if (e.getMessage() != null && e.getMessage().contains("maxCatalogVersion")) {
+              return super.loadCatalogTable(ident, catalogTable);
+            }
+            throw e;
+          }
+        },
         () -> super.loadCatalogTable(ident, catalogTable));
   }
 
@@ -101,8 +117,29 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
         // delta.`/path/to/table`, where ident.name() is `/path/to/table`
-        () -> new SparkTable(ident, ident.name()),
+        () -> {
+          try {
+            return new SparkTable(ident, ident.name());
+          } catch (IllegalArgumentException e) {
+            // Catch "Must provide maxCatalogVersion for catalogManaged tables"
+            if (e.getMessage() != null && e.getMessage().contains("maxCatalogVersion")) {
+              return super.loadPathTable(ident);
+            }
+            throw e;
+          }
+        },
         () -> super.loadPathTable(ident));
+  }
+
+  /**
+   * Checks if the table is catalog-owned (coordinated commits).
+   * Uses the "delta.coordinatedCommits.commitCoordinator-preview" property.
+   */
+  private boolean isCatalogOwned(CatalogTable catalogTable) {
+    if (catalogTable == null) return false;
+    // Scala Map.contains is accessible from Java
+    return catalogTable.properties()
+        .contains("delta.coordinatedCommits.commitCoordinator-preview");
   }
 
   /**
