@@ -20,7 +20,7 @@ import java.util.ConcurrentModificationException
 
 import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, FileAction, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.deletionvectors.RoaringBitmapArray
+import org.apache.spark.sql.delta.deletionvectors.{DeletionVectorsTestUtils, RoaringBitmapArray}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.hadoop.fs.Path
 

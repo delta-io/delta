@@ -19,7 +19,8 @@ package org.apache.spark.sql.delta.stats
 import java.sql.{Date, Timestamp}
 
 import org.apache.spark.sql.delta.skipping.ClusteredTableTestUtils
-import org.apache.spark.sql.delta.{DeltaColumnMappingEnableIdMode, DeltaLog}
+import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.columnmapping.DeltaColumnMappingEnableIdMode
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.BeforeAndAfter

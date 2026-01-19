@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, AlterTableSetPropertiesDeltaCommand, AlterTableUnsetPropertiesDeltaCommand}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.coordinatedcommits._
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.redirect.{PathBasedRedirectSpec, RedirectReaderWriter, RedirectWriterOnly, TableRedirect}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest

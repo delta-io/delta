@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import java.io.PrintWriter
 
 import org.apache.spark.sql.delta.GeneratedAsIdentityType.{GeneratedAlways, GeneratedByDefault}
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 

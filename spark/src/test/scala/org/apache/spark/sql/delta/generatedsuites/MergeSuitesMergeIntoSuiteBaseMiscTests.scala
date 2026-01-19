@@ -30,6 +30,11 @@ package org.apache.spark.sql.delta.generatedsuites
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
+import org.apache.spark.sql.delta.columnmapping._
+import org.apache.spark.sql.delta.deletionvectors._
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoSuiteBaseMiscSQLNameBasedSuite
