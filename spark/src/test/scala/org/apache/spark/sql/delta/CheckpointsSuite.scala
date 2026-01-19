@@ -24,12 +24,13 @@ import scala.concurrent.duration._
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import io.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.storage.LocalLogStore
+import org.apache.spark.sql.delta.storage.LogStoreAdaptor
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -1022,19 +1023,19 @@ class CheckpointsSuite
   }
 }
 
-class OverwriteTrackingLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
-  extends LocalLogStore(sparkConf, hadoopConf) {
+class OverwriteTrackingLogStore(hadoopConf: Configuration)
+  extends LocalLogStore(hadoopConf) {
 
   var fileToOverwriteCount: Map[Path, Long] = Map[Path, Long]()
 
   private var isPartialWriteVisibleBool: Boolean = false
-  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean =
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean =
     isPartialWriteVisibleBool
 
   override def write(
       path: Path,
-      actions: Iterator[String],
-      overwrite: Boolean,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
       hadoopConf: Configuration): Unit = {
     val toAdd = if (overwrite) 1 else 0
     fileToOverwriteCount += path -> (fileToOverwriteCount.getOrElse(path, 0L) + toAdd)
@@ -1071,7 +1072,9 @@ class V2CheckpointManifestOverwriteSuite
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
           s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
-      val store = deltaLog.store.asInstanceOf[OverwriteTrackingLogStore]
+      val actualLogStore = deltaLog.store.asInstanceOf[LogStoreAdaptor]
+          .logStoreImpl
+      val store = actualLogStore.asInstanceOf[OverwriteTrackingLogStore]
 
       store.clearCounts()
       store.setPartialWriteVisible(isPartialWriteVisible)
