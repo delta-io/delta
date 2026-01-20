@@ -359,7 +359,9 @@ trait AbstractLogReplaySuite extends AnyFunSuite {
       // Create sidecar file with Spark-style naming (no version prefix)
       var sidecarFileName: String = ""
       withTempDir { dir =>
+        // scalastyle:off sparkimplicits
         import spark.implicits._
+        // scalastyle:on sparkimplicits
         val addFile = AddFile(
           path = "fake-data-file.parquet",
           partitionValues = Map.empty,
