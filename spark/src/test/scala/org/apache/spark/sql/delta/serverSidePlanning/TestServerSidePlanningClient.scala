@@ -35,7 +35,8 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
       databaseName: String,
       table: String,
       filterOption: Option[Filter] = None,
-      projectionOption: Option[Seq[String]] = None): ScanPlan = {
+      projectionOption: Option[Seq[String]] = None,
+      caseSensitiveOption: Option[Boolean] = None): ScanPlan = {
     // Capture filter and projection for test verification
     TestServerSidePlanningClient.capturedFilter = filterOption
     TestServerSidePlanningClient.capturedProjection = projectionOption

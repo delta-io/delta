@@ -144,7 +144,8 @@ class IcebergRESTCatalogPlanningClient(
       database: String,
       table: String,
       sparkFilterOption: Option[Filter] = None,
-      sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
+      sparkProjectionOption: Option[Seq[String]] = None,
+      caseSensitiveOption: Option[Boolean] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
     // /v1/config to get the optional prefix and builds the proper endpoint
@@ -158,9 +159,9 @@ class IcebergRESTCatalogPlanningClient(
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
     val builder = new PlanTableScanRequest.Builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
-      // Set caseSensitive=false (defaults to true in spec) to match Spark's case-insensitive
+      // Set caseSensitive based on parameter (defaults to false) to match Spark's case-insensitive
       // column handling. Server should validate and block requests with caseSensitive=true.
-      .withCaseSensitive(false)
+      .withCaseSensitive(caseSensitiveOption.getOrElse(false))
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
     sparkFilterOption.foreach { sparkFilter =>
