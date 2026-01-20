@@ -16,8 +16,6 @@
 
 package io.delta.kernel.internal.replay;
 
-import io.delta.kernel.internal.util.RetryingCloseableIterator;
-
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.*;
 import static io.delta.kernel.internal.util.FileNames.*;
@@ -34,6 +32,8 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.RetryingCloseableIterator;
+import io.delta.kernel.internal.util.RetryingCloseableIterator.IteratorSupplier;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
@@ -509,30 +509,40 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       return readStagedCommitWithFallback(fileVersion, nextFile);
     }
 
-    RetryingCloseableIterator.IteratorSupplier<ActionWrapper> supplier =
+    IteratorSupplier<ActionWrapper> supplier =
         () ->
             readCommitFileIterator(
                 fileVersion, nextFile, Optional.of(nextFile.getModificationTime()));
+    // Retry once on retryable failures before any data is returned.
     return RetryingCloseableIterator.create(
         supplier, supplier, ActionsIterator::isRetryableException, ActionsIterator::clearInterrupt);
   }
 
+  /** Staged commits can be deleted after backfill; retry with the published commit if needed. */
   private CloseableIterator<ActionWrapper> readStagedCommitWithFallback(
       long fileVersion, FileStatus stagedFile) throws IOException {
+    // Derive the log path from the staged commit path so we can build the published path.
     Path stagedPath = new Path(stagedFile.getPath());
     Path logPath = stagedPath.getParent().getParent();
 
-    RetryingCloseableIterator.IteratorSupplier<ActionWrapper> stagedSupplier =
+    // Build two iterator suppliers for this current commit: staged first, published as fallback.
+    //    - stagedSupplier: calls readCommitFileIterator with the staged commit file path
+    //    - publishedSupplier: resolves the published commit file path and calls
+    // readCommitFileIterator with the published commit file path
+    // We retry once with the staged commit file path, and fallback to the published commit file
+    // path if the first attempt fails and that failure is transient (file not found or interrupt).
+    IteratorSupplier<ActionWrapper> stagedSupplier =
         () ->
             readCommitFileIterator(
                 fileVersion, stagedFile, Optional.of(stagedFile.getModificationTime()));
-    RetryingCloseableIterator.IteratorSupplier<ActionWrapper> publishedSupplier =
+    IteratorSupplier<ActionWrapper> publishedSupplier =
         () -> {
           String publishedPath = deltaFile(logPath, fileVersion);
           FileStatus publishedStatus = engine.getFileSystemClient().getFileStatus(publishedPath);
           return readCommitFileIterator(
               fileVersion, publishedStatus, Optional.of(publishedStatus.getModificationTime()));
         };
+
     return RetryingCloseableIterator.create(
         stagedSupplier,
         publishedSupplier,
@@ -666,20 +676,18 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   }
 
   private static boolean hasFileNotFoundCause(Throwable throwable) {
-    Throwable current = throwable;
-    while (current != null) {
-      if (current instanceof FileNotFoundException || current instanceof NoSuchFileException) {
-        return true;
-      }
-      current = current.getCause();
-    }
-    return false;
+    return hasCause(throwable, FileNotFoundException.class)
+        || hasCause(throwable, NoSuchFileException.class);
   }
 
   private static boolean hasInterruptCause(Throwable throwable) {
+    return hasCause(throwable, ClosedByInterruptException.class);
+  }
+
+  private static boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
     Throwable current = throwable;
     while (current != null) {
-      if (current instanceof ClosedByInterruptException) {
+      if (type.isInstance(current)) {
         return true;
       }
       current = current.getCause();

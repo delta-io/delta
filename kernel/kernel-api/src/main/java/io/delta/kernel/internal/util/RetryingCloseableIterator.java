@@ -26,15 +26,30 @@ import java.util.function.Predicate;
 /**
  * A CloseableIterator that retries exactly once before any data is returned.
  *
- * <p>Intended for retrying lazy file reads where the first attempt may fail due to transient
- * conditions (e.g., staged file cleanup or thread interrupts).
+ * <p>This is intended for lazy file reads where the first attempt may fail due to transient
+ * conditions (for example, staged commit cleanup or thread interrupts). The retry is only attempted
+ * if no elements have been emitted to avoid duplicate results.
  */
 public final class RetryingCloseableIterator<T> implements CloseableIterator<T> {
   @FunctionalInterface
   public interface IteratorSupplier<T> {
+    /**
+     * Opens a CloseableIterator. Implementations may perform I/O and should throw IOException on
+     * failures.
+     */
     CloseableIterator<T> get() throws IOException;
   }
 
+  /**
+   * Creates a retrying iterator.
+   *
+   * @param primary the primary iterator supplier
+   * @param retry the retry iterator supplier (invoked at most once)
+   * @param isRetryable predicate that decides whether a failure is retryable
+   * @param onRetry hook invoked before retrying (for example, to clear interrupt flags)
+   * @param <T> element type
+   * @return a CloseableIterator that retries at most once before any data is emitted
+   */
   public static <T> CloseableIterator<T> create(
       IteratorSupplier<T> primary,
       IteratorSupplier<T> retry,
@@ -62,6 +77,10 @@ public final class RetryingCloseableIterator<T> implements CloseableIterator<T> 
     this.onRetry = Objects.requireNonNull(onRetry, "onRetry is null");
   }
 
+  /**
+   * Returns whether another element is available, retrying once on a retryable failure before any
+   * data is emitted.
+   */
   @Override
   public boolean hasNext() {
     while (true) {
@@ -79,6 +98,11 @@ public final class RetryingCloseableIterator<T> implements CloseableIterator<T> 
     }
   }
 
+  /**
+   * Returns the next element, retrying once on a retryable failure before any data is emitted.
+   *
+   * @throws NoSuchElementException if no more elements are available
+   */
   @Override
   public T next() {
     if (!hasNext()) {
@@ -97,6 +121,7 @@ public final class RetryingCloseableIterator<T> implements CloseableIterator<T> 
     }
   }
 
+  /** Closes the underlying iterator if it has been opened. */
   @Override
   public void close() throws IOException {
     if (currentIter != null) {
@@ -128,10 +153,15 @@ public final class RetryingCloseableIterator<T> implements CloseableIterator<T> 
     return false;
   }
 
+  /**
+   * Returns true if we can retry the failure. Retries are allowed only before any elements are
+   * emitted and only once.
+   */
   private boolean canRetry(Throwable throwable) {
     return !returnedAny && isRetryable.test(throwable) && attempt < 2;
   }
 
+  /** Runs retry hook and clears the current iterator. */
   private void handleRetry(Throwable throwable) {
     onRetry.accept(throwable);
     Utils.closeCloseablesSilently(currentIter);
