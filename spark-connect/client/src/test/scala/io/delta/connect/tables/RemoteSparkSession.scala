@@ -77,6 +77,8 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     // spark-submit.
     val command = Seq.newBuilder[String]
     command += s"$javaHome/bin/java"
+    // Uncomment for debugging the server process.
+    // command += "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
     command += "-cp" += sparkHome + "/jars/*"
     command += "-Xmx1g"
     command += "-XX:+IgnoreUnrecognizedVMOptions"
