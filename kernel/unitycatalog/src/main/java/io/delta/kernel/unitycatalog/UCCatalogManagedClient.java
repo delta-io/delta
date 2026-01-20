@@ -162,15 +162,12 @@ public class UCCatalogManagedClient {
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
 
-                      SnapshotBuilder snapshotBuilderWithInputs =
+                      Snapshot snapshot =
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
-                              .withLogData(logData);
-                      if (maxUcTableVersion >= 0) {
-                        snapshotBuilderWithInputs =
-                            snapshotBuilderWithInputs.withMaxCatalogVersion(maxUcTableVersion);
-                      }
-                      Snapshot snapshot = snapshotBuilderWithInputs.build(engine);
+                              .withLogData(logData)
+                              .withMaxCatalogVersion(maxUcTableVersion)
+                              .build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
                     });
@@ -512,15 +509,11 @@ public class UCCatalogManagedClient {
         logger,
         "TableManager.loadSnapshot at latest for time-travel query",
         ucTableId,
-        () -> {
-          SnapshotBuilder snapshotBuilder =
-              TableManager.loadSnapshot(tablePath)
-                  .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
-                  .withLogData(logData);
-          if (ucTableVersion >= 0) {
-            snapshotBuilder = snapshotBuilder.withMaxCatalogVersion(ucTableVersion);
-          }
-          return snapshotBuilder.build(engine);
-        });
+        () ->
+            TableManager.loadSnapshot(tablePath)
+                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withLogData(logData)
+                .withMaxCatalogVersion(ucTableVersion)
+                .build(engine));
   }
 }

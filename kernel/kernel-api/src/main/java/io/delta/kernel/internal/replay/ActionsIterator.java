@@ -522,9 +522,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
    * Build two iterator suppliers for the current commit: staged first, published as fallback.
    *
    * <ul>
-   *   <li>stagedSupplier: calls {@link #readCommitFileIterator} on the staged commit file</li>
+   *   <li>stagedSupplier: calls {@link #readCommitFileIterator} on the staged commit file
    *   <li>publishedSupplier: resolves {@code <table_path>/_delta_log/<version>.json} and calls
-   *       {@link #readCommitFileIterator} on it</li>
+   *       {@link #readCommitFileIterator} on it
    * </ul>
    *
    * <p>We try the staged file first because it may be the only representation before backfill. If a
@@ -537,8 +537,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     Path stagedPath = new Path(stagedFile.getPath());
     Path logPath = stagedPath.getParent().getParent();
 
-    // Two suppliers: staged first, published as fallback. These suppliers are responsible for opening
-    // the files and returning an iterator of ActionWrappers on either the staged or published file.
+    // Two suppliers: staged first, published as fallback. These suppliers are responsible for
+    // opening the files and returning an iterator of ActionWrappers on the staged or published
+    // commit.
     IteratorSupplier<ActionWrapper> stagedSupplier =
         () ->
             readCommitFileIterator(
