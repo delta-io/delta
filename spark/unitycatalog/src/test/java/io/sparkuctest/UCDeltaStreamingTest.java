@@ -49,6 +49,8 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
 import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
@@ -204,6 +206,94 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  @Test
+  public void testStreamingReadWithStagedCommitDeletion() throws Exception {
+    withNewTable(
+        "streaming_read_staged_commit_deletion",
+        "id BIGINT, value STRING",
+        TableType.MANAGED,
+        tableName -> {
+          SparkSession spark = spark();
+          Option<String> originalMode = spark.conf().getOption(V2_ENABLE_MODE_KEY);
+          String queryName =
+              "uc_streaming_read_staged_commit_deletion_"
+                  + UUID.randomUUID().toString().replace("-", "");
+          StreamingQuery query = null;
+          List<List<String>> expected = new ArrayList<>();
+
+          ApiClient client = unityCatalogInfo().createApiClient();
+          TablesApi tablesApi = new TablesApi(client);
+          TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
+          Path logPath = resolveDeltaLogPath(tableInfo, spark, tableName);
+          Path stagedCommitsDir = logPath.resolve("_staged_commits");
+          Assumptions.assumeTrue(
+              Files.isDirectory(stagedCommitsDir),
+              "Missing staged commits directory at " + stagedCommitsDir);
+
+          try {
+            // Seed an initial commit before starting the streaming query.
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
+            spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+
+            Dataset<Row> input = spark.readStream().table(tableName);
+            query =
+                input
+                    .writeStream()
+                    .format("memory")
+                    .queryName(queryName)
+                    .option("checkpointLocation", createTempCheckpointDir())
+                    .outputMode("append")
+                    .start();
+
+            assertTrue(query.isActive(), "Streaming query should be active");
+
+            query.processAllAvailable();
+            expected.add(List.of("0", "seed"));
+            check(queryName, expected);
+
+            long lastDeletedVersion = -1L;
+            int deletions = 0;
+            int iterations = 20;
+
+            for (long i = 1; i <= iterations; i += 1) {
+              String value = "value_" + i;
+
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
+              spark
+                  .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
+                  .collect();
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+
+              Path stagedCommit =
+                  waitForNextStagedCommitFile(stagedCommitsDir, lastDeletedVersion, 5000);
+              if (stagedCommit != null) {
+                long version = parseStagedCommitVersion(stagedCommit.getFileName().toString());
+                waitForPublishedCommit(logPath, version, 5000);
+
+                deleteStagedCommitFile(stagedCommit);
+                lastDeletedVersion = version;
+                deletions += 1;
+              }
+
+              query.processAllAvailable();
+              expected.add(List.of(String.valueOf(i), value));
+              check(queryName, expected);
+            }
+
+            assertTrue(deletions > 0, "Expected staged commit deletions");
+          } finally {
+            if (query != null) {
+              query.stop();
+              query.awaitTermination();
+              assertFalse(query.isActive(), "Streaming query should have stopped");
+            }
+            spark.sql("DROP VIEW IF EXISTS " + queryName);
+            restoreV2Mode(spark, originalMode);
+          }
+        });
+  }
+
   private void assertUCManagedTableVersion(long expectedVersion, String tableName, ApiClient client)
       throws ApiException {
     // Get the table info.
@@ -233,6 +323,83 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
       spark.conf().set(V2_ENABLE_MODE_KEY, originalMode.get());
     } else {
       spark.conf().unset(V2_ENABLE_MODE_KEY);
+    }
+  }
+
+  private static Path resolveDeltaLogPath(TableInfo tableInfo, SparkSession spark, String tableName)
+      throws Exception {
+    String location = tableInfo.getStorageLocation();
+    if (location == null || location.isEmpty()) {
+      Row row = spark.sql("DESCRIBE DETAIL " + tableName).collectAsList().get(0);
+      int locationIndex = row.fieldIndex("location");
+      location = row.getString(locationIndex);
+    }
+
+    Assumptions.assumeTrue(
+        location != null && !location.isEmpty(), "Table location is not available");
+
+    URI locationUri = URI.create(location);
+    if (locationUri.getScheme() != null) {
+      Assumptions.assumeTrue(
+          "file".equals(locationUri.getScheme()),
+          "Test requires file-based tables, found: " + location);
+      return Paths.get(locationUri).resolve("_delta_log");
+    }
+
+    return Paths.get(location).resolve("_delta_log");
+  }
+
+  private static Path waitForNextStagedCommitFile(
+      Path stagedCommitsDir, long lastVersion, long timeoutMs) throws Exception {
+    long deadlineNs = System.nanoTime() + timeoutMs * 1_000_000L;
+    while (System.nanoTime() < deadlineNs) {
+      Path candidate = null;
+      long candidateVersion = Long.MAX_VALUE;
+      try (DirectoryStream<Path> stream = Files.newDirectoryStream(stagedCommitsDir, "*.json")) {
+        for (Path path : stream) {
+          long version = parseStagedCommitVersion(path.getFileName().toString());
+          if (version > lastVersion && version < candidateVersion) {
+            candidate = path;
+            candidateVersion = version;
+          }
+        }
+      }
+      if (candidate != null) {
+        return candidate;
+      }
+      Thread.sleep(50);
+    }
+    return null;
+  }
+
+  private static void waitForPublishedCommit(Path logPath, long version, long timeoutMs)
+      throws Exception {
+    Path commitPath = logPath.resolve(String.format("%020d.json", version));
+    long deadlineNs = System.nanoTime() + timeoutMs * 1_000_000L;
+    while (System.nanoTime() < deadlineNs) {
+      if (Files.exists(commitPath)) {
+        return;
+      }
+      Thread.sleep(50);
+    }
+    assertTrue(Files.exists(commitPath), "Published commit not found for version " + version);
+  }
+
+  private static void deleteStagedCommitFile(Path stagedCommit) throws Exception {
+    Files.deleteIfExists(stagedCommit);
+    assertFalse(
+        Files.exists(stagedCommit), "Expected staged commit to be deleted: " + stagedCommit);
+  }
+
+  private static long parseStagedCommitVersion(String fileName) {
+    int dotIndex = fileName.indexOf('.');
+    if (dotIndex <= 0) {
+      return -1L;
+    }
+    try {
+      return Long.parseLong(fileName.substring(0, dotIndex));
+    } catch (NumberFormatException e) {
+      return -1L;
     }
   }
 }

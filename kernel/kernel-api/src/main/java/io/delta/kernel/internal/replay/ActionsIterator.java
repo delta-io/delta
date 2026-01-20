@@ -27,6 +27,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
+import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
@@ -35,8 +36,11 @@ import io.delta.kernel.internal.util.*;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.channels.ClosedByInterruptException;
+import java.nio.file.NoSuchFileException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -500,30 +504,170 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
+    if (isStagedDeltaFile(nextFile.getPath())) {
+      return readStagedCommitWithFallback(fileVersion, nextFile);
+    }
+
+    List<CommitFileCandidate> candidates = new ArrayList<>();
+    candidates.add(
+        new CommitFileCandidate(
+            () ->
+                readCommitFileIterator(
+                    fileVersion, nextFile, Optional.of(nextFile.getModificationTime()))));
+    candidates.add(
+        new CommitFileCandidate(
+            () ->
+                readCommitFileIterator(
+                    fileVersion, nextFile, Optional.of(nextFile.getModificationTime()))));
+    return createCommitFileIteratorWithRetry(candidates);
+  }
+
+  private CloseableIterator<ActionWrapper> readStagedCommitWithFallback(
+      long fileVersion, FileStatus stagedFile) throws IOException {
+    Path stagedPath = new Path(stagedFile.getPath());
+    Path logPath = stagedPath.getParent().getParent();
+
+    List<CommitFileCandidate> candidates = new ArrayList<>();
+    candidates.add(
+        new CommitFileCandidate(
+            () ->
+                readCommitFileIterator(
+                    fileVersion, stagedFile, Optional.of(stagedFile.getModificationTime()))));
+    candidates.add(
+        new CommitFileCandidate(
+            () -> {
+              String publishedPath = deltaFile(logPath, fileVersion);
+              FileStatus publishedStatus =
+                  engine.getFileSystemClient().getFileStatus(publishedPath);
+              return readCommitFileIterator(
+                  fileVersion, publishedStatus, Optional.of(publishedStatus.getModificationTime()));
+            }));
+
+    return createCommitFileIteratorWithRetry(candidates);
+  }
+
+  private CloseableIterator<ActionWrapper> readCommitFileIterator(
+      long fileVersion, FileStatus fileStatus, Optional<Long> timestamp) throws IOException {
     CloseableIterator<FileReadResult> dataIter = null;
     try {
-      dataIter =
-          wrapEngineExceptionThrowsIO(
-              () ->
-                  engine
-                      .getJsonHandler()
-                      .readJsonFiles(
-                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
-                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
-              "Reading JSON log file `%s` with readSchema=%s",
-              nextFile,
-              deltaReadSchema);
-      return combine(
-          dataIter,
-          false /* isFromCheckpoint */,
-          fileVersion,
-          Optional.of(nextFile.getModificationTime()) /* timestamp */);
+      dataIter = readCommitFile(fileStatus);
+      return combine(dataIter, false /* isFromCheckpoint */, fileVersion, timestamp);
     } catch (Exception e) {
       if (dataIter != null) {
         Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
       }
       throw e;
     }
+  }
+
+  private CloseableIterator<FileReadResult> readCommitFile(FileStatus fileStatus)
+      throws IOException {
+    return wrapEngineExceptionThrowsIO(
+        () ->
+            engine
+                .getJsonHandler()
+                .readJsonFiles(
+                    singletonCloseableIterator(fileStatus), deltaReadSchema, Optional.empty())
+                .map(batch -> new FileReadResult(batch, fileStatus.getPath())),
+        "Reading JSON log file `%s` with readSchema=%s",
+        fileStatus,
+        deltaReadSchema);
+  }
+
+  private CloseableIterator<ActionWrapper> createCommitFileIteratorWithRetry(
+      List<CommitFileCandidate> candidates) {
+    return new CloseableIterator<ActionWrapper>() {
+      private int candidateIndex = 0;
+      private CloseableIterator<ActionWrapper> currentIter;
+      private boolean returnedAny = false;
+
+      @Override
+      public boolean hasNext() {
+        while (true) {
+          if (currentIter == null && !openNextCandidate()) {
+            return false;
+          }
+          try {
+            return currentIter.hasNext();
+          } catch (KernelEngineException | UncheckedIOException e) {
+            if (returnedAny || !isRetryableException(e) || candidateIndex >= candidates.size()) {
+              throw e;
+            }
+            handleRetryableException(e);
+          }
+        }
+      }
+
+      @Override
+      public ActionWrapper next() {
+        if (!hasNext()) {
+          throw new NoSuchElementException("No next element");
+        }
+        try {
+          ActionWrapper next = currentIter.next();
+          returnedAny = true;
+          return next;
+        } catch (KernelEngineException | UncheckedIOException e) {
+          if (returnedAny || !isRetryableException(e) || candidateIndex >= candidates.size()) {
+            throw e;
+          }
+          handleRetryableException(e);
+          return next();
+        }
+      }
+
+      @Override
+      public void close() throws IOException {
+        if (currentIter != null) {
+          currentIter.close();
+          currentIter = null;
+        }
+      }
+
+      private boolean openNextCandidate() {
+        while (candidateIndex < candidates.size()) {
+          CommitFileCandidate candidate = candidates.get(candidateIndex++);
+          try {
+            currentIter = candidate.open();
+            return true;
+          } catch (KernelEngineException | UncheckedIOException e) {
+            if (returnedAny || !isRetryableException(e) || candidateIndex >= candidates.size()) {
+              throw e;
+            }
+            handleRetryableException(e);
+          }
+        }
+        return false;
+      }
+
+      private void handleRetryableException(Throwable throwable) {
+        if (hasInterruptCause(throwable)) {
+          Thread.interrupted(); // clear interrupt flag
+        }
+        Utils.closeCloseablesSilently(currentIter);
+        currentIter = null;
+      }
+    };
+  }
+
+  private static class CommitFileCandidate {
+    private final CommitFileIteratorSupplier iteratorSupplier;
+
+    private CommitFileCandidate(CommitFileIteratorSupplier iteratorSupplier) {
+      this.iteratorSupplier = iteratorSupplier;
+    }
+
+    public CloseableIterator<ActionWrapper> open() {
+      try {
+        return iteratorSupplier.get();
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+    }
+  }
+
+  private interface CommitFileIteratorSupplier {
+    CloseableIterator<ActionWrapper> get() throws IOException;
   }
 
   /**
@@ -611,5 +755,31 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     return toCloseableIterator(checkpointFiles.iterator());
+  }
+
+  private static boolean isRetryableException(Throwable throwable) {
+    return hasFileNotFoundCause(throwable) || hasInterruptCause(throwable);
+  }
+
+  private static boolean hasFileNotFoundCause(Throwable throwable) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (current instanceof FileNotFoundException || current instanceof NoSuchFileException) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private static boolean hasInterruptCause(Throwable throwable) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (current instanceof ClosedByInterruptException) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 }
