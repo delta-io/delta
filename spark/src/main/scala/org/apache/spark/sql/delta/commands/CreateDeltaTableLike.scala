@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -167,15 +167,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
-   * Horrible hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
+   * Differentiate between DataFrameWriterV1 and V2 so that we can decide
    * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
    * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
    * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    */
-  protected def isV1Writer: Boolean = {
-    Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
+  protected def isV1WriterSaveAsTableOverwrite: Boolean = {
+    val options = new DeltaOptions(table.storage.properties, conf)
+    CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(options, mode)
   }
 }
