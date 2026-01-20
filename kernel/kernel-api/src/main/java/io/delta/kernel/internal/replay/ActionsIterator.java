@@ -518,19 +518,27 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         supplier, supplier, ActionsIterator::isRetryableException, ActionsIterator::clearInterrupt);
   }
 
-  /** Staged commits can be deleted after backfill; retry with the published commit if needed. */
+  /**
+   * Build two iterator suppliers for the current commit: staged first, published as fallback.
+   *
+   * <ul>
+   *   <li>stagedSupplier: calls {@link #readCommitFileIterator} on the staged commit file</li>
+   *   <li>publishedSupplier: resolves {@code <table_path>/_delta_log/<version>.json} and calls
+   *       {@link #readCommitFileIterator} on it</li>
+   * </ul>
+   *
+   * <p>We try the staged file first because it may be the only representation before backfill. If a
+   * retryable failure occurs before any actions are emitted (missing file or interrupt) due to the
+   * staged file being deleted after backfill, we retry once using the published file.
+   */
   private CloseableIterator<ActionWrapper> readStagedCommitWithFallback(
       long fileVersion, FileStatus stagedFile) throws IOException {
     // Derive the log path from the staged commit path so we can build the published path.
     Path stagedPath = new Path(stagedFile.getPath());
     Path logPath = stagedPath.getParent().getParent();
 
-    // Build two iterator suppliers for this current commit: staged first, published as fallback.
-    //    - stagedSupplier: calls readCommitFileIterator with the staged commit file path
-    //    - publishedSupplier: resolves the published commit file path and calls
-    // readCommitFileIterator with the published commit file path
-    // We retry once with the staged commit file path, and fallback to the published commit file
-    // path if the first attempt fails and that failure is transient (file not found or interrupt).
+    // Two suppliers: staged first, published as fallback. These suppliers are responsible for opening
+    // the files and returning an iterator of ActionWrappers on either the staged or published file.
     IteratorSupplier<ActionWrapper> stagedSupplier =
         () ->
             readCommitFileIterator(
@@ -666,26 +674,31 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   }
 
   private static boolean isRetryableException(Throwable throwable) {
-    return hasCause(
-        throwable,
-        FileNotFoundException.class,
-        NoSuchFileException.class,
-        ClosedByInterruptException.class);
+    return hasFileNotFoundCause(throwable) || hasInterruptCause(throwable);
   }
 
   private static void clearInterrupt(Throwable throwable) {
-    if (hasCause(throwable, ClosedByInterruptException.class)) {
+    if (hasInterruptCause(throwable)) {
       Thread.interrupted(); // clear interrupt flag
     }
   }
 
-  private static boolean hasCause(Throwable throwable, Class<? extends Throwable>... types) {
-    for (Throwable current = throwable; current != null; current = current.getCause()) {
-      for (Class<? extends Throwable> type : types) {
-        if (type.isInstance(current)) {
-          return true;
-        }
+  private static boolean hasFileNotFoundCause(Throwable throwable) {
+    return hasCause(throwable, FileNotFoundException.class)
+        || hasCause(throwable, NoSuchFileException.class);
+  }
+
+  private static boolean hasInterruptCause(Throwable throwable) {
+    return hasCause(throwable, ClosedByInterruptException.class);
+  }
+
+  private static boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (type.isInstance(current)) {
+        return true;
       }
+      current = current.getCause();
     }
     return false;
   }
