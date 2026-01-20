@@ -1263,7 +1263,10 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val df = if (keepNumRecords) {
+    val forceCollectRowCount =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+    val shouldCollectStats = keepNumRecords || forceCollectRowCount
+    val df = if (shouldCollectStats) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
@@ -1278,7 +1281,26 @@ trait DataSkippingReaderBase
     }
     val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
-    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
+    // Compute row count if we have stats available and forceCollectRowCount is enabled
+    val rowCount = if (forceCollectRowCount) {
+      sumRowCounts(files)
+    } else {
+      None
+    }
+    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), rowCount, Some(files.size))
+  }
+
+  /**
+   * Sums up the numPhysicalRecords from the given AddFile objects.
+   * Returns None if any file is missing stats (to indicate incomplete row count).
+   */
+  private def sumRowCounts(files: Seq[AddFile]): Option[Long] = {
+    files.foldLeft(Option(0L)) { (accOpt, file) =>
+      for {
+        acc <- accOpt
+        count <- file.numPhysicalRecords
+      } yield acc + count
+    }
   }
 
   /**
@@ -1335,13 +1357,23 @@ trait DataSkippingReaderBase
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
+        val forceCollectRowCount =
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+        val shouldCollectStats = keepNumRecords || forceCollectRowCount
+        val files = getAllFiles(shouldCollectStats)
+        // Compute row count if forceCollectRowCount is enabled
+        val rowCount = if (forceCollectRowCount) {
+          sumRowCounts(files)
+        } else {
+          None
+        }
         val dataSize = DataSize(
           bytesCompressed = sizeInBytesIfKnown,
-          rows = None,
+          rows = rowCount,
           files = numOfFilesIfKnown)
         return DeltaScan(
           version = version,
-          files = getAllFiles(keepNumRecords),
+          files = files,
           total = dataSize,
           partition = dataSize,
           scanned = dataSize)(
