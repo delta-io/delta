@@ -76,13 +76,13 @@ public interface CommitRangeBuilder {
    * <p>When specified, the following additional constraints are enforced:
    *
    * <ul>
-   *   <li>If {@link #withStartBoundary(CommitBoundary)} is used with a version, the requested
-   *       version must be less than or equal to the max catalog version.
+   *   <li>When the provided startBoundary is version-based, the start version must be less than or
+   *       equal to the max catalog version.
    *   <li>If {@link #withEndBoundary(CommitBoundary)} is used with a version, the requested version
    *       must be less than or equal to the max catalog version.
-   *   <li>If {@link #withStartBoundary(CommitBoundary)} or {@link #withEndBoundary(CommitBoundary)}
-   *       is used with a timestamp, the provided latest snapshot must have a version equal to the
-   *       max catalog version.
+   *   <li>If the provided startBoundary is timestamp-based, or {@link
+   *       #withEndBoundary(CommitBoundary)} is used with a timestamp, the provided latest snapshot
+   *       must have a version equal to the max catalog version.
    *   <li>If {@link #withLogData(List)} is provided and no end boundary is specified (resolving to
    *       latest), the log data must end with the max catalog version.
    * </ul>
