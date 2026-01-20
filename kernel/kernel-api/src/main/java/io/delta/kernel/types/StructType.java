@@ -20,6 +20,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.Tuple2;
 import java.util.*;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -212,6 +213,19 @@ public final class StructType extends DataType {
   @Override
   public boolean isNested() {
     return true;
+  }
+
+  @Override
+  public boolean existsRecursively(Predicate<DataType> predicate) {
+    if (super.existsRecursively(predicate)) {
+      return true;
+    }
+    for (StructField field : fields) {
+      if (field.getDataType().existsRecursively(predicate)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override
