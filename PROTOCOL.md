@@ -2129,6 +2129,19 @@ maxValues | A value that is equal to the largest valid value[^1] present in the 
 
 [^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
 
+### Statistics Configuration
+
+The following table properties control which columns have per-column statistics collected:
+
+Property | Description
+-|-
+`delta.dataSkippingStatsColumns` | A comma-separated list of column names for which to collect per-column statistics. Column names may refer to struct fields using dot notation (e.g., `a.b.c`), in which case statistics are collected for all leaf fields within that struct. When this property is set, it takes precedence over `delta.dataSkippingNumIndexedCols`. Partition columns should not be included as they do not have statistics collected.
+`delta.dataSkippingNumIndexedCols` | The number of leading leaf columns in the table schema for which to collect per-column statistics. Defaults to 32. This property is ignored if `delta.dataSkippingStatsColumns` is set. A negative value indicates that statistics should be collected for all columns.
+
+When neither property is set, statistics are collected for the first 32 leaf columns in the table schema.
+Per-column statistics use the physical column names (when [Column Mapping](#column-mapping) is enabled) and do not include partition columns.
+All statistics fields are nullable.
+
 ## Partition Value Serialization
 
 Partition values are stored as strings, using the following formats. An empty string for any type translates to a `null` partition value.
