@@ -381,24 +381,28 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     case class TestCase(
       description: String,
       caseSensitiveValue: Option[Boolean],
-      shouldSucceed: Boolean
+      shouldSucceed: Boolean,
+      expectedCapturedValue: Option[Boolean] // Expected value captured by server (None if request fails)
     )
 
     val testCases = Seq(
       TestCase(
         description = "caseSensitive=false should succeed",
         caseSensitiveValue = Some(false),
-        shouldSucceed = true
+        shouldSucceed = true,
+        expectedCapturedValue = Some(false)
       ),
       TestCase(
         description = "caseSensitive=true should be rejected",
         caseSensitiveValue = Some(true),
-        shouldSucceed = false
+        shouldSucceed = false,
+        expectedCapturedValue = None // No capture since request should fail
       ),
       TestCase(
         description = "default (None) should succeed with false",
         caseSensitiveValue = None,
-        shouldSucceed = true
+        shouldSucceed = true,
+        expectedCapturedValue = Some(false) // None defaults to false
       )
     )
 
@@ -418,10 +422,11 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
               caseSensitiveOption = testCase.caseSensitiveValue)
 
             val capturedCaseSensitive = server.getCapturedCaseSensitive()
-            val expectedValue = testCase.caseSensitiveValue.getOrElse(false)
-            assert(capturedCaseSensitive == expectedValue,
-              s"[${testCase.description}] Expected captured caseSensitive=$expectedValue, " +
-              s"got $capturedCaseSensitive")
+            testCase.expectedCapturedValue.foreach { expectedValue =>
+              assert(capturedCaseSensitive == expectedValue,
+                s"[${testCase.description}] Expected captured caseSensitive=$expectedValue, " +
+                s"got $capturedCaseSensitive")
+            }
           } else {
             // Should fail - verify exception is thrown
             val exception = intercept[Exception] {
