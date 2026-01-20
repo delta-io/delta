@@ -171,6 +171,14 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * For test verification.
+   */
+  public Boolean getCapturedCaseSensitive() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedCaseSensitive();
+  }
+
+  /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {

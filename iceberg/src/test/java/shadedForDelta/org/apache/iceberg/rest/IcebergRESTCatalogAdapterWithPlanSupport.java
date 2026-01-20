@@ -58,6 +58,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
   private static volatile List<String> capturedProjection = null;
+  private static volatile Boolean capturedCaseSensitive = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -102,12 +103,21 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Boolean getCapturedCaseSensitive() {
+    return capturedCaseSensitive;
+  }
+
+  /**
    * Clear captured filter and projection. Call between tests to avoid pollution.
    * Package-private for test access.
    */
   static void clearCaptured() {
     capturedFilter = null;
     capturedProjection = null;
+    capturedCaseSensitive = null;
   }
 
   @Override
@@ -210,8 +220,10 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     // Capture filter and projection for test verification
     capturedFilter = planRequest.filter();
     capturedProjection = planRequest.select();
+    capturedCaseSensitive = planRequest.caseSensitive();
     LOG.debug("Captured filter: {}", capturedFilter);
     LOG.debug("Captured projection: {}", capturedProjection);
+    LOG.debug("Captured caseSensitive: {}", capturedCaseSensitive);
 
     // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {
