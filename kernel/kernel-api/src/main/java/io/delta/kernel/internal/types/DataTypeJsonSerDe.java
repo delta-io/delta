@@ -430,6 +430,10 @@ public class DataTypeJsonSerDe {
 
   private static String FIXED_DECIMAL_REGEX = "decimal\\(\\s*(\\d+)\\s*,\\s*(\\-?\\d+)\\s*\\)";
   private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
+  private static String GEOMETRY_REGEX = "geometry\\(\\s*(.+?)\\s*\\)";
+  private static Pattern GEOMETRY_PATTERN = Pattern.compile(GEOMETRY_REGEX);
+  private static String GEOGRAPHY_REGEX = "geography\\(\\s*(.+?)\\s*\\)";
+  private static Pattern GEOGRAPHY_PATTERN = Pattern.compile(GEOGRAPHY_REGEX);
 
   /** Parses primitive string type names to a {@link DataType} */
   private static DataType nameToType(String name) {
@@ -448,6 +452,20 @@ public class DataTypeJsonSerDe {
         int precision = Integer.parseInt(decimalMatcher.group(1));
         int scale = Integer.parseInt(decimalMatcher.group(2));
         return new DecimalType(precision, scale);
+      }
+
+      // geometry has a special pattern with an SRID
+      Matcher geometryMatcher = GEOMETRY_PATTERN.matcher(name);
+      if (geometryMatcher.matches()) {
+        String srid = geometryMatcher.group(1);
+        return new GeometryType(srid);
+      }
+
+      // geography has a special pattern with an SRID
+      Matcher geographyMatcher = GEOGRAPHY_PATTERN.matcher(name);
+      if (geographyMatcher.matches()) {
+        String srid = geographyMatcher.group(1);
+        return new GeographyType(srid);
       }
 
       // We have encountered a type that is beyond the specification of the protocol
@@ -503,6 +521,12 @@ public class DataTypeJsonSerDe {
     } else if (dataType instanceof DecimalType) {
       DecimalType decimalType = (DecimalType) dataType;
       gen.writeString(format("decimal(%d,%d)", decimalType.getPrecision(), decimalType.getScale()));
+    } else if (dataType instanceof GeometryType) {
+      GeometryType geometryType = (GeometryType) dataType;
+      gen.writeString(format("geometry(%s)", geometryType.getSRID()));
+    } else if (dataType instanceof GeographyType) {
+      GeographyType geographyType = (GeographyType) dataType;
+      gen.writeString(format("geography(%s)", geographyType.getSRID()));
     } else {
       gen.writeString(dataType.toString());
     }

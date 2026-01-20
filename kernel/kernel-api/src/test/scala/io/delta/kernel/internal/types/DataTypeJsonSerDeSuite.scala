@@ -73,7 +73,11 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     ("\"timestamp\"", TimestampType.TIMESTAMP),
     ("\"decimal\"", DecimalType.USER_DEFAULT),
     ("\"decimal(10, 5)\"", new DecimalType(10, 5)),
-    ("\"variant\"", VariantType.VARIANT)).foreach { case (json, dataType) =>
+    ("\"variant\"", VariantType.VARIANT),
+    ("\"geometry(EPSG:0)\"", new GeometryType("EPSG:0")),
+    ("\"geometry(EPSG:4326)\"", new GeometryType("EPSG:4326")),
+    ("\"geography(EPSG:4326)\"", new GeographyType("EPSG:4326")),
+    ("\"geography(EPSG:3857)\"", new GeographyType("EPSG:3857"))).foreach { case (json, dataType) =>
     test("serialize/deserialize: " + dataType) {
       testRoundTrip(json, dataType)
     }
@@ -87,6 +91,21 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     checkError[IllegalArgumentException](
       "\"decimal(1)\"",
       "decimal(1) is not a supported delta data type")
+  }
+
+  test("serialize/deserialize: geometry with various SRID formats") {
+    // Kernel accepts any SRID format; engine validates compatibility
+    testRoundTrip("\"geometry(4326)\"", new GeometryType("4326"))
+    testRoundTrip("\"geometry(EPSG)\"", new GeometryType("EPSG"))
+    testRoundTrip("\"geometry(epsg:4326)\"", new GeometryType("epsg:4326"))
+    testRoundTrip(
+      "\"geometry(urn:ogc:def:crs:EPSG::4326)\"",
+      new GeometryType("urn:ogc:def:crs:EPSG::4326"))
+  }
+
+  test("serialize/deserialize: geography with various SRID formats") {
+    testRoundTrip("\"geography(4326)\"", new GeographyType("4326"))
+    testRoundTrip("\"geography(WGS84)\"", new GeographyType("WGS84"))
   }
 
   /* ---------------  Complex types ----------------- */
