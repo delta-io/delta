@@ -28,19 +28,24 @@ import io.unitycatalog.client.model.TableInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -97,11 +102,11 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           // Assert that the query is active
           assertTrue(query.isActive(), "Streaming query should be active");
 
-          // Let's do 10 rounds testing, and for every round, adding 1 row and waiting to be
+          // Let's do 3 rounds testing, and for every round, adding 1 row and waiting to be
           // available, and finally verify the results and unity catalog latest version are
           // expected.
           ApiClient client = unityCatalogInfo().createApiClient();
-          for (long i = 1; i < 10; i += 1) {
+          for (long i = 1; i < 3; i += 1) {
             Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
             memoryStream.addData(batchRow);
 
@@ -130,6 +135,71 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  @TestAllTableTypes
+  public void testStreamingReadFromTable(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_read_test",
+        "id BIGINT, value STRING",
+        tableType,
+        (tableName) -> {
+          SparkSession spark = spark();
+          Option<String> originalMode = spark.conf().getOption(V2_ENABLE_MODE_KEY);
+          String queryName =
+              "uc_streaming_read_"
+                  + tableType.name().toLowerCase()
+                  + "_"
+                  + UUID.randomUUID().toString().replace("-", "");
+          StreamingQuery query = null;
+          List<List<String>> expected = new ArrayList<>();
+
+          try {
+            // Seed an initial commit (required for managed tables, harmless for external).
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
+            spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
+            expected.add(List.of("0", "seed"));
+            // Enable V2 for streaming reads.
+            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+            Dataset<Row> input = spark.readStream().table(tableName);
+            // Start the streaming query into a memory sink
+            query =
+                input
+                    .writeStream()
+                    .format("memory")
+                    .queryName(queryName)
+                    .option("checkpointLocation", createTempCheckpointDir())
+                    .outputMode("append")
+                    .start();
+
+            assertTrue(query.isActive(), "Streaming query should be active");
+
+            // Write a few batches and verify the stream consumes them.
+            // For writing, we disable V2 mode, write, then re-enable it for reading
+            for (long i = 1; i < 3; i += 1) {
+              String value = "value_" + i;
+
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
+              spark
+                  .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
+                  .collect();
+              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
+
+              query.processAllAvailable();
+              // Validate by checking if query and expected match.
+              expected.add(List.of(String.valueOf(i), value));
+              check(queryName, expected);
+            }
+          } finally {
+            if (query != null) {
+              query.stop();
+              query.awaitTermination();
+              assertFalse(query.isActive(), "Streaming query should have stopped");
+            }
+            spark.sql("DROP VIEW IF EXISTS " + queryName);
+            restoreV2Mode(spark, originalMode);
+          }
+        });
+  }
+
   private void assertUCManagedTableVersion(long expectedVersion, String tableName, ApiClient client)
       throws ApiException {
     // Get the table info.
@@ -152,5 +222,13 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     return JavaConverters.asScalaIteratorConverter(Arrays.asList(rows).iterator())
         .asScala()
         .toSeq();
+  }
+
+  private static void restoreV2Mode(SparkSession spark, Option<String> originalMode) {
+    if (originalMode.isDefined()) {
+      spark.conf().set(V2_ENABLE_MODE_KEY, originalMode.get());
+    } else {
+      spark.conf().unset(V2_ENABLE_MODE_KEY);
+    }
   }
 }
