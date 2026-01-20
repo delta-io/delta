@@ -23,7 +23,7 @@ import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection}
+import org.apache.spark.sql.delta.stats.{DeltaStatistics, SkippingEligibleDataType, StatisticsCollection, StatsCollectionUtils}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 
 import org.apache.spark.sql.{AnalysisException, SparkSession}
@@ -336,6 +336,8 @@ trait ClusteredTableUtilsBase extends DeltaLogging {
       override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
       override val columnMappingMode: DeltaColumnMappingMode = metadata.columnMappingMode
       override val protocol: Protocol = p
+      override def getDataSkippingStringPrefixLength: Int =
+        StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
 
       override def spark: SparkSession = {
         throw new Exception("Method not used in statisticsCollectionFromMetadata")
