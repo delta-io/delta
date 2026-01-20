@@ -666,31 +666,26 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   }
 
   private static boolean isRetryableException(Throwable throwable) {
-    return hasFileNotFoundCause(throwable) || hasInterruptCause(throwable);
+    return hasCause(
+        throwable,
+        FileNotFoundException.class,
+        NoSuchFileException.class,
+        ClosedByInterruptException.class);
   }
 
   private static void clearInterrupt(Throwable throwable) {
-    if (hasInterruptCause(throwable)) {
+    if (hasCause(throwable, ClosedByInterruptException.class)) {
       Thread.interrupted(); // clear interrupt flag
     }
   }
 
-  private static boolean hasFileNotFoundCause(Throwable throwable) {
-    return hasCause(throwable, FileNotFoundException.class)
-        || hasCause(throwable, NoSuchFileException.class);
-  }
-
-  private static boolean hasInterruptCause(Throwable throwable) {
-    return hasCause(throwable, ClosedByInterruptException.class);
-  }
-
-  private static boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
-    Throwable current = throwable;
-    while (current != null) {
-      if (type.isInstance(current)) {
-        return true;
+  private static boolean hasCause(Throwable throwable, Class<? extends Throwable>... types) {
+    for (Throwable current = throwable; current != null; current = current.getCause()) {
+      for (Class<? extends Throwable> type : types) {
+        if (type.isInstance(current)) {
+          return true;
+        }
       }
-      current = current.getCause();
     }
     return false;
   }
