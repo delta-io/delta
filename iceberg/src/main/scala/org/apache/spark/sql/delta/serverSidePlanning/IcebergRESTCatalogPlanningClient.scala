@@ -162,9 +162,6 @@ class IcebergRESTCatalogPlanningClient(
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
     val builder = new PlanTableScanRequest.Builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
-      // Set caseSensitive=false (defaults to true in spec) because Spark doesn't support
-      // case-sensitive columns in serverless GC. Server validates and blocks caseSensitive=true.
-      .withCaseSensitive(false)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
     sparkFilterOption.foreach { sparkFilter =>
@@ -195,10 +192,9 @@ class IcebergRESTCatalogPlanningClient(
       val statusCode = httpResponse.getStatusLine.getStatusCode
       val responseBody = EntityUtils.toString(httpResponse.getEntity)
       if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        // Parse response with caseSensitive=false to match request and Spark's case-insensitive
-        // column handling
+        // Parse response. caseSensitive = true because Iceberg is case-sensitive by default.
         val icebergResponse = parsePlanTableScanResponse(
-          responseBody, unpartitionedSpecMap, caseSensitive = false)
+          responseBody, unpartitionedSpecMap, caseSensitive = true)
 
         // Verify plan status is "completed". The Iceberg REST spec allows async planning
         // where the server returns "submitted" status and the client must poll for results.
