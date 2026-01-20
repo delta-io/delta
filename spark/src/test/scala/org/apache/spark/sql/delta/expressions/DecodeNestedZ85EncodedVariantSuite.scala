@@ -28,7 +28,7 @@ import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructFiel
 import org.apache.spark.types.variant.Variant
 import org.apache.spark.unsafe.types.{UTF8String, VariantVal}
 
-class ReplaceVariantZ85WithVariantValSuite extends QueryTest with DeltaSQLCommandTest {
+class DecodeNestedZ85EncodedVariantSuite extends QueryTest with DeltaSQLCommandTest {
 
   test("RoundTrip alternateVariantEncoding Z85") {
     val jsonValues = Seq(
@@ -53,10 +53,10 @@ class ReplaceVariantZ85WithVariantValSuite extends QueryTest with DeltaSQLComman
       val statsSchema = StructType(Seq(StructField("v", VariantType)))
       val parsedDf = df.withColumn("parsed", from_json(col("z85_string"), statsSchema))
 
-      // Apply ReplaceVariantZ85WithVariantVal
+      // Apply DecodeNestedZ85EncodedVariant
       val decodedDf = parsedDf.withColumn(
         "decoded",
-        Column(ReplaceVariantZ85WithVariantVal(col("parsed").expr))
+        Column(DecodeNestedZ85EncodedVariant(col("parsed").expr))
       )
 
       // Extract the decoded variant and verify
@@ -109,7 +109,7 @@ class ReplaceVariantZ85WithVariantValSuite extends QueryTest with DeltaSQLComman
     val parsedDf = df.withColumn("parsed", from_json(col("stats"), statsSchema))
     val decodedDf = parsedDf.withColumn(
       "decoded",
-      Column(ReplaceVariantZ85WithVariantVal(col("parsed").expr))
+      Column(DecodeNestedZ85EncodedVariant(col("parsed").expr))
     )
 
     val result = decodedDf.select(

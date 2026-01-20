@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, Clus
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.expressions.ReplaceVariantZ85WithVariantVal
+import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -268,7 +268,7 @@ trait DataSkippingReaderBase
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
     val parsedStats = from_json(col("stats"), statsSchema)
-    val decodedStats = Column(ReplaceVariantZ85WithVariantVal(parsedStats.expr))
+    val decodedStats = Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
     allFiles.withColumn("stats", decodedStats)
   }
 

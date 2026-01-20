@@ -35,7 +35,7 @@ import org.apache.spark.unsafe.types.VariantVal
  *
  * @param child The expression producing the row with Z85-encoded variants
  */
-case class ReplaceVariantZ85WithVariantVal(child: Expression)
+case class DecodeNestedZ85EncodedVariant(child: Expression)
   extends UnaryExpression with CodegenFallback {
 
   override def dataType: DataType = child.dataType
@@ -43,9 +43,13 @@ case class ReplaceVariantZ85WithVariantVal(child: Expression)
   override def nullable: Boolean = child.nullable
 
   override def checkInputDataTypes(): TypeCheckResult = {
-    if (!isValidType(child.dataType)) {
+    if (!child.dataType.isInstanceOf[StructType]) {
+      TypeCheckResult.TypeCheckFailure(s"The top-level data type for the input to " +
+        s"DecodeNestedZ85EncodedVariant must be StructType but this is not true " +
+        s"in: ${child.dataType}.")
+    } else if (!isValidType(child.dataType)) {
       TypeCheckResult.TypeCheckFailure(
-        s"ReplaceVariantZ85WithVariantVal does not support arrays or maps in schema. " +
+        s"DecodeNestedZ85EncodedVariant does not support arrays or maps in schema. " +
         s"Found: ${child.dataType}")
     } else {
       TypeCheckResult.TypeCheckSuccess
@@ -100,5 +104,5 @@ case class ReplaceVariantZ85WithVariantVal(child: Expression)
   override def prettyName: String = "replace_variant_z85_with_variant_val"
 
   override protected def withNewChildInternal(newChild: Expression)
-    : ReplaceVariantZ85WithVariantVal = copy(child = newChild)
+      : DecodeNestedZ85EncodedVariant = copy(child = newChild)
 }
