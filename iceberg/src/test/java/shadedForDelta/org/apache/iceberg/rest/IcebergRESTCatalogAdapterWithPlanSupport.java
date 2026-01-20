@@ -225,6 +225,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     LOG.debug("Captured projection: {}", capturedProjection);
     LOG.debug("Captured caseSensitive: {}", capturedCaseSensitive);
 
+    // Validate caseSensitive=false requirement
+    if (planRequest.caseSensitive()) {
+      throw new IllegalArgumentException("caseSensitive=true is not supported");
+    }
+
     // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {
       throw new UnsupportedOperationException(
