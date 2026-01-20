@@ -16,7 +16,6 @@
 
 package io.sparkuctest;
 
-import io.delta.tables.DeltaTable;
 import java.util.List;
 import org.junit.jupiter.api.Assertions;
 
@@ -66,30 +65,28 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
         tableType,
         "'delta.enableChangeDataFeed'='true'",
         tableName -> {
-          // Setup initial data
+          // Setup initial data (creates version 0)
           sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
 
-          // Get current version to determine the next version's timestamp
-          long version0 = currentVersion(tableName);
-
-          // Add more data
+          // Add more data (creates version 1)
           sql("INSERT INTO %s VALUES (4), (5)", tableName);
 
-          // Get the timestamp of the second insert (version after first)
-          String timestamp = timestampForVersion(tableName, version0 + 1);
+          // Get current version and timestamp (both for version 1)
+          long currentVersion = currentVersion(tableName);
+          String currentTimestamp = currentTimestamp(tableName);
 
-          // Query changes from the version after the 1st insert.
+          // Query changes from version 1 (the second insert)
           check(
               sql(
                   "SELECT id, _change_type FROM table_changes('%s', %d) ORDER BY id",
-                  tableName, version0 + 1),
+                  tableName, currentVersion),
               List.of(List.of("4", "insert"), List.of("5", "insert")));
 
-          // Query changes from the timestamp after the 1st insert.
+          // Query changes from the timestamp of version 1
           check(
               sql(
                   "SELECT id, _change_type FROM table_changes('%s', '%s') ORDER BY id",
-                  tableName, timestamp),
+                  tableName, currentTimestamp),
               List.of(List.of("4", "insert"), List.of("5", "insert")));
         });
   }
@@ -140,29 +137,13 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
+  /** Returns the current (latest) version of the table. */
   private long currentVersion(String tableName) {
-    return DeltaTable.forName(spark(), tableName)
-        .history()
-        .selectExpr("max(version)")
-        .collectAsList()
-        .get(0)
-        .getLong(0);
+    return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
   }
 
+  /** Returns the timestamp of the current (latest) version. */
   private String currentTimestamp(String tableName) {
-    long currentVersion = currentVersion(tableName);
-    return timestampForVersion(tableName, currentVersion);
-  }
-
-  private String timestampForVersion(String tableName, long version) {
-    // Get timestamp for a specific version
-    return DeltaTable.forName(spark(), tableName)
-        .history()
-        .filter("version = " + version)
-        .selectExpr("timestamp")
-        .collectAsList()
-        .get(0)
-        .getTimestamp(0)
-        .toString();
+    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
   }
 }
