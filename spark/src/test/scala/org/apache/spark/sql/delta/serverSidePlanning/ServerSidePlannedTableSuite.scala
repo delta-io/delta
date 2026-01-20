@@ -150,7 +150,6 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     // 3. Enable flag is set
     // ============================================================
 
-    // THE GOLDEN PATH: The ONE case that should return true
     assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
       isUnityCatalog = true,
       hasCredentials = false,
