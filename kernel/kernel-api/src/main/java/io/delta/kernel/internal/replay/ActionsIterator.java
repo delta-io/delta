@@ -16,6 +16,8 @@
 
 package io.delta.kernel.internal.replay;
 
+import io.delta.kernel.internal.util.RetryingCloseableIterator;
+
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.replay.DeltaLogFile.LogType.*;
 import static io.delta.kernel.internal.util.FileNames.*;
@@ -27,7 +29,6 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
-import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
@@ -508,18 +509,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
       return readStagedCommitWithFallback(fileVersion, nextFile);
     }
 
-    List<CommitFileCandidate> candidates = new ArrayList<>();
-    candidates.add(
-        new CommitFileCandidate(
-            () ->
-                readCommitFileIterator(
-                    fileVersion, nextFile, Optional.of(nextFile.getModificationTime()))));
-    candidates.add(
-        new CommitFileCandidate(
-            () ->
-                readCommitFileIterator(
-                    fileVersion, nextFile, Optional.of(nextFile.getModificationTime()))));
-    return createCommitFileIteratorWithRetry(candidates);
+    RetryingCloseableIterator.IteratorSupplier<ActionWrapper> supplier =
+        () ->
+            readCommitFileIterator(
+                fileVersion, nextFile, Optional.of(nextFile.getModificationTime()));
+    return RetryingCloseableIterator.create(
+        supplier, supplier, ActionsIterator::isRetryableException, ActionsIterator::clearInterrupt);
   }
 
   private CloseableIterator<ActionWrapper> readStagedCommitWithFallback(
@@ -527,23 +522,22 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     Path stagedPath = new Path(stagedFile.getPath());
     Path logPath = stagedPath.getParent().getParent();
 
-    List<CommitFileCandidate> candidates = new ArrayList<>();
-    candidates.add(
-        new CommitFileCandidate(
-            () ->
-                readCommitFileIterator(
-                    fileVersion, stagedFile, Optional.of(stagedFile.getModificationTime()))));
-    candidates.add(
-        new CommitFileCandidate(
-            () -> {
-              String publishedPath = deltaFile(logPath, fileVersion);
-              FileStatus publishedStatus =
-                  engine.getFileSystemClient().getFileStatus(publishedPath);
-              return readCommitFileIterator(
-                  fileVersion, publishedStatus, Optional.of(publishedStatus.getModificationTime()));
-            }));
-
-    return createCommitFileIteratorWithRetry(candidates);
+    RetryingCloseableIterator.IteratorSupplier<ActionWrapper> stagedSupplier =
+        () ->
+            readCommitFileIterator(
+                fileVersion, stagedFile, Optional.of(stagedFile.getModificationTime()));
+    RetryingCloseableIterator.IteratorSupplier<ActionWrapper> publishedSupplier =
+        () -> {
+          String publishedPath = deltaFile(logPath, fileVersion);
+          FileStatus publishedStatus = engine.getFileSystemClient().getFileStatus(publishedPath);
+          return readCommitFileIterator(
+              fileVersion, publishedStatus, Optional.of(publishedStatus.getModificationTime()));
+        };
+    return RetryingCloseableIterator.create(
+        stagedSupplier,
+        publishedSupplier,
+        ActionsIterator::isRetryableException,
+        ActionsIterator::clearInterrupt);
   }
 
   private CloseableIterator<ActionWrapper> readCommitFileIterator(
@@ -572,102 +566,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         "Reading JSON log file `%s` with readSchema=%s",
         fileStatus,
         deltaReadSchema);
-  }
-
-  private CloseableIterator<ActionWrapper> createCommitFileIteratorWithRetry(
-      List<CommitFileCandidate> candidates) {
-    return new CloseableIterator<ActionWrapper>() {
-      private int candidateIndex = 0;
-      private CloseableIterator<ActionWrapper> currentIter;
-      private boolean returnedAny = false;
-
-      @Override
-      public boolean hasNext() {
-        while (true) {
-          if (currentIter == null && !openNextCandidate()) {
-            return false;
-          }
-          try {
-            return currentIter.hasNext();
-          } catch (KernelEngineException | UncheckedIOException e) {
-            if (returnedAny || !isRetryableException(e) || candidateIndex >= candidates.size()) {
-              throw e;
-            }
-            handleRetryableException(e);
-          }
-        }
-      }
-
-      @Override
-      public ActionWrapper next() {
-        if (!hasNext()) {
-          throw new NoSuchElementException("No next element");
-        }
-        try {
-          ActionWrapper next = currentIter.next();
-          returnedAny = true;
-          return next;
-        } catch (KernelEngineException | UncheckedIOException e) {
-          if (returnedAny || !isRetryableException(e) || candidateIndex >= candidates.size()) {
-            throw e;
-          }
-          handleRetryableException(e);
-          return next();
-        }
-      }
-
-      @Override
-      public void close() throws IOException {
-        if (currentIter != null) {
-          currentIter.close();
-          currentIter = null;
-        }
-      }
-
-      private boolean openNextCandidate() {
-        while (candidateIndex < candidates.size()) {
-          CommitFileCandidate candidate = candidates.get(candidateIndex++);
-          try {
-            currentIter = candidate.open();
-            return true;
-          } catch (KernelEngineException | UncheckedIOException e) {
-            if (returnedAny || !isRetryableException(e) || candidateIndex >= candidates.size()) {
-              throw e;
-            }
-            handleRetryableException(e);
-          }
-        }
-        return false;
-      }
-
-      private void handleRetryableException(Throwable throwable) {
-        if (hasInterruptCause(throwable)) {
-          Thread.interrupted(); // clear interrupt flag
-        }
-        Utils.closeCloseablesSilently(currentIter);
-        currentIter = null;
-      }
-    };
-  }
-
-  private static class CommitFileCandidate {
-    private final CommitFileIteratorSupplier iteratorSupplier;
-
-    private CommitFileCandidate(CommitFileIteratorSupplier iteratorSupplier) {
-      this.iteratorSupplier = iteratorSupplier;
-    }
-
-    public CloseableIterator<ActionWrapper> open() {
-      try {
-        return iteratorSupplier.get();
-      } catch (IOException e) {
-        throw new UncheckedIOException(e);
-      }
-    }
-  }
-
-  private interface CommitFileIteratorSupplier {
-    CloseableIterator<ActionWrapper> get() throws IOException;
   }
 
   /**
@@ -759,6 +657,12 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private static boolean isRetryableException(Throwable throwable) {
     return hasFileNotFoundCause(throwable) || hasInterruptCause(throwable);
+  }
+
+  private static void clearInterrupt(Throwable throwable) {
+    if (hasInterruptCause(throwable)) {
+      Thread.interrupted(); // clear interrupt flag
+    }
   }
 
   private static boolean hasFileNotFoundCause(Throwable throwable) {
