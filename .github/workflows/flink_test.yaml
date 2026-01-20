@@ -62,5 +62,5 @@ jobs:
           fi
       - name: Run unit tests
         run: |
-          build/sbt -DflinkVersion=${{ matrix.flink_version }} flinkGroup/test
+          build/sbt flinkGroup/test
 

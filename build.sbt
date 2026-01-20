@@ -65,7 +65,6 @@ val internalModuleNames = settingKey[Set[String]]("Internal module artifact name
 val sparkVersion = settingKey[String]("Spark version")
 
 // Flink version to delta-flink and its dependent modules
-// For more information see CrossFlinkVersions.scala
 val flinkVersion = settingKey[String]("Flink version")
 
 // Dependent library versions
@@ -1391,6 +1390,7 @@ lazy val flink = (project in file("flink"))
   .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink",
+    flinkVersion := "1.20.3",
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),
