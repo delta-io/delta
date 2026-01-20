@@ -159,7 +159,7 @@ class IcebergRESTCatalogPlanningClient(
     val builder = new PlanTableScanRequest.Builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
       // Set caseSensitive=false (defaults to true in spec) to match Spark's case-insensitive
-      // column handling. Server validates and blocks requests with caseSensitive=true.
+      // column handling. Server should validate and block requests with caseSensitive=true.
       .withCaseSensitive(false)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
