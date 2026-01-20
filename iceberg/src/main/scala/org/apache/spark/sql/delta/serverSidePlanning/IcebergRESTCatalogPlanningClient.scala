@@ -192,10 +192,10 @@ class IcebergRESTCatalogPlanningClient(
       val statusCode = httpResponse.getStatusLine.getStatusCode
       val responseBody = EntityUtils.toString(httpResponse.getEntity)
       if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        // Parse response with caseSensitive=false to match request and Spark's case-insensitive
-        // column handling
+        // Parse response with matching caseSensitive value (defaults to false) to match request
+        // and Spark's case-insensitive column handling
         val icebergResponse = parsePlanTableScanResponse(
-          responseBody, unpartitionedSpecMap, caseSensitive = false)
+          responseBody, unpartitionedSpecMap, caseSensitive = caseSensitiveOption.getOrElse(false))
 
         // Verify plan status is "completed". The Iceberg REST spec allows async planning
         // where the server returns "submitted" status and the client must poll for results.
