@@ -288,7 +288,7 @@ case class CreateDeltaTableCommand(
         schema: StructType): (TaggedCommitData[Action], DeltaOperations.Operation) = {
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-      if (!isV1Writer) {
+      if (!isV1WriterSaveAsTableOverwrite) {
         replaceMetadataIfNecessary(
           txn,
           tableWithLocation,
@@ -307,7 +307,7 @@ case class CreateDeltaTableCommand(
         // saveAsTable() command uses this same code path and is marked as a V1 writer.
         // We do not want saveAsTable() to be treated as a REPLACE command wrt dynamic partition
         // overwrite.
-        isTableReplace = isReplace && !isV1Writer
+        isTableReplace = isReplace && !isV1WriterSaveAsTableOverwrite
       )
       // The 'deltaWriter' initialized the schema. Remove 'EXISTS_DEFAULT' metadata keys because
       // they are not required on tables created by CTAS.
@@ -316,7 +316,7 @@ case class CreateDeltaTableCommand(
       // (only with V1 writer) will be handled inside WriteIntoDelta.
       // For createOrReplace operation, metadata updates are handled here if the table already
       // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
-      if (!isV1Writer && isReplace && txn.readVersion > -1L) {
+      if (!isV1WriterSaveAsTableOverwrite && isReplace && txn.readVersion > -1L) {
         val newDomainMetadata = Seq.empty[DomainMetadata] ++
           ClusteredTableUtils.getDomainMetadataFromTransaction(
             ClusteredTableUtils.getClusterBySpecOptional(table), txn)

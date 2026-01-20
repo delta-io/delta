@@ -469,6 +469,68 @@ class DeltaTableSuite extends DeltaQueryTest with RemoteSparkSession {
         Seq(Row(0L, "WRITE"), Row(1L, "SET TBLPROPERTIES"), Row(2L, "DROP FEATURE"))
       )
     }
-  }  
+  }
+
+  test("DataFrameWriter V1 overwrite preserves partitioning information") {
+    withTable("foo") {
+      val data = Seq(
+        (1, "Alice", 29),
+        (2, "Bob", 35),
+        (3, "Charlie", 23)
+      )
+      val df = spark.createDataFrame(data).toDF("id", "name", "age")
+      df.write.partitionBy("age").format("delta").saveAsTable("foo")
+      val overwriteData = Seq(
+        (4, "Flip", 11),
+        (5, "Flap", 11),
+        (6, "Flop", 13),
+        (6, "Flep", 13)
+      )
+      val df1 = spark.createDataFrame(overwriteData).toDF("id", "name", "age")
+      df1.write
+        .format("delta")
+        .mode("overwrite")
+        .saveAsTable("foo")
+      // Verify partitioning is preserved
+      assert(
+        DeltaTable
+          .forName(spark, "foo")
+          .detail()
+          .select("partitionColumns")
+          .head()
+          .getSeq[String](0) == Seq("age"))
+      // Verify row count after overwrite
+      assert(DeltaTable.forName(spark, "foo").toDF.count() == 4)
+    }
+  }
+
+  test("DataFrameWriter V1 replaceWhere preserves non-overwritten partitions") {
+    withTable("foo") {
+      val data = Seq(
+        (1, "Alice", 29),
+        (2, "Bob", 35),
+        (3, "Charlie", 23)
+      )
+      val df = spark.createDataFrame(data).toDF("id", "name", "age")
+      df.write.partitionBy("age").format("delta").saveAsTable("foo")
+      val overwriteData = Seq((4, "Daniel", 29), (5, "Eve", 29))
+      val df1 = spark.createDataFrame(overwriteData).toDF("id", "name", "age")
+      df1.write
+        .format("delta")
+        .option("replaceWhere", "age = 29")
+        .mode("overwrite")
+        .saveAsTable("foo")
+      // Verify partitioning is preserved
+      assert(
+        DeltaTable
+          .forName(spark, "foo")
+          .detail()
+          .select("partitionColumns")
+          .head()
+          .getSeq[String](0) == Seq("age"))
+      // Verify row count - should have 4 rows (2 replaced + 2 preserved)
+      assert(DeltaTable.forName(spark, "foo").toDF.count() == 4)
+    }
+  }
 }
 

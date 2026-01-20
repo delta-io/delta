@@ -23,7 +23,8 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.connector.catalog.SupportsV1OverwriteWithSaveAsTable
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -82,6 +83,14 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
    */
   def canOverwriteSchema: Boolean = {
     options.get(OVERWRITE_SCHEMA_OPTION).exists(toBoolean(_, OVERWRITE_SCHEMA_OPTION))
+  }
+
+  /**
+   * Whether this write is coming from DataFrameWriter V1 saveAsTable.
+   */
+  def isDataFrameWriterV1SaveAsTableOverwrite: Boolean = {
+    options.get(IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE)
+      .exists(toBoolean(_, IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE))
   }
 
   /**
@@ -237,6 +246,10 @@ class DeltaOptions(
 
 object DeltaOptions extends DeltaLogging {
 
+  /** Internal option to indicate write originated from DataFrameWriter V1 saveAsTable. */
+  val IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE =
+    SupportsV1OverwriteWithSaveAsTable.OPTION_NAME
+
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
   /** An option to allow automatic schema merging during a write operation. */
@@ -306,6 +319,7 @@ object DeltaOptions extends DeltaLogging {
   val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
 
   val validOptionKeys : Set[String] = Set(
+    IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
     REPLACE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
