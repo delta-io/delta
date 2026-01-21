@@ -152,7 +152,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           StreamingQuery query = null;
 
           try {
-	    List<List<String>> expected = new ArrayList<>();
+            List<List<String>> expected = new ArrayList<>();
             // Seed an initial commit (required for managed tables, harmless for external).
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
