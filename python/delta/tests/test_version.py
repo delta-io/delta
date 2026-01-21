@@ -21,45 +21,42 @@ from packaging.version import Version
 
 class VersionAPITests(unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), '..', '..', '..')
-        )
-        cls.version_sbt_path = os.path.join(cls.project_root, 'version.sbt')
+    version_sbt_path = os.path.abspath(os.path.join(
+        os.path.dirname(__file__), '..', '..', '..', 'version.sbt')
+    )
 
-    def verify_version(self, version):
+    def verify_version(self, version: str) -> None:
         self.assertIsNotNone(version)
         self.assertIsInstance(version, str)
         self.assertEqual(version.count("."), 2, "Version should have major.minor.patch format")
         # version should be parseable by packaging.version.Version
         Version(version)
 
-    def test_version_import_from_module(self):
+    def test_version_import_from_module(self) -> None:
         """Test that __version__ can be imported from delta.version"""
         from delta.version import __version__
         self.verify_version(__version__)
 
-    def test_version_import_from_package(self):
+    def test_version_import_from_package(self) -> None:
         """Test that __version__ can be imported from delta package"""
         from delta import __version__
         self.verify_version(__version__)
 
-    def test_version_consistency_across_imports(self):
+    def test_version_consistency_across_imports(self) -> None:
         """Test that version is consistent across import methods"""
         from delta.version import __version__ as version_from_module
         from delta import __version__ as version_from_package
 
         self.assertEqual(version_from_module, version_from_package)
 
-    def test_version_sbt_exists(self):
+    def test_version_sbt_exists(self) -> None:
         """Verify version.sbt exists"""
         self.assertTrue(
             os.path.exists(self.version_sbt_path),
             f"version.sbt not found at {self.version_sbt_path}"
         )
 
-    def test_version_sbt_and_version_py_consistency(self):
+    def test_version_sbt_and_version_py_consistency(self) -> None:
         with open(self.version_sbt_path) as f:
             sbt_content = f.read()
             # Extract version from: ThisBuild / version := "x.y.z-SNAPSHOT" -> "x.y.z"
