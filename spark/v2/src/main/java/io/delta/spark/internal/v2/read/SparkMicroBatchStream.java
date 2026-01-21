@@ -768,7 +768,7 @@ public class SparkMicroBatchStream
             batch -> {
               // Processing each batch eagerly because they are already loaded into memory.
               List<IndexedFile> files = new ArrayList<>();
-              fileIndex[0] = extractIndexedFilesFromBatch(batch, version, fileIndex[0], files);
+              fileIndex[0] = addIndexedFilesAndReturnNextIndex(batch, version, fileIndex[0], files);
               return Utils.toCloseableIterator(files.iterator());
             });
   }
@@ -946,11 +946,13 @@ public class SparkMicroBatchStream
    *
    * @return The next available index after processing this batch
    */
-  private long extractIndexedFilesFromBatch(
+  private long addIndexedFilesAndReturnNextIndex(
       ColumnarBatch batch, long version, long startIndex, List<IndexedFile> output) {
     long index = startIndex;
     for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-      Optional<AddFile> addOpt = StreamingHelper.getDataChangeAdd(batch, rowId);
+      // Only include AddFiles with dataChange=true. Skip changes that optimize or reorganize
+      // data without changing the logical content.
+      Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
       if (addOpt.isPresent()) {
         AddFile addFile = addOpt.get();
         output.add(new IndexedFile(version, index++, addFile));
@@ -983,8 +985,10 @@ public class SparkMicroBatchStream
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
         ColumnarBatch batch = filteredBatch.getData();
+        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
+        // (checkpoint files) files.
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          StreamingHelper.getDataChangeAdd(batch, rowId).ifPresent(addFiles::add);
+          StreamingHelper.getAddFile(batch, rowId).ifPresent(addFiles::add);
         }
       }
     } catch (IOException e) {
