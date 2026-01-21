@@ -371,7 +371,8 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       assert(capturedProjection.isDefined, "Projection should be pushed down")
       val projectedFields = capturedProjection.get.toSet
       assert(projectedFields == Set("id"),
-        s"Expected projection with only SELECT columns {id}, got {${projectedFields.mkString(", ")}}")
+        s"Expected projection with only SELECT columns {id}, " +
+        s"got {${projectedFields.mkString(", ")}}")
 
       // Verify filter was also pushed
       val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
