@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.DeltaParquetFileFormat._
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils.deletionVectorsReadable
 import org.apache.spark.sql.delta.files.{TahoeFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.PreparedDeltaFileIndex
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, EqualTo, Literal}
@@ -82,9 +83,15 @@ object ScanWithDeletionVectors {
     if (fileFormat.hasTablePath) return None
 
     // See if any files actually have a DV.
-    val filesWithDVs = index
-      .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
-      .filter(_.deletionVector != null)
+    val filesWithDVs = index match {
+      case p: PreparedDeltaFileIndex =>
+        p.preparedScan.files.distinct.filter(_.deletionVector != null)
+      case _ =>
+        index
+        .matchingFiles(Seq(), Seq())
+        .filter(_.deletionVector != null)
+    }
+
     if (filesWithDVs.isEmpty) return None
 
     // Get the list of columns in the output of the `LogicalRelation` we are
