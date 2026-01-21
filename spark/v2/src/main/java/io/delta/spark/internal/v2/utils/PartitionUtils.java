@@ -194,7 +194,8 @@ public class PartitionUtils {
             /* nullableRowTrackingGeneratedFields */ false,
             /* optimizationsEnabled */ true,
             Option.apply(tablePath),
-            /* isCDCRead */ false);
+            /* isCDCRead */ false,
+            /* useMetadataRowIndexOpt */ Option.empty());
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
