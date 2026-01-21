@@ -2102,6 +2102,7 @@ Bytes | Name | Description
 ## Per-file Statistics
 `add` and `remove` actions can optionally contain statistics about the data in the file being added or removed from the table.
 These statistics can be used for eliminating files based on query predicates or as inputs to query optimization.
+See [Statistics Collection Properties](#statistics-collection-properties) for table properties that control which columns have statistics collected.
 
 Global statistics record information about the entire file.
 The following global statistic is currently supported:
