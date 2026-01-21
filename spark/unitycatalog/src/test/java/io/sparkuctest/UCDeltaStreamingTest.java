@@ -106,7 +106,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           // available, and finally verify the results and unity catalog latest version are
           // expected.
           ApiClient client = unityCatalogInfo().createApiClient();
-          for (long i = 1; i < 3; i += 1) {
+          for (long i = 1; i <= 3; i += 1) {
             Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
             memoryStream.addData(batchRow);
 
@@ -150,9 +150,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
                   + "_"
                   + UUID.randomUUID().toString().replace("-", "");
           StreamingQuery query = null;
-          List<List<String>> expected = new ArrayList<>();
 
           try {
+	    List<List<String>> expected = new ArrayList<>();
             // Seed an initial commit (required for managed tables, harmless for external).
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
@@ -174,7 +174,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
             // Write a few batches and verify the stream consumes them.
             // For writing, we disable V2 mode, write, then re-enable it for reading
-            for (long i = 1; i < 3; i += 1) {
+            for (long i = 1; i <= 3; i += 1) {
               String value = "value_" + i;
 
               spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
@@ -189,9 +189,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               check(queryName, expected);
             }
           } finally {
-            while (query.status().isTriggerActive()) {
-              Thread.sleep(200);
-            }
+            query.processAllAvailable();
             query.stop();
             query.awaitTermination();
             assertFalse(query.isActive(), "Streaming query should have stopped");
