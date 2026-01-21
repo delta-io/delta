@@ -35,6 +35,8 @@
   - [Table Features for New and Existing Tables](#table-features-for-new-and-existing-tables)
   - [Supported Features](#supported-features)
   - [Active Features](#active-features)
+- [Table Properties](#table-properties)
+  - [Statistics Collection Properties](#statistics-collection-properties)
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
@@ -885,6 +887,22 @@ A feature being supported does not imply that it is active. For example, a table
 
 ## Active Features
 A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
+
+# Table Properties
+
+Delta tables support configuration through table properties stored in the `configuration` field of the [metadata](#change-metadata) action. The following table properties are recognized by the Delta protocol:
+
+## Statistics Collection Properties
+
+The following table properties control which columns have per-column statistics collected in [Per-file Statistics](#per-file-statistics):
+
+Property | Description
+-|-
+`delta.dataSkippingStatsColumns` | A comma-separated list of column names for which to collect per-column statistics. Column names may refer to nested struct fields using dot notation (e.g., `a.b.c`), in which case statistics are collected for all leaf fields within that struct. When this property is set, it takes precedence over `delta.dataSkippingNumIndexedCols`. Partition columns cannot be specified.
+`delta.dataSkippingNumIndexedCols` | The number of leading leaf columns in the table schema for which to collect per-column statistics. Defaults to 32. This property is ignored if `delta.dataSkippingStatsColumns` is set. A negative value indicates that statistics should be collected for all columns.
+
+When neither property is set, statistics are collected for the first 32 leaf columns in the table schema (excluding partition columns).
+When [Column Mapping](#column-mapping) is enabled, per-column statistics are keyed by physical column names.
 
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
@@ -2128,19 +2146,6 @@ minValues | A value that is equal to the smallest valid value[^1] present in the
 maxValues | A value that is equal to the largest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is greater than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 
 [^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
-
-### Statistics Configuration
-
-The following table properties control which columns have per-column statistics collected:
-
-Property | Description
--|-
-`delta.dataSkippingStatsColumns` | A comma-separated list of column names for which to collect per-column statistics. Column names may refer to struct fields using dot notation (e.g., `a.b.c`), in which case statistics are collected for all leaf fields within that struct. When this property is set, it takes precedence over `delta.dataSkippingNumIndexedCols`. Partition columns should not be included as they do not have statistics collected.
-`delta.dataSkippingNumIndexedCols` | The number of leading leaf columns in the table schema for which to collect per-column statistics. Defaults to 32. This property is ignored if `delta.dataSkippingStatsColumns` is set. A negative value indicates that statistics should be collected for all columns.
-
-When neither property is set, statistics are collected for the first 32 leaf columns in the table schema.
-Per-column statistics use the physical column names (when [Column Mapping](#column-mapping) is enabled) and do not include partition columns.
-All statistics fields are nullable.
 
 ## Partition Value Serialization
 
