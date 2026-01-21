@@ -32,11 +32,16 @@ import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.RetryingCloseableIterator;
+import io.delta.kernel.internal.util.RetryingCloseableIterator.IteratorSupplier;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.channels.ClosedByInterruptException;
+import java.nio.file.NoSuchFileException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -500,30 +505,86 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // version with actions read from the JSON file for further optimizations later
     // on (faster metadata & protocol loading in subsequent runs by remembering
     // the version of the last version where the metadata and protocol are found).
+    if (isStagedDeltaFile(nextFile.getPath())) {
+      return readStagedCommitWithFallback(fileVersion, nextFile);
+    }
+
+    IteratorSupplier<ActionWrapper> supplier =
+        () ->
+            readCommitFileIterator(
+                fileVersion, nextFile, Optional.of(nextFile.getModificationTime()));
+    // Retry once on retryable failures before any data is returned.
+    return RetryingCloseableIterator.create(
+        supplier, supplier, ActionsIterator::isRetryableException, ActionsIterator::clearInterrupt);
+  }
+
+  /**
+   * Build two iterator suppliers for the current commit: staged first, published as fallback.
+   *
+   * <ul>
+   *   <li>stagedSupplier: calls {@link #readCommitFileIterator} on the staged commit file
+   *   <li>publishedSupplier: resolves {@code <table_path>/_delta_log/<version>.json} and calls
+   *       {@link #readCommitFileIterator} on it
+   * </ul>
+   *
+   * <p>We try the staged file first because it may be the only representation before backfill. If a
+   * retryable failure occurs before any actions are emitted (missing file or interrupt) due to the
+   * staged file being deleted after backfill, we retry once using the published file.
+   */
+  private CloseableIterator<ActionWrapper> readStagedCommitWithFallback(
+      long fileVersion, FileStatus stagedFile) throws IOException {
+    // Derive the log path from the staged commit path so we can build the published path.
+    Path stagedPath = new Path(stagedFile.getPath());
+    Path logPath = stagedPath.getParent().getParent();
+
+    // Two suppliers: staged first, published as fallback. These suppliers are responsible for
+    // opening the files and returning an iterator of ActionWrappers on the staged or published
+    // commit.
+    IteratorSupplier<ActionWrapper> stagedSupplier =
+        () ->
+            readCommitFileIterator(
+                fileVersion, stagedFile, Optional.of(stagedFile.getModificationTime()));
+    IteratorSupplier<ActionWrapper> publishedSupplier =
+        () -> {
+          String publishedPath = deltaFile(logPath, fileVersion);
+          FileStatus publishedStatus = engine.getFileSystemClient().getFileStatus(publishedPath);
+          return readCommitFileIterator(
+              fileVersion, publishedStatus, Optional.of(publishedStatus.getModificationTime()));
+        };
+
+    return RetryingCloseableIterator.create(
+        stagedSupplier,
+        publishedSupplier,
+        ActionsIterator::isRetryableException,
+        ActionsIterator::clearInterrupt);
+  }
+
+  private CloseableIterator<ActionWrapper> readCommitFileIterator(
+      long fileVersion, FileStatus fileStatus, Optional<Long> timestamp) throws IOException {
     CloseableIterator<FileReadResult> dataIter = null;
     try {
-      dataIter =
-          wrapEngineExceptionThrowsIO(
-              () ->
-                  engine
-                      .getJsonHandler()
-                      .readJsonFiles(
-                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
-                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
-              "Reading JSON log file `%s` with readSchema=%s",
-              nextFile,
-              deltaReadSchema);
-      return combine(
-          dataIter,
-          false /* isFromCheckpoint */,
-          fileVersion,
-          Optional.of(nextFile.getModificationTime()) /* timestamp */);
+      dataIter = readCommitFile(fileStatus);
+      return combine(dataIter, false /* isFromCheckpoint */, fileVersion, timestamp);
     } catch (Exception e) {
       if (dataIter != null) {
         Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
       }
       throw e;
     }
+  }
+
+  private CloseableIterator<FileReadResult> readCommitFile(FileStatus fileStatus)
+      throws IOException {
+    return wrapEngineExceptionThrowsIO(
+        () ->
+            engine
+                .getJsonHandler()
+                .readJsonFiles(
+                    singletonCloseableIterator(fileStatus), deltaReadSchema, Optional.empty())
+                .map(batch -> new FileReadResult(batch, fileStatus.getPath())),
+        "Reading JSON log file `%s` with readSchema=%s",
+        fileStatus,
+        deltaReadSchema);
   }
 
   /**
@@ -611,5 +672,35 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     }
 
     return toCloseableIterator(checkpointFiles.iterator());
+  }
+
+  private static boolean isRetryableException(Throwable throwable) {
+    return hasFileNotFoundCause(throwable) || hasInterruptCause(throwable);
+  }
+
+  private static void clearInterrupt(Throwable throwable) {
+    if (hasInterruptCause(throwable)) {
+      Thread.interrupted(); // clear interrupt flag
+    }
+  }
+
+  private static boolean hasFileNotFoundCause(Throwable throwable) {
+    return hasCause(throwable, FileNotFoundException.class)
+        || hasCause(throwable, NoSuchFileException.class);
+  }
+
+  private static boolean hasInterruptCause(Throwable throwable) {
+    return hasCause(throwable, ClosedByInterruptException.class);
+  }
+
+  private static boolean hasCause(Throwable throwable, Class<? extends Throwable> type) {
+    Throwable current = throwable;
+    while (current != null) {
+      if (type.isInstance(current)) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
   }
 }
