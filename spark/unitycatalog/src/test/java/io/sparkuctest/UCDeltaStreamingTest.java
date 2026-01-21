@@ -66,71 +66,71 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
-  // @TestAllTableTypes
-  // public void testStreamingWriteToManagedTable(TableType tableType) throws Exception {
-  //   withNewTable(
-  //       "streaming_write_test",
-  //       "id BIGINT, value STRING",
-  //       tableType,
-  //       (tableName) -> {
-  //         // Define schema for the stream
-  //         StructType schema =
-  //             new StructType(
-  //                 new StructField[] {
-  //                   new StructField("id", DataTypes.LongType, false, Metadata.empty()),
-  //                   new StructField("value", DataTypes.StringType, false, Metadata.empty())
-  //                 });
+  @TestAllTableTypes
+  public void testStreamingWriteToManagedTable(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_write_test",
+        "id BIGINT, value STRING",
+        tableType,
+        (tableName) -> {
+          // Define schema for the stream
+          StructType schema =
+              new StructType(
+                  new StructField[] {
+                    new StructField("id", DataTypes.LongType, false, Metadata.empty()),
+                    new StructField("value", DataTypes.StringType, false, Metadata.empty())
+                  });
 
-  //         // Create MemoryStream - using Scala companion object with proper encoder via shims
-  //         var memoryStream =
-  //             StreamingTestShims.MemoryStream().apply(Encoders.row(schema),
-  // spark().sqlContext());
+          // Create MemoryStream - using Scala companion object with proper encoder via shims
+          var memoryStream =
+              StreamingTestShims.MemoryStream().apply(Encoders.row(schema),
+  spark().sqlContext());
 
-  //         // Start streaming query writing to the Unity Catalog managed table
-  //         StreamingQuery query =
-  //             memoryStream
-  //                 .toDF()
-  //                 .writeStream()
-  //                 .format("delta")
-  //                 .outputMode("append")
-  //                 .option("checkpointLocation", createTempCheckpointDir())
-  //                 .toTable(tableName);
+          // Start streaming query writing to the Unity Catalog managed table
+          StreamingQuery query =
+              memoryStream
+                  .toDF()
+                  .writeStream()
+                  .format("delta")
+                  .outputMode("append")
+                  .option("checkpointLocation", createTempCheckpointDir())
+                  .toTable(tableName);
 
-  //         // Assert that the query is active
-  //         assertTrue(query.isActive(), "Streaming query should be active");
+          // Assert that the query is active
+          assertTrue(query.isActive(), "Streaming query should be active");
 
-  //         // Let's do 3 rounds testing, and for every round, adding 1 row and waiting to be
-  //         // available, and finally verify the results and unity catalog latest version are
-  //         // expected.
-  //         ApiClient client = unityCatalogInfo().createApiClient();
-  //         for (long i = 1; i < 3; i += 1) {
-  //           Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
-  //           memoryStream.addData(batchRow);
+          // Let's do 3 rounds testing, and for every round, adding 1 row and waiting to be
+          // available, and finally verify the results and unity catalog latest version are
+          // expected.
+          ApiClient client = unityCatalogInfo().createApiClient();
+          for (long i = 1; i < 3; i += 1) {
+            Seq<Row> batchRow = createRowsAsSeq(RowFactory.create(i, String.valueOf(i)));
+            memoryStream.addData(batchRow);
 
-  //           // Process all available data
-  //           query.processAllAvailable();
+            // Process all available data
+            query.processAllAvailable();
 
-  //           // Verify the content
-  //           check(
-  //               tableName,
-  //               LongStream.range(1, i + 1)
-  //                   .mapToObj(idx -> List.of(String.valueOf(idx), String.valueOf(idx)))
-  //                   .collect(Collectors.toUnmodifiableList()));
+            // Verify the content
+            check(
+                tableName,
+                LongStream.range(1, i + 1)
+                    .mapToObj(idx -> List.of(String.valueOf(idx), String.valueOf(idx)))
+                    .collect(Collectors.toUnmodifiableList()));
 
-  //           // The UC server should have the latest version, for managed table.
-  //           if (TableType.MANAGED == tableType) {
-  //             assertUCManagedTableVersion(i, tableName, client);
-  //           }
-  //         }
+            // The UC server should have the latest version, for managed table.
+            if (TableType.MANAGED == tableType) {
+              assertUCManagedTableVersion(i, tableName, client);
+            }
+          }
 
-  //         // Stop the stream.
-  //         query.stop();
-  //         query.awaitTermination();
+          // Stop the stream.
+          query.stop();
+          query.awaitTermination();
 
-  //         // Assert that the query has stopped
-  //         assertFalse(query.isActive(), "Streaming query should have stopped");
-  //       });
-  // }
+          // Assert that the query has stopped
+          assertFalse(query.isActive(), "Streaming query should have stopped");
+        });
+  }
 
   @TestAllTableTypes
   public void testStreamingReadFromTable(TableType tableType) throws Exception {
@@ -209,6 +209,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               logQueryStatus(query, "before-stop");
               try {
                 query.stop();
+                query.awaitTermination();
               } catch (Exception e) {
                 // silently fail
                 System.out.println(
@@ -216,7 +217,6 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
                         "DEBUG[stop-failed] table=%s queryName=%s", tableName, queryName));
                 e.printStackTrace(System.out);
               }
-              query.awaitTermination();
               assertFalse(query.isActive(), "Streaming query should have stopped");
             }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
