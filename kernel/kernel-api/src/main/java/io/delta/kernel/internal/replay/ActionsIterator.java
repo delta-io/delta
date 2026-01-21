@@ -27,7 +27,6 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.FileReadResult;
-import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.expressions.*;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.checkpoints.SidecarFile;
@@ -38,7 +37,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -57,8 +55,6 @@ import org.slf4j.LoggerFactory;
  */
 public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   private static final Logger logger = LoggerFactory.getLogger(ActionsIterator.class);
-  private static final int PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS = 3;
-  private static final long PUBLISHED_COMMIT_FALLBACK_BASE_SLEEP_MS = 50L;
   private final Engine engine;
 
   private final Optional<Predicate> checkpointPredicate;
@@ -492,17 +488,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
         default:
           throw new IOException("Unrecognized log type: " + nextLogFile.getLogType());
       }
-    } catch (RuntimeException ex) {
-      System.out.println(
-          "DEBUG ActionsIterator.getNextActionsIter: logType="
-              + nextLogFile.getLogType()
-              + " path="
-              + nextFile.getPath()
-              + " exception="
-              + ex.getClass().getName()
-              + " message="
-              + ex.getMessage());
-      throw ex;
     } catch (IOException ex) {
       throw new UncheckedIOException(ex);
     }
@@ -510,16 +495,6 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
 
   private CloseableIterator<ActionWrapper> readCommitOrCompactionFile(
       long fileVersion, FileStatus nextFile) throws IOException {
-    Optional<Long> timestamp = Optional.of(nextFile.getModificationTime());
-    if (isStagedDeltaFile(nextFile.getPath())) {
-      return readStagedCommitWithFallback(fileVersion, nextFile, timestamp);
-    }
-    return readCommitFileWithRetry(fileVersion, nextFile, timestamp);
-  }
-
-  private CloseableIterator<ActionWrapper> readCommitFile(
-      long fileVersion, FileStatus fileToRead, String logicalFilePath, Optional<Long> timestamp)
-      throws IOException {
     // We can not read multiple JSON files in parallel (like the checkpoint files),
     // because each one has a different version, and we need to associate the
     // version with actions read from the JSON file for further optimizations later
@@ -527,299 +502,27 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     // the version of the last version where the metadata and protocol are found).
     CloseableIterator<FileReadResult> dataIter = null;
     try {
-      dataIter = buildCommitFileReadIterator(fileToRead, logicalFilePath);
-      return combine(dataIter, false /* isFromCheckpoint */, fileVersion, timestamp);
+      dataIter =
+          wrapEngineExceptionThrowsIO(
+              () ->
+                  engine
+                      .getJsonHandler()
+                      .readJsonFiles(
+                          singletonCloseableIterator(nextFile), deltaReadSchema, Optional.empty())
+                      .map(batch -> new FileReadResult(batch, nextFile.getPath())),
+              "Reading JSON log file `%s` with readSchema=%s",
+              nextFile,
+              deltaReadSchema);
+      return combine(
+          dataIter,
+          false /* isFromCheckpoint */,
+          fileVersion,
+          Optional.of(nextFile.getModificationTime()) /* timestamp */);
     } catch (Exception e) {
       if (dataIter != null) {
         Utils.closeCloseablesSilently(dataIter); // close it avoid leaking resources
       }
       throw e;
-    }
-  }
-
-  private CloseableIterator<FileReadResult> buildCommitFileReadIterator(
-      FileStatus fileToRead, String logicalFilePath) throws IOException {
-    return wrapEngineExceptionThrowsIO(
-        () ->
-            engine
-                .getJsonHandler()
-                .readJsonFiles(
-                    singletonCloseableIterator(fileToRead), deltaReadSchema, Optional.empty())
-                .map(batch -> new FileReadResult(batch, logicalFilePath)),
-        "Reading JSON log file `%s` with readSchema=%s",
-        fileToRead,
-        deltaReadSchema);
-  }
-
-  private CloseableIterator<ActionWrapper> readStagedCommitWithFallback(
-      long fileVersion, FileStatus stagedFile, Optional<Long> timestamp) throws IOException {
-    String stagedPath = stagedFile.getPath();
-    Path logPath = new Path(stagedFile.getPath()).getParent().getParent();
-    String publishedPath = deltaFile(logPath, fileVersion);
-
-    System.out.println(
-        "DEBUG ActionsIterator.readStagedCommitWithFallback: version="
-            + fileVersion
-            + " stagedPath="
-            + stagedPath
-            + " publishedPath="
-            + publishedPath);
-    List<CommitFileCandidate> candidates = new ArrayList<>();
-    candidates.add(
-        new CommitFileCandidate(
-            "staged=" + stagedPath,
-            () -> readCommitFile(fileVersion, stagedFile, stagedPath, timestamp)));
-    candidates.add(
-        new CommitFileCandidate(
-            "published=" + publishedPath,
-            () -> {
-              FileStatus publishedStatus =
-                  engine.getFileSystemClient().getFileStatus(publishedPath);
-              return readCommitFile(fileVersion, publishedStatus, stagedPath, timestamp);
-            }));
-    return createCommitFileIteratorWithRetry(
-        "version=" + fileVersion + " stagedPath=" + stagedPath + " publishedPath=" + publishedPath,
-        candidates);
-  }
-
-  private CloseableIterator<ActionWrapper> readCommitFileWithRetry(
-      long fileVersion, FileStatus fileToRead, Optional<Long> timestamp) throws IOException {
-    String filePath = fileToRead.getPath();
-    List<CommitFileCandidate> candidates =
-        Collections.singletonList(
-            new CommitFileCandidate(
-                "path=" + filePath,
-                () -> {
-                  FileStatus refreshedFile = engine.getFileSystemClient().getFileStatus(filePath);
-                  return readCommitFile(fileVersion, refreshedFile, filePath, timestamp);
-                }));
-    return createCommitFileIteratorWithRetry("path=" + filePath, candidates);
-  }
-
-  private interface CommitFileOpener {
-    CloseableIterator<ActionWrapper> open() throws IOException;
-  }
-
-  private static final class CommitFileCandidate {
-    private final String label;
-    private final CommitFileOpener opener;
-
-    private CommitFileCandidate(String label, CommitFileOpener opener) {
-      this.label = label;
-      this.opener = opener;
-    }
-  }
-
-  private CloseableIterator<ActionWrapper> createCommitFileIteratorWithRetry(
-      String debugContext, List<CommitFileCandidate> candidates) {
-    return new CloseableIterator<ActionWrapper>() {
-      private CloseableIterator<ActionWrapper> currentIter;
-      private boolean returnedAny = false;
-
-      private CloseableIterator<ActionWrapper> openWithRetry() {
-        KernelEngineException lastException = null;
-        for (int attempt = 1; attempt <= PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS; attempt++) {
-          for (CommitFileCandidate candidate : candidates) {
-            try {
-              return candidate.opener.open();
-            } catch (IOException e) {
-              if (!isRetryableException(e)) {
-                throw new KernelEngineException(
-                    String.format("Failed to access commit file (%s)", candidate.label), e);
-              }
-              // Clear interrupt flag if set (allows subsequent I/O to proceed)
-              if (hasInterruptCause(e)) {
-                Thread.interrupted();
-              }
-              lastException =
-                  new KernelEngineException(
-                      String.format("Commit file access failed (%s)", candidate.label), e);
-            } catch (UncheckedIOException e) {
-              // DefaultJsonHandler wraps IOExceptions in UncheckedIOException
-              if (!isRetryableException(e)) {
-                throw new KernelEngineException(
-                    String.format("Failed to access commit file (%s)", candidate.label), e);
-              }
-              // Clear interrupt flag if set (allows subsequent I/O to proceed)
-              if (hasInterruptCause(e)) {
-                Thread.interrupted();
-              }
-              lastException =
-                  new KernelEngineException(
-                      String.format("Commit file access failed (%s)", candidate.label), e);
-            } catch (KernelEngineException e) {
-              if (!isRetryableException(e)) {
-                throw e;
-              }
-              // Clear interrupt flag if set (allows subsequent I/O to proceed)
-              if (hasInterruptCause(e)) {
-                Thread.interrupted();
-              }
-              lastException = e;
-            }
-          }
-
-          if (attempt < PUBLISHED_COMMIT_FALLBACK_MAX_ATTEMPTS) {
-            System.out.println(
-                "DEBUG ActionsIterator.commitFileRetry: attempt="
-                    + attempt
-                    + " "
-                    + debugContext
-                    + " lastException="
-                    + (lastException != null ? lastException.getMessage() : "none"));
-            if (!sleepBeforeRetry(attempt)) {
-              break;
-            }
-          }
-        }
-
-        if (lastException != null) {
-          System.out.println(
-              "DEBUG ActionsIterator.commitFileRetry: giving up "
-                  + debugContext
-                  + " lastException="
-                  + lastException.getMessage());
-          throw lastException;
-        }
-        throw new KernelEngineException(
-            String.format("Commit file not found (%s)", debugContext),
-            new IOException("Commit file missing"));
-      }
-
-      private void resetCurrentIter() {
-        if (currentIter != null) {
-          Utils.closeCloseablesSilently(currentIter);
-          currentIter = null;
-        }
-      }
-
-      @Override
-      public boolean hasNext() {
-        while (true) {
-          if (currentIter == null) {
-            currentIter = openWithRetry();
-          }
-          try {
-            return currentIter.hasNext();
-          } catch (KernelEngineException e) {
-            if (returnedAny || !isRetryableException(e)) {
-              throw e;
-            }
-            // Clear interrupt flag if set (allows subsequent I/O to proceed)
-            if (hasInterruptCause(e)) {
-              Thread.interrupted();
-            }
-            System.out.println(
-                "DEBUG ActionsIterator.hasNext: retrying after KernelEngineException: "
-                    + e.getMessage());
-            resetCurrentIter();
-          } catch (UncheckedIOException e) {
-            // DefaultJsonHandler wraps IOExceptions in UncheckedIOException
-            if (returnedAny || !isRetryableException(e)) {
-              throw e;
-            }
-            // Clear interrupt flag if set (allows subsequent I/O to proceed)
-            if (hasInterruptCause(e)) {
-              Thread.interrupted();
-            }
-            System.out.println(
-                "DEBUG ActionsIterator.hasNext: retrying after UncheckedIOException: "
-                    + e.getMessage());
-            resetCurrentIter();
-          }
-        }
-      }
-
-      @Override
-      public ActionWrapper next() {
-        while (true) {
-          if (currentIter == null) {
-            currentIter = openWithRetry();
-          }
-          try {
-            ActionWrapper next = currentIter.next();
-            returnedAny = true;
-            return next;
-          } catch (KernelEngineException e) {
-            if (returnedAny || !isRetryableException(e)) {
-              throw e;
-            }
-            // Clear interrupt flag if set (allows subsequent I/O to proceed)
-            if (hasInterruptCause(e)) {
-              Thread.interrupted();
-            }
-            System.out.println(
-                "DEBUG ActionsIterator.next: retrying after KernelEngineException: "
-                    + e.getMessage());
-            resetCurrentIter();
-          } catch (UncheckedIOException e) {
-            // DefaultJsonHandler wraps IOExceptions in UncheckedIOException
-            if (returnedAny || !isRetryableException(e)) {
-              throw e;
-            }
-            // Clear interrupt flag if set (allows subsequent I/O to proceed)
-            if (hasInterruptCause(e)) {
-              Thread.interrupted();
-            }
-            System.out.println(
-                "DEBUG ActionsIterator.next: retrying after UncheckedIOException: "
-                    + e.getMessage());
-            resetCurrentIter();
-          }
-        }
-      }
-
-      @Override
-      public void close() throws IOException {
-        if (currentIter != null) {
-          currentIter.close();
-        }
-      }
-    };
-  }
-
-  private static boolean isFileNotFoundException(Throwable throwable) {
-    if (throwable instanceof java.io.FileNotFoundException) {
-      return true;
-    }
-    String className = throwable.getClass().getName();
-    return className.endsWith("FileNotFoundException")
-        || className.endsWith("PathNotFoundException");
-  }
-
-  private static boolean hasFileNotFoundCause(Throwable throwable) {
-    Throwable current = throwable;
-    while (current != null) {
-      if (isFileNotFoundException(current)) {
-        return true;
-      }
-      current = current.getCause();
-    }
-    return false;
-  }
-
-  private static boolean hasInterruptCause(Throwable throwable) {
-    Throwable current = throwable;
-    while (current != null) {
-      if (current instanceof ClosedByInterruptException) {
-        return true;
-      }
-      current = current.getCause();
-    }
-    return false;
-  }
-
-  private static boolean isRetryableException(Throwable throwable) {
-    return hasFileNotFoundCause(throwable) || hasInterruptCause(throwable);
-  }
-
-  private static boolean sleepBeforeRetry(int attempt) {
-    try {
-      Thread.sleep(PUBLISHED_COMMIT_FALLBACK_BASE_SLEEP_MS * attempt);
-      return true;
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      return false;
     }
   }
 
