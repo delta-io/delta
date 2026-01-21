@@ -208,65 +208,18 @@ public class SparkMicroBatchStream
                 .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
   }
 
-  private DeltaStreamUtils.SchemaReadOptions constructSchemaReadOptions() {
-    boolean allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(
-                    DeltaSQLConf
-                        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES());
-    boolean allowUnsafeStreamingReadOnPartitionColumnChanges =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE());
-    boolean forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(
-                    DeltaSQLConf
-                        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START());
-    boolean forceEnableUnsafeReadOnNullabilityChange =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE());
     boolean isStreamingFromColumnMappingTable =
-        ColumnMapping.getColumnMappingMode(snapshotAtSourceInit.getMetadata().getConfiguration())
+        ColumnMapping.getColumnMappingMode(
+                this.snapshotAtSourceInit.getMetadata().getConfiguration())
             != ColumnMapping.ColumnMappingMode.NONE;
-    boolean typeWideningEnabled =
-        (Boolean)
-                spark
-                    .sessionState()
-                    .conf()
-                    .getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE())
-            && (this.snapshotAtSourceInit
-                    .getProtocol()
-                    .supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
-                || this.snapshotAtSourceInit
-                    .getProtocol()
-                    .supportsFeature(TYPE_WIDENING_RW_FEATURE));
-    boolean enableSchemaTrackingForTypeWidening =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING());
-
-    return new DeltaStreamUtils.SchemaReadOptions(
-        /* allowUnsafeStreamingReadOnColumnMappingSchemaChanges= */ allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
-        /* allowUnsafeStreamingReadOnPartitionColumnChanges= */ allowUnsafeStreamingReadOnPartitionColumnChanges,
-        /* forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart= */ forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
-        /* forceEnableUnsafeReadOnNullabilityChange= */ forceEnableUnsafeReadOnNullabilityChange,
-        /* isStreamingFromColumnMappingTable= */ isStreamingFromColumnMappingTable,
-        /* typeWideningEnabled= */ typeWideningEnabled,
-        /* enableSchemaTrackingForTypeWidening= */ enableSchemaTrackingForTypeWidening);
+    boolean isTypeWideningSupportedInProtocol =
+        this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
+            || this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_FEATURE);
+    this.schemaReadOptions =
+        Objects.requireNonNull(
+            DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
+                spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
+            "schemaReadOptions is null");
   }
 
   @Override
@@ -812,8 +765,10 @@ public class SparkMicroBatchStream
    *
    * @param commit the CommitActions representing a single commit
    * @param version the commit version
+   * @param batchStartVersion Starting version of the batch being processed
    * @param tablePath the path to the Delta table
    * @param endOffsetOpt optional end offset for boundary checking
+   * @param verifyMetadataAction Whether to verify metadata action compatibility
    * @throws RuntimeException if the commit is invalid.
    */
   private void validateCommit(
@@ -851,6 +806,11 @@ public class SparkMicroBatchStream
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
             Metadata metadata = metadataOpt.get();
+            Preconditions.checkArgument(
+                metadataAction == null,
+                "Should not encounter two metadata actions in the same commit of version %d",
+                version);
+            metadataAction = metadata;
             Long batchEndVersion =
                 endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
             if (verifyMetadataAction) {
@@ -858,14 +818,9 @@ public class SparkMicroBatchStream
                   metadata,
                   version,
                   batchStartVersion,
-                  batchEndVersion, /* validatedDuringStreamStart */
-                  false);
+                  batchEndVersion,
+                  /* validatedDuringStreamStart */ false);
             }
-            Preconditions.checkArgument(
-                metadataAction == null,
-                "Should not encounter two metadata actions in the same commit of version %d",
-                version);
-            metadataAction = metadata;
           }
         }
       }
@@ -980,9 +935,10 @@ public class SparkMicroBatchStream
    * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
    *
    * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
-   * starts at version 1 (after a schema change at version 1), scanning only validates version 1's
-   * schema against itself (SAME, passes). But version 0 files may have an incompatible older schema
-   * that was never checked since version 0 has no metadata action.
+   * starts at version 1 with the latest version is version 3 and there is a schema change at
+   * version 2, validateCommits only validates version 2's schema against version 3 (SAME, passes).
+   * But version 1 files may have an incompatible older schema that was never checked since version
+   * 1 has no metadata action.
    *
    * <p>This method explicitly loads and validates the snapshot in the scan range, regardless of
    * whether it has a metadata action, catching such incompatibilities before planInputPartitions

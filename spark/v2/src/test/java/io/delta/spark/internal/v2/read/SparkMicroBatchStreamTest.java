@@ -1931,6 +1931,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   // Tests for checkReadIncompatibleSchemaChanges parity between v1 connector vs v2 connector
   // ================================================================================================
 
+  // TODO(#5319): Tests on RESTORE on delta table after applying an additive schema change
+
   /**
    * Parameterized test that verifies both DSv1 and DSv2 throw DeltaIllegalStateException when
    * encountering forward-fill additive schema change actions.

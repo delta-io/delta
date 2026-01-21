@@ -29,6 +29,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
+import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.io.IOException;
@@ -152,7 +153,6 @@ public class StreamingHelper {
    * @param snapshotManager the Delta snapshot manager
    * @param engine the Delta engine
    * @param tablePath the path to the Delta table
-   * @param actionSet the set of actions to read (should include METADATA)
    * @return a map from version number to metadata action, in version order
    */
   public static Map<Long, Metadata> collectMetadataActionsFromRangeUnsafe(
@@ -179,13 +179,11 @@ public class StreamingHelper {
               for (int rowId = 0; rowId < numRows; rowId++) {
                 Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
                 if (metadataOpt.isPresent()) {
-                  Metadata metadata = metadataOpt.get();
-                  Metadata existing = versionToMetadata.putIfAbsent(version, metadata);
-                  checkState(
+                  Metadata existing = versionToMetadata.putIfAbsent(version, metadataOpt.get());
+                  Preconditions.checkArgument(
                       existing == null,
-                      String.format(
-                          "Should not encounter two metadata actions in the same commit of version %d.",
-                          version));
+                      "Should not encounter two metadata actions in the same commit of version %d",
+                      version);
                 }
               }
             }
