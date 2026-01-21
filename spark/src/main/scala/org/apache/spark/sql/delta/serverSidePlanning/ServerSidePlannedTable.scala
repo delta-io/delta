@@ -332,11 +332,6 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
-  //
-  // Note: We only send columns from requiredSchema (SELECT clause), not filter columns.
-  // The server is smart enough to read filter columns even if not explicitly in projection.
-  // Example: "SELECT int_col WHERE float_col < 3.15" sends projection=["int_col"],
-  // and the server still correctly evaluates the filter on float_col.
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
