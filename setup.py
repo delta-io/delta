@@ -32,7 +32,7 @@ class VerifyVersionCommand(install):
 with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
+install_requires_arg = ['pyspark>=4.1.0', 'importlib_metadata>=1.0.0']
 python_requires_arg = '>=3.10'
 
 setup(

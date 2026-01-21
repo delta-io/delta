@@ -251,7 +251,7 @@ if __name__ == "__main__":
         spark_full_version = json.loads(result.stdout.strip())
     except Exception as e:
         print(f"Warning: Could not determine full Spark version: {e}")
-        spark_full_version = "4.0.0"
+        spark_full_version = "4.1.0"
 
     delta_connect_packages = ["com.google.protobuf:protobuf-java:3.25.1",
                               f"org.apache.spark:spark-connect_2.13:{spark_full_version}",
