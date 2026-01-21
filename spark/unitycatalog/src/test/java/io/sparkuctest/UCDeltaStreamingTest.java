@@ -189,9 +189,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               check(queryName, expected);
             }
           } finally {
-            while (query.status().isTriggerActive()) {
-              Thread.sleep(200);
-            }
+            query.processAllAvailable();
             query.stop();
             query.awaitTermination();
             assertFalse(query.isActive(), "Streaming query should have stopped");
