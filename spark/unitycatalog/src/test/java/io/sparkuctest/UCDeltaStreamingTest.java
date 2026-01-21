@@ -189,15 +189,12 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               check(queryName, expected);
             }
           } finally {
-            if (query != null) {
-              try {
-                query.stop();
-                query.awaitTermination();
-              } catch (Exception e) {
-                // silently fail
-              }
-              assertFalse(query.isActive(), "Streaming query should have stopped");
+            while (query.status().isTriggerActive()) {
+              Thread.sleep(200);
             }
+            query.stop();
+            query.awaitTermination();
+            assertFalse(query.isActive(), "Streaming query should have stopped");
             spark.sql("DROP VIEW IF EXISTS " + queryName);
             restoreV2Mode(spark, originalMode);
           }
