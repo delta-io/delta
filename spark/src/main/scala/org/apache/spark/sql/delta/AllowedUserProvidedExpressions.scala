@@ -340,6 +340,45 @@ object AllowedUserProvidedExpressions {
     expression[Contains]("contains"),
     expression[StartsWith]("startswith"),
     expression[EndsWith]("endswith"),
-    expression[InSet]("inset")
+    expression[InSet]("inset"),
+    // Lambda Functions
+    expression[LambdaFunction]("lambdafunction"),
+    expression[NamedLambdaVariable]("namedlambdavariable"),
+    // Date/Time Functions
+    expression[CurrentDate]("current_date"),
+    expression[CurrentTimestamp]("current_timestamp"),
+    // Used by Extract when applied to interval types
+    expression[ExtractANSIIntervalDays]("extractansiintervaldays"),
+    expression[ExtractANSIIntervalHours]("extractansiintervalhours"),
+    expression[ExtractANSIIntervalMinutes]("extractansiintervalminutes"),
+    expression[ExtractANSIIntervalSeconds]("extractansiintervalseconds"),
+    expression[ExtractANSIIntervalYears]("extractansiintervalyears"),
+    expression[ExtractANSIIntervalMonths]("extractansiintervalmonths"),
+    expression[ExtractIntervalYears]("extractintervalyears"),
+    expression[ExtractIntervalMonths]("extractintervalmonths"),
+    expression[ExtractIntervalDays]("extractintervaldays"),
+    expression[ExtractIntervalHours]("extractintervalhours"),
+    expression[ExtractIntervalMinutes]("extractintervalminutes"),
+    expression[ExtractIntervalSeconds]("extractintervalseconds"),
+    // Date/time arithmetic expressions
+    expression[DatetimeSub]("datetimesub"),
+    // Date/time arithmetic with intervals
+    expression[TimestampAddYMInterval]("timestampaddyminterval"),
+    expression[DateAddInterval]("dateaddinterval"),
+    expression[DateAddYMInterval]("dateaddyminterval"),
+
+    // Comparison functions
+    expression[ILike]("ilike"),
+
+    // Try arithmetic functions
+    expression[TryAdd]("try_add"),
+    expression[TrySubtract]("try_subtract"),
+    expression[TryMultiply]("try_multiply"),
+    expression[TryDivide]("try_divide"),
+
+    // Try parsing/conversion functions
+    expression[TryToBinary]("try_to_binary"),
+    expression[TryToNumber]("try_to_number"),
+    expression[ToNumber]("to_number")
   )
 }

@@ -21,6 +21,7 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
@@ -41,8 +42,10 @@ import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 import org.apache.commons.lang3.tuple.Pair;
+import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DynamicTest;
@@ -108,6 +111,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @Setter
   @ToString
   private class TableSetupOptions {
+
     private TableType tableType;
     private String catalogName;
     private String schemaName;
@@ -316,90 +320,14 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       check(fullTableName, List.of(List.of("2", "b")));
     }
 
-    // Verify that properties are set on server. This can not be done by DESC EXTENDED.
-    TablesApi tablesApi = new TablesApi(uc.createApiClient());
-    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
-    assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
-    assertThat(tableInfo.getName()).isEqualTo(tableName);
-    assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);
-    assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
-    assertThat(tableInfo.getDataSourceFormat().name()).isEqualTo(DataSourceFormat.DELTA.name());
-    assertThat(tableInfo.getComment()).isEqualTo(comment);
-    if (tableType == TableType.EXTERNAL) {
-      assertThat(tableInfo.getStorageLocation()).isEqualTo(options.getExternalTableLocation());
-    }
-
-    // At this point table schema can not be sent to server yet because it won't be
-    // updated
-    // later and that would cause problem.
-    List<ColumnInfo> columns = tableInfo.getColumns();
-    assertThat(columns).isNotNull();
-    assertThat(columns).isEmpty();
-
-    if (tableType == TableType.MANAGED) {
-      // Delta sent properties of managed tables to server
-      Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
-
-      Map<String, String> expectedOtherProperties =
-          ImmutableMap.of(
-              "delta.enableInCommitTimestamps",
-              "true",
-              "delta.lastUpdateVersion",
-              "0",
-              "delta.minReaderVersion",
-              "3",
-              "delta.minWriterVersion",
-              "7",
-              UC_TABLE_ID_KEY,
-              tableInfo.getTableId(),
-              // User specified custom table property is also sent.
-              "Foo",
-              "Bar");
-      // This is combination of expectedOtherProperties and
-      //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
-      Map<String, String> expectedProperties =
-          Stream.concat(
-                  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.entrySet().stream(),
-                  expectedOtherProperties.entrySet().stream())
-              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-      expectedProperties.forEach(
-          (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
-      // Lastly the timestamp value is always changing so skip checking its value
-      assertThat(tablePropertiesFromServer).containsKey("delta.lastCommitTimestamp");
-    }
-
-    // Also verify table using DESC EXTENDED
-    List<List<String>> rows = sql("DESC EXTENDED " + fullTableName);
-    Map<String, String> describeResult = new HashMap<>();
-    for (List<String> row : rows) {
-      String key = row.get(0);
-      // Skip duplicate column names that appear in partition info
-      if (!List.of("i", "s").contains(key)) {
-        describeResult.put(key, row.get(1));
-      }
-    }
-
-    // Verify basic table properties
-    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
-    assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
-    assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
-    assertThat(describeResult.get("Is_managed_location"))
-        .isEqualTo(tableType == TableType.MANAGED ? "true" : null);
-    assertThat(describeResult).containsKey("Table Properties");
-    String tableProperties = describeResult.get("Table Properties");
-    if (tableType == TableType.MANAGED) {
-      // Check for UC table ID
-      assertThat(tableProperties).contains(UC_TABLE_ID_KEY);
-      // Check for catalogManaged feature
-      assertThat(tableProperties)
-          .contains(String.format("%s=%s", DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
-    } else {
-      // Check for UC table ID
-      assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
-      // Check for catalogManaged feature
-      assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
-    }
+    // Verify that table information maintained at the uc server side are expected.
+    assertUCTableInfo(
+        tableType,
+        fullTableName,
+        List.of("i", "s"),
+        Map.of("Foo", "Bar"),
+        comment,
+        options.getExternalTableLocation());
   }
 
   @Test
@@ -449,5 +377,277 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             String.format(
                 "Managed table creation requires table property '%s'='%s' to be set",
                 DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
+  }
+
+  @TestAllTableTypes
+  public void testCreateOrReplaceTable(TableType tableType) throws Exception {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
+    withTempDir(
+        (Path dir) -> {
+          try {
+            // CREATE OR REPLACE with new schema
+            if (tableType == TableType.MANAGED) {
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
+                  tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+            } else {
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+                  tableName, dir.toString());
+            }
+
+            // Assert the unity catalog table information.
+            assertUCTableInfo(tableType, tableName, List.of("id", "name"), Map.of(), null, null);
+
+            // Insert data to verify new schema
+            sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+            check(tableName, List.of(List.of("1", "Alice")));
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", tableName);
+          }
+        });
+  }
+
+  @TestAllTableTypes
+  public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
+    String schema =
+        // Numeric types
+        "col_tinyint TINYINT, col_smallint SMALLINT, col_int INT, col_bigint BIGINT, "
+            + "col_float FLOAT, col_double DOUBLE, col_decimal DECIMAL(10,2), "
+            // String and binary types
+            + "col_string STRING, col_char CHAR(10), col_varchar VARCHAR(20), col_binary BINARY, "
+            // Boolean type
+            + "col_boolean BOOLEAN, "
+            // Date and time types
+            + "col_date DATE, col_timestamp TIMESTAMP, col_timestamp_ntz TIMESTAMP_NTZ";
+
+    withNewTable(
+        "supported_types_table",
+        schema,
+        tableType,
+        tableName -> {
+          // Insert sample data
+          sql(
+              "INSERT INTO %s VALUES ("
+                  // Numeric values
+                  + "CAST(1 AS TINYINT), CAST(100 AS SMALLINT), 1000, 100000, "
+                  + "2.5, 1.5, 123.45, "
+                  // String and binary values
+                  + "'test', 'char_test', 'varchar_test', X'CAFEBABE', "
+                  // Boolean value
+                  + "true, "
+                  // Date and time values
+                  + "DATE'2025-01-01', TIMESTAMP'2025-01-01 12:00:00', "
+                  + "TIMESTAMP_NTZ'2025-01-01 12:00:00')",
+              tableName);
+
+          // Assert the unity catalog table information.
+          assertUCTableInfo(
+              tableType,
+              tableName,
+              List.of(
+                  "col_tinyint",
+                  "col_smallint",
+                  "col_int",
+                  "col_bigint",
+                  "col_float",
+                  "col_double",
+                  "col_decimal",
+                  "col_string",
+                  "col_char",
+                  "col_varchar",
+                  "col_binary",
+                  "col_boolean",
+                  "col_date",
+                  "col_timestamp",
+                  "col_timestamp_ntz"),
+              Map.of(),
+              null,
+              null);
+
+          // Verify data can be queried - checking that each column type is correctly
+          // stored/retrieved
+          List<List<String>> results = sql("SELECT * FROM %s", tableName);
+          assertThat(results).hasSize(1);
+          List<String> row = results.get(0);
+
+          // Verify each column value
+          assertThat(row.get(0)).isEqualTo("1"); // TINYINT
+          assertThat(row.get(1)).isEqualTo("100"); // SMALLINT
+          assertThat(row.get(2)).isEqualTo("1000"); // INT
+          assertThat(row.get(3)).isEqualTo("100000"); // BIGINT
+          assertThat(row.get(4)).isEqualTo("2.5"); // FLOAT
+          assertThat(row.get(5)).isEqualTo("1.5"); // DOUBLE
+          assertThat(row.get(6)).isEqualTo("123.45"); // DECIMAL
+          assertThat(row.get(7)).isEqualTo("test"); // STRING
+          assertThat(row.get(8)).isEqualTo("char_test "); // CHAR (padded with space)
+          assertThat(row.get(9)).isEqualTo("varchar_test"); // VARCHAR
+          assertThat(row.get(10)).startsWith("[B@"); // BINARY (Java byte array object reference)
+          assertThat(row.get(11)).isEqualTo("true"); // BOOLEAN
+          assertThat(row.get(12)).isEqualTo("2025-01-01"); // DATE
+          assertThat(row.get(13)).isEqualTo("2025-01-01 12:00:00.0"); // TIMESTAMP
+          assertThat(row.get(14)).isEqualTo("2025-01-01T12:00"); // TIMESTAMP_NTZ
+        });
+  }
+
+  @TestAllTableTypes
+  public void testTableWithComplexTypes(TableType tableType) throws Exception {
+    String schema =
+        "id INT, arr ARRAY<INT>, "
+            + "map_col MAP<STRING, INT>, "
+            + "struct_col STRUCT<a: INT, b: STRING>";
+
+    withNewTable(
+        "complex_types_table",
+        schema,
+        tableType,
+        tableName -> {
+          // Insert sample data
+          sql(
+              "INSERT INTO %s VALUES (1, array(1, 2, 3), "
+                  + "map('key1', 10, 'key2', 20), "
+                  + "struct(42, 'test'))",
+              tableName);
+
+          // Assert the unity catalog table information.
+          assertUCTableInfo(
+              tableType,
+              tableName,
+              List.of("id", "arr", "map_col", "struct_col"),
+              Map.of(),
+              null,
+              null);
+
+          // Verify data can be queried
+          check(
+              tableName,
+              List.of(
+                  List.of("1", "ArraySeq(1, 2, 3)", "Map(key1 -> 10, key2 -> 20)", "[42,test]")));
+        });
+  }
+
+  @TestAllTableTypes
+  public void testTableWithNotNullConstraints(TableType tableType) throws Exception {
+    withNewTable(
+        "not_null_table",
+        "id INT NOT NULL, name STRING NOT NULL, optional STRING",
+        tableType,
+        tableName -> {
+          // Insert valid data
+          sql("INSERT INTO %s VALUES (1, 'Alice', 'extra')", tableName);
+          sql("INSERT INTO %s VALUES (2, 'Bob', NULL)", tableName);
+
+          check(tableName, List.of(List.of("1", "Alice", "extra"), List.of("2", "Bob", "null")));
+
+          // Assert the unity catalog table information.
+          assertUCTableInfo(
+              tableType, tableName, List.of("id", "name", "optional"), Map.of(), null, null);
+
+          // Attempting to insert NULL into NOT NULL column should fail
+          Assertions.assertThatThrownBy(
+                  () -> sql("INSERT INTO %s VALUES (NULL, 'Charlie', 'data')", tableName))
+              .isInstanceOf(Exception.class);
+        });
+  }
+
+  private void assertUCTableInfo(
+      TableType tableType,
+      String fullTableName,
+      List<String> expectedColumns,
+      Map<String, String> customizedProps,
+      String comment,
+      String externalTableLocation)
+      throws ApiException {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String catalogName = uc.catalogName();
+    String schemaName = uc.schemaName();
+
+    // Verify that properties are set on server. This can not be done by DESC EXTENDED.
+    TablesApi tablesApi = new TablesApi(uc.createApiClient());
+    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+    assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
+    assertThat(tableInfo.getName()).isEqualTo(parseTableName(fullTableName));
+    assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);
+    assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
+    assertThat(tableInfo.getDataSourceFormat().name()).isEqualTo(DataSourceFormat.DELTA.name());
+    assertThat(tableInfo.getComment()).isEqualTo(comment);
+    if (tableType == TableType.EXTERNAL && externalTableLocation != null) {
+      assertThat(tableInfo.getStorageLocation()).isEqualTo(externalTableLocation);
+    }
+
+    // At this point table schema can not be sent to server yet because it won't be
+    // updated later and that would cause problem.
+    List<ColumnInfo> columns = tableInfo.getColumns();
+    assertThat(columns).isNotNull();
+    assertThat(columns).isEmpty();
+
+    if (tableType == TableType.MANAGED) {
+      // Delta sent properties of managed tables to server
+      Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
+
+      // The server-side table properties should contain feature properties.
+      assertThat(tablePropertiesFromServer)
+          .containsAllEntriesOf(EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES);
+
+      // The server-side table properties should include customized properties.
+      assertThat(tablePropertiesFromServer).containsAllEntriesOf(customizedProps);
+
+      // The server-side table properties should include built-in table properties.
+      assertThat(tablePropertiesFromServer)
+          .containsAllEntriesOf(
+              ImmutableMap.of(
+                  "delta.enableInCommitTimestamps",
+                  "true",
+                  "delta.lastUpdateVersion",
+                  "0",
+                  "delta.minReaderVersion",
+                  "3",
+                  "delta.minWriterVersion",
+                  "7",
+                  UC_TABLE_ID_KEY,
+                  tableInfo.getTableId()));
+
+      // Lastly the timestamp value is always changing so skip checking its value
+      assertThat(tablePropertiesFromServer).containsKey("delta.lastCommitTimestamp");
+    }
+
+    // Also verify table using DESC EXTENDED
+    List<List<String>> rows = sql("DESC EXTENDED %s", fullTableName);
+    Map<String, String> describeResult = new HashMap<>();
+    for (List<String> row : rows) {
+      String key = row.get(0);
+      // Skip duplicate column names that appear in partition info
+      if (!expectedColumns.contains(key)) {
+        describeResult.put(key, row.get(1));
+      }
+    }
+
+    // Verify basic table properties
+    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
+    assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
+    assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
+    assertThat(describeResult.get("Is_managed_location"))
+        .isEqualTo(tableType == TableType.MANAGED ? "true" : null);
+    assertThat(describeResult).containsKey("Table Properties");
+    String tableProperties = describeResult.get("Table Properties");
+    if (tableType == TableType.MANAGED) {
+      // Check for UC table ID
+      assertThat(tableProperties).contains(UC_TABLE_ID_KEY);
+      // Check for catalogManaged feature
+      assertThat(tableProperties)
+          .contains(String.format("%s=%s", DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
+    } else {
+      // Check for UC table ID
+      assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
+      // Check for catalogManaged feature
+      assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
+    }
+  }
+
+  private static String parseTableName(String fullTableName) {
+    String[] splits = fullTableName.split("\\.");
+    assertThat(splits.length).isEqualTo(3);
+    return splits[splits.length - 1];
   }
 }
