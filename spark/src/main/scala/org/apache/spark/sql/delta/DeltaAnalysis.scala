@@ -327,7 +327,8 @@ class DeltaAnalysis(session: SparkSession)
     // to perform CLONE. We do this by passing the CloneTableCommand as the query in
     // CreateDeltaTableCommand and let Create handle the creation + checks of creating a table in
     // the metastore instead of duplicating that effort in CloneTableCommand.
-    case cloneStatement: CloneTableStatement =>
+    case cloneStatement: CloneTableStatement
+      if cloneStatement.source.resolved =>
       // Get the info necessary to CreateDeltaTableCommand
       EliminateSubqueryAliases(cloneStatement.source) match {
         case DataSourceV2RelationShim(table: DeltaTableV2, _, _, _, _) =>
@@ -366,12 +367,6 @@ class DeltaAnalysis(session: SparkSession)
               session
             ),
             cloneStatement)
-
-        case u: UnresolvedRelation =>
-          u.tableNotFound(u.multipartIdentifier)
-
-        case TimeTravel(u: UnresolvedRelation, _, _, _) =>
-          u.tableNotFound(u.multipartIdentifier)
 
         case LogicalRelationWithTable(
             HadoopFsRelation(location, _, _, _, _: ParquetFileFormat, _), catalogTable) =>
@@ -414,7 +409,8 @@ class DeltaAnalysis(session: SparkSession)
             l.toString, "Unknown")
       }
 
-    case restoreStatement @ RestoreTableStatement(target) =>
+    case restoreStatement @ RestoreTableStatement(target)
+      if target.resolved =>
       EliminateSubqueryAliases(target) match {
         // Pass the traveled table if a previous version is to be cloned
         case tt @ TimeTravel(DataSourceV2RelationShim(tbl: DeltaTableV2, _, _, _, _), _, _, _)
@@ -445,12 +441,6 @@ class DeltaAnalysis(session: SparkSession)
           }
 
           RestoreTableCommand(traveledTable)
-
-        case u: UnresolvedRelation =>
-          u.tableNotFound(u.multipartIdentifier)
-
-        case TimeTravel(u: UnresolvedRelation, _, _, _) =>
-          u.tableNotFound(u.multipartIdentifier)
 
         case _ =>
           throw DeltaErrors.notADeltaTableException("RESTORE")
