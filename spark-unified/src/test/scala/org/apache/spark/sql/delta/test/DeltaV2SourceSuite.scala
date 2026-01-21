@@ -57,6 +57,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === Schema Evolution ===
     "restarting a query should pick up latest table schema and recover",
     "disallow to change schema after starting a streaming query",
+    "allow to change schema before starting a streaming query",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -74,13 +75,13 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxBytesPerTrigger: change and restart",
     "maxBytesPerTrigger: invalid parameter",
     "maxBytesPerTrigger: max bytes and max files together",
-    "startingVersion should work with rate time"
+    "startingVersion should work with rate time",
+    "maxFilesPerTrigger: metadata checkpoint",
+    "maxBytesPerTrigger: metadata checkpoint",
+    "Delta sources should verify the protocol reader version"
   )
 
   private lazy val shouldFailTests = Set(
-    // === Schema Evolution ===
-    "allow to change schema before starting a streaming query",
-
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
@@ -103,9 +104,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files with option off",
 
     // === Rate Limiting / Trigger Options ===
-    "maxFilesPerTrigger: metadata checkpoint",
     "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: metadata checkpoint",
     "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
     "Trigger.AvailableNow with an empty table",
     "Rate limited Delta source advances with non-data inserts",
@@ -117,7 +116,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "recreate the reservoir should fail the query",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "Delta sources should verify the protocol reader version",
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
       "non-data operations",

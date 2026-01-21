@@ -491,7 +491,12 @@ public class SparkMicroBatchStream
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
       if (startingVersion instanceof StartingVersionLatest$) {
-        Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
+        Snapshot latestSnapshot;
+        try {
+          latestSnapshot = snapshotManager.loadLatestSnapshot();
+        } catch (io.delta.kernel.exceptions.UnsupportedProtocolVersionException e) {
+          throw wrapProtocolException(e);
+        }
         // "latest": start reading from the next commit
         cachedStartingVersion = Optional.of(latestSnapshot.getVersion() + 1);
         return cachedStartingVersion;
@@ -662,7 +667,11 @@ public class SparkMicroBatchStream
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
-        endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+        try {
+          endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+        } catch (io.delta.kernel.exceptions.UnsupportedProtocolVersionException e) {
+          throw wrapProtocolException(e);
+        }
       }
 
       // After capping, check if startVersion is beyond the endVersion.
@@ -675,7 +684,14 @@ public class SparkMicroBatchStream
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
-      long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      long currentLatestVersion;
+      try {
+        currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      } catch (io.delta.kernel.exceptions.UnsupportedProtocolVersionException e) {
+        // Wrap kernel's UnsupportedProtocolVersionException in Spark's
+        // InvalidProtocolVersionException to match V1 behavior.
+        throw wrapProtocolException(e);
+      }
       if (startVersion > currentLatestVersion) {
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
@@ -768,7 +784,7 @@ public class SparkMicroBatchStream
             batch -> {
               // Processing each batch eagerly because they are already loaded into memory.
               List<IndexedFile> files = new ArrayList<>();
-              fileIndex[0] = extractIndexedFilesFromBatch(batch, version, fileIndex[0], files);
+              fileIndex[0] = addIndexedFilesAndReturnNextIndex(batch, version, fileIndex[0], files);
               return Utils.toCloseableIterator(files.iterator());
             });
   }
@@ -946,11 +962,13 @@ public class SparkMicroBatchStream
    *
    * @return The next available index after processing this batch
    */
-  private long extractIndexedFilesFromBatch(
+  private long addIndexedFilesAndReturnNextIndex(
       ColumnarBatch batch, long version, long startIndex, List<IndexedFile> output) {
     long index = startIndex;
     for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-      Optional<AddFile> addOpt = StreamingHelper.getDataChangeAdd(batch, rowId);
+      // Only include AddFiles with dataChange=true. Skip changes that optimize or reorganize
+      // data without changing the logical content.
+      Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
       if (addOpt.isPresent()) {
         AddFile addFile = addOpt.get();
         output.add(new IndexedFile(version, index++, addFile));
@@ -972,7 +990,12 @@ public class SparkMicroBatchStream
   private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
     // TODO(#5318): Cache the sorted snapshot files.
     // Load snapshot at the specified version
-    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+    Snapshot snapshot;
+    try {
+      snapshot = snapshotManager.loadSnapshotAt(version);
+    } catch (io.delta.kernel.exceptions.UnsupportedProtocolVersionException e) {
+      throw wrapProtocolException(e);
+    }
 
     // Build scan to get all files
     Scan scan = snapshot.getScanBuilder().build();
@@ -983,8 +1006,10 @@ public class SparkMicroBatchStream
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
         ColumnarBatch batch = filteredBatch.getData();
+        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
+        // (checkpoint files) files.
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          StreamingHelper.getDataChangeAdd(batch, rowId).ifPresent(addFiles::add);
+          StreamingHelper.getAddFile(batch, rowId).ifPresent(addFiles::add);
         }
       }
     } catch (IOException e) {
@@ -1012,5 +1037,31 @@ public class SparkMicroBatchStream
     indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
 
     return Utils.toCloseableIterator(indexedFiles.iterator());
+  }
+
+  /**
+   * Wrap kernel's UnsupportedProtocolVersionException in Spark's InvalidProtocolVersionException to
+   * match V1 behavior.
+   */
+  private org.apache.spark.sql.delta.InvalidProtocolVersionException wrapProtocolException(
+      io.delta.kernel.exceptions.UnsupportedProtocolVersionException e) {
+    int version = e.getVersion();
+    // Determine if it's reader or writer version based on exception type
+    boolean isReaderVersion =
+        e.getVersionType()
+            == io.delta.kernel.exceptions.UnsupportedProtocolVersionException.ProtocolVersionType
+                .READER;
+
+    int readerVersion = isReaderVersion ? version : 1;
+    int writerVersion = isReaderVersion ? 1 : version;
+
+    // Get supported versions from Action companion object (same as V1)
+    scala.collection.immutable.Seq<Object> supportedReaderVersions =
+        org.apache.spark.sql.delta.actions.Action$.MODULE$.supportedReaderVersionNumbers().toSeq();
+    scala.collection.immutable.Seq<Object> supportedWriterVersions =
+        org.apache.spark.sql.delta.actions.Action$.MODULE$.supportedWriterVersionNumbers().toSeq();
+
+    return new org.apache.spark.sql.delta.InvalidProtocolVersionException(
+        tablePath, readerVersion, writerVersion, supportedReaderVersions, supportedWriterVersions);
   }
 }
