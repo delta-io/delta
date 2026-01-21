@@ -113,6 +113,8 @@ We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/d
 
 Delta Lake is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html).
 
+The required JDK versions span from JDK 8 to JDK 17, with JDK 18 and above not being supported.
+
 To compile, run
 
     build/sbt compile
