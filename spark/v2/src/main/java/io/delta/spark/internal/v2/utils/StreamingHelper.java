@@ -25,6 +25,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
@@ -61,8 +62,8 @@ public class StreamingHelper {
     return batch.getColumnVector(versionColIdx).getLong(0);
   }
 
-  /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
-  public static Optional<AddFile> getDataChangeAdd(ColumnarBatch batch, int rowId) {
+  /** Get AddFile action from a batch at the specified row, if present. */
+  public static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
     int addIdx = getFieldIndex(batch, "add");
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
@@ -74,15 +75,19 @@ public class StreamingHelper {
         addFileRow != null,
         String.format("Failed to extract AddFile struct from batch at rowId=%d.", rowId));
 
-    AddFile addFile = new AddFile(addFileRow);
-    return addFile.getDataChange() ? Optional.of(addFile) : Optional.empty();
+    return Optional.of(new AddFile(addFileRow));
+  }
+
+  /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
+  public static Optional<AddFile> getAddFileWithDataChange(ColumnarBatch batch, int rowId) {
+    return getAddFile(batch, rowId).filter(AddFile::getDataChange);
   }
 
   /**
    * Get RemoveFile action from a batch at the specified row, if present and has dataChange=true.
    */
   public static Optional<RemoveFile> getDataChangeRemove(ColumnarBatch batch, int rowId) {
-    int removeIdx = getFieldIndex(batch, "remove");
+    int removeIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.REMOVE.colName);
     ColumnVector removeVector = batch.getColumnVector(removeIdx);
     if (removeVector.isNullAt(rowId)) {
       return Optional.empty();
@@ -95,6 +100,15 @@ public class StreamingHelper {
 
     RemoveFile removeFile = new RemoveFile(removeFileRow);
     return removeFile.getDataChange() ? Optional.of(removeFile) : Optional.empty();
+  }
+
+  /** Get Metadata action from a batch at the specified row, if present. */
+  public static Optional<Metadata> getMetadata(ColumnarBatch batch, int rowId) {
+    int metadataIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.METADATA.colName);
+    ColumnVector metadataVector = batch.getColumnVector(metadataIdx);
+    Metadata metadata = Metadata.fromColumnVector(metadataVector, rowId);
+
+    return Optional.ofNullable(metadata);
   }
 
   /**

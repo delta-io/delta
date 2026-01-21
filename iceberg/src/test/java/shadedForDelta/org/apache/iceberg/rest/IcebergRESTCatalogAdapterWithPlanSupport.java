@@ -58,6 +58,10 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
   private static volatile List<String> capturedProjection = null;
+  
+  // Static field for test credential injection - credentials to inject into /plan responses
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile Map<String, String> testCredentials = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -102,12 +106,31 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
+   * Set test credentials to inject into /plan responses.
+   * Package-private for test access.
+   * 
+   * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
+   */
+  static void setTestCredentials(Map<String, String> credentials) {
+    testCredentials = credentials;
+  }
+  
+  /**
+   * Get the test credentials configured for injection into /plan responses.
+   * Package-private for servlet access.
+   */
+  static Map<String, String> getTestCredentials() {
+    return testCredentials;
+  }
+  
+  /**
    * Clear captured filter and projection. Call between tests to avoid pollution.
    * Package-private for test access.
    */
   static void clearCaptured() {
     capturedFilter = null;
     capturedProjection = null;
+    testCredentials = null;
   }
 
   @Override
