@@ -16,6 +16,12 @@
 
 package io.sparkuctest;
 
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -28,6 +34,9 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DynamicContainer;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
 
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
@@ -40,12 +49,38 @@ import org.junit.jupiter.api.BeforeAll;
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
 
+  public static final List<TableType> ALL_TABLE_TYPES =
+      List.of(TableType.EXTERNAL, TableType.MANAGED);
+
   /**
-   * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
-   * different table types.
+   * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
+   *
+   * <pre>{@code
+   * @TestAllTableTypes
+   * public void testAdvancedInsertOperations(TableType tableType)
+   * }</pre>
    */
-  protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
+  @Target(ElementType.METHOD)
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface TestAllTableTypes {}
+
+  /** Generate dynamic tests for all methods with @TestAllTableTypes to run with ALL_TABLE_TYPES. */
+  @TestFactory
+  Stream<DynamicContainer> allTableTypesTestsFactory() {
+    List<Method> methods =
+        Stream.of(this.getClass().getDeclaredMethods())
+            .filter(m -> m.isAnnotationPresent(TestAllTableTypes.class))
+            .collect(Collectors.toList());
+    List<DynamicContainer> containers = new ArrayList<>();
+    for (Method method : methods) {
+      List<DynamicTest> tests = new ArrayList<>();
+      for (TableType tableType : ALL_TABLE_TYPES) {
+        String testName = String.format("%s(%s)", method.getName(), tableType);
+        tests.add(DynamicTest.dynamicTest(testName, () -> method.invoke(this, tableType)));
+      }
+      containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
+    }
+    return containers.stream();
   }
 
   private SparkSession sparkSession;
@@ -158,14 +193,46 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    *
    * @param tableName The simple table name (without catalog/schema prefix)
    * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
    * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param tableProperties Additional table properties (e.g., "delta.enableChangeDataFeed"="true")
    * @param testCode The test function that receives the full table name
    */
   protected void withNewTable(
-      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      String tableProperties,
+      TestCode testCode)
       throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+
+    // Create th partition cause.
+    StringBuilder partitionCause = new StringBuilder();
+    if (partitionFields != null && !partitionFields.trim().isEmpty()) {
+      partitionCause.append(String.format("PARTITIONED BY (%s)", partitionFields));
+    }
+
+    // Build table properties clause
+    StringBuilder tblPropertiesClause = new StringBuilder();
+    if (tableType == TableType.MANAGED) {
+      tblPropertiesClause.append("'delta.feature.catalogManaged'='supported'");
+    }
+    if (tableProperties != null && !tableProperties.trim().isEmpty()) {
+      if (tblPropertiesClause.length() > 0) {
+        tblPropertiesClause.append(", ");
+      }
+      tblPropertiesClause.append(tableProperties);
+    }
+
+    final String tblPropertiesSql;
+    if (tblPropertiesClause.length() > 0) {
+      tblPropertiesSql = "TBLPROPERTIES (" + tblPropertiesClause + ")";
+    } else {
+      tblPropertiesSql = "";
+    }
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
@@ -173,8 +240,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
           (Path dir) -> {
             Path tablePath = new Path(dir, tableName);
             sql(
-                "CREATE TABLE %s (%s) USING DELTA LOCATION '%s'",
-                fullTableName, tableSchema, tablePath.toString());
+                "CREATE TABLE %s (%s) USING DELTA %s %s LOCATION '%s'",
+                fullTableName,
+                tableSchema,
+                partitionCause.toString(),
+                tblPropertiesSql,
+                tablePath.toString());
 
             try {
               testCode.run(fullTableName);
@@ -186,9 +257,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
       sql(
-          "CREATE TABLE %s (%s) USING DELTA "
-              + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-          fullTableName, tableSchema);
+          "CREATE TABLE %s (%s) USING DELTA %s %s",
+          fullTableName, tableSchema, partitionCause.toString(), tblPropertiesSql);
 
       try {
         testCode.run(fullTableName);
@@ -196,6 +266,39 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
         sql("DROP TABLE IF EXISTS %s", fullTableName);
       }
     }
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, partitionFields, tableType, null, testCode);
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, null, tableType, testCode);
   }
 
   /** Functional interface for test code that takes a temporary directory. */

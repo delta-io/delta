@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import shadedForDelta.org.apache.iceberg.FileScanTask;
 import shadedForDelta.org.apache.iceberg.Table;
 import shadedForDelta.org.apache.iceberg.TableScan;
@@ -54,10 +57,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   //          to /v1/iceberg/namespaces/db/tables/t1/plan
   private String catalogPrefix = null;  // null = no prefix (fallback case)
 
-  // Static fields for test verification - captures filter and projection from requests
+  // Static fields for test verification - captures filter, projection, and limit from requests
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
   private static volatile List<String> capturedProjection = null;
+  private static volatile Long capturedMinRowsRequested = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -102,12 +106,21 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
-   * Clear captured filter and projection. Call between tests to avoid pollution.
+   * Get the min-rows-requested captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Long getCapturedMinRowsRequested() {
+    return capturedMinRowsRequested;
+  }
+
+  /**
+   * Clear captured filter, projection, and limit. Call between tests to avoid pollution.
    * Package-private for test access.
    */
   static void clearCaptured() {
     capturedFilter = null;
     capturedProjection = null;
+    capturedMinRowsRequested = null;
   }
 
   @Override
@@ -178,6 +191,25 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return PlanTableScanRequestParser.fromJson(jsonBody);
   }
 
+  /**
+   * Extract min-rows-requested from JSON string using Jackson.
+   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it from JSON.
+   */
+  private Long extractMinRowsRequested(String jsonBody) {
+    if (jsonBody == null || jsonBody.trim().isEmpty()) {
+      return null;
+    }
+    try {
+      ObjectMapper mapper = new ObjectMapper();
+      JsonNode root = mapper.readTree(jsonBody);
+      JsonNode minRowsNode = root.get("min-rows-requested");
+      return minRowsNode != null ? minRowsNode.asLong() : null;
+    } catch (Exception e) {
+      LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
+      return null;
+    }
+  }
+
   private PlanTableScanResponse handlePlanTableScan(
       HTTPRequest request,
       ParserContext parserContext) throws Exception {
@@ -187,6 +219,12 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     // Extract table identifier
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
+
+    // Extract min-rows-requested from JSON before parsing (not in Iceberg 1.10.0 API)
+    Object body = request.body();
+    String jsonBody = body != null ? body.toString() : null;
+    Long minRows = extractMinRowsRequested(jsonBody);
+    LOG.debug("Extracted min-rows-requested from JSON: {}", minRows);
 
     // Parse request
     PlanTableScanRequest planRequest = parsePlanRequest(request);
@@ -207,11 +245,13 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // Capture filter and projection for test verification
+    // Capture filter, projection, and limit for test verification
     capturedFilter = planRequest.filter();
     capturedProjection = planRequest.select();
+    capturedMinRowsRequested = minRows;  // Extracted from JSON, not from API
     LOG.debug("Captured filter: {}", capturedFilter);
     LOG.debug("Captured projection: {}", capturedProjection);
+    LOG.debug("Captured min-rows-requested: {}", capturedMinRowsRequested);
 
     // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {

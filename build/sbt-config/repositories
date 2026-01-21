@@ -12,3 +12,4 @@
   repos-spark-packages: https://repos.spark-packages.org
   typesafe-releases: https://repo.typesafe.com/typesafe/releases/
   apache-snapshot: https://repository.apache.org/content/groups/snapshots/
+  jitpack: https://jitpack.io

@@ -210,7 +210,8 @@ class ServerSidePlannedScanBuilder(
   extends ScanBuilder
   with SupportsPushDownFilters
   with SupportsPushDownRequiredColumns
-  with SupportsPushDownLimit {
+  with SupportsPushDownLimit
+  with DeltaLogging {
 
   // Filters that have been pushed down and will be sent to the server
   private var _pushedFilters: Array[Filter] = Array.empty
@@ -221,12 +222,49 @@ class ServerSidePlannedScanBuilder(
   // Limit that has been pushed down. None means no limit.
   private var _limit: Option[Int] = None
 
+  /**
+   * Push filters to the server-side planning client.
+   *
+   * Strategy:
+   * - If ALL filters convert to server's native format: Returns empty array (no residuals)
+   *   This enables Spark to push down LIMIT in addition to filters
+   * - If ANY filter fails conversion: Returns all filters as residuals
+   *   This falls back to safety mode where Spark re-applies all filters locally
+   *
+   * The server receives converted filters in both cases, but residuals provide a safety net
+   * for correctness if the server silently ignores unsupported filters.
+   */
   override def pushFilters(filters: Array[Filter]): Array[Filter] = {
-    // Store filters to send to catalog, but return all as residuals.
-    // Since we don't know what the catalog can handle yet, we conservatively claim we handle
-    // none. Even if the catalog applies some filters, Spark will redundantly re-apply them.
+    // Store filters to send to IRC server
     _pushedFilters = filters
-    filters  // Return all as residuals
+
+    // Strategy: Check if all filters can be converted upfront
+    // Case 1: ALL convert -> return empty residuals -> enables filter+limit pushdown
+    // Case 2: ANY fails -> return all residuals -> only filter pushdown (safety mode)
+
+    if (filters.isEmpty) {
+      // No filters to push
+      return Array.empty
+    }
+
+    // Check if all filters are convertible
+    val allConvertible = planningClient.canConvertFilters(filters)
+
+    if (allConvertible) {
+      // All filters successfully converted to server's native format
+      // Trust that the server can handle them - return no residuals
+      // This enables Spark to call pushLimit() for combined filter+limit pushdown
+      logInfo(s"All ${filters.length} filters convertible, " +
+              "returning empty residuals to enable limit pushdown")
+      Array.empty
+    } else {
+      // At least one filter failed to convert
+      // Return all filters as residuals for safety (Spark will re-apply)
+      // Note: Server will still receive converted filters, but Spark provides safety net
+      logWarning(s"Some filters failed to convert, " +
+                 "returning all as residuals (limit pushdown disabled)")
+      filters
+    }
   }
 
   override def pushedFilters(): Array[Filter] = _pushedFilters
@@ -237,7 +275,7 @@ class ServerSidePlannedScanBuilder(
 
   override def pushLimit(limit: Int): Boolean = {
     _limit = Some(limit)
-    true  // Accept the limit for forwarding to server
+    true
   }
 
   override def isPartiallyPushed(): Boolean = {
@@ -284,6 +322,11 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
+  //
+  // Note: We only send columns from requiredSchema (SELECT clause), not filter columns.
+  // The server is smart enough to read filter columns even if not explicitly in projection.
+  // Example: "SELECT int_col WHERE float_col < 3.15" sends projection=["int_col"],
+  // and the server still correctly evaluates the filter on float_col.
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
@@ -407,6 +450,9 @@ class ServerSidePlannedFilePartitionReader(
   }
 
   override def close(): Unit = {
-    // Reader cleanup is handled by Spark
+    // Close the reader if it was initialized and is closeable
+    if (readerIterator.isInstanceOf[java.io.Closeable]) {
+      readerIterator.asInstanceOf[java.io.Closeable].close()
+    }
   }
 }

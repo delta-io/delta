@@ -41,7 +41,6 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     TestServerSidePlanningClient.capturedFilter = filterOption
     TestServerSidePlanningClient.capturedProjection = projectionOption
     TestServerSidePlanningClient.capturedLimit = limitOption
-
     val fullTableName = s"$databaseName.$table"
 
     // Temporarily disable server-side planning to avoid infinite recursion
@@ -89,6 +88,12 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     }
   }
 
+  override def canConvertFilters(filters: Array[Filter]): Boolean = {
+    // For testing: check if filters should be treated as convertible
+    // Tests can configure this via TestServerSidePlanningClient.setFiltersConvertible()
+    TestServerSidePlanningClient.filtersConvertible
+  }
+
   private def getFileFormat(path: Path): String = "parquet"
 }
 
@@ -100,14 +105,25 @@ object TestServerSidePlanningClient {
   private var capturedFilter: Option[Filter] = None
   private var capturedProjection: Option[Seq[String]] = None
   private var capturedLimit: Option[Int] = None
+  private var filtersConvertible: Boolean = true  // Default: all filters convertible
 
   def getCapturedFilter: Option[Filter] = capturedFilter
   def getCapturedProjection: Option[Seq[String]] = capturedProjection
   def getCapturedLimit: Option[Int] = capturedLimit
+
+  /**
+   * Configure whether filters should be treated as convertible.
+   * Used for testing filter conversion failure scenarios.
+   */
+  def setFiltersConvertible(convertible: Boolean): Unit = {
+    filtersConvertible = convertible
+  }
+
   def clearCaptured(): Unit = {
     capturedFilter = None
     capturedProjection = None
     capturedLimit = None
+    filtersConvertible = true  // Reset to default
   }
 }
 

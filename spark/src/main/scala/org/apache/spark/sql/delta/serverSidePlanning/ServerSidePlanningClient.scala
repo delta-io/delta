@@ -30,13 +30,6 @@ case class ScanFile(
 )
 
 /**
- * Result of a table scan plan operation.
- */
-case class ScanPlan(
-  files: Seq[ScanFile]
-)
-
-/**
  * Interface for planning table scans via server-side planning.
  * This interface uses Spark's standard `org.apache.spark.sql.sources.Filter` as the universal
  * representation for filter pushdown. This keeps the interface catalog-agnostic while allowing
@@ -59,6 +52,15 @@ trait ServerSidePlanningClient {
       filterOption: Option[Filter] = None,
       projectionOption: Option[Seq[String]] = None,
       limitOption: Option[Int] = None): ScanPlan
+
+  /**
+   * Check if all given filters can be converted to the server's native filter format.
+   * This is used during filter pushdown to determine whether to return residuals to Spark.
+   *
+   * @param filters Array of Spark filters to check
+   * @return true if ALL filters can be converted, false if ANY filter cannot be converted
+   */
+  def canConvertFilters(filters: Array[Filter]): Boolean
 }
 
 /**
@@ -123,3 +125,76 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
     getFactory().buildClient(spark, metadata)
   }
 }
+
+/**
+ * Temporary storage credentials from server-side planning response.
+ */
+sealed trait ScanPlanStorageCredentials
+
+object ScanPlanStorageCredentials {
+
+  /** IRC config key mappings for each credential type. */
+  private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
+  private val AZURE_KEYS = Seq("azure.account-name", "azure.sas-token", "azure.container-name")
+  private val GCS_KEYS = Seq("gcs.oauth2.token")
+
+  /**
+   * Factory method to create credentials from IRC config map.
+   * Tries each credential type and returns the first complete match.
+   * Throws IllegalStateException if credentials are incomplete or unrecognized.
+   */
+  def fromConfig(config: Map[String, String]): ScanPlanStorageCredentials = {
+    def get(key: String): String =
+      config.getOrElse(key, throw new IllegalStateException(s"Missing required credential: $key"))
+
+    def hasAny(keys: Seq[String]): Boolean = keys.exists(config.contains)
+
+    // Try each sealed trait subtype in priority order
+    if (hasAny(S3_KEYS)) {
+      S3Credentials(
+        get("s3.access-key-id"),
+        get("s3.secret-access-key"),
+        get("s3.session-token"))
+    } else if (hasAny(AZURE_KEYS)) {
+      AzureCredentials(
+        get("azure.account-name"),
+        get("azure.sas-token"),
+        get("azure.container-name"))
+    } else if (hasAny(GCS_KEYS)) {
+      GcsCredentials(get("gcs.oauth2.token"))
+    } else {
+      throw new IllegalStateException(
+        s"Unrecognized credential keys: ${config.keys.mkString(", ")}. " +
+          "Expected S3, Azure, or GCS properties.")
+    }
+  }
+}
+
+/**
+ * AWS S3 temporary credentials.
+ */
+case class S3Credentials(
+    accessKeyId: String,
+    secretAccessKey: String,
+    sessionToken: String) extends ScanPlanStorageCredentials
+
+/**
+ * Azure ADLS Gen2 credentials with SAS token.
+ */
+case class AzureCredentials(
+    accountName: String,
+    sasToken: String,
+    containerName: String) extends ScanPlanStorageCredentials
+
+/**
+ * Google Cloud Storage OAuth2 token credentials.
+ */
+case class GcsCredentials(
+    oauth2Token: String) extends ScanPlanStorageCredentials
+
+/**
+ * Result of a table scan plan operation.
+ */
+case class ScanPlan(
+    files: Seq[ScanFile],
+    credentials: Option[ScanPlanStorageCredentials] = None)
