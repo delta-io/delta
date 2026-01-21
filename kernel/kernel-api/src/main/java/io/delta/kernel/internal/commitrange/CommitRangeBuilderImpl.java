@@ -170,9 +170,9 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
     LogDataUtils.validateLogDataContainsOnlyRatifiedStagedCommits(ctx.logDatas);
     LogDataUtils.validateLogDataIsSortedContiguous(ctx.logDatas);
 
-    // Validate that when endVersion is provided with logData, logData must cover the range
-    // This is especially important for catalog-managed tables where the catalog must provide
-    // sufficient ratified commits to cover the requested range.
+    // Validate that when endVersion and logData are both provided, the logData includes endVersion
+    // This is applicable for catalog-managed tables since the catalog must provide sufficient
+    // ratified commits to cover the requested endVersion
     if (ctx.endBoundaryOpt.isPresent() && !ctx.logDatas.isEmpty()) {
       CommitBoundary endBoundary = ctx.endBoundaryOpt.get();
       if (endBoundary.isVersion()) {
