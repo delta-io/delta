@@ -157,7 +157,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       skipUCRequirementForTests = false
     ) == true, "Production: UC without credentials + flag enabled should use SSP")
 
-    // Group 1: Missing flag (even with valid UC setup)
+    // Group 1: flag disabled (even with valid UC setup)
     assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
       isUnityCatalog = true,
       hasCredentials = false,
