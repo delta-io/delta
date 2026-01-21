@@ -104,7 +104,7 @@ object ServerSidePlannedTable extends DeltaLogging {
       ident: Identifier,
       table: Table,
       isUnityCatalog: Boolean): Option[ServerSidePlannedTable] = {
-    // Check if server-side planning is enabled
+    // Check if we should enable server-side planning (for testing)
     val enableServerSidePlanning =
       spark.conf.get(DeltaSQLConf.ENABLE_SERVER_SIDE_PLANNING.key, "false").toBoolean
     val hasTableCredentials = hasCredentials(table)
@@ -340,11 +340,15 @@ class ServerSidePlannedScan(
     }
   }
 
-  override def planInputPartitions(): Array[InputPartition] = {
-    // Call the server-side planning API to get the scan plan
-    val scanPlan = planningClient.planScan(
-      databaseName, tableName, combinedFilter, projectionColumnNames, limit)
+  // Call the server-side planning API to get the scan plan with files AND credentials
+  private val scanPlan: ScanPlan = planningClient.planScan(
+    databaseName,
+    tableName,
+    combinedFilter,
+    projectionColumnNames,
+    limit)
 
+  override def planInputPartitions(): Array[InputPartition] = {
     // Convert each file to an InputPartition
     scanPlan.files.map { file =>
       ServerSidePlannedFileInputPartition(file.filePath, file.fileSizeInBytes, file.fileFormat)
@@ -352,7 +356,8 @@ class ServerSidePlannedScan(
   }
 
   override def createReaderFactory(): PartitionReaderFactory = {
-    new ServerSidePlannedFilePartitionReaderFactory(spark, tableSchema, requiredSchema)
+    new ServerSidePlannedFilePartitionReaderFactory(
+      spark, tableSchema, requiredSchema, scanPlan.credentials)
   }
 }
 
@@ -370,11 +375,13 @@ case class ServerSidePlannedFileInputPartition(
  *
  * @param tableSchema The full table schema (all columns in the file)
  * @param requiredSchema The required schema (columns to read after projection pushdown)
+ * @param credentials Optional storage credentials from server-side planning response
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
     tableSchema: StructType,
-    requiredSchema: StructType)
+    requiredSchema: StructType,
+    credentials: Option[ScanPlanStorageCredentials])
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
@@ -387,7 +394,29 @@ class ServerSidePlannedFilePartitionReaderFactory(
   // - ServerSidePlannedTable is NOT a Delta table, so we don't want Delta-specific options
   //   from deltaLog.newDeltaHadoopConf()
   // - General Spark options from spark.hadoop.* are included and work for all tables
-  private val hadoopConf = new SerializableConfiguration(spark.sessionState.newHadoopConf())
+  private val hadoopConf = {
+    val conf = spark.sessionState.newHadoopConf()
+
+    // Inject temporary credentials from IRC server response
+    credentials.foreach { creds =>
+      creds match {
+        case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
+          conf.set("fs.s3a.access.key", accessKeyId)
+          conf.set("fs.s3a.secret.key", secretAccessKey)
+          conf.set("fs.s3a.session.token", sessionToken)
+
+        case AzureCredentials(accountName, sasToken, containerName) =>
+          // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
+          val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
+          conf.set(sasKey, sasToken)
+
+        case GcsCredentials(oauth2Token) =>
+          conf.set("fs.gs.auth.access.token", oauth2Token)
+      }
+    }
+
+    new SerializableConfiguration(conf)
+  }
   // scalastyle:on deltahadoopconfiguration
 
   // Pre-build reader function for Parquet on the driver
@@ -455,9 +484,6 @@ class ServerSidePlannedFilePartitionReader(
   }
 
   override def close(): Unit = {
-    // Close the reader if it was initialized and is closeable
-    if (readerIterator.isInstanceOf[java.io.Closeable]) {
-      readerIterator.asInstanceOf[java.io.Closeable].close()
-    }
+    // Reader cleanup is handled by Spark
   }
 }
