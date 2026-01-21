@@ -16,6 +16,7 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.ConcurrentTransactionException;
 import io.delta.kernel.exceptions.DomainDoesNotExistException;
@@ -61,6 +62,7 @@ public interface TransactionBuilder {
    * @throws io.delta.kernel.exceptions.KernelException in case column mapping is not enabled
    * @throws IllegalArgumentException in case of any validation failure
    */
+  @Experimental
   TransactionBuilder withSchema(Engine engine, StructType schema);
 
   /**
