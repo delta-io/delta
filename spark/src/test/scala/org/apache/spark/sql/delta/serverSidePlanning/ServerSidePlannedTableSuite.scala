@@ -180,34 +180,18 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       skipUCRequirementForTests = false
     ) == false, "Production: UC with credentials and no flag should NOT use SSP")
 
-    // Group 3: Not Unity Catalog
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = false,
-      enableServerSidePlanning = true,
-      skipUCRequirementForTests = false
-    ) == false, "Production: Non-UC without credentials should NOT use SSP")
-
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      enableServerSidePlanning = true,
-      skipUCRequirementForTests = false
-    ) == false, "Production: Non-UC with credentials should NOT use SSP")
-
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = false,
-      enableServerSidePlanning = false,
-      skipUCRequirementForTests = false
-    ) == false, "Production: Non-UC without credentials or flag should NOT use SSP")
-
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      enableServerSidePlanning = false,
-      skipUCRequirementForTests = false
-    ) == false, "Production: Non-UC with credentials and no flag should NOT use SSP")
+    // Group 3: Not Unity Catalog (always false, regardless of other params)
+    for (hasCreds <- Seq(true, false)) {
+      for (enableSSP <- Seq(true, false)) {
+        assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
+          isUnityCatalog = false,
+          hasCredentials = hasCreds,
+          enableServerSidePlanning = enableSSP,
+          skipUCRequirementForTests = false
+        ) == false,
+          s"Production: Non-UC should NOT use SSP (hasCreds=$hasCreds, enableSSP=$enableSSP)")
+      }
+    }
 
     // ============================================================
     // Test mode: skipUCRequirementForTests = true
