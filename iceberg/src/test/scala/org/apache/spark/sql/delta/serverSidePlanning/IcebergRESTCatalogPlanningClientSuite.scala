@@ -382,7 +382,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       description: String,
       caseSensitiveValue: Option[Boolean],
       shouldSucceed: Boolean,
-      expectedCapturedValue: Option[Boolean] // Expected value captured by server (None if request fails)
+      expectedCapturedValue: Option[Boolean] // Expected value captured by server
     )
 
     val testCases = Seq(
@@ -424,8 +424,8 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
             val capturedCaseSensitive = server.getCapturedCaseSensitive()
             testCase.expectedCapturedValue.foreach { expectedValue =>
               assert(capturedCaseSensitive == expectedValue,
-                s"[${testCase.description}] Expected captured caseSensitive=$expectedValue, " +
-                s"got $capturedCaseSensitive")
+                s"[${testCase.description}] Expected captured " +
+                s"caseSensitive=$expectedValue, got $capturedCaseSensitive")
             }
           } else {
             // Should fail - verify exception is thrown
@@ -435,13 +435,136 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
                 "caseSensitiveTest",
                 caseSensitiveOption = testCase.caseSensitiveValue)
             }
-            assert(exception.getMessage.contains("caseSensitive=true is not supported"),
-              s"[${testCase.description}] Expected error message about caseSensitive=true, " +
-              s"got: ${exception.getMessage}")
+            assert(
+              exception.getMessage.contains("caseSensitive=true is not supported"),
+              s"[${testCase.description}] Expected error message about " +
+              s"caseSensitive=true, got: ${exception.getMessage}")
           }
         } finally {
           client.close()
         }
+      }
+    }
+  }
+
+  // Test case class for parameterized credential tests
+  private case class CredentialTestCase(
+    description: String,
+    credentialConfig: Map[String, String],
+    expectedCredentials: ScanPlanStorageCredentials)
+
+  test("ScanPlan with cloud provider credentials") {
+    withTempTable("credentialsTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.credentialsTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Test cases for all three cloud providers
+        val testCases = Seq(
+          CredentialTestCase(
+            "S3",
+            Map(
+              "s3.access-key-id" -> "test-access-key",
+              "s3.secret-access-key" -> "test-secret-key",
+              "s3.session-token" -> "test-session-token"),
+            S3Credentials(
+              accessKeyId = "test-access-key",
+              secretAccessKey = "test-secret-key",
+              sessionToken = "test-session-token")),
+          CredentialTestCase(
+            "Azure",
+            Map(
+              "azure.account-name" -> "teststorageaccount",
+              "azure.sas-token" -> "sp=r&st=2024-01-01T00:00:00Z&se=2024-12-31T23:59:59Z&sig=test",
+              "azure.container-name" -> "testcontainer"),
+            AzureCredentials(
+              accountName = "teststorageaccount",
+              sasToken = "sp=r&st=2024-01-01T00:00:00Z&se=2024-12-31T23:59:59Z&sig=test",
+              containerName = "testcontainer")),
+          CredentialTestCase(
+            "GCS",
+            Map("gcs.oauth2.token" -> "test-oauth2-token"),
+            GcsCredentials(oauth2Token = "test-oauth2-token"))
+        )
+
+        testCases.foreach { testCase =>
+          // Configure server to return test credentials
+          server.setTestCredentials(testCase.credentialConfig.asJava)
+
+          // Call planScan
+          val scanPlan = client.planScan(defaultNamespace.toString, "credentialsTest")
+
+          // Verify credentials are present and match expected type
+          assert(scanPlan.credentials.isDefined,
+            s"[${testCase.description}] Credentials should be present in ScanPlan")
+
+          val actualCreds = scanPlan.credentials.get
+          assert(actualCreds == testCase.expectedCredentials,
+            s"[${testCase.description}] Expected credentials: ${testCase.expectedCredentials}, " +
+            s"got: $actualCreds")
+
+          // Clear for next test case
+          server.clearCaptured()
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("ScanPlan with no credentials") {
+    withTempTable("noCredentialsTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.noCredentialsTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Don't configure any credentials (current default behavior)
+        val scanPlan = client.planScan(defaultNamespace.toString, "noCredentialsTest")
+
+        // Verify credentials are absent
+        assert(scanPlan.credentials.isEmpty,
+          "Credentials should be None when server doesn't return any")
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("incomplete credentials throw errors") {
+    withTempTable("incompleteCredsTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.incompleteCredsTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Test cases for incomplete credentials that should throw errors
+        val errorTestCases = Seq(
+          ("Incomplete S3 (missing secret and token)",
+            Map("s3.access-key-id" -> "test-key"),
+            "s3.secret-access-key"),
+          ("Incomplete Azure (missing SAS and container)",
+            Map("azure.account-name" -> "testaccount"),
+            "azure.sas-token")
+        )
+
+        errorTestCases.foreach { case (description, incompleteConfig, expectedMissingField) =>
+          // Configure server with incomplete credentials
+          server.setTestCredentials(incompleteConfig.asJava)
+
+          // Verify that planScan throws IllegalStateException
+          val exception = intercept[IllegalStateException] {
+            client.planScan(defaultNamespace.toString, "incompleteCredsTest")
+          }
+
+          // Verify error message mentions the missing field
+          assert(exception.getMessage.contains(expectedMissingField),
+            s"[$description] Error message should mention missing field '$expectedMissingField'. " +
+            s"Got: ${exception.getMessage}")
+
+          // Clear for next test case
+          server.clearCaptured()
+        }
+      } finally {
+        client.close()
       }
     }
   }
@@ -488,6 +611,46 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     } finally {
       catalog.dropTable(tableId, false)
       server.clearCaptured()
+    }
+  }
+
+  test("User-Agent header format") {
+    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
+    try {
+      val userAgent = client.getUserAgent()
+
+      // Verify the format follows RFC 7231: product/version [product/version ...]
+      val parts = userAgent.split(" ")
+      assert(parts.length == 4,
+        s"User-Agent should have 4 space-separated components, got ${parts.length}: $userAgent")
+
+      // First part should be Delta/version
+      assert(parts(0).matches("Delta/.*"),
+        s"First component should match 'Delta/<version>', got: ${parts(0)}")
+
+      // Second part should be Spark/version
+      assert(parts(1).matches("Spark/.*"),
+        s"Second component should match 'Spark/<version>', got: ${parts(1)}")
+
+      // Third part should be Java/version
+      assert(parts(2).matches("Java/.*"),
+        s"Third component should match 'Java/<version>', got: ${parts(2)}")
+
+      // Fourth part should be Scala/version
+      assert(parts(3).matches("Scala/.*"),
+        s"Fourth component should match 'Scala/<version>', got: ${parts(3)}")
+
+      // Verify versions are not "unknown" in test environment where all dependencies are available
+      assert(!userAgent.contains("Spark/unknown"),
+        s"Spark version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Delta/unknown"),
+        s"Delta version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Java/unknown"),
+        s"Java version should not be 'unknown' in test environment, got: $userAgent")
+      assert(!userAgent.contains("Scala/unknown"),
+        s"Scala version should not be 'unknown' in test environment, got: $userAgent")
+    } finally {
+      client.close()
     }
   }
 

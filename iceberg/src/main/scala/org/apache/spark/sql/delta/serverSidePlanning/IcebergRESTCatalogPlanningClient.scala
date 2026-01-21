@@ -21,6 +21,7 @@ import java.lang.reflect.Method
 import java.util.Locale
 
 import scala.jdk.CollectionConverters._
+import scala.util.Try
 
 import org.apache.http.client.methods.HttpPost
 import org.apache.http.entity.{ContentType, StringEntity}
@@ -28,9 +29,12 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
+import org.json4s._
+import org.json4s.jackson.JsonMethods._
 import shadedForDelta.org.apache.iceberg.PartitionSpec
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
@@ -76,13 +80,26 @@ class IcebergRESTCatalogPlanningClient(
   }
 
   /**
-   * Build User-Agent header with Delta and Spark version information.
-   * Format: "Delta-Lake/<version> Apache-Spark/<version>"
+   * Build User-Agent header with Delta, Spark, Java and Scala version information.
+   * Format: "Delta/<version> Spark/<version> Java/<version> Scala/<version>"
+   * Example: "Delta/4.0.0 Spark/3.5.0 Java/17.0.10 Scala/2.12.18"
    */
   private def buildUserAgent(): String = {
     val deltaVersion = getDeltaVersion().getOrElse("unknown")
     val sparkVersion = getSparkVersion().getOrElse("unknown")
-    s"Delta-Lake/$deltaVersion Apache-Spark/$sparkVersion"
+    val javaVersion = getJavaVersion()
+    val scalaVersion = getScalaVersion()
+    s"Delta/$deltaVersion Spark/$sparkVersion Java/$javaVersion Scala/$scalaVersion"
+  }
+
+  /**
+   * Get the User-Agent header value used by this client.
+   * Format: "Delta/<version> Spark/<version> Java/<version> Scala/<version>"
+   *
+   * @return The User-Agent string used in HTTP requests
+   */
+  def getUserAgent(): String = {
+    buildUserAgent()
   }
 
   /**
@@ -133,6 +150,20 @@ class IcebergRESTCatalogPlanningClient(
     }
 
     None
+  }
+
+  /**
+   * Get Java version from system properties.
+   */
+  private def getJavaVersion(): String = {
+    System.getProperty("java.version", "unknown")
+  }
+
+  /**
+   * Get Scala version from the scala.util.Properties.versionNumberString property.
+   */
+  private def getScalaVersion(): String = {
+    scala.util.Properties.versionNumberString
   }
 
   private lazy val httpClient = HttpClientBuilder.create()
@@ -207,7 +238,7 @@ class IcebergRESTCatalogPlanningClient(
             s"expected 'completed'. Table: $database.$table")
         }
 
-        convertToScanPlan(icebergResponse)
+        convertToScanPlan(icebergResponse, responseBody)
       } else {
         // TODO: Parse structured ErrorResponse JSON from Iceberg REST spec instead of raw body
         throw new IOException(
@@ -224,7 +255,9 @@ class IcebergRESTCatalogPlanningClient(
    *
    * Validates response structure and ensures the table is unpartitioned.
    */
-  private def convertToScanPlan(response: PlanTableScanResponse): ScanPlan = {
+  private def convertToScanPlan(
+      response: PlanTableScanResponse,
+      responseBody: String): ScanPlan = {
     require(response != null, "PlanTableScanResponse cannot be null")
     require(response.fileScanTasks() != null, "File scan tasks cannot be null")
 
@@ -247,7 +280,47 @@ class IcebergRESTCatalogPlanningClient(
       )
     }.toSeq
 
-    ScanPlan(files = files)
+    val credentials = extractCredentials(responseBody)
+    ScanPlan(files = files, credentials = credentials)
+  }
+
+  /**
+   * Extract storage credentials from IRC server response.
+   * Uses sealed trait pattern - tries each credential type in priority order.
+   *
+   * JSON structure:
+   * {
+   *   "storage-credentials": [{
+   *     "config": {
+   *       "s3.access-key-id": "...",
+   *       "azure.account-name": "...",
+   *       "gcs.oauth2.token": "...",
+   *       ...
+   *     }
+   *   }]
+   * }
+   */
+  /**
+   * Extract storage credentials from response using sealed trait factory.
+   * Returns None if no credentials section exists.
+   * Throws IllegalStateException if credentials are incomplete or malformed.
+   */
+  private def extractCredentials(responseBody: String): Option[ScanPlanStorageCredentials] = {
+    implicit val formats: Formats = DefaultFormats
+    val json = parse(responseBody)
+
+    // Extract config map from storage-credentials[0].config
+    val config: Option[Map[String, String]] = try {
+      (json \ "storage-credentials")(0) \ "config" match {
+        case JNothing | JNull => None
+        case c => Some(c.extract[Map[String, String]])
+      }
+    } catch {
+      case _: Exception => None // No credentials section in response
+    }
+
+    // If config exists and is non-empty, use factory (throws on incomplete credentials)
+    config.filter(_.nonEmpty).map(ScanPlanStorageCredentials.fromConfig)
   }
 
   /**
