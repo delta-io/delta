@@ -38,7 +38,7 @@ import scala.collection.Iterator;
  * <p>Tests the ApplyV2Streaming rule and DeltaConnectorMode behavior across different modes (AUTO,
  * STRICT, NONE) with both UC-managed and regular Delta tables.
  */
-public class UCV2StreamingConversionTest extends UCDeltaTableIntegrationBaseTest {
+public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest {
 
   private static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
 

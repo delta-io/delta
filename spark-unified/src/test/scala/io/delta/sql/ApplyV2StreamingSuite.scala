@@ -31,12 +31,15 @@ import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.DataSource
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
-  private def applyRule(plan: StreamingRelation): LogicalPlan = {
+  private def applyRule(plan: LogicalPlan): LogicalPlan = {
     new ApplyV2Streaming(spark).apply(plan)
   }
 
@@ -95,6 +98,18 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
     StreamingRelation(dataSource)
   }
 
+  private def makeV2Relation(catalogTable: CatalogTable): DataSourceV2Relation = {
+    val ident = Identifier.of(
+      catalogTable.identifier.database.toArray,
+      catalogTable.identifier.table)
+    val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+    DataSourceV2Relation.create(
+      table,
+      None,
+      None,
+      CaseInsensitiveStringMap.empty)
+  }
+
   test("ApplyV2Streaming rewrites to StreamingRelationV2 in STRICT mode") {
     withTempDir { dir =>
       withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
@@ -129,6 +144,22 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
         val nonUcPlan = makeStreamingRelation(nonUcTable, path)
         val nonUcResult = applyRule(nonUcPlan)
         assertV1(nonUcResult)
+      }
+    }
+  }
+
+  test("ApplyV2Streaming leaves non-streaming relations unchanged") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val plan = makeV2Relation(catalogTable)
+
+      Seq("STRICT", "AUTO", "NONE").foreach { mode =>
+        withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
+          val result = applyRule(plan)
+          assert(result == plan)
+        }
       }
     }
   }
