@@ -193,7 +193,8 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
   def getExpectedException(
       startBoundary: RequiredBoundaryDef,
-      endBoundary: BoundaryDef): Option[(Class[_ <: Throwable], String)] = {
+      endBoundary: BoundaryDef,
+      fileStatuses: Seq[FileStatus]): Option[(Class[_ <: Throwable], String)] = {
     // These two cases fail on CommitRangeBuilderImpl.validateInputOnBuild
     if (startBoundary.version.isDefined && endBoundary.version.isDefined) {
       if (startBoundary.version.get > endBoundary.version.get) {
@@ -205,6 +206,19 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         return Some(classOf[IllegalArgumentException], "startTimestamp must be <= endTimestamp")
       }
     }
+    if (endBoundary.version.isDefined) {
+      val stagedCommits = fileStatuses
+        .filter(fs => FileNames.isStagedDeltaFile(fs.getPath))
+      if (stagedCommits.nonEmpty) {
+        val tailStagedCommit = stagedCommits(stagedCommits.length - 1)
+        if (endBoundary.version.get > FileNames.deltaVersion(tailStagedCommit.getPath)) {
+          return Some(
+            classOf[IllegalArgumentException],
+            "When endVersion is specified with logData, the last logData version")
+        }
+      }
+    }
+
     // We try to resolve any timestamps, first startVersion then endVersion (CommitRangeFactory)
     if (startBoundary.expectError && startBoundary.timestamp.isDefined) {
       return Some(classOf[KernelException], "is after the latest available version")
@@ -245,7 +259,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     startBoundaries.foreach { startBound =>
       endBoundaries.foreach { endBound =>
         test(s"$description: build CommitRange with startBound=$startBound endBound=$endBound") {
-          val expectedException = getExpectedException(startBound, endBound)
+          val expectedException = getExpectedException(startBound, endBound, fileStatuses)
           if (expectedException.isDefined) {
             val e = intercept[Throwable] {
               buildCommitRange(
@@ -424,7 +438,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     startBoundaries.foreach { startBound =>
       endBoundaries.foreach { endBound =>
         test(s"$description: build CommitRange with startBound=$startBound endBound=$endBound") {
-          val expectedException = getExpectedException(startBound, endBound)
+          val expectedException = getExpectedException(startBound, endBound, fileStatuses)
           if (expectedException.isDefined) {
             val e = intercept[Throwable] {
               buildCommitRange(
@@ -784,13 +798,13 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         createMockFSAndJsonEngineForICT(fileList, versionToICT),
         fileList,
         startBoundary = VersionBoundaryDef(0),
-        endBoundary = VersionBoundaryDef(3),
+        endBoundary = VersionBoundaryDef(2),
         logData = Some(parsedLogData),
         ictEnablementInfo = Some((0, 0)))
     }
     assert(e.getMessage.contains(
       "Missing delta file: found staged ratified commit for version 0 but no published " +
-        "delta file. Found published deltas for later versions: [1, 2, 3]"))
+        "delta file. Found published deltas for later versions: [1, 2]"))
   }
 
   test("build CommitRange fails if published commits and catalog commits are not contiguous") {
