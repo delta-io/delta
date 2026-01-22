@@ -198,7 +198,8 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
       supportBoolean: Boolean = false): Any = {
     // Reject unsupported types - only allow known primitive types
     if (!isSupportedType(value, supportBoolean)) {
-      throw new UnsupportedOperationException(s"Cannot convert type to Iceberg literal: ${value.getClass.getName}.")
+      throw new UnsupportedOperationException(
+        s"Cannot convert type to Iceberg literal: ${value.getClass.getName}.")
     }
 
     value match {
