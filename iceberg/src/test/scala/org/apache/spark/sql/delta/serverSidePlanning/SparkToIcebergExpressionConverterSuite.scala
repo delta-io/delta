@@ -426,7 +426,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // NOT OPERATOR
   // ========================================================================
 
-  test("NOT operator (only NOT EqualTo is supported)") {
+  test("NOT operator (NOT EqualTo and NOT IN are supported)") {
     val testCases = Seq(
       // Supported: Not(EqualTo) with regular values, null, and NaN are all tested in the
       // equality operators test. This test case is included for completeness of the NOT
@@ -456,6 +456,81 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     )
 
     assertConvert(testCases)
+  }
+
+  // ========================================================================
+  // NOT IN OPERATOR
+  // ========================================================================
+
+  test("NOT IN operator with type coercion and null handling") {
+    // Helper to generate multiple test values for NOT IN operator
+    def generateNotInValues(value: Any): Array[Any] = value match {
+      case v: Int => Array(v, v + 1, v + 2)
+      case v: Long => Array(v, v + 1L, v + 2L)
+      case v: Float => Array(v, v + 1.0f, v + 2.0f)
+      case v: Double => Array(v, v + 1.0, v + 2.0)
+      case v: String => Array(v, s"${v}_2", s"${v}_3")
+      case v: java.math.BigDecimal =>
+        Array(v, v.add(java.math.BigDecimal.ONE), v.add(java.math.BigDecimal.TEN))
+      case v: Boolean => Array(v, !v)
+      case v: java.sql.Date =>
+        Array(v, new java.sql.Date(v.getTime + 86400000L)) // +1 day in millis
+      case v: java.sql.Timestamp =>
+        Array(v, new java.sql.Timestamp(v.getTime + 3600000L)) // +1 hour in millis
+      case _ => Array(value)
+    }
+
+    // Test NOT IN operator for all types
+    val notInTestCases = allTypesTestCases.map { case (col, value, typeDesc) =>
+      val values = generateNotInValues(value)
+      val icebergValues = values.map(v =>
+        SparkToIcebergExpressionConverter.toIcebergValue(v, supportBoolean = true))
+      ExprConvTestCase(
+        s"Not(In) with $typeDesc", // Test case label
+        Not(In(col, values)), // Spark filter builder
+        Some(Expressions.notIn(col, icebergValues: _*)) // Iceberg expression builder
+      )
+    }
+
+    val nullHandlingTests = Seq(
+      // Null handling: nulls are filtered out
+      ExprConvTestCase(
+        "Not(In) with null values (nulls filtered)",
+        Not(In("stringCol", Array(null, "value1", "value2"))),
+        Some(Expressions.notIn("stringCol", "value1", "value2"))
+      ),
+      ExprConvTestCase(
+        "Not(In) with null and integers",
+        Not(In("intCol", Array(null, 1, 2))),
+        Some(Expressions.notIn("intCol", 1: Integer, 2: Integer))
+      ),
+      // Edge case: Not(In) with only null becomes empty NotIn
+      ExprConvTestCase(
+        "Not(In) with only null",
+        Not(In("stringCol", Array(null))),
+        Some(Expressions.notIn("stringCol"))
+      )
+    )
+
+    val specificExamples = Seq(
+      ExprConvTestCase(
+        "NOT IN with string values", // Test case label
+        Not(In("status", Array("completed", "cancelled"))), // Spark filter builder
+        Some(Expressions.notIn("status", "completed", "cancelled")) // Iceberg expression builder
+      ),
+      ExprConvTestCase(
+        "NOT IN with single value",
+        Not(In("id", Array(42))),
+        Some(Expressions.notIn("id", 42: Integer))
+      ),
+      ExprConvTestCase(
+        "NOT IN with nested column",
+        Not(In("address.intCol", Array(1, 2, 3))),
+        Some(Expressions.notIn("address.intCol", 1: Integer, 2: Integer, 3: Integer))
+      )
+    )
+
+    assertConvert(notInTestCases ++ nullHandlingTests ++ specificExamples)
   }
 
   // ========================================================================
@@ -571,11 +646,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ExprConvTestCase(
         "Not(IsNull) - arbitrary NOT unsupported",
         Not(IsNull("intCol")),
-        None
-      ),
-      ExprConvTestCase(
-        "Not(In) - arbitrary NOT unsupported",
-        Not(In("intCol", Array(1, 2, 3))),
         None
       ),
       ExprConvTestCase(
