@@ -509,19 +509,25 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "Not(In) with only null",
         Not(In("stringCol", Array(null))),
         Some(Expressions.notIn("stringCol"))
+      ),
+      // Edge case: Not(In) with empty array
+      ExprConvTestCase(
+        "Not(In) with empty array",
+        Not(In("intCol", Array())),
+        Some(Expressions.notIn("intCol"))
       )
     )
 
     val specificExamples = Seq(
       ExprConvTestCase(
         "NOT IN with string values", // Test case label
-        Not(In("status", Array("completed", "cancelled"))), // Spark filter builder
-        Some(Expressions.notIn("status", "completed", "cancelled")) // Iceberg expression builder
+        Not(In("stringCol", Array("value1", "value2"))), // Spark filter builder
+        Some(Expressions.notIn("stringCol", "value1", "value2")) // Iceberg expression builder
       ),
       ExprConvTestCase(
         "NOT IN with single value",
-        Not(In("id", Array(42))),
-        Some(Expressions.notIn("id", 42: Integer))
+        Not(In("intCol", Array(42))),
+        Some(Expressions.notIn("intCol", 42: Integer))
       ),
       ExprConvTestCase(
         "NOT IN with nested column",

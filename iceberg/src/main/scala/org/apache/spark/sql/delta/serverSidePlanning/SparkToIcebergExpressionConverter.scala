@@ -209,7 +209,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
 
   /**
    * Convert a Spark NOT filter to an Iceberg Expression.
-   * 
+   *
    * Supported conversions:
    * - Not(EqualTo(col, value)) -> Expressions.notEqual
    * - Not(EqualTo(col, null)) -> Expressions.notNull
@@ -223,10 +223,10 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     sparkInnerFilter match {
       case EqualTo(attribute, sparkValue) =>
         Some(convertNotEqualTo(attribute, sparkValue))
-      
+
       case In(attribute, values) =>
         Some(convertNotIn(attribute, values))
-      
+
       case _ =>
         None  // All other NOT expressions are unsupported
     }
