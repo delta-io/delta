@@ -100,6 +100,7 @@ object DeltaStreamUtils {
       enableSchemaTrackingForTypeWidening: Boolean
   )
 
+  // TODO(#5319): migrate v1 connector to reuse this utility
   object SchemaReadOptions {
     /**
      * Creates a SchemaReadOptions instance from SparkSession configuration settings.
@@ -134,16 +135,16 @@ object DeltaStreamUtils {
           DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING)
 
       new DeltaStreamUtils.SchemaReadOptions(
-        /* allowUnsafeStreamingReadOnColumnMappingSchemaChanges= */
-        allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
-        /* allowUnsafeStreamingReadOnPartitionColumnChanges= */
-        allowUnsafeStreamingReadOnPartitionColumnChanges,
-        /* forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart= */
-        forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
-        /* forceEnableUnsafeReadOnNullabilityChange= */ forceEnableUnsafeReadOnNullabilityChange,
-        /* isStreamingFromColumnMappingTable= */ isStreamingFromColumnMappingTable,
-        /* typeWideningEnabled= */ typeWideningEnabled,
-        /* enableSchemaTrackingForTypeWidening= */ enableSchemaTrackingForTypeWidening)
+        allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
+          allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
+        allowUnsafeStreamingReadOnPartitionColumnChanges =
+          allowUnsafeStreamingReadOnPartitionColumnChanges,
+        forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
+          forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
+        forceEnableUnsafeReadOnNullabilityChange = forceEnableUnsafeReadOnNullabilityChange,
+        isStreamingFromColumnMappingTable = isStreamingFromColumnMappingTable,
+        typeWideningEnabled = typeWideningEnabled,
+        enableSchemaTrackingForTypeWidening = enableSchemaTrackingForTypeWidening)
     }
   }
 

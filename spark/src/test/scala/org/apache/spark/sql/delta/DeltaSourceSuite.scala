@@ -2487,7 +2487,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempDir { checkpointDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
         (0 until 10).foreach { i =>
-          val v = Seq(i).toDF("id")
+          val v = Seq(i.toString).toDF("id")
           v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
         }
 
@@ -2507,7 +2507,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           DeltaLog.clearCache()
           // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
           // table schema change happens on a different cluster
-          withMetadata(deltaLog, StructType.fromDDL("id INT, newcol STRING"))
+          withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
 
           // The streaming query should fail when detecting a schema change
           val e = intercept[StreamingQueryException] {
@@ -2525,6 +2525,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
   test("handling nullability schema changes") {
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
