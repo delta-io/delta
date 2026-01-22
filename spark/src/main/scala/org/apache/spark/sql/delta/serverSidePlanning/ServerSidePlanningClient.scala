@@ -77,16 +77,16 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
  */
 private[serverSidePlanning] object ServerSidePlanningClientFactory extends DeltaLogging {
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
-  @volatile private var serviceLoaderAttempted: Boolean = false
+  @volatile private var autoRegistrationAttempted: Boolean = false
 
   // Lazy initialization - only runs when getFactory() is called and no factory is set.
   // Uses reflection to load the hardcoded IcebergRESTCatalogPlanningClientFactory class.
   private def tryAutoRegisterFactory(): Unit = {
     // Double-checked locking pattern to ensure initialization happens only once
-    if (!serviceLoaderAttempted) {
+    if (!autoRegistrationAttempted) {
       synchronized {
-        if (!serviceLoaderAttempted) {
-          serviceLoaderAttempted = true
+        if (!autoRegistrationAttempted) {
+          autoRegistrationAttempted = true
           
           try {
             // Use reflection to load the Iceberg factory class
@@ -136,7 +136,7 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
    */
   private[serverSidePlanning] def clearFactory(): Unit = {
     registeredFactory = None
-    serviceLoaderAttempted = false
+    autoRegistrationAttempted = false
   }
 
   /**
