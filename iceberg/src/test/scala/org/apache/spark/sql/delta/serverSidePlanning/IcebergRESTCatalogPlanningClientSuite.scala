@@ -325,9 +325,9 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
             EqualTo("longCol", 2L),
             Seq("intCol", "stringCol")),
           FilterProjectionTestCase(
-            "nested field in both filter and projection",
-            EqualTo("address.intCol", 200),
-            Seq("intCol", "address.intCol"))
+            "literal dotted column name in both filter and projection",
+            EqualTo("address.city", "city_1"),
+            Seq("intCol", "address.city"))
         )
 
         testCases.foreach { testCase =>
@@ -602,10 +602,20 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         BigDecimal(i).bigDecimal, // decimalCol
         java.sql.Date.valueOf("2024-01-01"), // dateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
-        Row(i * 100), // address.intCol
-        Row(s"meta_$i") // metadata.stringCol
+        Row(i * 100), // address.intCol (nested)
+        Row(s"meta_$i"), // metadata.stringCol (nested)
+        // Literal column names with dots (fields 12-21)
+        i * 1000, // id
+        s"city_$i", // address.city
+        s"abc_$i", // a.b.c
+        i * 10, // location.state
+        i.toLong * 20, // person.age
+        i * 5.5, // data.value
+        i * 3.14, // user.score
+        s"user$i@example.com", // user.email
+        s"user_$i", // user.name
+        s"work_city_$i" // work.city
       ))
-
 
     spark.createDataFrame(data, TestSchemas.sparkSchema)
       .write
