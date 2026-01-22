@@ -72,9 +72,8 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
 
 /**
  * Registry for client factories. Automatically discovers and registers implementations
- * using reflection-based auto-discovery on first access to the factory.
- * Manual registration using setFactory() is only needed for testing or 
- * to override the auto-discovered factory.
+ * using reflection-based auto-discovery on first access to the factory. Manual registration 
+ * using setFactory() is only needed for testing or to override the auto-discovered factory.
  */
 private[serverSidePlanning] object ServerSidePlanningClientFactory extends DeltaLogging {
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
