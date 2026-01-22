@@ -73,16 +73,13 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
 /**
  * Registry for client factories. Automatically discovers and registers implementations
  * using reflection-based auto-discovery on first access to the factory.
- *
- * When delta-iceberg JAR is on the classpath, IcebergRESTCatalogPlanningClientFactory
- * is automatically registered via reflection with a hardcoded class name. Manual registration
- * using setFactory() is only needed for testing or to override the auto-discovered factory.
+ * Manual registration using setFactory() is only needed for testing or 
+ * to override the auto-discovered factory.
  */
 private[serverSidePlanning] object ServerSidePlanningClientFactory extends DeltaLogging {
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
   @volatile private var serviceLoaderAttempted: Boolean = false
 
-  // ========== REFLECTION-BASED AUTO-REGISTRATION ==========
   // Lazy initialization - only runs when getFactory() is called and no factory is set.
   // Uses reflection to load the hardcoded IcebergRESTCatalogPlanningClientFactory class.
   private def tryAutoRegisterFactory(): Unit = {
@@ -111,20 +108,16 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
       }
     }
   }
-  // ========== END REFLECTION-BASED AUTO-REGISTRATION ==========
 
   /**
    * Set a factory, overriding any auto-registered factory.
-   * Primarily useful for testing or providing custom implementations.
    */
   private[serverSidePlanning] def setFactory(factory: ServerSidePlanningClientFactory): Unit = {
     registeredFactory = Some(factory)
   }
 
   /**
-   * Clear the registered factory. Primarily useful for testing to reset state between tests.
-   * This also resets the ServiceLoader discovery state, allowing it to be re-triggered on
-   * the next getFactory() call.
+   * Clear the registered factory. 
    */
   private[serverSidePlanning] def clearFactory(): Unit = {
     registeredFactory = None
