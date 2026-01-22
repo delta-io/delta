@@ -19,8 +19,9 @@ To support this feature:
 ## Reader Requirements for Collations:
 
 When Collations is supported (when the `writerFeatures` field of a table's protocol action contains `collations`), then:
-- Readers could do comparisons and sorting of strings based on the collation specified in the schema. The choice of collation and collation version is up to the reader.
+- Readers could do comparisons and sorting of strings based on the collation specified in the schema. 
 - If the collation is not specified for a string type, then the reader must use the default utf8 binary collation.
+- Readers must only use statistics for a collation if the version matches.
 
 ## Writer Requirements for Collations:
 
@@ -28,9 +29,8 @@ When Collations is supported (when the `writerFeatures` field of a table's proto
 - Writers must write the collation identifier in the schema metadata for a column with non-default collation, i.e., any collation that is not utf8 binary.
 - Writer must not write the collation identifier in the schema metadata for a column with default collation (utf8 binary).
 - Writers could write per-file statistics for string columns with collations other than utf8 binary collation in `statsWithCollation`. See [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics) for more details.
-- Writers could collect per-file statistics for collation versions that are specified in the `domainMetadata` for the `collations` table feature.
+- If a writer adds per-file statistics for a new version of a collation, the writer should also update the `domainMetadata` for the `collations` table feature to include the new collation versions that are used to collect statistics.
 - Writers could remove a collation version from the `domainMetadata` for the `collations` table feature if stats collection for the collation version is no longer desired.
-- If a writer adds per-file statistics for a new version of a collation, the writer should also update the DomainMetadata for the `collations` table feature to include the new collation versions that are used to collect statistics.
 
 > ***Add a new section in front of the [Primitive Types](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) section.***
 
@@ -42,6 +42,8 @@ Each string field can have a collation, which is specified in the table schema. 
 By default, all strings are collated using binary collation. That means that strings compare equal if their binary UTF8 encoded representations are equal. The binary UTF8 encoded representation is also used to sort them. Note that in Delta all strings are encoded in UTF8.
 
 The `collations` table feature is a writer only feature and allows clients that do not support collations to read the table using UTF8 binary collation. To support the table feature clients must preserve collations when they change the schema. Collecting collated statistics is optional and it is valid to store UTF8 binary collated statistics for fields with a collation other than UTF8 binary.
+
+The column level collation defined may not always be applied. Engines are responsible for choosing what collation to apply on a query. An engine may apply a different collation than the schema collation based on the engine's collation precedence rules.
 
 #### Collation identifiers
 
@@ -122,7 +124,7 @@ Schema with collation information
 
 #### Collation versions
 
-The [Domain Metadata](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata) for the `collations` table feature contains hints for which versions of a collations clients should produce statistics when writing to the table. They allow clients to choose a collation version without having to look at the statistics of all AddFiles first. Clients are allowed to ignore the hints.
+The [Domain Metadata](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata) for the `collations` table feature contains hints for which versions of a collations clients should produce statistics when writing to the table. The hints allow clients to choose a collation version without having to look at the statistics of all AddFiles first. Clients are allowed to ignore the hints.
 
 `collations` [Domain Metadata](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#domain-metadata)
 
