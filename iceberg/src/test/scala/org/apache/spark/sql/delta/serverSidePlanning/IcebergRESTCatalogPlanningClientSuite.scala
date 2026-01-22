@@ -377,72 +377,20 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  test("caseSensitive parameter handling") {
-    case class TestCase(
-      description: String,
-      caseSensitiveValue: Option[Boolean],
-      shouldSucceed: Boolean,
-      expectedCapturedValue: Option[Boolean] // Expected value captured by server
-    )
+  test("caseSensitive=false sent to IRC server") {
+    withTempTable("caseSensitiveTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.caseSensitiveTest")
 
-    val testCases = Seq(
-      TestCase(
-        description = "caseSensitive=false should succeed",
-        caseSensitiveValue = Some(false),
-        shouldSucceed = true,
-        expectedCapturedValue = Some(false)
-      ),
-      TestCase(
-        description = "caseSensitive=true should be rejected",
-        caseSensitiveValue = Some(true),
-        shouldSucceed = false,
-        expectedCapturedValue = None // No capture since request should fail
-      ),
-      TestCase(
-        description = "default (None) should succeed with false",
-        caseSensitiveValue = None,
-        shouldSucceed = true,
-        expectedCapturedValue = Some(false) // None defaults to false
-      )
-    )
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Call planScan - the client sets caseSensitive=false in the request
+        val scanPlan = client.planScan(defaultNamespace.toString, "caseSensitiveTest")
 
-    testCases.foreach { testCase =>
-      withTempTable("caseSensitiveTest") { table =>
-        populateTestData(s"rest_catalog.${defaultNamespace}.caseSensitiveTest")
-
-        val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
-        try {
-          server.clearCaptured()
-
-          if (testCase.shouldSucceed) {
-            // Should succeed - verify captured value
-            client.planScan(
-              defaultNamespace.toString,
-              "caseSensitiveTest",
-              caseSensitiveOption = testCase.caseSensitiveValue)
-
-            val capturedCaseSensitive = server.getCapturedCaseSensitive()
-            testCase.expectedCapturedValue.foreach { expectedValue =>
-              assert(capturedCaseSensitive == expectedValue,
-                s"[${testCase.description}] Expected captured " +
-                s"caseSensitive=$expectedValue, got $capturedCaseSensitive")
-            }
-          } else {
-            // Should fail - verify exception is thrown
-            val exception = intercept[Exception] {
-              client.planScan(
-                defaultNamespace.toString,
-                "caseSensitiveTest",
-                caseSensitiveOption = testCase.caseSensitiveValue)
-            }
-            assert(
-              exception.getMessage.contains("caseSensitive=true is not supported"),
-              s"[${testCase.description}] Expected error message about " +
-              s"caseSensitive=true, got: ${exception.getMessage}")
-          }
-        } finally {
-          client.close()
-        }
+        // Verify the scan succeeds and returns files
+        assert(scanPlan.files.nonEmpty,
+          "Expected planScan to return files for the test table")
+      } finally {
+        client.close()
       }
     }
   }

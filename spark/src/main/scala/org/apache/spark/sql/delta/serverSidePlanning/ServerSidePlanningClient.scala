@@ -43,15 +43,13 @@ trait ServerSidePlanningClient {
    * @param table The table name
    * @param filterOption Optional filter expression to push down to server (Spark Filter format)
    * @param projectionOption Optional projection (column names) to push down to server
-   * @param caseSensitiveOption Optional case sensitivity flag (defaults to false)
    * @return ScanPlan containing files to read
    */
   def planScan(
       databaseName: String,
       table: String,
       filterOption: Option[Filter] = None,
-      projectionOption: Option[Seq[String]] = None,
-      caseSensitiveOption: Option[Boolean] = None): ScanPlan
+      projectionOption: Option[Seq[String]] = None): ScanPlan
 }
 
 /**

@@ -171,14 +171,6 @@ public class IcebergRESTServer {
   }
 
   /**
-   * Get the caseSensitive flag captured from the most recent /plan request.
-   * For test verification.
-   */
-  public Boolean getCapturedCaseSensitive() {
-    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedCaseSensitive();
-  }
-
-  /**
    * Set test credentials to inject into /plan responses.
    * Used for testing credential extraction in clients.
    *

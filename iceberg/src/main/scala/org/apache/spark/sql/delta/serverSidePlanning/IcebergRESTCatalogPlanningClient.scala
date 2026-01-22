@@ -175,8 +175,7 @@ class IcebergRESTCatalogPlanningClient(
       database: String,
       table: String,
       sparkFilterOption: Option[Filter] = None,
-      sparkProjectionOption: Option[Seq[String]] = None,
-      caseSensitiveOption: Option[Boolean] = None): ScanPlan = {
+      sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
     // /v1/config to get the optional prefix and builds the proper endpoint
@@ -190,9 +189,9 @@ class IcebergRESTCatalogPlanningClient(
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
     val builder = new PlanTableScanRequest.Builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
-      // Set caseSensitive based on parameter (defaults to false) to match Spark's case-insensitive
+      // Set caseSensitive=false (defaults to true in spec) to match Spark's case-insensitive
       // column handling. Server should validate and block requests with caseSensitive=true.
-      .withCaseSensitive(caseSensitiveOption.getOrElse(false))
+      .withCaseSensitive(false)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
     sparkFilterOption.foreach { sparkFilter =>
@@ -223,10 +222,10 @@ class IcebergRESTCatalogPlanningClient(
       val statusCode = httpResponse.getStatusLine.getStatusCode
       val responseBody = EntityUtils.toString(httpResponse.getEntity)
       if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        // Parse response with matching caseSensitive value (defaults to false) to match request
-        // and Spark's case-insensitive column handling
+        // Parse response with caseSensitive=false to match request and Spark's case-insensitive
+        // column handling
         val icebergResponse = parsePlanTableScanResponse(
-          responseBody, unpartitionedSpecMap, caseSensitive = caseSensitiveOption.getOrElse(false))
+          responseBody, unpartitionedSpecMap, caseSensitive = false)
 
         // Verify plan status is "completed". The Iceberg REST spec allows async planning
         // where the server returns "submitted" status and the client must poll for results.
