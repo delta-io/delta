@@ -96,28 +96,11 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
               .asInstanceOf[ServerSidePlanningClientFactory]
             registeredFactory = Some(factory)
           } catch {
-            case _: ClassNotFoundException =>
-              // delta-iceberg not on classpath, no factory available
-              // This is fine - server-side planning just won't be available
-            case e: NoSuchMethodException =>
-              throw new IllegalStateException(
-                "IcebergRESTCatalogPlanningClientFactory found but has no no-arg constructor. " +
-                "This indicates a version mismatch or corrupted delta-iceberg JAR.", e)
-            case e: InstantiationException =>
-              throw new IllegalStateException(
-                "Failed to instantiate IcebergRESTCatalogPlanningClientFactory. " +
-                "The class may be abstract or the delta-iceberg JAR may be corrupted.", e)
-            case e: IllegalAccessException =>
-              throw new IllegalStateException(
-                "Cannot access IcebergRESTCatalogPlanningClientFactory constructor. " +
-                "This indicates an access control issue with the delta-iceberg JAR.", e)
-            case e: ClassCastException =>
-              throw new IllegalStateException(
-                "IcebergRESTCatalogPlanningClientFactory does not implement " +
-                "ServerSidePlanningClientFactory. This indicates a version mismatch.", e)
             case e: Exception =>
               throw new IllegalStateException(
-                s"Unexpected error loading IcebergRESTCatalogPlanningClientFactory: ${e.getMessage}", e)
+                "Unable to load IcebergRESTCatalogPlanningClientFactory for server-side planning. " +
+                "Ensure the delta-iceberg JAR is on the classpath and compatible with this Delta version.",
+                e)
           }
         }
       }
