@@ -148,18 +148,18 @@ public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest
         .start();
   }
 
-  private void assertV2StreamingFailure(StreamingQuery query) {
-    Exception exception =
-        assertThrows(
-            Exception.class,
-            () -> query.processAllAvailable(),
-            "V2 streaming should fail with known limitation");
+  private void assertV2StreamingDeltaOutput(
+      StreamingQuery query, String outputDir, long expectedCount) throws Exception {
+    query.processAllAvailable();
+    Dataset<Row> result = spark().read().format("delta").load(outputDir);
+    assertEquals(expectedCount, result.count(), "Unexpected number of output rows");
+  }
 
-    assertTrue(
-        exception.getMessage().contains("initialOffset")
-            || (exception.getCause() != null
-                && exception.getCause().getMessage().contains("initialOffset")),
-        "Should fail with initialOffset limitation, but got: " + exception.getMessage());
+  private void assertV2StreamingMemoryOutput(
+      StreamingQuery query, String tableName, long expectedCount) throws Exception {
+    query.processAllAvailable();
+    Dataset<Row> result = spark().table(tableName);
+    assertEquals(expectedCount, result.count(), "Unexpected number of output rows");
   }
 
   private void cleanupDirs(String... dirs) {
@@ -197,7 +197,10 @@ public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest
 
                   // V2 streaming execution expected to fail with known limitation
                   StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
-                  assertV2StreamingFailure(query);
+                  assertV2StreamingDeltaOutput(query, outputDir, 1);
+
+                  sql("INSERT INTO %s VALUES (2, 'b')", tableName);
+                  assertV2StreamingDeltaOutput(query, outputDir, 2);
                   query.stop();
                 } finally {
                   cleanupDirs(checkpointDir, outputDir);
@@ -339,12 +342,15 @@ public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest
                     usesV2Streaming(df),
                     "STRICT mode should use V2 streaming for UC-managed tables");
 
-                // V2 streaming execution expected to fail with known limitation
+                // Verify V2 streaming results for UC-managed table in STRICT mode
                 String checkpointDir = createCheckpointDir();
                 String outputDir = createTempDir();
                 try {
                   StreamingQuery query = startDeltaStream(df, checkpointDir, outputDir);
-                  assertV2StreamingFailure(query);
+                  assertV2StreamingDeltaOutput(query, outputDir, 1);
+
+                  withV2Mode("NONE", () -> sql("INSERT INTO %s VALUES (2, 'b')", tableName));
+                  assertV2StreamingDeltaOutput(query, outputDir, 2);
                   query.stop();
                 } finally {
                   cleanupDirs(checkpointDir, outputDir);
@@ -378,8 +384,12 @@ public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest
 
             // V2 streaming execution expected to fail with known limitation
             // Use memory sink to avoid catalog resolution issues with Delta sink in STRICT mode
-            StreamingQuery query = startMemoryStream(df, checkpointDir, "strict_mode_test");
-            assertV2StreamingFailure(query);
+            String outputTable = "strict_mode_test";
+            StreamingQuery query = startMemoryStream(df, checkpointDir, outputTable);
+            assertV2StreamingMemoryOutput(query, outputTable, 2);
+
+            spark().range(1).toDF("id").write().format("delta").mode("append").save(tempDir);
+            assertV2StreamingMemoryOutput(query, outputTable, 3);
             query.stop();
 
           } finally {
