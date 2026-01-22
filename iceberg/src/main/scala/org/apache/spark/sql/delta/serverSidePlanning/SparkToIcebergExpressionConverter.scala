@@ -26,28 +26,30 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  *
  * Filter Mapping Table:
  * {{{
- * +-----------------------+--------------------------------+
- * | Spark Filter          | Iceberg Expression             |
- * +-----------------------+--------------------------------+
- * | EqualTo               | Expressions.equal()            |
- * |   EqualTo(col, null)  | Expressions.isNull()           |
- * |   EqualTo(col, NaN)   | Expressions.isNaN()            |
- * | NotEqualTo            | Expressions.notEqual()         |
- * |   NotEqualTo(col, NaN)| Expressions.notNaN()           |
- * | LessThan              | Expressions.lessThan()         |
- * | GreaterThan           | Expressions.greaterThan()      |
- * | LessThanOrEqual       | Expressions.lessThanOrEqual()  |
- * | GreaterThanOrEqual    | Expressions.greaterThanOrEqual()|
- * | In                    | Expressions.in()               |
- * | Not(In)               | Expressions.notIn()            |
- * | IsNull                | Expressions.isNull()           |
- * | IsNotNull             | Expressions.notNull()          |
- * | And                   | Expressions.and()              |
- * | Or                    | Expressions.or()               |
- * | StringStartsWith      | Expressions.startsWith()       |
- * | AlwaysTrue            | Expressions.alwaysTrue()       |
- * | AlwaysFalse           | Expressions.alwaysFalse()      |
- * +-----------------------+--------------------------------+
+ * +--------------------------+--------------------------------+
+ * | Spark Filter             | Iceberg Expression             |
+ * +--------------------------+--------------------------------+
+ * | EqualTo                  | Expressions.equal()            |
+ * |   EqualTo(col, null)     | Expressions.isNull()           |
+ * |   EqualTo(col, NaN)      | Expressions.isNaN()            |
+ * | NotEqualTo               | Expressions.notEqual()         |
+ * |   NotEqualTo(col, NaN)   | Expressions.notNaN()           |
+ * | LessThan                 | Expressions.lessThan()         |
+ * | GreaterThan              | Expressions.greaterThan()      |
+ * | LessThanOrEqual          | Expressions.lessThanOrEqual()  |
+ * | GreaterThanOrEqual       | Expressions.greaterThanOrEqual()|
+ * | In                       | Expressions.in()               |
+ * | Not(In)                  | Expressions.notIn()            |
+ * | IsNull                   | Expressions.isNull()           |
+ * | IsNotNull                | Expressions.notNull()          |
+ * | Not(IsNull)              | Expressions.notNull()          |
+ * | And                      | Expressions.and()              |
+ * | Or                       | Expressions.or()               |
+ * | StringStartsWith         | Expressions.startsWith()       |
+ * | Not(StringStartsWith)    | Expressions.notStartsWith()    |
+ * | AlwaysTrue               | Expressions.alwaysTrue()       |
+ * | AlwaysFalse              | Expressions.alwaysFalse()      |
+ * +--------------------------+--------------------------------+
  * }}}
  *
  *
@@ -215,6 +217,8 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
    * - Not(EqualTo(col, null)) -> Expressions.notNull
    * - Not(EqualTo(col, NaN)) -> Expressions.notNaN
    * - Not(In(col, values)) -> Expressions.notIn
+   * - Not(IsNull(col)) -> Expressions.notNull
+   * - Not(StringStartsWith(col, value)) -> Expressions.notStartsWith
    *
    * All other NOT expressions (Not(LessThan), Not(And), etc.) are unsupported because Iceberg
    * doesn't provide equivalent predicates. This is consistent with OSS Iceberg's SparkV2Filters.
@@ -226,6 +230,12 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
 
       case In(attribute, values) =>
         Some(convertNotIn(attribute, values))
+
+      case IsNull(attribute) =>
+        Some(Expressions.notNull(attribute))
+
+      case StringStartsWith(attribute, value) =>
+        Some(Expressions.notStartsWith(attribute, value))
 
       case _ =>
         None  // All other NOT expressions are unsupported

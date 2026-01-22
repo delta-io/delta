@@ -426,7 +426,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // NOT OPERATOR
   // ========================================================================
 
-  test("NOT operator (NOT EqualTo and NOT IN are supported)") {
+  test("NOT operator (NOT EqualTo, NOT IN, NOT IsNull, and NOT StringStartsWith are supported)") {
     val testCases = Seq(
       // Supported: Not(EqualTo) with regular values, null, and NaN are all tested in the
       // equality operators test. This test case is included for completeness of the NOT
@@ -435,6 +435,20 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "Not(EqualTo) converts to NotEqualTo (supported)", // Test case label
         Not(EqualTo("intCol", 42)), // Spark filter builder
         Some(Expressions.notEqual("intCol", 42)) // Iceberg expression builder
+      ),
+
+      // Supported: Not(IsNull) converts to notNull
+      ExprConvTestCase(
+        "Not(IsNull) converts to notNull (supported)",
+        Not(IsNull("stringCol")),
+        Some(Expressions.notNull("stringCol"))
+      ),
+
+      // Supported: Not(StringStartsWith) converts to notStartsWith
+      ExprConvTestCase(
+        "Not(StringStartsWith) converts to notStartsWith (supported)",
+        Not(StringStartsWith("stringCol", "prefix")),
+        Some(Expressions.notStartsWith("stringCol", "prefix"))
       ),
 
       // Unsupported: Not with other operators
@@ -446,11 +460,6 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ExprConvTestCase(
         "Not(GreaterThan) is unsupported",
         Not(GreaterThan("longCol", 100L)),
-        None
-      ),
-      ExprConvTestCase(
-        "Not(IsNull) is unsupported (use IsNotNull instead)",
-        Not(IsNull("stringCol")),
         None
       )
     )
@@ -537,6 +546,58 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     )
 
     assertConvert(notInTestCases ++ nullHandlingTests ++ specificExamples)
+  }
+
+  // ========================================================================
+  // NOT IsNull OPERATOR
+  // ========================================================================
+
+  test("NOT IsNull operator") {
+    val testCases = Seq(
+      ExprConvTestCase(
+        "Not(IsNull) on string column", // Test case label
+        Not(IsNull("stringCol")), // Spark filter builder
+        Some(Expressions.notNull("stringCol")) // Iceberg expression builder
+      ),
+      ExprConvTestCase(
+        "Not(IsNull) on integer column",
+        Not(IsNull("intCol")),
+        Some(Expressions.notNull("intCol"))
+      ),
+      ExprConvTestCase(
+        "Not(IsNull) on nested column",
+        Not(IsNull("address.intCol")),
+        Some(Expressions.notNull("address.intCol"))
+      )
+    )
+
+    assertConvert(testCases)
+  }
+
+  // ========================================================================
+  // NOT StringStartsWith OPERATOR
+  // ========================================================================
+
+  test("NOT StringStartsWith operator") {
+    val testCases = Seq(
+      ExprConvTestCase(
+        "Not(StringStartsWith) on string column", // Test case label
+        Not(StringStartsWith("stringCol", "prefix")), // Spark filter builder
+        Some(Expressions.notStartsWith("stringCol", "prefix")) // Iceberg expression builder
+      ),
+      ExprConvTestCase(
+        "Not(StringStartsWith) with empty prefix",
+        Not(StringStartsWith("stringCol", "")),
+        Some(Expressions.notStartsWith("stringCol", ""))
+      ),
+      ExprConvTestCase(
+        "Not(StringStartsWith) on nested column",
+        Not(StringStartsWith("metadata.stringCol", "test")),
+        Some(Expressions.notStartsWith("metadata.stringCol", "test"))
+      )
+    )
+
+    assertConvert(testCases)
   }
 
   // ========================================================================
@@ -650,18 +711,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         None
       ),
       ExprConvTestCase(
-        "Not(IsNull) - arbitrary NOT unsupported",
-        Not(IsNull("intCol")),
-        None
-      ),
-      ExprConvTestCase(
         "Not(And) - arbitrary NOT unsupported",
         Not(And(EqualTo("intCol", 1), EqualTo("longCol", 2L))),
-        None
-      ),
-      ExprConvTestCase(
-        "Not(StringStartsWith) - arbitrary NOT unsupported",
-        Not(StringStartsWith("stringCol", "prefix")),
         None
       )
     )
