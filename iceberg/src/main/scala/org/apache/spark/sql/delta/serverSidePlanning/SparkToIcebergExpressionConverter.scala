@@ -24,6 +24,10 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
 /**
  * Converts Spark Filter expressions to Iceberg Expression objects for server-side planning.
  *
+ * Limitations:
+ * Only primitive types are supported in filter values. Complex types (Array, Struct, Map)
+ * and unknown types (e.g., VARIANT) are NOT supported.
+ *
  * Filter Mapping Table:
  * {{{
  * +-----------------------+--------------------------------+
@@ -128,6 +132,10 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
         None
       }
     } catch {
+      case e: UnsupportedOperationException =>
+        // Expected for unsupported types (e.g., complex types, unknown types like VARIANT)
+        logInfo(s"Filter cannot be pushed down to Iceberg: ${e.getMessage}")
+        None
       case e: IllegalArgumentException =>
         /*
          * The filter is supported but conversion failed as the type or value is unsupported.
@@ -152,6 +160,34 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
   }
 
   /**
+   * Check if a value is a supported primitive type that can be pushed down to Iceberg.
+   * Only explicitly supported types are allowed. Unknown types (e.g., VARIANT, complex types)
+   * will be rejected by default for safety.
+   *
+   * @param value The value to check
+   * @param supportBoolean Whether Boolean type is supported in this context
+   * @return true if the value is a supported primitive type, false otherwise
+   */
+  private def isSupportedType(value: Any, supportBoolean: Boolean): Boolean = {
+    value match {
+      case null => true  // null is handled specially
+      case _: java.sql.Date => true
+      case _: java.sql.Timestamp => true
+      case _: java.time.Instant => true
+      case _: java.time.LocalDateTime => true
+      case _: java.time.LocalDate => true
+      case _: Int => true
+      case _: Long => true
+      case _: Float => true
+      case _: Double => true
+      case _: java.math.BigDecimal => true
+      case _: String => true
+      case _: Boolean => supportBoolean
+      case _ => false  // Unknown types default to "rejected"
+    }
+  }
+
+  /**
    * Convert a Spark value to Iceberg-compatible type with proper coercion.
    * @param supportBoolean if true, also handles Boolean type.
    *        Note: Comparison operators (LessThan, GreaterThan, etc.) don't support Boolean.
@@ -159,10 +195,19 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
    */
   private[serverSidePlanning] def toIcebergValue(
       value: Any,
-      supportBoolean: Boolean = false): Any = value match {
-    // Date/Timestamp conversion (semantic change) because
-    // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
-    case v: java.sql.Date =>
+      supportBoolean: Boolean = false): Any = {
+    // Reject unsupported types - only allow known primitive types
+    if (!isSupportedType(value, supportBoolean)) {
+      throw new UnsupportedOperationException(
+        s"Cannot convert type to Iceberg literal: ${value.getClass.getName}. " +
+        "Only primitive types (Int, Long, Float, Double, String, Date, Timestamp, " +
+        "Decimal, Boolean) are supported in Iceberg filter expressions.")
+    }
+
+    value match {
+      // Date/Timestamp conversion (semantic change) because
+      // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
+      case v: java.sql.Date =>
       // Iceberg expects days since epoch (1970-01-01) as Int
       DateTimeUtils.fromJavaDate(v): Integer
     case v: java.sql.Timestamp =>
@@ -186,6 +231,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     case v: String => v
     case v: Boolean if supportBoolean => v: java.lang.Boolean
     case _ => value
+    }
   }
 
   /*
