@@ -383,12 +383,19 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
+        server.clearCaptured()
+
         // Call planScan - the client sets caseSensitive=false in the request
         val scanPlan = client.planScan(defaultNamespace.toString, "caseSensitiveTest")
 
         // Verify the scan succeeds and returns files
         assert(scanPlan.files.nonEmpty,
           "Expected planScan to return files for the test table")
+
+        // Verify server captured caseSensitive=false
+        val capturedCaseSensitive = server.getCapturedCaseSensitive()
+        assert(capturedCaseSensitive == false,
+          s"Expected server to capture caseSensitive=false, got $capturedCaseSensitive")
       } finally {
         client.close()
       }
