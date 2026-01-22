@@ -341,12 +341,16 @@ class ServerSidePlannedScan(
   }
 
   // Call the server-side planning API to get the scan plan with files AND credentials
-  private val scanPlan: ScanPlan = planningClient.planScan(
+  private lazy val scanPlan: ScanPlan = planningClient.planScan(
     databaseName,
     tableName,
     combinedFilter,
     projectionColumnNames,
     limit)
+
+  // Explicitly signal that columnar is unsupported to prevent early enumeration of the partitions
+  override def columnarSupportMode(): Scan.ColumnarSupportMode =
+    Scan.ColumnarSupportMode.UNSUPPORTED
 
   override def planInputPartitions(): Array[InputPartition] = {
     // Convert each file to an InputPartition

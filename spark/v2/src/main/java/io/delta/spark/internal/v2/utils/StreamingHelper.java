@@ -62,9 +62,9 @@ public class StreamingHelper {
     return batch.getColumnVector(versionColIdx).getLong(0);
   }
 
-  /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
-  public static Optional<AddFile> getDataChangeAdd(ColumnarBatch batch, int rowId) {
-    int addIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.ADD.colName);
+  /** Get AddFile action from a batch at the specified row, if present. */
+  public static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
+    int addIdx = getFieldIndex(batch, "add");
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
       return Optional.empty();
@@ -75,8 +75,12 @@ public class StreamingHelper {
         addFileRow != null,
         String.format("Failed to extract AddFile struct from batch at rowId=%d.", rowId));
 
-    AddFile addFile = new AddFile(addFileRow);
-    return addFile.getDataChange() ? Optional.of(addFile) : Optional.empty();
+    return Optional.of(new AddFile(addFileRow));
+  }
+
+  /** Get AddFile action from a batch at the specified row, if present and has dataChange=true. */
+  public static Optional<AddFile> getAddFileWithDataChange(ColumnarBatch batch, int rowId) {
+    return getAddFile(batch, rowId).filter(AddFile::getDataChange);
   }
 
   /**

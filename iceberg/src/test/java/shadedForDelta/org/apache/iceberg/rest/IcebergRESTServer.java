@@ -179,15 +179,23 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * For test verification.
+   */
+  public Boolean getCapturedCaseSensitive() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedCaseSensitive();
+  }
+
+  /**
    * Set test credentials to inject into /plan responses.
    * Used for testing credential extraction in clients.
-   * 
+   *
    * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
    */
   public void setTestCredentials(Map<String, String> credentials) {
     IcebergRESTCatalogAdapterWithPlanSupport.setTestCredentials(credentials);
   }
-  
+
   /**
    * Clear captured filter and projection. Call between tests.
    */

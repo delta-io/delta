@@ -466,4 +466,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       }
     }
   }
+
+  test("avoid planInputPartitions call during Spark query planning") {
+    withPushdownCapturingEnabled {
+      sql("EXPLAIN EXTENDED SELECT id, name FROM test_db.shared_test").collect()
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isEmpty, "Should not fire a planTable request for EXPLAIN")
+    }
+  }
 }
