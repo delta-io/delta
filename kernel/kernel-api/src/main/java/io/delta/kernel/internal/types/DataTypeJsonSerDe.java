@@ -430,10 +430,19 @@ public class DataTypeJsonSerDe {
 
   private static String FIXED_DECIMAL_REGEX = "decimal\\(\\s*(\\d+)\\s*,\\s*(\\-?\\d+)\\s*\\)";
   private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
-  private static String GEOMETRY_REGEX = "geometry\\(\\s*(.+?)\\s*\\)";
+
+  // Geometry patterns
+  private static String GEOMETRY_REGEX = "geometry\\(\\s*([\\w]+:-?[\\w]+)\\s*\\)";
   private static Pattern GEOMETRY_PATTERN = Pattern.compile(GEOMETRY_REGEX);
-  private static String GEOGRAPHY_REGEX = "geography\\(\\s*(.+?)\\s*\\)";
-  private static Pattern GEOGRAPHY_PATTERN = Pattern.compile(GEOGRAPHY_REGEX);
+
+  // Geography patterns
+  private static String GEOGRAPHY_CRS_ALG_REGEX =
+      "geography\\(\\s*(\\w+:-?\\w+)\\s*,\\s*(\\w+)\\s*\\)";
+  private static Pattern GEOGRAPHY_CRS_ALG_PATTERN = Pattern.compile(GEOGRAPHY_CRS_ALG_REGEX);
+  private static String GEOGRAPHY_CRS_REGEX = "geography\\(\\s*(\\w+:-?\\w+)\\s*\\)";
+  private static Pattern GEOGRAPHY_CRS_PATTERN = Pattern.compile(GEOGRAPHY_CRS_REGEX);
+  private static String GEOGRAPHY_ALG_REGEX = "geography\\(\\s*(\\w+)\\s*\\)";
+  private static Pattern GEOGRAPHY_ALG_PATTERN = Pattern.compile(GEOGRAPHY_ALG_REGEX);
 
   /** Parses primitive string type names to a {@link DataType} */
   private static DataType nameToType(String name) {
@@ -441,6 +450,10 @@ public class DataTypeJsonSerDe {
       return BasePrimitiveType.createPrimitive(name);
     } else if (name.equals("decimal")) {
       return DecimalType.USER_DEFAULT;
+    } else if (name.equals("geometry")) {
+      return new GeometryType();
+    } else if (name.equals("geography")) {
+      return new GeographyType();
     } else if ("void".equalsIgnoreCase(name)) {
       // Earlier versions of Delta had VOID type which is not specified in Delta Protocol.
       // It is not readable or writable. Throw a user-friendly error message.
@@ -461,11 +474,31 @@ public class DataTypeJsonSerDe {
         return new GeometryType(srid);
       }
 
-      // geography has a special pattern with an SRID
-      Matcher geographyMatcher = GEOGRAPHY_PATTERN.matcher(name);
-      if (geographyMatcher.matches()) {
-        String srid = geographyMatcher.group(1);
+      // geography has different patterns:
+      // 1. geography(<srid>, <algorithm>) - both specified
+      // 2. geography(<srid>) - SRID specified (contains colon)
+      // 3. geography(<algorithm>) - algorithm specified (no colon)
+
+      // First check for both CRS and algorithm (contains comma)
+      Matcher geographyCrsAlgMatcher = GEOGRAPHY_CRS_ALG_PATTERN.matcher(name);
+      if (geographyCrsAlgMatcher.matches()) {
+        String srid = geographyCrsAlgMatcher.group(1);
+        String algorithm = geographyCrsAlgMatcher.group(2);
+        return new GeographyType(srid, algorithm);
+      }
+
+      // Check for CRS pattern (contains colon)
+      Matcher geographyCrsMatcher = GEOGRAPHY_CRS_PATTERN.matcher(name);
+      if (geographyCrsMatcher.matches()) {
+        String srid = geographyCrsMatcher.group(1);
         return new GeographyType(srid);
+      }
+
+      // Check for algorithm pattern (no colon)
+      Matcher geographyAlgMatcher = GEOGRAPHY_ALG_PATTERN.matcher(name);
+      if (geographyAlgMatcher.matches()) {
+        String algorithm = geographyAlgMatcher.group(1);
+        return new GeographyType(GeographyType.DEFAULT_SRID, algorithm);
       }
 
       // We have encountered a type that is beyond the specification of the protocol
@@ -523,10 +556,10 @@ public class DataTypeJsonSerDe {
       gen.writeString(format("decimal(%d,%d)", decimalType.getPrecision(), decimalType.getScale()));
     } else if (dataType instanceof GeometryType) {
       GeometryType geometryType = (GeometryType) dataType;
-      gen.writeString(format("geometry(%s)", geometryType.getSRID()));
+      gen.writeString(geometryType.toJson());
     } else if (dataType instanceof GeographyType) {
       GeographyType geographyType = (GeographyType) dataType;
-      gen.writeString(format("geography(%s)", geographyType.getSRID()));
+      gen.writeString(geographyType.toJson());
     } else {
       gen.writeString(dataType.toString());
     }

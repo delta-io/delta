@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,42 +20,53 @@ import java.util.Objects;
 
 /**
  * The data type representing geography values. A Geography must have a fixed Spatial Reference
- * System Identifier (SRID) that defines the coordinate system.
+ * System Identifier (SRID) that defines the coordinate system and an algorithm that determines how
+ * geometric calculations are performed.
  *
- * <p>The SRID is specified as a string (e.g., "EPSG:4326" for WGS84, "4326", or any other format).
- * The engine is responsible for validating and interpreting the SRID value. The default SRID is
- * "EPSG:4326" which represents the WGS84 coordinate system commonly used for geographic coordinates
- * (latitude/longitude).
- *
- * <p>Geography values are stored in Well-Known Binary (WKB) or Extended Well-Known Binary (EWKB)
- * format in Parquet files, and statistics are stored in Well-Known Text (WKT) format in Delta log
- * files.
+ * <p>The SRID is specified as a string and the algorithm defines the calculation method. The engine
+ * is responsible for validating and interpreting the SRID and algorithm values.
  *
  * @since 3.0.0
  */
 @Evolving
 public final class GeographyType extends DataType {
-  /** Default SRID representing WGS84 coordinate system (latitude/longitude). */
-  public static final String DEFAULT_SRID = "EPSG:4326";
+  public static final String DEFAULT_SRID = "OGC:CRS84";
+  public static final String DEFAULT_ALGORITHM = "spherical";
 
   private final String srid;
+  private final String algorithm;
+
+  /** Create a GeographyType with the default SRID and algorithm. */
+  public GeographyType() {
+    this(DEFAULT_SRID, DEFAULT_ALGORITHM);
+  }
 
   /**
-   * Create a GeographyType with the specified SRID.
+   * Create a GeographyType with the specified SRID and default algorithm.
    *
    * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
    * @throws IllegalArgumentException if the SRID is null or empty
    */
   public GeographyType(String srid) {
+    this(srid, DEFAULT_ALGORITHM);
+  }
+
+  /**
+   * Create a GeographyType with the specified SRID and algorithm.
+   *
+   * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @param algorithm the algorithm for geometric calculations (any non-null, non-empty string)
+   * @throws IllegalArgumentException if the SRID or algorithm is null or empty
+   */
+  public GeographyType(String srid, String algorithm) {
     if (srid == null || srid.isEmpty()) {
       throw new IllegalArgumentException("SRID cannot be null or empty");
     }
+    if (algorithm == null || algorithm.isEmpty()) {
+      throw new IllegalArgumentException("Algorithm cannot be null or empty");
+    }
     this.srid = srid;
-  }
-
-  /** Create a GeographyType with the default SRID (EPSG:4326 for WGS84). */
-  public GeographyType() {
-    this(DEFAULT_SRID);
+    this.algorithm = algorithm;
   }
 
   /**
@@ -67,14 +78,33 @@ public final class GeographyType extends DataType {
     return srid;
   }
 
+  /**
+   * Get the algorithm for geometric calculations.
+   *
+   * @return the algorithm string
+   */
+  public String getAlgorithm() {
+    return algorithm;
+  }
+
   @Override
   public boolean isNested() {
     return false;
   }
 
+  /**
+   * Serialize this GeographyType to its string representation for JSON serialization. Format:
+   * "geography(<srid>, <algorithm>)"
+   *
+   * @return the serialized string representation
+   */
+  public String toJson() {
+    return String.format("geography(%s, %s)", srid, algorithm);
+  }
+
   @Override
   public String toString() {
-    return String.format("Geography(%s)", srid);
+    return String.format("Geography(srid=%s, algorithm=%s)", srid, algorithm);
   }
 
   @Override
@@ -86,11 +116,11 @@ public final class GeographyType extends DataType {
       return false;
     }
     GeographyType that = (GeographyType) o;
-    return srid.equals(that.srid);
+    return srid.equals(that.srid) && algorithm.equals(that.algorithm);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(srid);
+    return Objects.hash(srid, algorithm);
   }
 }

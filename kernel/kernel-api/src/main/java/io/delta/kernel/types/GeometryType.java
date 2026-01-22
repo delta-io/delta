@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,22 +22,22 @@ import java.util.Objects;
  * The data type representing geometry values. A Geometry must have a fixed Spatial Reference System
  * Identifier (SRID) that defines the coordinate system.
  *
- * <p>The SRID is specified as a string (e.g., "EPSG:4326" for WGS84, "4326", or any other format).
- * The engine is responsible for validating and interpreting the SRID value. The default SRID is
- * "EPSG:0" which represents an unknown coordinate system.
- *
- * <p>Geometry values are stored in Well-Known Binary (WKB) or Extended Well-Known Binary (EWKB)
- * format in Parquet files, and statistics are stored in Well-Known Text (WKT) format in Delta log
- * files.
+ * <p>The SRID is specified as a string The engine is responsible for validating and interpreting
+ * the SRID value.
  *
  * @since 3.0.0
  */
 @Evolving
 public final class GeometryType extends DataType {
-  /** Default SRID representing an unknown coordinate system. */
-  public static final String DEFAULT_SRID = "EPSG:0";
+
+  public static final String DEFAULT_SRID = "OGC:CRS84";
 
   private final String srid;
+
+  /** Create a GeometryType with the default SRID. */
+  public GeometryType() {
+    this(DEFAULT_SRID);
+  }
 
   /**
    * Create a GeometryType with the specified SRID.
@@ -50,11 +50,6 @@ public final class GeometryType extends DataType {
       throw new IllegalArgumentException("SRID cannot be null or empty");
     }
     this.srid = srid;
-  }
-
-  /** Create a GeometryType with the default SRID (EPSG:0). */
-  public GeometryType() {
-    this(DEFAULT_SRID);
   }
 
   /**
@@ -71,9 +66,19 @@ public final class GeometryType extends DataType {
     return false;
   }
 
+  /**
+   * Serialize this GeometryType to its string representation for JSON serialization. Format:
+   * "geometry(<srid>)"
+   *
+   * @return the serialized string representation
+   */
+  public String toJson() {
+    return String.format("geometry(%s)", srid);
+  }
+
   @Override
   public String toString() {
-    return String.format("Geometry(%s)", srid);
+    return String.format("Geometry(srid=%s)", srid);
   }
 
   @Override

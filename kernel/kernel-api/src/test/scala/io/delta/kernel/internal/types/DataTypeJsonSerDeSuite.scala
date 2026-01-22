@@ -74,13 +74,16 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     ("\"decimal\"", DecimalType.USER_DEFAULT),
     ("\"decimal(10, 5)\"", new DecimalType(10, 5)),
     ("\"variant\"", VariantType.VARIANT),
+    ("\"geometry\"", new GeometryType()),
     ("\"geometry(EPSG:0)\"", new GeometryType("EPSG:0")),
-    ("\"geometry(EPSG:4326)\"", new GeometryType("EPSG:4326")),
-    ("\"geography(EPSG:4326)\"", new GeographyType("EPSG:4326")),
-    ("\"geography(EPSG:3857)\"", new GeographyType("EPSG:3857"))).foreach { case (json, dataType) =>
-    test("serialize/deserialize: " + dataType) {
-      testRoundTrip(json, dataType)
-    }
+    ("\"geography\"", new GeographyType()),
+    ("\"geography(EPSG:4326)\"", new GeographyType("EPSG:4326", "spherical")),
+    ("\"geography(planar)\"", new GeographyType("OGC:CRS84", "planar")),
+    ("\"geography(EPSG:3857, planar)\"", new GeographyType("EPSG:3857", "planar"))).foreach {
+    case (json, dataType) =>
+      test("serialize/deserialize: " + dataType) {
+        testRoundTrip(json, dataType)
+      }
   }
 
   test("parseDataType: invalid primitive string data type") {
@@ -93,19 +96,91 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       "decimal(1) is not a supported delta data type")
   }
 
-  test("serialize/deserialize: geometry with various SRID formats") {
-    // Kernel accepts any SRID format; engine validates compatibility
-    testRoundTrip("\"geometry(4326)\"", new GeometryType("4326"))
-    testRoundTrip("\"geometry(EPSG)\"", new GeometryType("EPSG"))
-    testRoundTrip("\"geometry(epsg:4326)\"", new GeometryType("epsg:4326"))
-    testRoundTrip(
-      "\"geometry(urn:ogc:def:crs:EPSG::4326)\"",
-      new GeometryType("urn:ogc:def:crs:EPSG::4326"))
+  test("deserialize: geometry with default SRID") {
+    // Parsing "geometry" should use default SRID (OGC:CRS84)
+    assert(parse("\"geometry\"") === new GeometryType())
+    // But serialization always writes full form
+    assert(serialize(new GeometryType()) === "\"geometry(OGC:CRS84)\"")
   }
 
-  test("serialize/deserialize: geography with various SRID formats") {
-    testRoundTrip("\"geography(4326)\"", new GeographyType("4326"))
-    testRoundTrip("\"geography(WGS84)\"", new GeographyType("WGS84"))
+  test("serialize/deserialize: geometry with various SRID formats") {
+    // Kernel accepts any SRID format; engine validates compatibility
+    testRoundTrip("\"geometry(OGC:CRS84)\"", new GeometryType("OGC:CRS84"))
+    testRoundTrip("\"geometry(EPSG:4326)\"", new GeometryType("EPSG:4326"))
+    testRoundTrip("\"geometry(EPSG:0)\"", new GeometryType("EPSG:0"))
+    testRoundTrip("\"geometry(epsg:4326)\"", new GeometryType("epsg:4326"))
+  }
+
+  test("deserialize: geography with default SRID and algorithm") {
+    // Parsing "geography" should use defaults (OGC:CRS84, spherical)
+    assert(parse("\"geography\"") === new GeographyType())
+    // But serialization always writes full form
+    assert(serialize(new GeographyType()) === "\"geography(OGC:CRS84, spherical)\"")
+  }
+
+  test("deserialize: geography with SRID and default algorithm") {
+    // Parsing "geography(<srid>)" should use default algorithm (spherical)
+    assert(parse("\"geography(EPSG:4326)\"") === new GeographyType("EPSG:4326"))
+    assert(parse("\"geography(EPSG:3857)\"") === new GeographyType("EPSG:3857"))
+    assert(parse("\"geography(OGC:CRS84)\"") === new GeographyType("OGC:CRS84"))
+    // But serialization always writes full form
+    assert(serialize(new GeographyType("EPSG:4326")) === "\"geography(EPSG:4326, spherical)\"")
+  }
+
+  test("deserialize: geography with default SRID and specified algorithm") {
+    // Parsing "geography(<algorithm>)" should use default SRID (OGC:CRS84)
+    assert(parse("\"geography(spherical)\"") === new GeographyType("OGC:CRS84", "spherical"))
+    assert(parse("\"geography(planar)\"") === new GeographyType("OGC:CRS84", "planar"))
+    assert(parse("\"geography(haversine)\"") === new GeographyType("OGC:CRS84", "haversine"))
+    // But serialization always writes full form
+    assert(
+      serialize(new GeographyType("OGC:CRS84", "planar")) ===
+        "\"geography(OGC:CRS84, planar)\"")
+  }
+
+  test("serialize/deserialize: geography with both SRID and algorithm") {
+    // Both SRID and algorithm specified - round trips correctly
+    testRoundTrip(
+      "\"geography(EPSG:4326, spherical)\"",
+      new GeographyType("EPSG:4326", "spherical"))
+    testRoundTrip(
+      "\"geography(EPSG:3857, planar)\"",
+      new GeographyType("EPSG:3857", "planar"))
+    testRoundTrip(
+      "\"geography(OGC:CRS84, haversine)\"",
+      new GeographyType("OGC:CRS84", "haversine"))
+    assert(
+      serialize(new GeographyType("EPSG:4326", "planar")) ===
+        "\"geography(EPSG:4326, planar)\"")
+  }
+
+  test("parseDataType: invalid geometry formats") {
+    // Missing SRID parameter
+    checkError[IllegalArgumentException](
+      "\"geometry()\"",
+      "geometry() is not a supported delta data type")
+    // Invalid format with multiple parameters
+    checkError[IllegalArgumentException](
+      "\"geometry(EPSG:4326, extra)\"",
+      "geometry(EPSG:4326, extra) is not a supported delta data type")
+    checkError[IllegalArgumentException](
+      "\"geometry(noCollon)\"",
+      "geometry(noCollon) is not a supported delta data type")
+  }
+
+  test("parseDataType: invalid geography formats") {
+    // Empty parameters
+    checkError[IllegalArgumentException](
+      "\"geography()\"",
+      "geography() is not a supported delta data type")
+    // Too many parameters
+    checkError[IllegalArgumentException](
+      "\"geography(EPSG:4326, spherical, extra)\"",
+      "geography(EPSG:4326, spherical, extra) is not a supported delta data type")
+    // Invalid format
+    checkError[IllegalArgumentException](
+      "\"geography(EPSG:4326,)\"",
+      "geography(EPSG:4326,) is not a supported delta data type")
   }
 
   /* ---------------  Complex types ----------------- */
