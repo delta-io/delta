@@ -24,6 +24,23 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
 /**
  * Converts Spark Filter expressions to Iceberg Expression objects for server-side planning.
  *
+ * Design Note - Why Not Reuse Iceberg's SparkFilters:
+ * We implement our own converter rather than reusing org.apache.iceberg.spark.SparkFilters
+ * because:
+ * 1. Dependency Management: SparkFilters is in the Iceberg Spark connector (iceberg-spark),
+ *    which has version-specific builds (spark-3.5, spark-4.0, etc.). Using it would require
+ *    managing these version-specific dependencies.
+ * 2. Shading Requirements: Our Iceberg dependency is shaded to avoid conflicts. Using SparkFilters
+ *    would require either exposing unshaded Iceberg classes or complex shading configurations.
+ * 3. Control and Customization: Implementing our own converter gives us full control over
+ *    error handling, logging, and behavior specific to Unity Catalog server-side planning.
+ * 4. Simplicity: The conversion logic is straightforward and well-tested. The maintenance burden
+ *    is minimal compared to the complexity of managing additional dependencies.
+ *
+ * Limitations:
+ * - Complex types (Array, Struct, Map) in filter values are NOT supported
+ *   Filters containing complex type literals cannot be pushed down and will remain as residuals
+ *
  * Filter Mapping Table:
  * {{{
  * +-----------------------+--------------------------------+
@@ -162,6 +179,16 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
       supportBoolean: Boolean = false): Any = value match {
     // Date/Timestamp conversion (semantic change) because
     // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
+    //
+    // Note on Calendar Handling:
+    // The current implementation uses DateTimeUtils.fromJavaDate/fromJavaTimestamp for conversion.
+    // These methods handle the conversion from java.sql types to epoch-based values.
+    // For more advanced calendar handling (e.g., Gregorian/Julian calendar transitions),
+    // consider using SparkDateTimeUtils utilities when available. However, for standard use cases
+    // where dates are after 1582-10-15 (Gregorian calendar introduction), the current approach
+    // is sufficient and consistent with Spark's internal handling.
+    // Reference: https://github.com/apache/iceberg/blob/main/spark/v4.0/spark/src/main/java/
+    //            org/apache/iceberg/spark/SparkFilters.java#L370
     case v: java.sql.Date =>
       // Iceberg expects days since epoch (1970-01-01) as Int
       DateTimeUtils.fromJavaDate(v): Integer
