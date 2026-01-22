@@ -602,6 +602,9 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         BigDecimal(i).bigDecimal, // decimalCol
         java.sql.Date.valueOf("2024-01-01"), // dateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+        java.sql.Date.valueOf("2024-01-01"), // localDateCol (java.sql.Date for Spark DATE)
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // localDateTimeCol (java.sql.Timestamp for Spark TIMESTAMP)
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // instantCol (java.sql.Timestamp for Spark TIMESTAMP)
         Row(i * 100), // address.intCol
         Row(s"meta_$i") // metadata.stringCol
       ))
