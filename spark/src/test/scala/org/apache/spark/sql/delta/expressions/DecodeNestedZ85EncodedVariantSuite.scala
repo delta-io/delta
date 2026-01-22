@@ -70,7 +70,7 @@ class DecodeNestedZ85EncodedVariantSuite extends QueryTest with DeltaSQLCommandT
     }
   }
 
-  test("ReplaceVariantZ85WithVariantVal with nested struct and mixed types") {
+  test("DecodeNestedZ85EncodedVariantSuite with nested struct and mixed types") {
     val json1 = "{\"id\": 100, \"name\": \"test\"}"
     val inputVariant1 = VariantExpressionEvalUtils.parseJson(UTF8String.fromString(json1))
     val variant1 = new Variant(inputVariant1.getValue, inputVariant1.getMetadata)
