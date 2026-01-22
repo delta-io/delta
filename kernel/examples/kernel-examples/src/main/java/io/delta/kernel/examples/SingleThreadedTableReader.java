@@ -61,13 +61,12 @@ public class SingleThreadedTableReader
         throws TableNotFoundException, IOException {
         Table table = Table.forPath(engine, tablePath);
         Snapshot snapshot = table.getLatestSnapshot(engine);
-        StructType readSchema = pruneSchema(snapshot.getSchema(engine), columnsOpt);
+        StructType readSchema = pruneSchema(snapshot.getSchema(), columnsOpt);
 
-        ScanBuilder scanBuilder = snapshot.getScanBuilder(engine)
-            .withReadSchema(engine, readSchema);
+        ScanBuilder scanBuilder = snapshot.getScanBuilder().withReadSchema(readSchema);
 
         if (predicate.isPresent()) {
-            scanBuilder = scanBuilder.withFilter(engine, predicate.get());
+            scanBuilder = scanBuilder.withFilter(predicate.get());
         }
 
         return readData(readSchema, scanBuilder.build(), limit);
@@ -104,7 +103,7 @@ public class SingleThreadedTableReader
         int readRecordCount = 0;
         try {
             StructType physicalReadSchema =
-                ScanStateRow.getPhysicalDataReadSchema(engine, scanState);
+                ScanStateRow.getPhysicalDataReadSchema(scanState);
             while (scanFileIter.hasNext()) {
                 FilteredColumnarBatch scanFilesBatch = scanFileIter.next();
                 try (CloseableIterator<Row> scanFileRows = scanFilesBatch.getRows()) {
@@ -116,7 +115,7 @@ public class SingleThreadedTableReader
                             engine.getParquetHandler().readParquetFiles(
                                 singletonCloseableIterator(fileStatus),
                                 physicalReadSchema,
-                                Optional.empty());
+                                Optional.empty()).map(res -> res.getData());
                         try (
                             CloseableIterator<FilteredColumnarBatch> transformedData =
                                 Scan.transformPhysicalData(

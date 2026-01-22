@@ -23,7 +23,8 @@ import java.util.regex.PatternSyntaxException
 import scala.util.Try
 import scala.util.matching.Regex
 
-import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
+import org.apache.spark.sql.connector.catalog.SupportsV1OverwriteWithSaveAsTable
+import org.apache.spark.sql.delta.DeltaOptions.{DATA_CHANGE_OPTION, IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE, MERGE_SCHEMA_OPTION, OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -85,6 +86,14 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   }
 
   /**
+   * Whether this write is coming from DataFrameWriter V1 saveAsTable.
+   */
+  def isDataFrameWriterV1SaveAsTableOverwrite: Boolean = {
+    options.get(IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE)
+      .exists(toBoolean(_, IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE))
+  }
+
+  /**
    * Whether to write new data to the table or just rearrange data that is already
    * part of the table. This option declares that the data being written by this job
    * does not change any data in the table and merely rearranges existing data.
@@ -122,8 +131,8 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
   /** Whether to only overwrite partitions that have data written into it at runtime. */
   def isDynamicPartitionOverwriteMode: Boolean = {
     val mode = options.get(PARTITION_OVERWRITE_MODE_OPTION)
-      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE))
-    val modeIsDynamic = mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
+      .getOrElse(sqlConf.getConf(SQLConf.PARTITION_OVERWRITE_MODE).toString)
+    val modeIsDynamic = mode != null && mode.equalsIgnoreCase(PARTITION_OVERWRITE_MODE_DYNAMIC)
     if (!sqlConf.getConf(DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED)) {
       // Raise an exception when DYNAMIC_PARTITION_OVERWRITE_ENABLED=false
       // but users explicitly request dynamic partition overwrite.
@@ -133,7 +142,8 @@ trait DeltaWriteOptionsImpl extends DeltaOptionParser {
       // If dynamic partition overwrite mode is disabled, fallback to the default behavior
       false
     } else {
-      if (!DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
+      if (mode == null ||
+        !DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.exists(mode.equalsIgnoreCase(_))) {
         val acceptableStr =
           DeltaOptions.PARTITION_OVERWRITE_MODE_VALUES.map("'" + _ + "'").mkString(" or ")
         throw DeltaErrors.illegalDeltaOptionException(
@@ -212,6 +222,12 @@ trait DeltaReadOptions extends DeltaOptionParser {
   val schemaTrackingLocation = options.get(SCHEMA_TRACKING_LOCATION)
 
   val sourceTrackingId = options.get(STREAMING_SOURCE_TRACKING_ID)
+
+  val allowSourceColumnRename = options.get(ALLOW_SOURCE_COLUMN_RENAME)
+
+  val allowSourceColumnDrop = options.get(ALLOW_SOURCE_COLUMN_DROP)
+
+  val allowSourceColumnTypeChange = options.get(ALLOW_SOURCE_COLUMN_TYPE_CHANGE)
 }
 
 
@@ -229,6 +245,10 @@ class DeltaOptions(
 }
 
 object DeltaOptions extends DeltaLogging {
+
+  /** Internal option to indicate write originated from DataFrameWriter V1 saveAsTable. */
+  val IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE =
+    SupportsV1OverwriteWithSaveAsTable.OPTION_NAME
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
@@ -289,12 +309,17 @@ object DeltaOptions extends DeltaLogging {
    */
   val STREAMING_SOURCE_TRACKING_ID = "streamingSourceTrackingId"
 
+  val ALLOW_SOURCE_COLUMN_DROP = "allowSourceColumnDrop"
+  val ALLOW_SOURCE_COLUMN_RENAME = "allowSourceColumnRename"
+  val ALLOW_SOURCE_COLUMN_TYPE_CHANGE = "allowSourceColumnTypeChange"
+
   /**
    * An option to control if delta will write partition columns to data files
    */
   val WRITE_PARTITION_COLUMNS = "writePartitionColumns"
 
   val validOptionKeys : Set[String] = Set(
+    IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
     REPLACE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,

@@ -15,9 +15,9 @@
  */
 package io.delta.kernel.types
 
-import org.scalatest.funsuite.AnyFunSuite
-
 import java.util.Optional
+
+import org.scalatest.funsuite.AnyFunSuite
 
 class CollationIdentifierSuite extends AnyFunSuite {
   val PROVIDER_SPARK = "SPARK"
@@ -29,18 +29,14 @@ class CollationIdentifierSuite extends AnyFunSuite {
     Seq(
       (
         s"$PROVIDER_SPARK.$DEFAULT_COLLATION_NAME",
-        DEFAULT_COLLATION_IDENTIFIER
-      ),
+        DEFAULT_COLLATION_IDENTIFIER),
       (
         s"$PROVIDER_ICU.sr_Cyrl_SRB",
-        CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB")
-      ),
+        CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB")),
       (
         s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1",
-        CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1")
-      )
-    ).foreach {
-      case(stringIdentifier, collationIdentifier) =>
+        CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1"))).foreach {
+      case (stringIdentifier, collationIdentifier) =>
         assert(CollationIdentifier.fromString(stringIdentifier).equals(collationIdentifier))
     }
   }
@@ -48,8 +44,7 @@ class CollationIdentifierSuite extends AnyFunSuite {
   test("check fromString with invalid string") {
     Seq(
       PROVIDER_SPARK,
-      s"${PROVIDER_SPARK}_sr_Cyrl_SRB"
-    ).foreach {
+      s"${PROVIDER_SPARK}_sr_Cyrl_SRB").foreach {
       stringIdentifier =>
         val e = intercept[IllegalArgumentException] {
           val collationIdentifier = CollationIdentifier.fromString(stringIdentifier)
@@ -62,18 +57,14 @@ class CollationIdentifierSuite extends AnyFunSuite {
     Seq(
       (
         DEFAULT_COLLATION_IDENTIFIER,
-        s"$PROVIDER_SPARK.$DEFAULT_COLLATION_NAME"
-      ),
+        s"$PROVIDER_SPARK.$DEFAULT_COLLATION_NAME"),
       (
         CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB"),
-        s"$PROVIDER_ICU.SR_CYRL_SRB"
-      ),
+        s"$PROVIDER_ICU.SR_CYRL_SRB"),
       (
         CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1"),
-        s"$PROVIDER_ICU.SR_CYRL_SRB"
-      )
-    ).foreach {
-      case(collationIdentifier, toStringWithoutVersion) =>
+        s"$PROVIDER_ICU.SR_CYRL_SRB")).foreach {
+      case (collationIdentifier, toStringWithoutVersion) =>
         assert(collationIdentifier.toStringWithoutVersion == toStringWithoutVersion)
     }
   }
@@ -82,18 +73,14 @@ class CollationIdentifierSuite extends AnyFunSuite {
     Seq(
       (
         DEFAULT_COLLATION_IDENTIFIER,
-        s"$PROVIDER_SPARK.$DEFAULT_COLLATION_NAME"
-      ),
+        s"$PROVIDER_SPARK.$DEFAULT_COLLATION_NAME"),
       (
         CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB"),
-        s"$PROVIDER_ICU.SR_CYRL_SRB"
-      ),
+        s"$PROVIDER_ICU.SR_CYRL_SRB"),
       (
         CollationIdentifier.fromString(s"$PROVIDER_ICU.sr_Cyrl_SRB.75.1"),
-        s"$PROVIDER_ICU.SR_CYRL_SRB.75.1"
-      )
-    ).foreach {
-      case(collationIdentifier, toString) =>
+        s"$PROVIDER_ICU.SR_CYRL_SRB.75.1")).foreach {
+      case (collationIdentifier, toString) =>
         assert(collationIdentifier.toString == toString)
     }
   }

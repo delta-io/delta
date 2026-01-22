@@ -19,9 +19,10 @@ import io.delta.kernel.defaults.internal.parquet.ParquetSchemaUtils.pruneSchema
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.internal.util.ColumnMapping.PARQUET_FIELD_NESTED_IDS_METADATA_KEY
+import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, MapType, StructType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
-import io.delta.kernel.types.{ArrayType, DoubleType, FieldMetadata, MapType, StructType}
+
 import org.apache.parquet.schema.MessageTypeParser
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -53,7 +54,8 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
 
   // Delta schema corresponding to the above test [[parquetSchema]]
   private val testParquetFileDeltaSchema = new StructType()
-    .add("f0",
+    .add(
+      "f0",
       new StructType()
         .add("f00", INTEGER, fieldMetadata(2))
         .add("f01", LONG, fieldMetadata(3)),
@@ -66,11 +68,9 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
           .add("key_f0", INTEGER, fieldMetadata(10))
           .add("key_f1", INTEGER, fieldMetadata(11)),
         INTEGER,
-        false
-      ),
+        false),
       fieldMetadata(7))
     .add("f3", DoubleType.DOUBLE, fieldMetadata(13))
-
 
   test("id mapping mode - delta reads all columns in the parquet file") {
     val prunedParquetSchema = pruneSchema(testParquetFileSchema, testParquetFileDeltaSchema)
@@ -84,8 +84,7 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         "f0",
         new StructType()
           .add("f00", INTEGER, fieldMetadata(2)),
-        fieldMetadata(1)
-      )
+        fieldMetadata(1))
 
     val expectedParquetSchema = MessageTypeParser.parseMessageType(
       """message fileSchema {
@@ -112,8 +111,7 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         new StructType()
           .add("f00", INTEGER, fieldMetadata(2))
           .add("f02", INTEGER, fieldMetadata(15)),
-        fieldMetadata(1)
-      )
+        fieldMetadata(1))
       .add("f4", INTEGER, fieldMetadata(14))
 
     // pruned parquet file schema shouldn't have the column "f4"
@@ -165,15 +163,14 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
 
   test("id mapping mode - field id matches but not the column name") {
     val readDeltaSchema = new StructType()
-       // physical name in the file is f3, but the same field id
+      // physical name in the file is f3, but the same field id
       .add("f3_new", DoubleType.DOUBLE, fieldMetadata(13))
       .add(
         "f0",
         new StructType()
           // physical name in the file is f00, but the same field id
           .add("f00_new", INTEGER, fieldMetadata(2)),
-        fieldMetadata(1)
-      )
+        fieldMetadata(1))
 
     val expectedParquetSchema = MessageTypeParser.parseMessageType(
       """message fileSchema {
@@ -213,8 +210,7 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         "f0",
         new StructType()
           .add("f00", INTEGER, fieldMetadata(2)),
-        fieldMetadata(1)
-      )
+        fieldMetadata(1))
 
     val testParquetFileSchema = MessageTypeParser.parseMessageType(
       """message fileSchema {
@@ -240,10 +236,13 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
       "struct with array and map",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(2, ("f00.element", 3)))
-            .add("f01", new MapType(INTEGER, INTEGER, true),
+            .add(
+              "f01",
+              new MapType(INTEGER, INTEGER, true),
               fieldMetadata(4, ("f01.key", 5), ("f01.value", 6))),
           fieldMetadata(1)),
       // Expected parquet schema
@@ -262,23 +261,20 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
           |      }
           |    }
           |  }
-          |}""".stripMargin)
-    ),
+          |}""".stripMargin)),
     (
       "top-level array and map columns",
       // Delta schema - input
       new StructType()
-        .add("f1",
-          new ArrayType(INTEGER, true),
-          fieldMetadata(1, ("f1.element", 2)))
-        .add("f2",
+        .add("f1", new ArrayType(INTEGER, true), fieldMetadata(1, ("f1.element", 2)))
+        .add(
+          "f2",
           new MapType(
             new StructType()
               .add("key_f0", INTEGER, fieldMetadata(6))
               .add("key_f1", INTEGER, fieldMetadata(7)),
             INTEGER,
-            true
-          ),
+            true),
           fieldMetadata(3, ("f2.key", 4), ("f2.value", 5))),
       // Expected parquet schema
       MessageTypeParser.parseMessageType("""message DefaultKernelSchema {
@@ -296,29 +292,27 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         |      optional int32 value = 5;
         |    }
         |  }
-        |}""".stripMargin)
-    ),
+        |}""".stripMargin)),
     (
       "array/map inside array/map",
       // Delta schema - input
       new StructType()
-        .add("f3",
+        .add(
+          "f3",
           new ArrayType(new ArrayType(INTEGER, false), false),
           fieldMetadata(0, ("f3.element", 1), ("f3.element.element", 2)))
-        .add("f4",
+        .add(
+          "f4",
           new MapType(
             new MapType(
               new StructType()
                 .add("key_f0", INTEGER, fieldMetadata(3))
                 .add("key_f1", INTEGER, fieldMetadata(4)),
               INTEGER,
-              false
-            ),
+              false),
             INTEGER,
-            false
-          ),
-          fieldMetadata(5,
-            ("f4.key", 6), ("f4.value", 7), ("f4.key.key", 8), ("f4.key.value", 9))),
+            false),
+          fieldMetadata(5, ("f4.key", 6), ("f4.value", 7), ("f4.key.key", 8), ("f4.key.value", 9))),
       // Expected parquet schema
       MessageTypeParser.parseMessageType("""message DefaultKernelSchema {
         |  optional group f3 (LIST) = 0 {
@@ -344,9 +338,7 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
         |      required int32 value = 7;
         |    }
         |  }
-        |}""".stripMargin)
-    )
-  ).foreach { case (testName, deltaSchema, expectedParquetSchema) =>
+        |}""".stripMargin))).foreach { case (testName, deltaSchema, expectedParquetSchema) =>
     test(s"icebergCompatV2 - nested fields are converted to parquet schema - $testName") {
       val actParquetSchema = ParquetSchemaUtils.toParquetSchema(deltaSchema)
       assert(actParquetSchema === expectedParquetSchema)
@@ -358,96 +350,96 @@ class ParquetSchemaUtilsSuite extends AnyFunSuite with TestUtils {
       "field id validation: no negative field id",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(-1))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(4)),
           fieldMetadata(1)),
       // Expected error message
-      "Field id should be non-negative."
-    ),
+      "Field id should be non-negative."),
     (
       "field id validation: no negative nested field id",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(1, ("f00.element", -1)))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(4)),
           fieldMetadata(0)),
       // Expected error message
-      "Field id should be non-negative."
-    ),
+      "Field id should be non-negative."),
     (
       "field id validation: no duplicate field id",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(1, ("f00.element", 1)))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(4)),
           fieldMetadata(1)),
       // Expected error message
-      "Field id should be unique."
-    ),
+      "Field id should be unique."),
     (
       "field id validation: no duplicate nested field id",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(1, ("f00.element", 2)))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(2)),
           fieldMetadata(1)),
       // Expected error message
-      "Field id should be unique."
-    ),
+      "Field id should be unique."),
     (
       "field id validation: missing field ids",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(4)),
           fieldMetadata(1)),
       // Expected error message
-      "Some of the fields are missing field ids."
-    ),
+      "Some of the fields are missing field ids."),
     (
       "field id validation: missing nested field ids",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(1, ("f00.element", 2)))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(4)), // missing nested id
           fieldMetadata(0)),
       // Expected error message
-      "Some of the fields are missing field ids."
-    ),
+      "Some of the fields are missing field ids."),
     (
       "field id validation: missing field ids but have nested fields",
       // Delta schema - input
       new StructType()
-        .add("f0",
+        .add(
+          "f0",
           new StructType()
             .add("f00", new ArrayType(LONG, false), fieldMetadata(1, ("f00.element", 2)))
             .add("f01", new MapType(INTEGER, INTEGER, true), fieldMetadata(4, ("f01.key", 5)))
         ), // missing field id for f0
       // Expected error message
-      "Some of the fields are missing field ids."
-    )
-  ).foreach { case (testName, deltaSchema, expectedErrorMsg) =>
-    test(testName) {
-      val ex = intercept[IllegalArgumentException] {
-        ParquetSchemaUtils.toParquetSchema(deltaSchema)
+      "Some of the fields are missing field ids.")).foreach {
+    case (testName, deltaSchema, expectedErrorMsg) =>
+      test(testName) {
+        val ex = intercept[IllegalArgumentException] {
+          ParquetSchemaUtils.toParquetSchema(deltaSchema)
+        }
+        assert(ex.getMessage.contains(expectedErrorMsg))
       }
-      assert(ex.getMessage.contains(expectedErrorMsg))
-    }
   }
 
-  private def fieldMetadata(id: Int, nestedFieldIds: (String, Int) *): FieldMetadata = {
+  private def fieldMetadata(id: Int, nestedFieldIds: (String, Int)*): FieldMetadata = {
     val builder = FieldMetadata.builder().putLong(ColumnMapping.PARQUET_FIELD_ID_KEY, id)
 
     val nestedFiledMetadata = FieldMetadata.builder()

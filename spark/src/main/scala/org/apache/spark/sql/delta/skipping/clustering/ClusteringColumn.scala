@@ -40,10 +40,14 @@ object ClusteringColumn {
     val physicalNameParts = logicalNameParts.foldLeft[(DataType, Seq[String])]((schema, Nil)) {
       (partial, namePart) =>
         val (currStructType, currPhysicalNameSeq) = partial
-        val field = currStructType.asInstanceOf[StructType].find(
-          field => resolver(field.name, namePart)) match {
-          case Some(f) => f
-          case None =>
+        val field = currStructType match {
+          case fieldType: StructType =>
+            fieldType.find(field => resolver(field.name, namePart)) match {
+              case Some(f) => f
+              case None =>
+                throw DeltaErrors.columnNotInSchemaException(logicalName, schema)
+            }
+          case _ =>
             throw DeltaErrors.columnNotInSchemaException(logicalName, schema)
         }
         (field.dataType, currPhysicalNameSeq :+ DeltaColumnMapping.getPhysicalName(field))

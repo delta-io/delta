@@ -16,6 +16,7 @@
 
 package io.delta.kernel.utils;
 
+import io.delta.kernel.statistics.DataFileStatistics;
 import java.util.Optional;
 
 /**

@@ -24,34 +24,27 @@ class StringTypeSuite extends AnyFunSuite {
       (
         StringType.STRING,
         StringType.STRING,
-        true
-      ),
+        true),
       (
         StringType.STRING,
         new StringType("sPark.UTF8_bINary"),
-        true
-      ),
+        true),
       (
         StringType.STRING,
         new StringType("SPARK.UTF8_LCASE"),
-        false
-      ),
+        false),
       (
         new StringType("ICU.UNICODE"),
         new StringType("SPARK.UTF8_LCASE"),
-        false
-      ),
+        false),
       (
         new StringType("ICU.UNICODE"),
         new StringType("ICU.UNICODE_CI"),
-        false
-      ),
+        false),
       (
         new StringType("ICU.UNICODE_CI"),
         new StringType("icU.uniCODe_Ci"),
-        true
-      )
-    ).foreach {
+        true)).foreach {
       case (st1, st2, expResult) =>
         assert(st1.equals(st2) == expResult)
     }

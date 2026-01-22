@@ -86,7 +86,8 @@ case class IdentityColumnSpec(
     incrementBy: Option[Long] = None,
     colName: String = "id",
     dataType: DataType = LongType,
-    comment: Option[String] = None)
+    comment: Option[String] = None,
+    nullable: Boolean = true)
   extends ColumnSpec {
 
   override def ddl: String = {
@@ -97,6 +98,7 @@ case class IdentityColumnSpec(
   override def structField(spark: SparkSession): StructField = {
     var col = io.delta.tables.DeltaTable.columnBuilder(spark, colName)
       .dataType(dataType)
+      .nullable(nullable)
     val start = startsWith.getOrElse(IdentityColumn.defaultStart.toLong)
     val step = incrementBy.getOrElse(IdentityColumn.defaultStep.toLong)
     col = generatedAsIdentityType match {

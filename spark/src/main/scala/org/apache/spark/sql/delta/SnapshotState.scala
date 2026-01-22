@@ -19,12 +19,15 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.actions.DomainMetadata
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
+import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogramUtils
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
 import org.apache.spark.sql.{Column, DataFrame}
-import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum}
+import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum, when}
 import org.apache.spark.util.Utils
 
 
@@ -35,6 +38,8 @@ import org.apache.spark.util.Utils
  * @param numOfSetTransactions Number of streams writing to this table.
  * @param numOfFiles The number of files in this table.
  * @param numOfRemoves The number of tombstones in the state.
+ * @param numDeletedRecordsOpt The total number of records deleted with Deletion Vectors.
+ * @param numDeletionVectorsOpt The number of Deletion Vectors present in the table.
  * @param numOfMetadata The number of metadata actions in the state. Should be 1.
  * @param numOfProtocol The number of protocol actions in the state. Should be 1.
  * @param setTransactions The streaming queries writing to this table.
@@ -42,19 +47,24 @@ import org.apache.spark.util.Utils
  * @param protocol The protocol version of the Delta table.
  * @param fileSizeHistogram A Histogram class tracking the file counts and total bytes
  *                          in different size ranges.
+ * @param deletedRecordCountsHistogramOpt A histogram of deletion records counts distribution
+ *                                        for all files.
  */
 case class SnapshotState(
   sizeInBytes: Long,
   numOfSetTransactions: Long,
   numOfFiles: Long,
   numOfRemoves: Long,
+  numDeletedRecordsOpt: Option[Long],
+  numDeletionVectorsOpt: Option[Long],
   numOfMetadata: Long,
   numOfProtocol: Long,
   setTransactions: Seq[SetTransaction],
   domainMetadata: Seq[DomainMetadata],
   metadata: Metadata,
   protocol: Protocol,
-  fileSizeHistogram: Option[FileSizeHistogram] = None
+  fileSizeHistogram: Option[FileSizeHistogram] = None,
+  deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] = None
 )
 
 /**
@@ -65,6 +75,9 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
   // For implicits which re-use Encoder:
   import implicits._
+  /** Whether computedState is already computed or not */
+  @volatile protected var _computedStateTriggered: Boolean = false
+
 
   /** A map to look up transaction version by appId. */
   lazy val transactions: Map[String, Long] = setTransactions.map(t => t.appId -> t.version).toMap
@@ -114,6 +127,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
           throw DeltaErrors.actionNotFoundException("metadata", version)
         }
 
+        _computedStateTriggered = true
         _computedState
       }
     }
@@ -135,6 +149,33 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
    * A Map of alias to aggregations which needs to be done to calculate the `computedState`
    */
   protected def aggregationsToComputeState: Map[String, Column] = {
+    val checksumDVMetricsEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
+    val deletedRecordCountsHistogramEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
+    lazy val persistentDVsOnTableSupported =
+      DeletionVectorUtils.deletionVectorsWritable(this)
+
+    val computeChecksumDVMetrics = checksumDVMetricsEnabled &&
+      persistentDVsOnTableSupported
+    val persistentDVsAggs =
+      if (computeChecksumDVMetrics) {
+        Map(
+          "numDeletedRecordsOpt" -> sum(coalesce(col("add.deletionVector.cardinality"), lit(0L))),
+          "numDeletionVectorsOpt" -> count(col("add.deletionVector")))
+      } else {
+        Map("numDeletedRecordsOpt" -> lit(null), "numDeletionVectorsOpt" -> lit(null))
+      }
+
+    val histogramDVsAggExpr = if (computeChecksumDVMetrics && deletedRecordCountsHistogramEnabled) {
+      DeletedRecordCountsHistogramUtils.histogramAggregate(
+        when(col("add").isNotNull, coalesce(col("add.deletionVector.cardinality"), lit(0L))))
+    } else {
+      lit(null).cast(DeletedRecordCountsHistogram.schema)
+    }
+
+    val histogramDVsAgg = Seq("deletedRecordCountsHistogramOpt" -> histogramDVsAggExpr)
+
     Map(
       // sum may return null for empty data set.
       "sizeInBytes" -> coalesce(sum(col("add.size")), lit(0L)),
@@ -148,7 +189,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
       "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
-    )
+    ) ++ persistentDVsAggs ++ histogramDVsAgg
   }
 
   /**
@@ -167,22 +208,47 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
   protected[delta] def setTransactionsIfKnown: Option[Seq[SetTransaction]] = Some(setTransactions)
   protected[delta] def numOfFilesIfKnown: Option[Long] = Some(numOfFiles)
   protected[delta] def domainMetadatasIfKnown: Option[Seq[DomainMetadata]] = Some(domainMetadata)
+  def numDeletedRecordsOpt: Option[Long] = computedState.numDeletedRecordsOpt
+  def numDeletionVectorsOpt: Option[Long] = computedState.numDeletionVectorsOpt
+  def deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram] =
+    computedState.deletedRecordCountsHistogramOpt
 
-  /** Generate a default SnapshotState of a new table, given the table metadata */
-  protected def initialState(metadata: Metadata): SnapshotState = {
-    val protocol = Protocol.forNewTable(spark, Some(metadata))
+  protected def deletionVectorsReadableAndMetricsEnabled: Boolean = {
+    val checksumDVMetricsEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKSUM_DV_METRICS_ENABLED)
+    val dvsReadable = DeletionVectorUtils.deletionVectorsReadable(snapshotToScan)
+    checksumDVMetricsEnabled && dvsReadable
+  }
+
+  protected def deletionVectorsReadableAndHistogramEnabled: Boolean = {
+    val deletedRecordCountsHistogramEnabled =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)
+    deletionVectorsReadableAndMetricsEnabled && deletedRecordCountsHistogramEnabled
+  }
+
+  /** Generate a default SnapshotState of a new table given the table metadata and the protocol. */
+  protected def initialState(metadata: Metadata, protocol: Protocol): SnapshotState = {
+    val deletedRecordCountsHistogramOpt = if (spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_DELETED_RECORD_COUNTS_HISTOGRAM_ENABLED)) {
+      Some(DeletedRecordCountsHistogramUtils.emptyHistogram)
+    } else None
 
     SnapshotState(
       sizeInBytes = 0L,
       numOfSetTransactions = 0L,
       numOfFiles = 0L,
       numOfRemoves = 0L,
+      // DV metrics are initialized to Some(0) to allow incremental computation. For tables where
+      // DVs are disabled, there are turned to None by the incremental computation.
+      numDeletedRecordsOpt = Some(0),
+      numDeletionVectorsOpt = Some(0),
       numOfMetadata = 1L,
       numOfProtocol = 1L,
       setTransactions = Nil,
       domainMetadata = Nil,
       metadata = metadata,
-      protocol = protocol
+      protocol = protocol,
+      deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt
     )
   }
 }

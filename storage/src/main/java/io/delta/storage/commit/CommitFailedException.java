@@ -41,12 +41,16 @@ public class CommitFailedException extends Exception {
 
   private boolean conflict;
 
-  private String message;
-
   public CommitFailedException(boolean retryable, boolean conflict, String message) {
+    super(message);
     this.retryable = retryable;
     this.conflict = conflict;
-    this.message = message;
+  }
+
+  public CommitFailedException(boolean retryable, boolean conflict, String message, Throwable cause) {
+    super(message, cause);
+    this.retryable = retryable;
+    this.conflict = conflict;
   }
 
   public boolean getRetryable() {
@@ -55,9 +59,5 @@ public class CommitFailedException extends Exception {
 
   public boolean getConflict() {
     return conflict;
-  }
-
-  public String getMessage() {
-    return message;
   }
 }

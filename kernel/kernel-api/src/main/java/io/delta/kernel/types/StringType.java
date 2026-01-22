@@ -24,8 +24,7 @@ import io.delta.kernel.annotation.Evolving;
  */
 @Evolving
 public class StringType extends BasePrimitiveType {
-  public static final StringType STRING =
-      new StringType(CollationIdentifier.fromString("SPARK.UTF8_BINARY"));
+  public static final StringType STRING = new StringType(CollationIdentifier.SPARK_UTF8_BINARY);
 
   private final CollationIdentifier collationIdentifier;
 
@@ -51,6 +50,33 @@ public class StringType extends BasePrimitiveType {
   /** @return StringType's collation identifier */
   public CollationIdentifier getCollationIdentifier() {
     return collationIdentifier;
+  }
+
+  /**
+   * Are the data types same? The metadata, collations or column names could be different.
+   *
+   * @param dataType
+   * @return
+   */
+  public boolean equivalent(DataType dataType) {
+    return dataType instanceof StringType;
+  }
+
+  /**
+   * Checks whether the given {@code dataType} is compatible with this type when writing data.
+   * Collation differences are ignored.
+   *
+   * <p>This method is intended to be used during the write path to validate that an input type
+   * matches the expected schema before data is written.
+   *
+   * <p>It should not be used in other cases, such as the read path.
+   *
+   * @param dataType the input data type being written
+   * @return {@code true} if the input type is compatible with this type.
+   */
+  @Override
+  public boolean isWriteCompatible(DataType dataType) {
+    return dataType instanceof StringType;
   }
 
   @Override

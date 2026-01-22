@@ -22,7 +22,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.IntegerLiteral
 import org.apache.spark.sql.catalyst.plans.logical.{LocalLimit, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
-import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelation}
+import org.apache.spark.sql.execution.datasources.{HadoopFsRelation, LogicalRelationWithTable}
 
 // A spark rule that applies limit pushdown to DeltaSharingFileIndex, when the config is enabled.
 // To allow only fetching needed files from delta sharing server.
@@ -38,10 +38,8 @@ object DeltaFormatSharingLimitPushDown extends Rule[LogicalPlan] {
     p transform {
       case localLimit @ LocalLimit(
             literalExpr @ IntegerLiteral(limit),
-            l @ LogicalRelation(
+            l @ LogicalRelationWithTable(
               r @ HadoopFsRelation(remoteIndex: DeltaSharingFileIndex, _, _, _, _, _),
-              _,
-              _,
               _
             )
           ) if (ConfUtils.limitPushdownEnabled(p.conf) && remoteIndex.limitHint.isEmpty) =>

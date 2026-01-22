@@ -46,9 +46,9 @@ case class ShowDeltaTableColumnsCommand(child: LogicalPlan)
   override def run(sparkSession: SparkSession): Seq[Row] = {
     // Return the schema from snapshot if it is an Delta table. Or raise
     // `DeltaErrors.notADeltaTableException` if it is a non-Delta table.
-    val deltaLog = getDeltaTable(child, "SHOW COLUMNS").deltaLog
-    recordDeltaOperation(deltaLog, "delta.ddl.showColumns") {
-      deltaLog.update().schema.fieldNames.map { x => Row(x) }.toSeq
+    val deltaTable = getDeltaTable(child, "SHOW COLUMNS")
+    recordDeltaOperation(deltaTable.deltaLog, "delta.ddl.showColumns") {
+      deltaTable.update().schema.fieldNames.map { x => Row(x) }.toSeq
     }
   }
 }

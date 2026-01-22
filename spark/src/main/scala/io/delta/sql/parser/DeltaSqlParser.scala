@@ -58,8 +58,7 @@ import org.apache.spark.sql.{AnalysisException, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.{FunctionIdentifier, TableIdentifier}
 import org.apache.spark.sql.catalyst.analysis._
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
-import org.apache.spark.sql.catalyst.parser.{CompoundBody, ParseErrorListener, ParseException, ParserInterface, ParserInterfaceShims}
+import org.apache.spark.sql.catalyst.parser.{DeltaParseException, ParseErrorListener, ParseException, ParseExceptionShims, ParserInterface}
 import org.apache.spark.sql.catalyst.parser.ParserUtils.{checkDuplicateClauses, string, withOrigin}
 import org.apache.spark.sql.catalyst.plans.logical.{AlterColumnSyncIdentity, AlterTableAddConstraint, AlterTableDropConstraint, AlterTableDropFeature, CloneTableStatement, LogicalPlan, RestoreTableStatement}
 import org.apache.spark.sql.catalyst.trees.Origin
@@ -72,8 +71,8 @@ import org.apache.spark.sql.types._
  * A SQL parser that tries to parse Delta commands. If failing to parse the SQL text, it will
  * forward the call to `delegate`.
  */
-class DeltaSqlParser(val delegateSpark: ParserInterface) extends ParserInterfaceShims {
-  private val delegate = ParserInterfaceShims(delegateSpark)
+class DeltaSqlParser(val delegate: ParserInterface)
+    extends ParserInterface {
   private val builder = new DeltaSqlAstBuilder
   private val substitution = new VariableSubstitution
 
@@ -133,7 +132,7 @@ class DeltaSqlParser(val delegateSpark: ParserInterface) extends ParserInterface
         throw e.withCommand(command)
       case e: AnalysisException =>
         val position = Origin(e.line, e.startPosition)
-        throw new ParseException(
+        throw ParseExceptionShims.createParseException(
           command = Option(command),
           start = position,
           stop = position,
@@ -157,8 +156,7 @@ class DeltaSqlParser(val delegateSpark: ParserInterface) extends ParserInterface
 
   override def parseDataType(sqlText: String): DataType = delegate.parseDataType(sqlText)
 
-  override def parseScript(sqlScriptText: String): CompoundBody =
-    delegate.parseScript(sqlScriptText)
+  override def parseRoutineParam(sqlText: String): StructType = delegate.parseRoutineParam(sqlText)
 }
 
 /**
@@ -219,7 +217,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitPropertyKey(key: PropertyKeyContext): String = {
     if (key.stringLit() != null) {
-      string(visitStringLit(key.stringLit()))
+      visitStringLit(key.stringLit())
     } else {
       key.getText
     }
@@ -235,7 +233,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     } else if (value.identifier != null) {
       value.identifier.getText
     } else if (value.value != null) {
-      string(visitStringLit(value.value))
+      visitStringLit(value.value)
     } else if (value.booleanValue != null) {
       value.getText.toLowerCase(Locale.ROOT)
     } else {
@@ -243,16 +241,16 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     }
   }
 
-  override def visitStringLit(ctx: StringLitContext): Token = {
-    if (ctx != null) {
-      if (ctx.STRING != null) {
-        ctx.STRING.getSymbol
+  override def visitStringLit(ctx: StringLitContext): String = {
+    if (ctx == null) return null
+    ctx.singleStringLit().asScala.map { singleCtx =>
+      val token = if (singleCtx.STRING != null) {
+        singleCtx.STRING.getSymbol
       } else {
-        ctx.DOUBLEQUOTED_STRING.getSymbol
+        singleCtx.DOUBLEQUOTED_STRING.getSymbol
       }
-    } else {
-      null
-    }
+      string(token)
+    }.mkString
   }
 
   /**
@@ -313,23 +311,48 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
       isReplace,
       isCreate,
       tablePropertyOverrides,
-      Option(ctx.location).map(s => string(visitStringLit(s))))
+      Option(ctx.location).map(visitStringLit))
   }
 
   /**
    * Create a [[VacuumTableCommand]] logical plan. Example SQL:
    * {{{
-   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`) [RETAIN number HOURS] [DRY RUN];
+   *   VACUUM ('/path/to/dir' | delta.`/path/to/dir`)
+   *   LITE|FULL
+   *   [RETAIN number HOURS] [DRY RUN];
    * }}}
    */
   override def visitVacuumTable(ctx: VacuumTableContext): AnyRef = withOrigin(ctx) {
+    val vacuumModifiersCtx = ctx.vacuumModifiers()
+    withOrigin(vacuumModifiersCtx) {
+      checkDuplicateClauses(vacuumModifiersCtx.vacuumType(), "LITE/FULL", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.inventory(), "INVENTORY", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.retain(), "RETAIN", vacuumModifiersCtx)
+      checkDuplicateClauses(vacuumModifiersCtx.dryRun(), "DRY RUN", vacuumModifiersCtx)
+      if (!vacuumModifiersCtx.inventory().isEmpty &&
+        !vacuumModifiersCtx.vacuumType().isEmpty &&
+        vacuumModifiersCtx.vacuumType().asScala.head.LITE != null) {
+        operationNotAllowed("Inventory option is not compatible with LITE", vacuumModifiersCtx)
+      }
+    }
     VacuumTableCommand(
-      path = Option(ctx.path).map(string),
+      path = Option(ctx.path).map(visitStringLit),
       table = Option(ctx.table).map(visitTableIdentifier),
-      inventoryTable = Option(ctx.inventoryTable).map(visitTableIdentifier),
-      inventoryQuery = Option(ctx.inventoryQuery).map(extractRawText),
-      horizonHours = Option(ctx.number).map(_.getText.toDouble),
-      dryRun = ctx.RUN != null)
+      inventoryTable = ctx.vacuumModifiers().inventory().asScala.headOption.collect {
+        case i if i.inventoryTable != null => visitTableIdentifier(i.inventoryTable)
+      },
+      inventoryQuery = ctx.vacuumModifiers().inventory().asScala.headOption.collect {
+        case i if i.inventoryQuery != null => extractRawText(i.inventoryQuery)
+      },
+      horizonHours =
+        ctx.vacuumModifiers().retain().asScala.headOption.map(_.number.getText.toDouble),
+      dryRun =
+        ctx.vacuumModifiers().dryRun().asScala.headOption.exists(_.RUN != null),
+      vacuumType = ctx.vacuumModifiers().vacuumType().asScala.headOption.map {
+        t => if (t.LITE != null) "LITE" else "FULL"
+      },
+      options = Map.empty
+    )
   }
 
   /** Provides a list of unresolved attributes for multi dimensional clustering. */
@@ -366,9 +389,10 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     }
     val interleaveBy = Option(ctx.zorderSpec).map(visitZorderSpec).getOrElse(Seq.empty)
     OptimizeTableCommand(
-      Option(ctx.path).map(string),
+      Option(ctx.path).map(visitStringLit),
       Option(ctx.table).map(visitTableIdentifier),
-      Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq)(interleaveBy)
+      Option(ctx.partitionPredicate).map(extractRawText(_)).toSeq,
+      DeltaOptimizeContext(isFull = ctx.FULL != null))(interleaveBy)
   }
 
   /**
@@ -413,7 +437,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitDescribeDeltaDetail(
       ctx: DescribeDeltaDetailContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaDetailCommand(
-      Option(ctx.path).map(string),
+      Option(ctx.path).map(visitStringLit),
       Option(ctx.table).map(visitTableIdentifier),
       Map.empty)
   }
@@ -421,16 +445,15 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
   override def visitDescribeDeltaHistory(
       ctx: DescribeDeltaHistoryContext): LogicalPlan = withOrigin(ctx) {
     DescribeDeltaHistory(
-      Option(ctx.path).map(string),
+      Option(ctx.path).map(visitStringLit),
       Option(ctx.table).map(visitTableIdentifier),
       Option(ctx.limit).map(_.getText.toInt))
   }
 
   override def visitGenerate(ctx: GenerateContext): LogicalPlan = withOrigin(ctx) {
     DeltaGenerateCommand(
-      modeName = ctx.modeName.getText,
-      tableId = visitTableIdentifier(ctx.table),
-      Map.empty)
+      UnresolvedTable(visitTableIdentifier(ctx.table).nameParts, DeltaGenerateCommand.COMMAND_NAME),
+      modeName = ctx.modeName.getText)
   }
 
   override def visitConvert(ctx: ConvertContext): LogicalPlan = withOrigin(ctx) {
@@ -579,7 +602,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
    */
   override def visitFeatureNameValue(featureNameValue: FeatureNameValueContext): String = {
     if (featureNameValue.stringLit() != null) {
-      string(visitStringLit(featureNameValue.stringLit()))
+      visitStringLit(featureNameValue.stringLit())
     } else {
       featureNameValue.getText
     }

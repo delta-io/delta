@@ -70,6 +70,14 @@ case class DeltaTimeTravelSpec(
     }
     DateTimeUtils.toJavaTimestamp(castResult.asInstanceOf[java.lang.Long])
   }
+
+  /**
+   * Compute the timestamp to use for time travelling the relation from the given expression for
+   * the given time zone if this spec has a timestamp defined.
+   */
+  def getTimestampOpt(conf: SQLConf): Option[Timestamp] = {
+    timestamp.map(_ => getTimestamp(conf))
+  }
 }
 
 object DeltaTimeTravelSpec {

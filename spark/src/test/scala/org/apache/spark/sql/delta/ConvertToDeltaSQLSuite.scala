@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
+import org.apache.spark.sql.execution.command.ExecutedCommandExec
 import org.apache.spark.sql.functions.{col, from_json}
 
 trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
@@ -58,6 +59,23 @@ trait ConvertToDeltaSQLSuiteBase extends ConvertToDeltaSuiteBaseCommons
     }
   }
 
+  for (numFiles <- Seq(1, 7)) {
+    test(s"numConvertedFiles metric ($numFiles files)") {
+      val testTableName = "test_table"
+      withTable(testTableName) {
+        spark.range(end = numFiles).toDF("part").withColumn("data", col("part"))
+          .write.partitionBy("part").mode("overwrite").format("parquet").saveAsTable(testTableName)
+
+        val plans = DeltaTestUtils.withPhysicalPlansCaptured(spark) {
+          convertToDelta(testTableName, Some("part long"))
+        }
+
+        // Validate that the command node has the correct metrics.
+        val commandNode = plans.collect { case exe: ExecutedCommandExec => exe.cmd }.head
+        assert(commandNode.metrics("numConvertedFiles").value === numFiles)
+      }
+    }
+  }
 }
 
 class ConvertToDeltaSQLSuite extends ConvertToDeltaSQLSuiteBase

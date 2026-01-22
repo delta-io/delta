@@ -1663,6 +1663,24 @@ class GoldenTables extends QueryTest with SharedSparkSession {
       Row(0, 0) :: Nil,
       schema)
   }
+
+  generateGoldenTable("commit-info-containing-arbitrary-operationParams-types") { tablePath =>
+    spark.sql(
+      f"""
+         |CREATE TABLE delta.`$tablePath`
+         |USING DELTA
+         |PARTITIONED BY (month)
+         |TBLPROPERTIES (delta.enableChangeDataFeed = true)
+         |AS
+         |SELECT 1 AS id, 1 AS month""".stripMargin)
+
+    // Add some data
+    spark.sql("INSERT INTO delta.`%s` VALUES (2, 2)".format(tablePath))
+
+    // Run optimize that generates a commitInfo with arbitrary value types
+    // operationParameters
+    spark.sql("OPTIMIZE delta.`%s` ZORDER BY id".format(tablePath))
+  }
 }
 
 case class TestStruct(f1: String, f2: Long)

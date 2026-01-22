@@ -19,10 +19,10 @@ package org.apache.spark.sql.delta.util
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 
 import org.apache.spark.SparkContext
-import org.apache.spark.internal.{LoggingShims, MDC}
+import org.apache.spark.internal.{Logging, MDC}
 import org.apache.spark.sql.SparkSession
 
-trait DeltaProgressReporter extends LoggingShims {
+trait DeltaProgressReporter extends Logging {
   /**
    * Report a log to indicate some command is running.
    */
@@ -31,7 +31,7 @@ trait DeltaProgressReporter extends LoggingShims {
       defaultMessage: String,
       data: Map[String, Any] = Map.empty)(body: => T): T = {
     logInfo(log"${MDC(DeltaLogKeys.STATUS, statusCode)}: " +
-      log"${MDC(DeltaLogKeys.MESSAGE, defaultMessage)}")
+      log"${MDC(DeltaLogKeys.STATUS_MESSAGE, defaultMessage)}")
     val t = withJobDescription(defaultMessage)(body)
     logInfo(log"${MDC(DeltaLogKeys.STATUS, statusCode)}: Done")
     t

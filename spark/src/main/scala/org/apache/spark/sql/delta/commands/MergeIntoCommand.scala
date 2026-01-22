@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.commands
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.FileAction
 import org.apache.spark.sql.delta.commands.merge.{ClassicMergeExecutor, InsertOnlyMergeExecutor, MergeIntoMaterializeSourceReason}
 import org.apache.spark.sql.delta.files._
@@ -208,19 +209,23 @@ case class MergeIntoCommand(
     checkNonDeterministicSource(spark)
 
     // Metrics should be recorded before commit (where they are written to delta logs).
+    setOperationNumSourceRowsMetric()
     metrics("executionTimeMs").set(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime))
     deltaTxn.registerSQLMetrics(spark, metrics)
 
     val finalActions = createSetTransaction(spark, targetDeltaLog).toSeq ++ mergeActions
     val numRecordsStats = NumRecordsStats.fromActions(finalActions)
+    val operation = DeltaOperations.Merge(
+      predicate = Option(condition),
+      matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
+      notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
+      notMatchedBySourcePredicates =
+        notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))
+    )
+    validateNumRecords(finalActions, numRecordsStats, operation, deltaTxn.deltaLog)
     val commitVersion = deltaTxn.commitIfNeeded(
       actions = finalActions,
-      op = DeltaOperations.Merge(
-        predicate = Option(condition),
-        matchedPredicates = matchedClauses.map(DeltaOperations.MergePredicate(_)),
-        notMatchedPredicates = notMatchedClauses.map(DeltaOperations.MergePredicate(_)),
-        notMatchedBySourcePredicates =
-          notMatchedBySourceClauses.map(DeltaOperations.MergePredicate(_))),
+      op = operation,
       tags = RowTracking.addPreservedRowTrackingTagIfNotSet(deltaTxn.snapshot))
     val stats = collectMergeStats(deltaTxn, materializeSourceReason, commitVersion, numRecordsStats)
     recordDeltaEvent(targetDeltaLog, "delta.dml.merge.stats", data = stats)

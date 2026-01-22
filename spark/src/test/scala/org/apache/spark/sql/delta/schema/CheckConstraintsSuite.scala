@@ -18,18 +18,19 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{ArrayType, IntegerType, MapType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, BooleanType, IntegerType, MapType, MetadataBuilder, StringType, StructField, StructType}
 
 class CheckConstraintsSuite extends QueryTest
     with SharedSparkSession
@@ -71,6 +72,91 @@ class CheckConstraintsSuite extends QueryTest
           |id <
           |----^^^
           |""".stripMargin)
+    }
+  }
+
+  test("Checking incorrect constraints added through table property in CREATE TABLE errors out") {
+    val tableName = "test_tbl"
+    withTable(tableName) {
+      sql(
+        s"""
+           |CREATE TABLE $tableName (
+           |id INT,
+           |event_date DATE
+           |) USING DELTA
+           |TBLPROPERTIES('delta.constraints.ch' = 'event_date < 2025-06-12');""".stripMargin)
+
+      val e = intercept[AnalysisException] {
+        sql(s"INSERT INTO $tableName VALUES(1, '2025-06-11')")
+      }
+      errorContains(e.getMessage,
+        "Cannot resolve \"(event_date < ((2025 - 6) - 12))\" due to data type mismatch")
+    }
+  }
+
+  test("CREATE TABLE with check constraint referencing non-existent column fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_invalid_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.invalid' = 'non_existent_column > 0')
+                 |""".stripMargin)
+          },
+          "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+          parameters = Map("colName" -> "`non_existent_column`")
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with non-boolean check constraint fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_non_boolean_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.nonbool' = 'id + 1')
+                 |""".stripMargin)
+          },
+          "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+          parameters = Map(
+            "name" -> "nonbool",
+            "expr" -> "(id + 1)"
+          )
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with valid check constraint succeeds") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_valid_constraint"
+      withTable(tableName) {
+        sql(
+          s"""
+             |CREATE TABLE $tableName (
+             |id INT,
+             |value STRING
+             |) USING DELTA
+             |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
+             |""".stripMargin)
+      }
     }
   }
 
@@ -299,18 +385,22 @@ class CheckConstraintsSuite extends QueryTest
 
   for (expression <- Seq("year(current_date())", "unix_timestamp()"))
   testQuietly(s"constraint with analyzer-evaluated expressions. Expression: $expression") {
-    withTestTable { table =>
-      // We use current_timestamp()/current_date() as the most convenient
-      // analyzer-evaluated expressions - of course in a realistic use case
-      // it'd probably not be right to add a constraint on a
-      // nondeterministic expression.
-      sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
-        s"CHECK (num < $expression)")
-      val e = intercept[InvariantViolationException] {
-        sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
+    // Explicitly block constraint validation since both functions are nondeterministic.
+    val disabled = ValidateCheckConstraintsMode.OFF.toString
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key -> disabled) {
+      withTestTable { table =>
+        // We use current_timestamp()/current_date() as the most convenient
+        // analyzer-evaluated expressions - of course in a realistic use case
+        // it'd probably not be right to add a constraint on a
+        // nondeterministic expression.
+        sql(s"ALTER TABLE $table ADD CONSTRAINT maxWithAnalyzerEval " +
+          s"CHECK (num < $expression)")
+        val e = intercept[InvariantViolationException] {
+          sql(s"INSERT INTO $table VALUES (${Int.MaxValue}, 'data')")
+        }
+        errorContains(e.getMessage,
+          s"maxwithanalyzereval (num < $expression) violated by row")
       }
-      errorContains(e.getMessage,
-        s"maxwithanalyzereval (num < $expression) violated by row")
     }
   }
 
@@ -503,4 +593,70 @@ class CheckConstraintsSuite extends QueryTest
       }
     }
   }
+
+  for (expression <- Seq("startsWith", "endsWith", "contains")) {
+    test(s"Creating constraints with expressions in the allowList should work for: $expression") {
+      withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+        val testTable = "tbl"
+        withTable(testTable) {
+          sql(s"CREATE TABLE $testTable (id STRING, value BOOLEAN) USING DELTA " +
+            "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+          sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 CHECK (value == $expression(id, 'A'))")
+          sql(s"INSERT INTO $testTable VALUES ('ABA', true), ('DEF', false)")
+        }
+      }
+    }
+  }
+
+  test("Creating constraints with expressions not in the allowList should throw an error") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      ValidateCheckConstraintsMode.ASSERT.toString) {
+      val testTable = "tbl"
+      withTable(testTable) {
+        sql(s"CREATE TABLE $testTable (id INT) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 " +
+              s"CHECK (id > (SELECT max(id) FROM $testTable))")
+          },
+          "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT",
+          parameters = Map("expression" -> "scalarsubquery()")
+        )
+      }
+    }
+  }
+
+  for (isEnabled <- Seq(ValidateCheckConstraintsMode.OFF, ValidateCheckConstraintsMode.ASSERT)) {
+    test(s"Reject CHECK constraints with external UDF calls when validation is ${isEnabled}") {
+      withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key -> isEnabled.toString) {
+        val testTable = "check_external_udf_test"
+        withTable(testTable) {
+          withUserDefinedFunction("external_udf" -> true) {
+            sql(s"CREATE TABLE $testTable (id INT, value INT) USING DELTA " +
+              "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+
+            spark.udf.register("external_udf", (x: Int) => x > 0)
+
+            val sqlText = s"ALTER TABLE $testTable ADD CONSTRAINT check_external_udf " +
+              "CHECK (external_udf(value))"
+
+            if (isEnabled == ValidateCheckConstraintsMode.ASSERT) {
+              checkError(
+                exception = intercept[AnalysisException] {
+                  sql(sqlText)
+                },
+                "DELTA_UDF_IN_CHECK_CONSTRAINT",
+                parameters = Map("expr" -> "external_udf(knownnotnull(value))")
+              )
+            } else {
+              sql(sqlText)
+            }
+          }
+        }
+      }
+    }
+  }
+
 }

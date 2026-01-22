@@ -22,18 +22,20 @@ import static java.util.stream.Collectors.toMap;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.exceptions.KernelException;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.deletionvectors.Base85Codec;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.LongType;
 import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.IntStream;
 
 /** Information about a deletion vector attached to a file action. */
@@ -173,6 +175,34 @@ public class DeletionVectorDescriptor {
     }
   }
 
+  /**
+   * Serialize this DV descriptor to a base64 encoded string.
+   *
+   * <p>Format is compatible with Spark's DeletionVectorDescriptor.serializeToBase64().
+   */
+  public String serializeToBase64() {
+    try (ByteArrayOutputStream bs = new ByteArrayOutputStream();
+        DataOutputStream ds = new DataOutputStream(bs)) {
+      ds.writeLong(cardinality);
+      ds.writeInt(sizeInBytes);
+
+      byte[] storageTypeBytes = storageType.getBytes();
+      checkArgument(storageTypeBytes.length == 1, "Storage type must be 1 byte: " + storageType);
+      ds.writeByte(storageTypeBytes[0]);
+
+      // Inline DVs (storageType="i") have no offset
+      if (!storageType.equals(INLINE_DV_MARKER)) {
+        checkArgument(offset.isPresent(), "Non-inline DV must have offset");
+        ds.writeInt(offset.get());
+      }
+
+      ds.writeUTF(pathOrInlineDv);
+      return Base64.getEncoder().encodeToString(bs.toByteArray());
+    } catch (IOException e) {
+      throw new KernelException("Failed to serialize DeletionVectorDescriptor", e);
+    }
+  }
+
   public boolean isInline() {
     return storageType == INLINE_DV_MARKER;
   }
@@ -235,6 +265,25 @@ public class DeletionVectorDescriptor {
         "DeletionVectorDescriptor(storageType=%s, pathOrInlineDv=%s, offset=%s, "
             + "sizeInBytes=%s, cardinality=%s)",
         storageType, pathOrInlineDv, offset, sizeInBytes, cardinality);
+  }
+
+  /** @return Row representation of this deletion vector descriptor */
+  public Row toRow() {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("storageType"), storageType);
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("pathOrInlineDv"), pathOrInlineDv);
+
+    // Only add offset if it's present
+    if (offset.isPresent()) {
+      fieldMap.put(COL_NAME_TO_ORDINAL.get("offset"), offset.get());
+    }
+    // If offset is not present, the field remains null in the map
+
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("sizeInBytes"), sizeInBytes);
+    fieldMap.put(COL_NAME_TO_ORDINAL.get("cardinality"), cardinality);
+
+    return new GenericRow(READ_SCHEMA, fieldMap);
   }
 
   @Override

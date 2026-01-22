@@ -19,26 +19,30 @@ package org.apache.spark.sql.delta.sources
 import java.util.concurrent.ConcurrentHashMap
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.Relocated._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaOperations.StreamingUpdate
 import org.apache.spark.sql.delta.actions.{FileAction, Metadata, Protocol, SetTransaction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{ImplicitMetadataOperation, SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.hadoop.fs.Path
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.catalyst.expressions.Alias
+import org.apache.spark.sql.catalyst.expressions.{Alias, Expression}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
-import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
+import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.{QueryExecution, SQLExecution}
 import org.apache.spark.sql.execution.metric.{SQLMetric, SQLMetrics}
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.execution.streaming.{IncrementalExecution, Sink, StreamExecution}
+import org.apache.spark.sql.execution.streaming.Sink
 import org.apache.spark.sql.streaming.OutputMode
-import org.apache.spark.sql.types.{DataType, NullType, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, NullType, StructType}
 import org.apache.spark.util.Utils
 
 /**
@@ -56,7 +60,8 @@ case class DeltaSink(
     with UpdateExpressionsSupport
     with DeltaLogging {
 
-  private val deltaLog = DeltaLog.forTable(sqlContext.sparkSession, path)
+  private lazy val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
+    sqlContext.sparkSession, catalogTable, path)
 
   private val sqlConf = sqlContext.sparkSession.sessionState.conf
 
@@ -93,8 +98,8 @@ case class DeltaSink(
       logInfo(
         log"Committed transaction, batchId=${MDC(DeltaLogKeys.BATCH_ID, batchId)}, " +
         log"duration=${MDC(DeltaLogKeys.DURATION, durationMs)} ms, " +
-        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, " +
-        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size)} files.")
+        log"added ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size.toLong)} files, " +
+        log"removed ${MDC(DeltaLogKeys.NUM_FILES2, deletedFiles.size.toLong)} files.")
       val executionId = sc.getLocalProperty(SQLExecution.EXECUTION_ID_KEY)
       SQLMetrics.postDriverMetricUpdates(sc, executionId, metrics.values.toSeq)
     }
@@ -153,8 +158,8 @@ case class DeltaSink(
     val totalSize = newFiles.map(_.getFileSize).sum
     val totalLogicalRecords = newFiles.map(_.numLogicalRecords.getOrElse(0L)).sum
     logInfo(
-      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size)} files, with total size " +
-      log"${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
+      log"Wrote ${MDC(DeltaLogKeys.NUM_FILES, newFiles.size.toLong)} files, " +
+        log"with total size ${MDC(DeltaLogKeys.NUM_BYTES, totalSize)}, " +
       log"${MDC(DeltaLogKeys.NUM_RECORDS, totalLogicalRecords)} logical records, " +
       log"duration=${MDC(DeltaLogKeys.DURATION, writeFilesTimeMs)} ms.")
 
@@ -176,11 +181,18 @@ case class DeltaSink(
 
     if (canOverwriteSchema) return dataSchema
 
+    val typeWideningMode = if (canMergeSchema && TypeWidening.isEnabled(protocol, metadata)) {
+        TypeWideningMode.TypeEvolution(
+          uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(metadata),
+          allowAutomaticWidening = AllowAutomaticWideningMode.fromConf(sqlConf))
+      } else {
+        TypeWideningMode.NoTypeWidening
+      }
     SchemaMergingUtils.mergeSchemas(
       metadata.schema,
       dataSchema,
       allowImplicitConversions = true,
-      allowTypeWidening = canMergeSchema && TypeWidening.isEnabled(protocol, metadata)
+      typeWideningMode = typeWideningMode
     )
   }
 
@@ -193,16 +205,51 @@ case class DeltaSink(
     val targetTypes =
       CaseInsensitiveMap[DataType](targetSchema.map(field => field.name -> field.dataType).toMap)
 
-    val needCast = data.schema.exists { field =>
-      !DataTypeUtils.equalsIgnoreCaseAndNullability(field.dataType, targetTypes(field.name))
-    }
+    val needCast =
+      if (sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY)) {
+        def hasTypeMismatch(from: DataType, to: DataType): Boolean = (from, to) match {
+          case (from: StructType, to: StructType) =>
+            val otherFields = SchemaMergingUtils.toFieldMap(to.fields, caseSensitive = false)
+            from.exists { field =>
+              otherFields.get(field.name) match {
+                case Some(other) => hasTypeMismatch(field.dataType, other.dataType)
+                // Ignore extra fields.
+                case None => false
+              }
+            }
+          case (from: MapType, to: MapType) =>
+            hasTypeMismatch(from.keyType, to.keyType) ||
+              hasTypeMismatch(from.valueType, to.valueType)
+          case (from: ArrayType, to: ArrayType) =>
+            hasTypeMismatch(from.elementType, to.elementType)
+          case (from, to) => from != to
+        }
+
+        hasTypeMismatch(data.schema, targetSchema)
+      } else {
+        // This will also return true if there are missing/extra nested fields or if nested fields
+        // are in a different order than in the table schema. We don't actually need implicit
+        // casting in these cases since Parquet will automatically fill missing fields with nulls
+        // and resolves fields by name.
+        data.schema.exists { field =>
+          !DataTypeUtils.equalsIgnoreCaseAndNullability(field.dataType, targetTypes(field.name))
+        }
+      }
+
     if (!needCast) return data
+
+    def exprForColumn(df: DataFrame, columnName: String): Expression =
+      if (sqlConf.getConf(DeltaSQLConf.DELTA_STREAMING_SINK_IMPLICIT_CAST_ESCAPE_COLUMN_NAMES)) {
+        df.col(QuotingUtils.quoteIdentifier(columnName)).expr
+      } else {
+        df.col(columnName).expr
+      }
 
     val castColumns = data.columns.map { columnName =>
       val castExpr = castIfNeeded(
-        fromExpression = data.col(columnName).expr,
+        fromExpression = exprForColumn(data, columnName),
         dataType = targetTypes(columnName),
-        allowStructEvolution = canMergeSchema,
+        castingBehavior = CastByName(allowMissingStructField = true),
         columnName = columnName
       )
       Column(Alias(castExpr, columnName)())

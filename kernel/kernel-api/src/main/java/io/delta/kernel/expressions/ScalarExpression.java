@@ -31,18 +31,24 @@ import java.util.stream.Collectors;
  * type scalar expressions are listed below.
  *
  * <ol>
- *   <li>Name: <code>element_at</code>
+ *   <li>Name: <code>ELEMENT_AT</code>
  *       <ul>
- *         <li>Semantic: <code>element_at(map, key)</code>. Return the value of given <i>key</i>
+ *         <li>Semantic: <code>ELEMENT_AT(map, key)</code>. Return the value of given <i>key</i>
  *             from the <i>map</i> type input. Returns <i>null</i> if the given <i>key</i> is not in
- *             the <i>map</i> Ex: `element_at(map(1, 'a', 2, 'b'), 2)` returns 'b'
+ *             the <i>map</i> Ex: `ELEMENT_AT(map(1, 'a', 2, 'b'), 2)` returns 'b'.
  *         <li>Since version: 3.0.0
  *       </ul>
  *   <li>Name: <code>COALESCE</code>
  *       <ul>
- *         <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code> Return the first non-null
- *             argument. If all arguments are null returns null
+ *         <li>Semantic: <code>COALESCE(expr1, ..., exprN)</code>. Return the first non-null
+ *             argument. If all arguments are null, returns null.
  *         <li>Since version: 3.1.0
+ *       </ul>
+ *   <li>Name: <code>ADD</code>
+ *       <ul>
+ *         <li>Semantic: <code>ADD(expr1, expr2)</code>. Return the sum of two numeric expressions.
+ *             If either of the expressions is null, returns null.
+ *         <li>Since Version: 4.1.0
  *       </ul>
  *   <li>Name: <code>TIMEADD</code>
  *       <ul>
@@ -52,6 +58,19 @@ import java.util.stream.Collectors;
  *             milliseconds. Ex: `TIMEADD(timestampColumn, 1000)` returns a timestamp 1 second
  *             later.
  *         <li>Since version: 3.3.0
+ *       </ul>
+ *   <li>Name: <code>SUBSTRING</code>
+ *       <ul>
+ *         <li>Semantic: <code>SUBSTRING(colExpr, pos, len)</code>. Returns the slice of byte array
+ *             or string, that starts at pos and has the length len.
+ *             <ul>
+ *               <li>pos is 1 based. If pos is negative the start is determined by counting
+ *                   characters (or bytes for BINARY) from the end.
+ *               <li>If len is less than 1 the result is empty.
+ *               <li>If len is omitted the function returns on characters or bytes starting with
+ *                   pos.
+ *             </ul>
+ *         <li>Since version: 3.4.0
  *       </ul>
  * </ol>
  *

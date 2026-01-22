@@ -21,15 +21,18 @@ import java.util.UUID
 
 import scala.collection.mutable
 import scala.math.Ordering.Implicits._
+import scala.util.Try
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Action, CheckpointMetadata, Metadata, SidecarFile, SingleAction}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIterator, FileNames}
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.conf.Configuration
@@ -41,8 +44,8 @@ import org.apache.spark.TaskContext
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
-import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
@@ -251,7 +254,9 @@ trait Checkpoints extends DeltaLogging {
   protected def store: LogStore
 
   /** Used to clean up stale log files. */
-  protected def doLogCleanup(snapshotToCleanup: Snapshot): Unit
+  protected def doLogCleanup(
+    snapshotToCleanup: Snapshot,
+    catalogTableOpt: Option[CatalogTable]): Unit
 
   /** Returns the checkpoint interval for this log. Not transactional. */
   def checkpointInterval(metadata: Metadata): Int =
@@ -277,8 +282,8 @@ trait Checkpoints extends DeltaLogging {
           opType,
           data = Map("exception" -> e.getMessage(), "stackTrace" -> e.getStackTrace())
         )
-        logWarning("Error when writing checkpoint-related files", e)
-        val throwError = Utils.isTesting ||
+        logWarning(log"Error when writing checkpoint-related files", e)
+        val throwError = DeltaUtils.isTesting ||
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED)
         if (throwError) throw e
     }
@@ -300,13 +305,13 @@ trait Checkpoints extends DeltaLogging {
    */
   def checkpoint(
       snapshotToCheckpoint: Snapshot,
-      tableIdentifierOpt: Option[TableIdentifier] = None): Unit =
+      catalogTableOpt: Option[CatalogTable] = None): Unit =
     recordDeltaOperation(this, "delta.checkpoint") {
     withCheckpointExceptionHandling(snapshotToCheckpoint.deltaLog, "delta.checkpoint.sync.error") {
       if (snapshotToCheckpoint.version < 0) {
         throw DeltaErrors.checkpointNonExistTable(dataPath)
       }
-      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, tableIdentifierOpt)
+      checkpointAndCleanUpDeltaLog(snapshotToCheckpoint, catalogTableOpt)
     }
   }
 
@@ -327,11 +332,11 @@ trait Checkpoints extends DeltaLogging {
 
   def checkpointAndCleanUpDeltaLog(
       snapshotToCheckpoint: Snapshot,
-      tableIdentifierOpt: Option[TableIdentifier] = None): Unit = {
-    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, tableIdentifierOpt)
+      catalogTableOpt: Option[CatalogTable]): Unit = {
+    val lastCheckpointInfo = writeCheckpointFiles(snapshotToCheckpoint, catalogTableOpt)
     writeLastCheckpointFile(
       snapshotToCheckpoint.deltaLog, lastCheckpointInfo, LastCheckpointInfo.checksumEnabled(spark))
-    doLogCleanup(snapshotToCheckpoint)
+    doLogCleanup(snapshotToCheckpoint, catalogTableOpt)
   }
 
   protected[delta] def writeLastCheckpointFile(
@@ -352,23 +357,8 @@ trait Checkpoints extends DeltaLogging {
 
   protected def writeCheckpointFiles(
       snapshotToCheckpoint: Snapshot,
-      tableIdentifierOpt: Option[TableIdentifier] = None): LastCheckpointInfo = {
-    // With Coordinated-Commits, commit files are not guaranteed to be backfilled immediately in the
-    // _delta_log dir. While it is possible to compute a checkpoint file without backfilling,
-    // writing the checkpoint file in the log directory before backfilling the relevant commits
-    // will leave gaps in the dir structure. This can cause issues for readers that are not
-    // communicating with the commit-coordinator.
-    //
-    // Sample directory structure with a gap if we don't backfill commit files:
-    // _delta_log/
-    //   _commits/
-    //     00017.$uuid.json
-    //     00018.$uuid.json
-    //   00015.json
-    //   00016.json
-    //   00018.checkpoint.parquet
-    snapshotToCheckpoint.ensureCommitFilesBackfilled(tableIdentifierOpt)
-    Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint)
+      catalogTableOpt: Option[CatalogTable] = None): LastCheckpointInfo = {
+    Checkpoints.writeCheckpoint(spark, this, snapshotToCheckpoint, catalogTableOpt)
   }
 
   /** Returns information about the most recent checkpoint. */
@@ -376,13 +366,22 @@ trait Checkpoints extends DeltaLogging {
     loadMetadataFromFile(0)
   }
 
+  /**
+   * Reads the checkpoint metadata from the `_last_checkpoint` file. This method doesn't handle any
+   * exceptions that can be thrown, for example IOExceptions thrown when reading the data such as
+   * FileNotFoundExceptions which is expected for a new Delta table or JSON deserialization errors.
+   */
+  protected def unsafeLoadMetadataFromFile(): LastCheckpointInfo = {
+    val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
+    val validate = LastCheckpointInfo.checksumEnabled(spark)
+    LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate)
+  }
+
   /** Loads the checkpoint metadata from the _last_checkpoint file. */
-  private def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
+  protected def loadMetadataFromFile(tries: Int): Option[LastCheckpointInfo] =
     recordDeltaOperation(self, "delta.deltaLog.loadMetadataFromFile") {
       try {
-        val lastCheckpointInfoJson = store.read(LAST_CHECKPOINT, newDeltaHadoopConf())
-        val validate = LastCheckpointInfo.checksumEnabled(spark)
-        Some(LastCheckpointInfo.deserializeFromJson(lastCheckpointInfoJson.head, validate))
+        Some(unsafeLoadMetadataFromFile())
       } catch {
         case _: FileNotFoundException =>
           None
@@ -470,7 +469,9 @@ trait Checkpoints extends DeltaLogging {
         // available checkpoint.
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
-          logInfo("Try to find Delta last complete checkpoint")
+          logInfo(
+            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to " +
+            log"find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
         }
@@ -479,7 +480,8 @@ trait Checkpoints extends DeltaLogging {
     eventData("upperBoundCheckpointType") = upperBoundCv.format.name
     var iterations: Long = 0L
     var numFilesScanned: Long = 0L
-    logInfo(log"Try to find Delta last complete checkpoint before version " +
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to find " +
+      log"Delta last complete checkpoint before version " +
       log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     var listingEndVersion = upperBoundCv.version
 
@@ -523,15 +525,25 @@ trait Checkpoints extends DeltaLogging {
         getLatestCompleteCheckpointFromList(checkpoints, Some(upperBoundCv.version))
       eventData("numFilesScanned") = numFilesScanned.toString
       if (lastCheckpoint.isDefined) {
-        logInfo(log"Delta checkpoint is found at version " +
+        logInfo(
+          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Delta " +
+          log"checkpoint is found at version " +
           log"${MDC(DeltaLogKeys.VERSION, lastCheckpoint.get.version)}")
         return lastCheckpoint
       }
       listingEndVersion = listingEndVersion - 1000
     }
-    logInfo(log"No checkpoint found for Delta table before version " +
-      log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
+    logInfo(
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] No checkpoint " +
+      log"found for Delta table before version ${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     None
+  }
+
+  /** Returns whether a checkpoint exists at `version`. */
+  def checkpointExistsAtVersion(version: Long): Boolean = {
+    val upperBoundVersion = Some(CheckpointInstance(version = version + 1))
+    val lastVerifiedCheckpoint = findLastCompleteCheckpointBefore(upperBoundVersion)
+    lastVerifiedCheckpoint.exists(_.version == version)
   }
 
   /** Returns the last complete checkpoint in the delta log directory (if any) */
@@ -583,6 +595,55 @@ object Checkpoints
   val LAST_CHECKPOINT_FILE_NAME = "_last_checkpoint"
 
   /**
+   * Determines the V2 checkpoint format to use for the given snapshot, if applicable.
+   *
+   * This method evaluates whether V2 checkpoints should be used based on the table's
+   * checkpoint policy and configuration settings. It performs the following checks:
+   *
+   * 1. Force Classic Checkpoint Check (Edge): If the Spark configuration
+   *    [[DeltaSQLConf.FORCE_CLASSIC_CHECKPOINT]] is set to true (typically due to
+   *    a file action count mismatch), this method returns None to force the use
+   *    of classic checkpoints.
+   *
+   * 2. V2 Checkpoint Policy Check: Examines the table's checkpoint policy from
+   *    the snapshot metadata to determine if V2 checkpoint support is required.
+   *
+   * 3. Format Selection: If V2 checkpoints are enabled, determines the format
+   *    for the top-level checkpoint file based on the
+   *    [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]] configuration:
+   *    - JSON format (default if not specified)
+   *    - PARQUET format
+   *
+   * @param spark The SparkSession to retrieve configuration settings
+   * @param snapshot The snapshot for which to determine the checkpoint format
+   * @return Some(V2Checkpoint.Format) if V2 checkpoints should be used with the
+   *         specified format (JSON or PARQUET), or None if classic checkpoints
+   *         should be used
+   * @throws IllegalStateException if an unknown checkpoint format is specified
+   *         in the configuration
+   */
+  def getV2CheckpointFormatOpt(
+      spark: SparkSession,
+      snapshot: Snapshot): Option[V2Checkpoint.Format] = {
+    val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
+    if (policy.needsV2CheckpointSupport) {
+      assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
+      val v2Format = spark.conf.getOption(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT.key)
+      // The format of the top level file in V2 checkpoints can be configured through
+      // the optional config [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]].
+      // If nothing is specified, we use the json format. In the future, we may
+      // write json/parquet dynamically based on heuristics.
+      v2Format match {
+        case Some(V2Checkpoint.Format.JSON.name) | None => Some(V2Checkpoint.Format.JSON)
+        case Some(V2Checkpoint.Format.PARQUET.name) => Some(V2Checkpoint.Format.PARQUET)
+        case _ => throw new IllegalStateException("unknown checkpoint format")
+      }
+    } else {
+      None
+    }
+  }
+
+  /**
    * Returns the checkpoint schema that should be written to the last checkpoint file based on
    * [[DeltaSQLConf.CHECKPOINT_SCHEMA_WRITE_THRESHOLD_LENGTH]] conf.
    */
@@ -604,33 +665,54 @@ object Checkpoints
   private[delta] def writeCheckpoint(
       spark: SparkSession,
       deltaLog: DeltaLog,
-      snapshot: Snapshot): LastCheckpointInfo = recordFrameProfile(
+      snapshot: Snapshot,
+      catalogTableOpt: Option[CatalogTable]): LastCheckpointInfo = recordFrameProfile(
       "Delta", "Checkpoints.writeCheckpoint") {
+    if (spark.conf.get(DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED)) {
+      snapshot.validateChecksum(Map("context" -> "writeCheckpoint"))
+    }
+    // Verify allFiles in checksum during checkpoint if we are not doing so already on every
+    // commit.
+    val allFilesInCRCEnabled = Snapshot.allFilesInCrcWritePathEnabled(spark, snapshot)
+    val shouldVerifyAllFilesInCRCEveryCommit =
+      Snapshot.allFilesInCrcVerificationEnabled(spark, snapshot)
+    if (allFilesInCRCEnabled && !shouldVerifyAllFilesInCRCEveryCommit) {
+      snapshot.checksumOpt.foreach { checksum =>
+        snapshot.validateFileListAgainstCRC(
+          checksum, contextOpt = Some("triggeredFromCheckpoint"))
+      }
+    }
+
     val hadoopConf = deltaLog.newDeltaHadoopConf()
 
     // The writing of checkpoints doesn't go through log store, so we need to check with the
     // log store and decide whether to use rename.
     val useRename = deltaLog.store.isPartialWriteVisible(deltaLog.logPath, hadoopConf)
 
-    val v2CheckpointFormatOpt = {
-      val policy = DeltaConfigs.CHECKPOINT_POLICY.fromMetaData(snapshot.metadata)
-      if (policy.needsV2CheckpointSupport) {
-        assert(CheckpointProvider.isV2CheckpointEnabled(snapshot))
-        val v2Format = spark.conf.get(DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT)
-        // The format of the top level file in V2 checkpoints can be configured through
-        // the optional config [[DeltaSQLConf.CHECKPOINT_V2_TOP_LEVEL_FILE_FORMAT]].
-        // If nothing is specified, we use the json format. In the future, we may
-        // write json/parquet dynamically based on heuristics.
-        v2Format match {
-          case Some(V2Checkpoint.Format.JSON.name) | None => Some(V2Checkpoint.Format.JSON)
-          case Some(V2Checkpoint.Format.PARQUET.name) => Some(V2Checkpoint.Format.PARQUET)
-          case _ => throw new IllegalStateException("unknown checkpoint format")
-        }
-      } else {
-        None
-      }
-    }
+    val v2CheckpointFormatOpt = getV2CheckpointFormatOpt(spark, snapshot)
     val v2CheckpointEnabled = v2CheckpointFormatOpt.nonEmpty
+    if (!v2CheckpointEnabled) {
+      // Ensures that commit files are backfilled for Catalog-Managed (CC) tables when
+      // writing Classic checkpoints.
+      //
+      // For CC tables with Classic checkpoint format (V2 checkpoint disabled), this method
+      // ensures that commit files are *synchronously* backfilled from staged commits to the
+      // _delta_log directory before writing the checkpoint. This prevents gaps in the
+      // directory structure that could cause issues for readers not communicating with
+      // the commit coordinator.
+      //
+      // Without backfilling, the directory structure might have gaps like:
+      // {{{
+      // _delta_log/
+      //   _staged_commits/
+      //     00017.$uuid.json
+      //     00018.$uuid.json
+      //   00015.json
+      //   00016.json
+      //   00018.checkpoint.parquet  // Gap: missing 00017.json
+      // }}}
+      snapshot.ensureCommitFilesBackfilled(catalogTableOpt)
+    }
 
     val checkpointRowCount = spark.sparkContext.longAccumulator("checkpointRowCount")
     val numOfFiles = spark.sparkContext.longAccumulator("numOfFiles")
@@ -769,6 +851,12 @@ object Checkpoints
       Checkpoints.checkpointSchemaToWriteInLastCheckpointFile(spark, schema)
 
     val v2Checkpoint = if (v2CheckpointEnabled) {
+      // For CC tables, ensure commit files are backfilled right before publishing the
+      // V2 checkpoint manifest.
+      // At this moment, any existing async commit backfill operations almost certainly
+      // would have completed as the full state reconstruction usually takes longer than
+      // commit backfilling.
+      snapshot.ensureCommitFilesBackfilled(catalogTableOpt)
       val (v2CheckpointFileStatus, nonFileActionsWriten, v2Checkpoint, checkpointSchema) =
         Checkpoints.writeTopLevelV2Checkpoint(
           v2CheckpointFormatOpt.get,
@@ -1055,7 +1143,7 @@ object Checkpoints
       // overrides the final path even if it already exists. So we use exists here to handle that
       // case.
       // TODO: Remove isTesting and fs.exists check after fixing LocalFS
-      if (Utils.isTesting && fs.exists(finalPath)) {
+      if (DeltaUtils.isTesting && fs.exists(finalPath)) {
         false
       } else {
         fs.rename(tempPath, finalPath)

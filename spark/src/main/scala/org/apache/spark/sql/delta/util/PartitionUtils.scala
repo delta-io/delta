@@ -119,8 +119,13 @@ object PartitionSpec {
 
 private[delta] object PartitionUtils {
 
-  lazy val timestampPartitionPattern = "yyyy-MM-dd HH:mm:ss[.S]"
-  lazy val utcFormatter = TimestampFormatter("yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
+  lazy val timestampPartitionPattern = s"yyyy-MM-dd HH:mm:ss${precisionMatchPatterns(6)}"
+  lazy val utcFormatter = TimestampFormatter(s"yyyy-MM-dd'T'HH:mm:ss.SSSSSSz", ZoneId.of("Z"))
+
+  private def precisionMatchPatterns(maxDigits: Int): String =
+    (maxDigits to 1 by -1)
+      .map(n => "[." + ("S" * n) + "]")
+      .mkString
 
   case class PartitionValues(columnNames: Seq[String], literals: Seq[Literal])
   {
@@ -625,7 +630,7 @@ private[delta] object PartitionUtils {
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
       field => field.dataType match {
         // Variant types are not orderable and thus cannot be partition columns.
-        case a: AtomicType if !VariantShims.isVariantType(a) => // OK
+        case a: AtomicType if !a.isInstanceOf[VariantType] => // OK
         case _ => throw DeltaErrors.cannotUseDataTypeForPartitionColumnError(field)
       }
     }

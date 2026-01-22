@@ -135,7 +135,13 @@ class OptimisticTransactionSuite
     actions = Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)),
     // commit info should show operation as truncate, because that's the operation used by the
     // harness
-    errorMessageHint = Some("[x=1]" :: "TRUNCATE" :: Nil))
+    expectedErrorClass = Some("DELTA_CONCURRENT_APPEND.WITH_PARTITION_HINT"),
+    expectedErrorMessageParameters = Some(Map(
+      "operation" -> "TRUNCATE",
+      "version" -> "1",
+      "partitionValues" -> "\\[x=1\\]",
+      "docLink" -> ".*"
+    )))
 
   check(
     "add / read + no write",  // no write = no real conflicting change even though data was added
@@ -199,7 +205,13 @@ class OptimisticTransactionSuite
     concurrentWrites = Seq(
       RemoveFile("a", Some(4))),
     actions = Seq(),
-    errorMessageHint = Some("a in partition [x=1]" :: "TRUNCATE" :: Nil))
+    expectedErrorClass = Some("DELTA_CONCURRENT_DELETE_READ.WITH_PARTITION_HINT"),
+    expectedErrorMessageParameters = Some(Map(
+      "operation" -> "TRUNCATE",
+      "version" -> "2",
+      "partitionValues" -> "\\[x=1\\]",
+      "docLink" -> ".*"
+    )))
 
   check(
     "schema change",
@@ -228,9 +240,9 @@ class OptimisticTransactionSuite
       t => t.metadata
     ),
     concurrentWrites = Seq(
-      Action.supportedProtocolVersion()),
+      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))),
     actions = Seq(
-      Action.supportedProtocolVersion()))
+      Action.supportedProtocolVersion(featuresToExclude = Seq(CatalogOwnedTableFeature))))
 
   check(
     "taint whole table",
@@ -613,7 +625,8 @@ class OptimisticTransactionSuite
   private def testDynamicPartitionOverwrite(
     caseName: String,
     concurrentActions: String => Seq[Action],
-    expectedException: Option[String => String] = None) = {
+    expectedErrorClass: Option[String] = None,
+    expectedErrorMessageParameters: String => Map[String, String] = _ => Map.empty) = {
 
     // We test with a partition column named "partitionValues" to make sure we correctly skip
     // rewriting the filters
@@ -654,11 +667,18 @@ class OptimisticTransactionSuite
                 txn.commit(addFiles.map(_.remove) ++ newData, ManualUpdate)
             }
 
-            if (expectedException.nonEmpty) {
+            if (expectedErrorClass.isDefined) {
               val e = intercept[DeltaConcurrentModificationException] {
                 commitTxn1
               }
-              assert(e.getMessage.contains(expectedException.get(partCol)))
+              checkError(
+                e.asInstanceOf[DeltaThrowable],
+                expectedErrorClass.get,
+                Some("2D521"),
+                expectedErrorMessageParameters(partCol)
+                  ++ Map("tableName" -> s"delta.`${log.dataPath}`"),
+                matchPVals = true
+              )
             } else {
               commitTxn1
             }
@@ -670,8 +690,13 @@ class OptimisticTransactionSuite
   testDynamicPartitionOverwrite(
     caseName = "concurrent append in same partition",
     concurrentActions = partCol => Seq(AddFile("y", Map(partCol -> "0"), 1, 1, dataChange = true)),
-    expectedException = Some(partCol =>
-      s"Files were added to partition [$partCol=0] by a concurrent update.")
+    expectedErrorClass = Some("DELTA_CONCURRENT_APPEND.WITH_PARTITION_HINT"),
+    expectedErrorMessageParameters = partCol => Map(
+      "operation" -> "Manual Update",
+      "partitionValues" -> s"\\[$partCol=0\\]",
+      "version" -> "2",
+      "docLink" -> ".*"
+    )
   )
 
   testDynamicPartitionOverwrite(
@@ -683,9 +708,13 @@ class OptimisticTransactionSuite
     caseName = "concurrent delete in same partition",
     concurrentActions = partCol => Seq(
       RemoveFile("a", None, partitionValues = Map(partCol -> "0"))),
-    expectedException = Some(partCol =>
-      "This transaction attempted to delete one or more files that were deleted (for example a) " +
-        "by a concurrent update")
+    expectedErrorClass = Some("DELTA_CONCURRENT_DELETE_DELETE.WITH_PARTITION_HINT"),
+    expectedErrorMessageParameters = partCol => Map(
+      "operation" -> "Manual Update",
+      "partitionValues" -> s"\\[$partCol=0\\]",
+      "version" -> "2",
+      "docLink" -> ".*"
+    )
   )
 
   testDynamicPartitionOverwrite(
@@ -710,7 +739,8 @@ class OptimisticTransactionSuite
         .add("id", "long")
         .add("part", "string")
       deltaLog.withNewTransaction { txn =>
-        val protocol = Action.supportedProtocolVersion()
+        val protocol = Action.supportedProtocolVersion(
+          featuresToExclude = Seq(CatalogOwnedTableFeature))
         val metadata = Metadata(
           schemaString = schema.json,
           partitionColumns = partitionColumns)
@@ -933,19 +963,29 @@ class OptimisticTransactionSuite
   }
 
   test("Append does not trigger snapshot state computation") {
-    withTempDir { tableDir =>
-      val df = Seq((1, 0), (2, 1)).toDF("key", "value")
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+    withSQLConf(
+      DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED.key -> "false",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+        "false",
+      DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS.key -> "false"
+    ) {
+      withTempDir { tableDir =>
+        val df = Seq((1, 0), (2, 1)).toDF("key", "value")
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
-      val deltaLog = DeltaLog.forTable(spark, tableDir)
-      val preCommitSnapshot = deltaLog.update()
-      assert(!preCommitSnapshot.stateReconstructionTriggered)
+        val deltaLog = DeltaLog.forTable(spark, tableDir)
+        val preCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
 
-      df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
+        df.write.format("delta").mode("append").save(tableDir.getCanonicalPath)
 
-      val postCommitSnapshot = deltaLog.update()
-      assert(!preCommitSnapshot.stateReconstructionTriggered)
-      assert(!postCommitSnapshot.stateReconstructionTriggered)
+        val postCommitSnapshot = deltaLog.update()
+        assert(!preCommitSnapshot.stateReconstructionTriggered)
+        assert(!postCommitSnapshot.stateReconstructionTriggered)
+      }
     }
   }
 

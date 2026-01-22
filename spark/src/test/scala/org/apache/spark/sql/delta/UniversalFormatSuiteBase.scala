@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.Utils.try_element_at
 
 import org.apache.spark.sql.{DataFrameWriter, QueryTest, Row}
@@ -24,10 +25,34 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SQLTestUtils
 
-trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
+trait UniversalFormatTestHelper {
+  val allCompatObjects: Seq[IcebergCompatBase] =
+    Seq(
+      IcebergCompatV1,
+      IcebergCompatV2
+    )
+  def compatObjectFromVersion(version: Int): IcebergCompatBase =
+    allCompatObjects(version - 1)
+
+  def getCompatVersionOtherThan(version: Int): Int = {
+    val targetVersion = getCompatVersionsOtherThan(version).head
+    assert(targetVersion != version)
+    targetVersion
+  }
+
+  def getCompatVersionsOtherThan(version: Int): Seq[Int] = {
+    allCompatObjects
+      .filter(_.version != version)
+      .map(_.version.toInt)
+  }
+}
+
+trait UniversalFormatSuiteBase extends IcebergCompatUtilsBase
+  with UniversalFormatTestHelper {
+
   protected def assertUniFormIcebergProtocolAndProperties(
       tableId: String, compatVersion: Int = compatVersion): Unit = {
-    assertIcebergCompatProtocolAndProperties(tableId, compatVersion)
+    assertIcebergCompatProtocolAndProperties(tableId, compatObjectFromVersion(compatVersion))
 
     val snapshot = DeltaLog.forTable(spark, TableIdentifier(tableId)).update()
     assert(UniversalFormat.icebergEnabled(snapshot.metadata))
@@ -65,7 +90,7 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
 
   protected def runReorgTableForUpgradeUniform(
       tableId: String,
-      icebergCompatVersion: Int): Unit = {
+      icebergCompatVersion: Int = compatVersion): Unit = {
     executeSql(s"""
            | REORG TABLE $tableId APPLY
            | (UPGRADE UNIFORM (ICEBERG_COMPAT_VERSION = $icebergCompatVersion))
@@ -84,21 +109,11 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
     assert(unchangedFiles.length == currFiles.length)
   }
 
-  protected def getCompatVersionOtherThan(version: Int): Int = {
-    val targetVersion = getCompatVersionsOtherThan(version).head
-    assert(targetVersion != version)
-    targetVersion
-  }
-
-  protected def getCompatVersionsOtherThan(version: Int): Seq[Int] = {
-    allCompatVersions.filter(_ != version)
-  }
-
   test("create new UniForm table while manually enabling IcebergCompat") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.universalFormat.enabledFormats' = 'iceberg',
                |  'delta.enableIcebergCompatV$compatVersion' = 'true',
                |  'delta.minReaderVersion' = $r,
@@ -111,9 +126,9 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
   }
 
   test("create new UniForm table while manually enabling IcebergCompat with no rw version") {
-    withTempTableAndDir { case (id, loc) =>
+    withTempTableAndDir { case (id, _) =>
       executeSql(s"""
-             |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+             |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
              |  'delta.universalFormat.enabledFormats' = 'iceberg',
              |  'delta.enableIcebergCompatV$compatVersion' = 'true'
              |)""".stripMargin)
@@ -121,11 +136,31 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
     }
   }
 
+  test("create new UniForm table via clone") {
+    withTempTableAndDir { case (id, loc) =>
+      executeSql(s"""
+              |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
+              | 'delta.columnMapping.mode' = 'name')
+              | """.stripMargin)
+      executeSql(s"""
+              |INSERT INTO $id values (1) """.stripMargin)
+      withTempTableAndDir { case (cloneId, _) =>
+        executeSql(s"""
+              |CREATE TABLE $cloneId SHALLOW CLONE $id TBLPROPERTIES (
+              |  'delta.universalFormat.enabledFormats' = 'iceberg',
+              |  'delta.enableIcebergCompatV$compatVersion' = 'true',
+              |  'delta.columnMapping.mode' = 'name'
+              |) """.stripMargin)
+        assertUniFormIcebergProtocolAndProperties(cloneId)
+      }
+    }
+  }
+
   test("enable UniForm on existing table with IcebergCompat enabled") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.minReaderVersion' = $r,
                |  'delta.minWriterVersion' = $w,
                |  'delta.enableIcebergCompatV$compatVersion' = true
@@ -139,11 +174,48 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
     }
   }
 
+  test("enable UniForm on existing table without IcebergCompat") {
+    allReaderWriterVersions.foreach { case (r, w) =>
+      withTempTableAndDir { case (id, _) =>
+        executeSql(s"""
+          |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
+          |  'delta.minReaderVersion' = $r,
+          |  'delta.minWriterVersion' = $w
+          |)""".stripMargin)
+
+        executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
+          s"('delta.universalFormat.enabledFormats' = 'iceberg'," +
+          s" 'delta.columnMapping.mode' = 'name', " +
+          s" 'delta.enableIcebergCompatV$compatVersion' = true) ")
+
+        assertUniFormIcebergProtocolAndProperties(id)
+      }
+    }
+  }
+
+  test("enable UniForm on existing table with ColumnMapping") {
+    allReaderWriterVersions.foreach { case (r, w) =>
+      withTempTableAndDir { case (id, _) =>
+        executeSql(s"""
+          |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
+          |  'delta.minReaderVersion' = $r,
+          |  'delta.minWriterVersion' = $w,
+          |  'delta.columnMapping.mode' = 'name'
+          |)""".stripMargin)
+
+        executeSql(s"ALTER TABLE $id SET TBLPROPERTIES " +
+          s"('delta.universalFormat.enabledFormats' = 'iceberg'," +
+          s" 'delta.enableIcebergCompatV$compatVersion' = true) ")
+        assertUniFormIcebergProtocolAndProperties(id)
+      }
+    }
+  }
+
   test("enable UniForm on existing table but IcebergCompat isn't enabled - fail") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.minReaderVersion' = $r,
                |  'delta.minWriterVersion' = $w,
                |  'delta.enableIcebergCompatV$compatVersion' = false,
@@ -160,10 +232,10 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
   }
 
   test("disabling UniForm will not disable IcebergCompat") {
-    withTempTableAndDir { case (id, loc) =>
+    withTempTableAndDir { case (id, _) =>
       executeSql(
         s"""
-           |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+           |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
            |  'delta.universalFormat.enabledFormats' = 'iceberg',
            |  'delta.enableIcebergCompatV$compatVersion' = 'true'
            |)""".stripMargin)
@@ -178,9 +250,9 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
 
   test("disabling IcebergCompat will disable UniForm if enabled") {
     allReaderWriterVersions.foreach { case (r, w) =>
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               |CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.minReaderVersion' = $r,
                |  'delta.minWriterVersion' = $w,
                |  'delta.universalFormat.enabledFormats' = 'iceberg',
@@ -201,110 +273,10 @@ trait UniversalFormatSuiteBase extends QueryTest with IcebergCompatUtilsBase {
       }
     }
   }
-
-  test("REORG TABLE for table from None to corresponding icebergCompat version") {
-    withTempTableAndDir { case (id, loc) =>
-      executeSql(s"""
-             | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc
-             | """.stripMargin)
-      executeSql(s"""
-             | INSERT INTO TABLE $id (ID)
-             | VALUES (1),(2),(3),(4),(5),(6),(7)""".stripMargin)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(id))
-      val snapshot = deltaLog.update()
-      val prevNumAddFiles = snapshot.allFiles.collect().length
-      assert(prevNumAddFiles === 1)
-      assertAddFileIcebergCompatVersion(snapshot, icebergCompatVersion = compatVersion, count = 0)
-
-      runReorgTableForUpgradeUniform(id, compatVersion)
-      val updatedSnapshot = deltaLog.update()
-      assert(updatedSnapshot.getProperties(s"delta.enableIcebergCompatV$compatVersion") === "true")
-
-      compatVersion match {
-        case 1 => checkFileNotRewritten(snapshot, updatedSnapshot)
-        case 2 => assertAddFileIcebergCompatVersion(
-          deltaLog.update(), icebergCompatVersion = 2, count = prevNumAddFiles)
-      }
-    }
-  }
-
-  test("REORG TABLE for table from icebergCompatVx to icebergCompatVx, should skip rewrite") {
-    withTempTableAndDir { case (id, loc) =>
-      executeSql(s"""
-             | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
-             |  'delta.universalFormat.enabledFormats' = 'iceberg',
-             |  'delta.enableIcebergCompatV$compatVersion' = 'true'
-             |)
-             | """.stripMargin)
-      executeSql(s"""
-             | INSERT INTO TABLE $id (ID)
-             | VALUES (1),(2),(3),(4),(5),(6),(7)""".stripMargin)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(id))
-      val snapshot = deltaLog.update()
-      val expectedNumAddFilesWithIcebergCompatVersion = compatVersion match {
-        case 1 => 0
-        case 2 => 1
-      }
-      assertAddFileIcebergCompatVersion(
-        snapshot,
-        icebergCompatVersion = compatVersion,
-        count = expectedNumAddFilesWithIcebergCompatVersion)
-
-      runReorgTableForUpgradeUniform(id, compatVersion)
-      val updatedSnapshot = deltaLog.update()
-      assert(updatedSnapshot.getProperties(s"delta.enableIcebergCompatV$compatVersion") === "true")
-      assert(snapshot.version == updatedSnapshot.version)
-      checkFileNotRewritten(snapshot, updatedSnapshot)
-    }
-  }
-
-  test("REORG TABLE: file would not be rewritten again if we run command twice") {
-    withTempTableAndDir { case (id, loc) =>
-      val anotherCompatVersion = getCompatVersionOtherThan(compatVersion)
-      executeSql(s"""
-             | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
-             |  'delta.universalFormat.enabledFormats' = 'iceberg',
-             |  'delta.enableIcebergCompatV$anotherCompatVersion' = 'true'
-             |)""".stripMargin)
-      executeSql(s"""
-             | INSERT INTO TABLE $id (ID)
-             | VALUES (1),(2),(3),(4),(5),(6),(7)""".stripMargin)
-      runReorgTableForUpgradeUniform(id, compatVersion)
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(id))
-      val snapshot1 = deltaLog.update()
-      val expectedNumAddFilesWithIcebergCompatVersion = compatVersion match {
-        case 1 => 0
-        case 2 => 1
-      }
-      assertAddFileIcebergCompatVersion(
-        snapshot1,
-        icebergCompatVersion = compatVersion,
-        count = expectedNumAddFilesWithIcebergCompatVersion
-      )
-
-      runReorgTableForUpgradeUniform(id, compatVersion)
-      val snapshot2 = deltaLog.update()
-      checkFileNotRewritten(snapshot1, snapshot2)
-    }
-  }
-
-  test("REORG TABLE: exception would be thrown for unsupported icebergCompatVersion") {
-    withTempTableAndDir { case (id, loc) =>
-      executeSql(s"""
-             | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
-             |  'delta.columnMapping.mode' = 'name'
-             |)
-             | """.stripMargin)
-      val e = intercept[DeltaUnsupportedOperationException] {
-        runReorgTableForUpgradeUniform(id, 5)
-      }
-      assert(e.getErrorClass === "DELTA_ICEBERG_COMPAT_VIOLATION.COMPAT_VERSION_NOT_SUPPORTED")
-    }
-  }
 }
 
 trait UniFormWithIcebergCompatV1SuiteBase extends UniversalFormatSuiteBase {
-  override val compatVersion = 1
+  protected override val compatObject: IcebergCompatBase = IcebergCompatV1
 
   test("enable UniForm and V1 on existing table") {
     withTempTableAndDir { case (id, loc) =>
@@ -325,9 +297,9 @@ trait UniFormWithIcebergCompatV1SuiteBase extends UniversalFormatSuiteBase {
 
   test("REORG TABLE for table from icebergCompatVx to icebergCompatV1, should skip rewrite") {
     getCompatVersionsOtherThan(1).foreach(originalVersion => {
-      withTempTableAndDir { case (id, loc) =>
+      withTempTableAndDir { case (id, _) =>
         executeSql(s"""
-               | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+               | CREATE TABLE $id (ID INT) USING DELTA TBLPROPERTIES (
                |  'delta.universalFormat.enabledFormats' = 'iceberg',
                |  'delta.enableIcebergCompatV$originalVersion' = 'true'
                |)
@@ -351,8 +323,8 @@ trait UniFormWithIcebergCompatV1SuiteBase extends UniversalFormatSuiteBase {
   }
 }
 
-trait UniFormWithIcebergCompatV2SuiteBase extends UniversalFormatSuiteBase with SQLTestUtils {
-  override val compatVersion = 2
+trait UniFormWithIcebergCompatV2SuiteBase extends UniversalFormatSuiteBase {
+  override val compatObject: IcebergCompatBase = IcebergCompatV2
 
   test("can downgrade from V2 to V1 with ALTER with UniForm enabled") {
     withTempTableAndDir {
@@ -372,28 +344,27 @@ trait UniFormWithIcebergCompatV2SuiteBase extends UniversalFormatSuiteBase with 
   }
 
   test("REORG TABLE for table from icebergCompatVx to icebergCompatV2") {
-    getCompatVersionsOtherThan(2).foreach(originalVersion => {
-      withTempTableAndDir { case (id, loc) =>
-        executeSql(s"""
-               | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
-               |  'delta.universalFormat.enabledFormats' = 'iceberg',
-               |  'delta.enableIcebergCompatV$originalVersion' = 'true'
-               |)""".stripMargin)
-        executeSql(s"""
-               | INSERT INTO TABLE $id (ID)
-               | VALUES (1),(2),(3),(4),(5),(6),(7)""".stripMargin)
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier(id))
-        val snapshot1 = deltaLog.update()
-        assert(snapshot1.allFiles.collect().nonEmpty)
-        assertAddFileIcebergCompatVersion(snapshot1, icebergCompatVersion = 2, count = 0)
+    val originalVersion = 1
+    withTempTableAndDir { case (id, loc) =>
+      executeSql(s"""
+           | CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
+           |  'delta.universalFormat.enabledFormats' = 'iceberg',
+           |  'delta.enableIcebergCompatV$originalVersion' = 'true'
+           |)""".stripMargin)
+      executeSql(s"""
+           | INSERT INTO TABLE $id (ID)
+           | VALUES (1),(2),(3),(4),(5),(6),(7)""".stripMargin)
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier(id))
+      val snapshot1 = deltaLog.update()
+      assert(snapshot1.allFiles.collect().nonEmpty)
+      assertAddFileIcebergCompatVersion(snapshot1, icebergCompatVersion = 2, count = 0)
 
-        runReorgTableForUpgradeUniform(id, icebergCompatVersion = 2)
-        val snapshot2 = deltaLog.update()
-        assert(snapshot2.getProperties("delta.enableIcebergCompatV2") === "true")
-        assert(snapshot2.getProperties("delta.enableDeletionVectors") === "false")
-        assertAddFileIcebergCompatVersion(snapshot2, icebergCompatVersion = 2, count = 1)
-      }
-    })
+      runReorgTableForUpgradeUniform(id, icebergCompatVersion = 2)
+      val snapshot2 = deltaLog.update()
+      assert(snapshot2.getProperties("delta.enableIcebergCompatV2") === "true")
+      assert(snapshot2.getProperties("delta.enableDeletionVectors") === "false")
+      assertAddFileIcebergCompatVersion(snapshot2, icebergCompatVersion = 2, count = 1)
+    }
   }
 
   test(
@@ -441,16 +412,18 @@ trait UniFormWithIcebergCompatV2SuiteBase extends UniversalFormatSuiteBase with 
   }
 }
 
-trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase {
+trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with UniversalFormatTestHelper {
   test("enforceInvariantsAndDependenciesForCTAS") {
-    withTempTableAndDir { case (id, loc) =>
-      executeSql(s"CREATE TABLE $id (id INT) USING DELTA LOCATION $loc")
-      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, loc)
+    withTempTableAndDir { case (id, _) =>
+      executeSql(s"CREATE TABLE $id (id INT) USING DELTA")
+      val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, TableIdentifier(id))
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(id))
       var configurationUnderTest = Map("dummykey1" -> "dummyval1", "dummykey2" -> "dummyval2")
       // The enforce is not lossy. It will do nothing if there is no Universal related key.
 
       def getUpdatedConfiguration(conf: Map[String, String]): Map[String, String] =
-        UniversalFormat.enforceDependenciesInConfiguration(conf, snapshot)
+        UniversalFormat.enforceDependenciesInConfiguration(spark,
+            catalogTable = catalogTable, conf, snapshot)
 
       var updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
       assert(configurationUnderTest == configurationUnderTest)
@@ -464,7 +437,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase {
       }
       assert(e.getErrorClass == "DELTA_UNIVERSAL_FORMAT_VIOLATION")
 
-      for (icv <- allCompatVersions) {
+      for (icv <- allCompatObjects.map(_.version)) {
         configurationUnderTest = Map(
           s"delta.enableIcebergCompatV$icv" -> "true",
           "delta.universalFormat.enabledFormats" -> "iceberg",
@@ -477,7 +450,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase {
         assert(updatedConfiguration("delta.universalFormat.enabledFormats") == "iceberg")
         assert(updatedConfiguration("delta.columnMapping.mode") == "name")
         assert(updatedConfiguration(s"delta.enableIcebergCompatV$icv") == "true")
-        assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "0")
+        assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "1")
 
         configurationUnderTest = Map(
           s"delta.enableIcebergCompatV$icv" -> "true",
@@ -502,7 +475,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase {
           executeSql(s"""
                  |CREATE TABLE $id (ID INT) USING DELTA LOCATION $loc TBLPROPERTIES (
                  |  'delta.universalFormat.enabledFormats' = '$invalidConf',
-                 |  'delta.icebergCompatV1.enabled' = 'true',
+                 |  'delta.enableIcebergCompatV1' = 'true',
                  |  'delta.columnMapping.mode' = 'name'
                  |)""".stripMargin)
         }.getMessage

@@ -25,7 +25,7 @@ import io.delta.sharing.client.{
   DeltaSharingProfileProvider,
   DeltaSharingRestClient
 }
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import io.delta.sharing.client.util.JsonUtils
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
@@ -85,14 +85,16 @@ private object TestUtils {
 class TestDeltaSharingClientForFileIndex(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
     maxFilesPerReq: Int = 100000,
+    endStreamActionEnabled: Boolean = false,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
     asyncQueryMaxDuration: Long = 600000L,
@@ -189,6 +191,12 @@ class TestDeltaSharingClientForFileIndex(
     )
   }
 
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
+  }
+
   override def getForStreaming(): Boolean = forStreaming
 
   override def getProfileProvider: DeltaSharingProfileProvider = profileProvider
@@ -227,7 +235,7 @@ class DeltaSharingFileIndexSuite
       profilePath: String,
       metaData: String): (Path, DeltaSharingFileIndex, DeltaSharingClient) = {
     val tablePath = new Path(s"$profilePath#$shareName.$schemaName.$sharedTableName")
-    val client = DeltaSharingRestClient(profilePath, false, "delta")
+    val client = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
 
     val spark = SparkSession.active
     val params = new DeltaSharingFileIndexParams(

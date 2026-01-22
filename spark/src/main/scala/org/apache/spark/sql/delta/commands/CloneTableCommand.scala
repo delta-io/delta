@@ -92,7 +92,7 @@ case class CloneTableCommand(
     }
 
     /** Log clone command information */
-    logInfo(log"Cloning ${MDC(DeltaLogKeys.TABLE_DESC, sourceTable.description)} to " +
+    logInfo(log"Cloning ${MDC(DeltaLogKeys.CLONE_SOURCE_DESC, sourceTable.description)} to " +
       log"${MDC(DeltaLogKeys.PATH, targetPath)}")
 
     // scalastyle:off deltahadoopconfiguration
@@ -237,23 +237,26 @@ abstract class CloneConvertedSource(spark: SparkSession) extends CloneSource {
     val baseDir = dataPath.toString
     val conf = spark.sparkContext.broadcast(serializableConf)
     val partitionSchema = convertTargetTable.partitionSchema
+    val enforceRelativePathCheck = enforceRelativePath
 
     {
       convertTargetTable.fileManifest.allFiles.mapPartitions { targetFile =>
         val basePath = new Path(baseDir)
         val fs = basePath.getFileSystem(conf.value.value)
         targetFile.map(ConvertUtils.createAddFile(
-          _, basePath, fs, SQLConf.get, Some(partitionSchema)))
+          _, basePath, fs, SQLConf.get, Some(partitionSchema), !enforceRelativePathCheck))
       }
     }
   }
 
-  private lazy val fileStats = allFiles.select(
-      coalesce(sum("size"), lit(0L)), count(new Column("*"))).first()
+  /**
+   * All data file paths are required to be relative to the table path when true
+   */
+  def enforceRelativePath: Boolean = true
 
-  def sizeInBytes: Long = fileStats.getLong(0)
+  def sizeInBytes: Long = convertTargetTable.sizeInBytes
 
-  def numOfFiles: Long = fileStats.getLong(1)
+  def numOfFiles: Long = convertTargetTable.numFiles
 
   def description: String = s"${format} table ${name}"
 
@@ -279,22 +282,28 @@ case class CloneParquetSource(
     .getOrElse(s"parquet.`${tableIdentifier.table}`")
 }
 
+case class TablePolicies(
+    hasRowPolicies: Boolean,
+    hasColumnPolicies: Boolean
+)
+
 /**
  * A iceberg table source to be cloned from
  */
 case class CloneIcebergSource(
-  tableIdentifier: TableIdentifier,
-  sparkTable: Option[Table],
-  tableSchema: Option[StructType],
+  metadataLocation: String,
+  tableNameOpt: Option[String],
+  tablePoliciesOpt: Option[TablePolicies],
+  deltaSnapshotOpt: Option[Snapshot],
   spark: SparkSession) extends CloneConvertedSource(spark) {
 
   override lazy val convertTargetTable: ConvertTargetTable =
-    ConvertUtils.getIcebergTable(spark, tableIdentifier.table, sparkTable, tableSchema)
+    ConvertUtils.getIcebergTable(spark, metadataLocation, deltaSnapshotOpt)
 
   override def format: String = CloneSourceFormat.ICEBERG
 
   override def name: String =
-    sparkTable.map(_.name()).getOrElse(s"iceberg.`${tableIdentifier.table}`")
+    tableNameOpt.getOrElse(s"iceberg.`$metadataLocation`")
 
   override def catalogTable: Option[CatalogTable] = None
 }

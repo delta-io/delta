@@ -45,7 +45,7 @@ export RELATIVE_DELTA_TABLE_PATH=___
 export DELTA_DYNAMO_TABLE_NAME=___
 
 ./run-integration-tests.py --use-local --run-dynamodb-commit-coordinator-integration-tests \
-    --dbb-packages org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
+    --packages org.apache.hadoop:hadoop-aws:3.4.0,com.amazonaws:aws-java-sdk-bundle:1.12.262 \
     --dbb-conf io.delta.storage.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider \
                spark.hadoop.fs.s3a.aws.credentials.provider=com.amazonaws.auth.profile.ProfileCredentialsProvider
 """
@@ -193,7 +193,7 @@ def check_for_delta_file_in_filesystem(delta_table_path, version, is_backfilled,
     s3_client = boto3.client("s3")
     relative_table_path = delta_table_path.replace(bucket_prefix, "")
     relative_delta_log_path = relative_table_path + "/_delta_log/"
-    relative_commit_folder_path = relative_delta_log_path if is_backfilled else os.path.join(relative_delta_log_path, "_commits")
+    relative_commit_folder_path = relative_delta_log_path if is_backfilled else os.path.join(relative_delta_log_path, "_staged_commits")
     listing_prefix = os.path.join(relative_commit_folder_path, f"{version:020}.").lstrip("/")
     print(f"querying {listing_prefix} from bucket {s3_bucket} for version {version}")
     response = s3_client.list_objects_v2(Bucket=s3_bucket, Prefix=listing_prefix)

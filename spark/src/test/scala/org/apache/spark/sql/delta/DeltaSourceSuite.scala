@@ -16,18 +16,23 @@
 
 package org.apache.spark.sql.delta
 
-import java.io.{File, FileInputStream, OutputStream}
+import java.io.{File, FileInputStream, OutputStream, PrintWriter, StringWriter}
 import java.net.URI
+import java.sql.Timestamp
 import java.util.UUID
 import java.util.concurrent.TimeoutException
 
 import scala.concurrent.duration._
 import scala.language.implicitConversions
 
+import org.apache.spark.sql.delta.DataFrameUtils
+import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
+import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
-import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
+import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -42,14 +47,13 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{NullType, StringType, StructType}
+import org.apache.spark.sql.types.{IntegerType, NullType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
 class DeltaSourceSuite extends DeltaSourceSuiteBase
   with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with DeltaSQLCommandTest {
 
   import testImplicits._
 
@@ -66,9 +70,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .save(sourcePath.getCanonicalPath)
 
         def runStream() = {
-          spark.readStream
-            .format("delta")
-            .load(sourcePath.getCanonicalPath)
+          loadStreamWithOptions(sourcePath.getCanonicalPath, Map.empty)
             // Need to drop null type columns because it's not supported by the writer.
             .drop("nullTypeCol")
             .writeStream
@@ -132,9 +134,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTempDir { inputDir =>
       new File(inputDir, "_delta_log").mkdir()
       val e = intercept[AnalysisException] {
-        spark.readStream
-          .format("delta")
-          .load(inputDir.getCanonicalPath)
+        loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
       }
       for (msg <- Seq("Table schema is not set", "CREATE TABLE")) {
         assert(e.getMessage.contains(msg))
@@ -144,15 +144,104 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("disallow user specified schema") {
     withTempDir { inputDir =>
-      new File(inputDir, "_delta_log").mkdir()
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
       val e = intercept[AnalysisException] {
         spark.readStream
           .schema(StructType.fromDDL("a INT, b STRING"))
           .format("delta")
           .load(inputDir.getCanonicalPath)
       }
-      for (msg <- Seq("Delta does not support specifying the schema at read time")) {
+      for (
+        msg <- Seq(
+          "The schema provided for the source read doesn't match the schema of the Delta table")
+      ) {
         assert(e.getMessage.contains(msg))
+      }
+
+      val e2 = intercept[Exception] {
+        spark.readStream
+          .schema(StructType.fromDDL("value STRING"))
+          .format("delta")
+          .load(inputDir.getCanonicalPath)
+      }
+      assert(e2.getMessage.contains("does not support user-specified schema"))
+    }
+  }
+
+  test("allow user specified schema if consistent: v1 source") {
+    withTempDir { inputDir =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
+
+      import org.apache.spark.sql.execution.datasources.DataSource
+      // User-specified schema is allowed if it's consistent with the actual Delta table schema.
+      // Here we use Spark internal APIs to trigger v1 source code path. That being said, we
+      // are not fixing end-user behavior, but advanced Spark plugins.
+      val v1DataSource = DataSource(
+        spark,
+        userSpecifiedSchema = Some(StructType.fromDDL("value STRING")),
+        className = "delta",
+        options = Map("path" -> inputDir.getCanonicalPath))
+      DataFrameUtils.ofRows(spark, Relocated.StreamingRelation(v1DataSource))
+    }
+  }
+
+  test("createSource should create source with empty or matching table schema provided") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+
+      sql(s"CREATE TABLE delta.`$path` (id INT NOT NULL, name STRING) USING delta")
+
+      val deltaSource = new DeltaDataSource()
+      val parameters = Map("path" -> path)
+      val metadataPath = tempDir.getCanonicalPath + "/_metadata"
+
+      val tableSchema = StructType(Seq(
+        StructField("id", IntegerType, false),
+        StructField("name", StringType, true)
+      ))
+      val emptySchema = new StructType()
+      val allowedCreationSchemas = Seq(emptySchema, tableSchema)
+      for (schema <- allowedCreationSchemas) {
+        val source = deltaSource.createSource(
+          sqlContext,
+          metadataPath = metadataPath,
+          schema = Some(schema),
+          providerName = "delta",
+          parameters = parameters
+        )
+
+        val actualSchema = source.asInstanceOf[DeltaSource].schema
+        assert(actualSchema.fields.map(_.name).toSet == Set("id", "name"))
+      }
+
+      val conflictingSchemas = Seq(
+        StructType(Seq(
+          StructField("id", IntegerType, true)
+          // missing field "name"
+        )),
+        StructType(Seq(
+          StructField("id", IntegerType, false),
+          StructField("name", StringType, true),
+          StructField("age", IntegerType, true) // extra field
+        ))
+      )
+
+      for (schema <- conflictingSchemas) {
+        val e = intercept[Exception] {
+          deltaSource.createSource(
+            sqlContext,
+            metadataPath = metadataPath,
+            schema = Some(schema),
+            providerName = "delta",
+            parameters = parameters
+          )
+        }
+        assert(e.getMessage.contains(
+          "[DELTA_READ_SOURCE_SCHEMA_CONFLICT] " +
+            "The schema provided for the source read doesn't match the schema of the Delta table"))
       }
     }
   }
@@ -162,9 +251,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
         .filter($"value" contains "keep")
 
       testStream(df)(
@@ -191,9 +278,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       Seq("keep1", "keep2", "drop3").toDF.write
         .format("delta").mode("append").save(inputDir.getAbsolutePath)
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
         .filter($"value" contains "keep")
 
       testStream(df)(
@@ -225,9 +310,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       val expected = (
           (0 until 5).map(_.toString -> null) ++ (5 until 10).map(_.toString).map(x => x -> x)
@@ -247,9 +330,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       testStream(df)(
         AssertOnQuery { q => q.processAllAvailable(); true },
@@ -272,10 +353,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("memory")
         .queryName("maxFilesPerTriggerTest")
@@ -302,10 +382,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("memory")
         .queryName("maxFilesPerTriggerTest")
@@ -332,10 +411,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -359,10 +437,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q2 = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "2")
-        .load(inputDir.getCanonicalPath)
+      val q2 = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -391,10 +468,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(0, -1, "string").foreach { invalidMaxFilesPerTrigger =>
         val e = intercept[StreamingQueryException] {
-          spark.readStream
-            .format("delta")
-            .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, invalidMaxFilesPerTrigger.toString)
-            .load(inputDir.getCanonicalPath)
+          loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> invalidMaxFilesPerTrigger.toString))
             .writeStream
             .format("console")
             .start()
@@ -417,10 +493,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       def runTriggerOnceAndVerifyResult(expected: Seq[Int]): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-          .load(inputDir.getCanonicalPath)
+        val q = loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
           .writeStream
           .format("memory")
           .trigger(Trigger.Once)
@@ -456,10 +531,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val stream = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val stream = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -539,10 +613,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (value STRING) USING delta")
 
-      val stream = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1")
-        .load(inputDir.getCanonicalPath)
+      val stream = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"))
         .writeStream
         .format("memory")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -568,10 +641,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("memory")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -599,10 +671,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("memory")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -630,10 +701,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -657,10 +727,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q2 = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "100g")
-        .load(inputDir.getCanonicalPath)
+      val q2 = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "100g"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -689,10 +758,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       Seq(0, -1, "string").foreach { invalidMaxBytesPerTrigger =>
         val e = intercept[StreamingQueryException] {
-          spark.readStream
-            .format("delta")
-            .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, invalidMaxBytesPerTrigger.toString)
-            .load(inputDir.getCanonicalPath)
+          loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> invalidMaxBytesPerTrigger.toString))
             .writeStream
             .format("console")
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -715,10 +783,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val stream = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val stream = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -757,11 +824,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
       }
 
-      val q = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "1") // should process a file at a time
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "100gb")
-        .load(inputDir.getCanonicalPath)
+      // should process a file at a time due to MAX_FILES_PER_TRIGGER_OPTION
+      val q = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1",
+          DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "100gb"))
         .writeStream
         .format("memory")
         .queryName("maxBytesPerTriggerTest")
@@ -778,11 +846,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         q.stop()
       }
 
-      val q2 = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION, "2")
-        .option(DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION, "1b")
-        .load(inputDir.getCanonicalPath)
+      val q2 = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "2",
+          DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION -> "1b"))
         .writeStream
         .format("memory")
         .queryName("maxBytesPerTriggerTest")
@@ -1034,12 +1102,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   testQuietly("recreate the reservoir should fail the query") {
     withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      val tablePath = new Path(inputDir.toURI)
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
         .filter($"value" contains "keep")
 
       testStream(df)(
@@ -1049,7 +1116,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         StopStream,
         AssertOnQuery { _ =>
           Utils.deleteRecursively(inputDir)
-          val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+          if (coordinatedCommitsEnabledInTests) {
+            deleteTableFromCommitCoordinator(tablePath)
+          }
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
           // to simulate a new table creation in production
           withMetadata(deltaLog, StructType.fromDDL("value STRING"), tableId = Some("tableId-1234"))
@@ -1070,10 +1140,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val chk = new File(inputDir, "_checkpoint").toString
 
       def excludeReTest(s: Option[String], expected: String*): Unit = {
-        val dfr = spark.readStream
-          .format("delta")
-        s.foreach(regex => dfr.option(DeltaOptions.EXCLUDE_REGEX_OPTION, regex))
-        val df = dfr.load(inputDir.getCanonicalPath).groupBy('value).count
+        val options = s.map(regex =>
+          Map(DeltaOptions.EXCLUDE_REGEX_OPTION -> regex)).getOrElse(Map.empty)
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, options).groupBy('value).count
         testStream(df, OutputMode.Complete())(
           StartStream(checkpointLocation = chk),
           AssertOnQuery { sq => sq.processAllAvailable(); true },
@@ -1108,10 +1177,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
       val e = intercept[StreamingQueryException] {
-        spark.readStream
-          .format("delta")
-          .option(DeltaOptions.EXCLUDE_REGEX_OPTION, "[abc")
-          .load(inputDir.getCanonicalPath)
+        loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map(DeltaOptions.EXCLUDE_REGEX_OPTION -> "[abc"))
           .writeStream
           .format("console")
           .start()
@@ -1138,9 +1206,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
       val testTableName = "delta_source_test"
       withTable(testTableName) {
-        val reader = spark.readStream
-          .format("delta")
-          .load(deltaPath)
+        val reader = loadStreamWithOptions(deltaPath, Map.empty)
           .writeStream
           .format("memory")
           .queryName(testTableName)
@@ -1171,9 +1237,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
       checkpoints.last.delete()
 
-      val df = spark.readStream
-        .format("delta")
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       testStream(df)(
         AssertOnQuery { q => q.processAllAvailable(); true },
@@ -1188,7 +1252,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream.format("delta").load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       // clear the cache so that the writer creates its own DeltaLog instead of reusing the reader's
       DeltaLog.clearCache()
@@ -1220,6 +1284,50 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("startingVersion specific version: new commits arrive after stream initialization") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Add version 0 and version 1
+      Seq(1, 2, 3).toDF("value").write.format("delta").save(inputDir.getCanonicalPath)
+      Seq(4, 5, 6).toDF("value").write
+        .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+      // Start streaming from version 1
+      val df = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(
+          "startingVersion" -> "1",
+          DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION -> "1"
+        )
+      )
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start(outputDir.getCanonicalPath)
+
+      try {
+        // Process version 1 only
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq(4, 5, 6).toDF("value"))
+
+        // Add version 2 and version 3 (after snapshotAtSourceInit was captured)
+        Seq(7, 8, 9).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+        Seq(10, 11, 12).toDF("value").write
+          .format("delta").mode("append").save(inputDir.getCanonicalPath)
+
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (4 to 12).toDF("value"))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test(
       "can delete old files of a snapshot without update"
   ) {
@@ -1227,7 +1335,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream.format("delta").load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
       // clear the cache so that the writer creates its own DeltaLog instead of reusing the reader's
       DeltaLog.clearCache()
@@ -1283,7 +1391,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
 
-      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty)
       val stream = df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
@@ -1316,7 +1424,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Version 0
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
-      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty)
 
       val stream = df
         .writeStream
@@ -1373,7 +1481,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Version 0
       Seq(1L, 2L, 3L).toDF("x").write.format("delta").save(inputDir.toString)
 
-      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty)
       val stream = df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
@@ -1428,7 +1536,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTempDir { tempDir =>
       spark.range(0).write.format("delta").save(tempDir.getCanonicalPath)
 
-      val df = spark.readStream.format("delta").load(tempDir.getCanonicalPath)
+      val df = loadStreamWithOptions(tempDir.getCanonicalPath, Map.empty)
       val stream = df.writeStream
         .format("console")
         .start()
@@ -1447,7 +1555,16 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         val e = intercept[StreamingQueryException] {
           stream.processAllAvailable()
         }
-        assert(e.getCause.isInstanceOf[InvalidProtocolVersionException])
+        val cause = e.getCause
+        val sw = new StringWriter()
+        cause.printStackTrace(new PrintWriter(sw))
+        assert(
+          cause.isInstanceOf[InvalidProtocolVersionException] ||
+          // When coordinated commits are enabled, the following assertion error coming from
+          // CoordinatedCommitsUtils.getCommitCoordinatorClient may get hit
+          (cause.isInstanceOf[AssertionError] &&
+           e.getCause.getMessage.contains("coordinated commits table feature is not supported")),
+          s"Caused by: ${sw.toString}")
       } finally {
         stream.stop()
       }
@@ -1462,8 +1579,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val rangeStart = startVersion * 10
       val rangeEnd = rangeStart + 10
       spark.range(rangeStart, rangeEnd).write.format("delta").mode("append").save(location)
-      val file = new File(FileNames.unsafeDeltaFile(deltaLog.logPath, startVersion).toUri)
-      file.setLastModified(ts)
+      modifyCommitTimestamp(deltaLog, startVersion, ts)
       startVersion += 1
     }
   }
@@ -1473,7 +1589,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   /** Disable log cleanup to avoid deleting logs we are testing. */
-  private def disableLogCleanup(tablePath: String): Unit = {
+  protected def disableLogCleanup(tablePath: String): Unit = {
     sql(s"alter table delta.`$tablePath` " +
       s"set tblproperties (${DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key} = false)")
   }
@@ -1485,11 +1601,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       generateCommits(tablePath, start, start + 20.minutes)
 
       def testStartingVersion(startingVersion: Long): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", startingVersion)
-          .load(tablePath)
-          .writeStream
+        val df = loadStreamWithOptions(
+          tablePath, Map("startingVersion" -> startingVersion.toString))
+        val q = df.writeStream
           .format("memory")
           .queryName("startingVersion_test")
           .start()
@@ -1561,10 +1675,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         def testStartingVersion(
             startingVersion: Long,
             checkpointLocation: String = checkpointDir.getCanonicalPath): Unit = {
-          val q = spark.readStream
-            .format("delta")
-            .option("startingVersion", startingVersion)
-            .load(inputDir.getCanonicalPath)
+          val q = loadStreamWithOptions(
+            inputDir.getCanonicalPath,
+            Map("startingVersion" -> startingVersion.toString))
             .writeStream
             .format("delta")
             .option("checkpointLocation", checkpointLocation)
@@ -1635,10 +1748,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       generateCommits(tablePath, start, start + 20.minutes)
 
       def testStartingTimestamp(startingTimestamp: String): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .option("startingTimestamp", startingTimestamp)
-          .load(tablePath)
+        val q = loadStreamWithOptions(
+          tablePath,
+          Map("startingTimestamp" -> startingTimestamp))
           .writeStream
           .format("memory")
           .queryName("startingTimestamp_test")
@@ -1715,11 +1827,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     withTempDir { tableDir =>
       val tablePath = tableDir.getCanonicalPath
       generateCommits(tablePath, 0)
-      val q = spark.readStream
-        .format("delta")
-        .option("startingVersion", 0L)
-        .option("startingTimestamp", "2020-07-15")
-        .load(tablePath)
+      val q = loadStreamWithOptions(
+        tablePath,
+        Map("startingVersion" -> "0", "startingTimestamp" -> "2020-07-15"))
         .writeStream
         .format("console")
         .start()
@@ -1762,11 +1872,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .save(inputDir.getCanonicalPath)
 
         // check answer from version 1
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", "1")
-          .load(inputDir.getCanonicalPath)
-          .writeStream
+        val q = loadStreamWithOptions(
+          inputDir.getCanonicalPath,
+          Map("startingVersion" -> "1")
+        ).writeStream
           .format("memory")
           .queryName("startingVersionTest")
           .start()
@@ -1794,10 +1903,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0, 10).write.format("delta").save(path)
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val q = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1830,10 +1936,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Define the stream, but don't start it, before a second write. The startingVersion
         // latest should be resolved when the query *starts*, so there'll be no data even though
         // some was added after the stream was defined.
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1858,10 +1961,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       withTempView("startingVersionTest") {
         val path = dir.getAbsolutePath
         spark.range(0).write.format("delta").save(path)
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
+        val streamDef = loadStreamWithOptions(path, Map("startingVersion" -> "latest"))
           .writeStream
           .format("memory")
           .queryName("startingVersionLatest")
@@ -1886,11 +1986,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         val path = dir.getAbsolutePath
         spark.range(0).write.format("delta").save(path)
 
-        val streamDef = spark.readStream
-          .format("delta")
-          .option("startingVersion", "latest")
-          .load(path)
-          .writeStream
+        val streamDef = loadStreamWithOptions(
+          path,
+          Map("startingVersion" -> "latest")
+        ).writeStream
           .format("memory")
           .queryName("startingVersionLatest")
         val log = DeltaLog.forTable(spark, path)
@@ -1926,12 +2025,13 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         spark.range(0, 5).repartition(2).write.mode("append").format("delta").save(path)
         spark.range(5, 10).repartition(2).write.mode("append").format("delta").save(path)
 
-        val q = spark.readStream
-          .format("delta")
-          .option("startingVersion", 1)
-          .option("maxFilesPerTrigger", 1)
-          .load(path)
-          .writeStream
+        val q = loadStreamWithOptions(
+          path,
+          Map(
+            "startingVersion" -> "1",
+            "maxFilesPerTrigger" -> "1"
+          )
+        ).writeStream
           .format("memory")
           .queryName("startingVersionWithRateLimit")
           .start()
@@ -1960,7 +2060,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
-      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty)
       df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
@@ -2002,7 +2102,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   testQuietly("SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
-      val df = spark.readStream.format("delta").load(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty)
       df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
@@ -2043,7 +2143,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       addData()
-      val df = spark.readStream.format("delta").load(srcData.getCanonicalPath)
+      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
 
       val q = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -2078,7 +2178,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       addData()
-      val df = spark.readStream.format("delta").load(srcData.getCanonicalPath)
+      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
 
       val q = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -2113,8 +2213,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       addData()
-      val df = spark.readStream.format("delta").option("failOnDataLoss", "false")
-        .load(srcData.getCanonicalPath)
+      val df = loadStreamWithOptions(
+        srcData.getCanonicalPath,
+        Map("failOnDataLoss" -> "false"))
 
       val q = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -2149,8 +2250,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
 
       addData()
-      val df = spark.readStream.format("delta").option("failOnDataLoss", "false")
-        .load(srcData.getCanonicalPath)
+      val df = loadStreamWithOptions(
+        srcData.getCanonicalPath,
+        Map("failOnDataLoss" -> "false"))
 
       val q = df.writeStream.format("delta")
         .option("checkpointLocation", chkLocation.getCanonicalPath)
@@ -2208,12 +2310,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       spark.range(1, 2).write.format("delta").save(inputDir2.getCanonicalPath)
 
       def startQuery(): StreamingQuery = {
-        val df1 = spark.readStream
-          .format("delta")
-          .load(inputDir1.getCanonicalPath)
-        val df2 = spark.readStream
-          .format("delta")
-          .load(inputDir2.getCanonicalPath)
+        val df1 = loadStreamWithOptions(inputDir1.getCanonicalPath, Map.empty)
+        val df2 = loadStreamWithOptions(inputDir2.getCanonicalPath, Map.empty)
         df1.union(df2).writeStream
           .format("noop")
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
@@ -2340,9 +2438,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("ES-445863: delta source should not hang or reprocess data when using AvailableNow") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       def runQuery(): Unit = {
-        val q = spark.readStream
-          .format("delta")
-          .load(inputDir.getCanonicalPath)
+        val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
           // Require a partition filter. The max index of files matching the partition filter must
           // be less than the number of files in the second commit.
           .where("part = 0")
@@ -2389,15 +2485,14 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("restarting a query should pick up latest table schema and recover") {
     withTempDir { inputDir =>
       withTempDir { checkpointDir =>
-        spark.range(10)
-          .write
-          .format("delta")
-          .mode("append")
-          .save(inputDir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 10).foreach { i =>
+          val v = Seq(i.toString).toDF("id")
+          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
 
         def startQuery(): StreamingQuery = {
-          spark.readStream.format("delta")
-            .load(inputDir.getCanonicalPath)
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
             .writeStream
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .format("noop")
@@ -2412,7 +2507,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           DeltaLog.clearCache()
           // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
           // table schema change happens on a different cluster
-          sql(s"ALTER TABLE delta.`${inputDir.getCanonicalPath}` ADD COLUMN newcol STRING")
+          withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
 
           // The streaming query should fail when detecting a schema change
           val e = intercept[StreamingQueryException] {
@@ -2534,10 +2629,9 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
       withMetadata(deltaLog, StructType.fromDDL("value STRING"))
 
-      val df = spark.readStream
-        .format("delta")
-        .option(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION, value = true)
-        .load(inputDir.getCanonicalPath)
+      val df = loadStreamWithOptions(
+        inputDir.getCanonicalPath,
+        Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"))
 
       testStream(df)(
         // Add data to source table
@@ -2598,4 +2692,16 @@ class MonotonicallyIncreasingTimestampFS extends RawLocalFileSystem {
 
 object MonotonicallyIncreasingTimestampFS {
   val scheme = s"MonotonicallyIncreasingTimestampFS"
+}
+
+class DeltaSourceWithCoordinatedCommitsBatch1Suite extends DeltaSourceSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSourceWithCoordinatedCommitsBatch10Suite extends DeltaSourceSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+}
+
+class DeltaSourceWithCoordinatedCommitsBatch100Suite extends DeltaSourceSuite {
+  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
 }

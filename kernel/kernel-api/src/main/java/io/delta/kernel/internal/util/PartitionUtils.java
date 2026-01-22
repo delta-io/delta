@@ -18,6 +18,7 @@ package io.delta.kernel.internal.util;
 import static io.delta.kernel.expressions.AlwaysFalse.ALWAYS_FALSE;
 import static io.delta.kernel.expressions.AlwaysTrue.ALWAYS_TRUE;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
+import static io.delta.kernel.internal.util.ExpressionUtils.createPredicate;
 import static io.delta.kernel.internal.util.InternalUtils.toLowerCaseSet;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames;
@@ -27,6 +28,7 @@ import io.delta.kernel.data.*;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.InternalScanFileUtils;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.types.*;
@@ -36,9 +38,9 @@ import java.sql.Date;
 import java.sql.Timestamp;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 public class PartitionUtils {
   private static final DateTimeFormatter PARTITION_TIMESTAMP_FORMATTER =
@@ -47,74 +49,67 @@ public class PartitionUtils {
   private PartitionUtils() {}
 
   /**
-   * Utility method to remove the given columns (as {@code columnsToRemove}) from the given {@code
-   * physicalSchema}.
+   * Utility method to attach partition columns to the given data batch.
    *
-   * @param physicalSchema
-   * @param logicalSchema To create a logical name to physical name map. Partition column names are
-   *     in logical space and we need to identify the equivalent physical column name.
-   * @param columnsToRemove
-   * @return
+   * @param dataBatch Data batch to which the partition columns will be added.
+   * @param logicalReadSchema Logical schema of the table scan. Used to insert partition columns at
+   *     the right positions in the data batch. This logical schema must contain column mapping
+   *     metadata if column mapping is enabled.
+   * @param partitionValues Map of partition column name to value.
+   * @param expressionHandler Expression handler used to evaluate the partition values.
+   * @return A new {@link ColumnarBatch} with the partition columns added.
    */
-  public static StructType physicalSchemaWithoutPartitionColumns(
-      StructType logicalSchema, StructType physicalSchema, Set<String> columnsToRemove) {
-    if (columnsToRemove == null || columnsToRemove.size() == 0) {
-      return physicalSchema;
-    }
-
-    // Partition columns are top-level only
-    Map<String, String> physicalToLogical =
-        new HashMap<String, String>() {
-          {
-            IntStream.range(0, logicalSchema.length())
-                .mapToObj(i -> new Tuple2<>(logicalSchema.at(i), physicalSchema.at(i)))
-                .forEach(tuple2 -> put(tuple2._2.getName(), tuple2._1.getName()));
-          }
-        };
-
-    return new StructType(
-        physicalSchema.fields().stream()
-            .filter(field -> !columnsToRemove.contains(physicalToLogical.get(field.getName())))
-            .collect(Collectors.toList()));
-  }
-
   public static ColumnarBatch withPartitionColumns(
-      ExpressionHandler expressionHandler,
       ColumnarBatch dataBatch,
+      StructType logicalReadSchema,
       Map<String, String> partitionValues,
-      StructType schemaWithPartitionCols) {
-    if (partitionValues == null || partitionValues.size() == 0) {
-      // no partition column vectors to attach to.
+      ExpressionHandler expressionHandler) {
+    if (partitionValues == null || partitionValues.isEmpty()) {
+      // No partition column vectors to attach to the data batch
       return dataBatch;
     }
 
-    for (int colIdx = 0; colIdx < schemaWithPartitionCols.length(); colIdx++) {
-      StructField structField = schemaWithPartitionCols.at(colIdx);
+    // We verify that the number of partition columns in the logical schema plus the number of
+    // columns in the data batch schema is equal to the length of the logical schema.
+    // `partitionValues` contains all partition columns of the table (not just the requested ones),
+    // so we first need to count the number of partition columns in the logical schema.
+    int numPartitionColumnsInSchema =
+        (int)
+            logicalReadSchema.fields().stream()
+                .map(ColumnMapping::getPhysicalName)
+                .filter(partitionValues::containsKey)
+                .count();
+    if (numPartitionColumnsInSchema + dataBatch.getSchema().length()
+        != logicalReadSchema.length()) {
+      throw DeltaErrorsInternal.logicalPhysicalSchemaMismatch(
+          numPartitionColumnsInSchema, dataBatch.getSchema().length(), logicalReadSchema.length());
+    }
 
-      if (partitionValues.containsKey(structField.getName())) {
-        // Create a partition vector
-
-        ColumnarBatch finalDataBatch = dataBatch;
+    for (int colIdx = 0; colIdx < logicalReadSchema.length(); colIdx++) {
+      // We must iterate the logical schema in order since we insert partition columns into the data
+      // batch according to their ordinal in the logical schema.
+      StructField structField = logicalReadSchema.at(colIdx);
+      String physicalName = ColumnMapping.getPhysicalName(structField);
+      if (partitionValues.containsKey(physicalName)) {
+        // Create a partition column vector
+        final ColumnarBatch finalDataBatch = dataBatch;
+        Literal partitionValue =
+            literalForPartitionValue(structField.getDataType(), partitionValues.get(physicalName));
         ExpressionEvaluator evaluator =
             wrapEngineException(
                 () ->
                     expressionHandler.getEvaluator(
-                        finalDataBatch.getSchema(),
-                        literalForPartitionValue(
-                            structField.getDataType(), partitionValues.get(structField.getName())),
-                        structField.getDataType()),
-                "Get the expression evaluator for partition column %s with datatype=%s and "
-                    + "value=%s",
-                structField.getName(),
+                        finalDataBatch.getSchema(), partitionValue, structField.getDataType()),
+                "Get the expression evaluator for partition column %s with type=%s and value=%s",
+                physicalName,
                 structField.getDataType(),
-                partitionValues.get(structField.getName()));
+                partitionValues.get(physicalName));
 
         ColumnVector partitionVector =
             wrapEngineException(
                 () -> evaluator.eval(finalDataBatch),
                 "Evaluating the partition value expression %s",
-                literalForPartitionValue(
-                    structField.getDataType(), partitionValues.get(structField.getName())));
+                partitionValue);
         dataBatch = dataBatch.withNewColumn(colIdx, structField, partitionVector);
       }
     }
@@ -192,10 +187,11 @@ public class PartitionUtils {
               // this shouldn't happen as we have already validated the partition column names
               checkArgument(
                   partColField != null,
-                  "Partition column " + partColName + " is not present in the table schema");
+                  "Partition column %s is not present in the table schema",
+                  partColName);
               DataType partColType = partColField.getDataType();
 
-              if (!partColType.equivalent(partValue.getDataType())) {
+              if (!partColType.isWriteCompatible(partValue.getDataType())) {
                 throw new IllegalArgumentException(
                     String.format(
                         "Partition column %s is of type %s but the value provided is of type %s",
@@ -204,6 +200,31 @@ public class PartitionUtils {
             });
 
     return schemaCasePartitionValues;
+  }
+
+  /**
+   * Validate that the given predicate references only (and at least one) partition columns.
+   *
+   * @throws IllegalArgumentException if the predicate does not reference any partition columns or
+   *     if it references any data columns
+   */
+  public static void validatePredicateOnlyOnPartitionColumns(
+      Predicate predicate, Set<String> partitionColNames) {
+    final Tuple2<Predicate, Predicate> metadataAndDataPredicates =
+        splitMetadataAndDataPredicates(predicate, partitionColNames);
+    final Predicate metadataPredicate = metadataAndDataPredicates._1;
+    final Predicate dataPredicate = metadataAndDataPredicates._2;
+
+    if (metadataPredicate == AlwaysTrue.ALWAYS_TRUE) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Partition predicate must contain at least one partition column: %s", predicate));
+    }
+
+    if (dataPredicate != AlwaysTrue.ALWAYS_TRUE) {
+      throw new IllegalArgumentException(
+          String.format("Partition predicate must contain only partition columns: %s", predicate));
+    }
   }
 
   /**
@@ -230,7 +251,7 @@ public class PartitionUtils {
           combineWithAndOp(leftResult._2, rightResult._2));
     }
     if (hasNonPartitionColumns(children, partitionColNames)) {
-      return new Tuple2(ALWAYS_TRUE, predicate);
+      return new Tuple2<>(ALWAYS_TRUE, predicate);
     } else {
       return new Tuple2<>(predicate, ALWAYS_TRUE);
     }
@@ -248,11 +269,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnCheckpointFileSchema(
       Predicate predicate, Map<String, StructField> partitionColNameToField) {
-    return new Predicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewriteColRefOnPartitionValuesParsed(child, partitionColNameToField))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewriteColRefOnPartitionValuesParsed(
@@ -297,11 +319,12 @@ public class PartitionUtils {
    */
   public static Predicate rewritePartitionPredicateOnScanFileSchema(
       Predicate predicate, Map<String, StructField> partitionColMetadata) {
-    return new Predicate(
+    return createPredicate(
         predicate.getName(),
         predicate.getChildren().stream()
             .map(child -> rewritePartitionColumnRef(child, partitionColMetadata))
-            .collect(Collectors.toList()));
+            .collect(Collectors.toList()),
+        predicate.getCollationIdentifier());
   }
 
   private static Expression rewritePartitionColumnRef(
@@ -354,7 +377,8 @@ public class PartitionUtils {
       Literal partitionValue = partitionValues.get(partitionColName);
       checkArgument(
           partitionValue != null,
-          "Partition column value is missing for column: " + partitionColName);
+          "Partition column value is missing for column: %s",
+          partitionColName);
       String serializedValue = serializePartitionValue(partitionValue);
       if (serializedValue == null) {
         // Follow the delta-spark behavior to use "__HIVE_DEFAULT_PARTITION__" for null
@@ -402,6 +426,56 @@ public class PartitionUtils {
     return new And(left, right);
   }
 
+  /**
+   * Try parsing the standard formatted timestamp (e.g. 2024-03-11 11:00:00.123456). Return the
+   * number of microseconds since epoch.
+   */
+  private static Optional<Long> tryParseStandardTimestamp(String value) {
+    try {
+      Timestamp ts = Timestamp.valueOf(value);
+      return Optional.of(InternalUtils.microsSinceEpoch(ts));
+    } catch (IllegalArgumentException e) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Try parsing the ISO8601 formatted timestamp (e.g. 1970-01-01T00:00:00.123456Z). Return the
+   * number of microseconds since epoch.
+   */
+  private static Optional<Long> tryParseIsoTimestamp(String value) {
+    try {
+      Instant instant = Instant.parse(value);
+      long micros = instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1000L;
+      return Optional.of(micros);
+    } catch (DateTimeParseException e) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Try parsing the timestamp, could be in the standard format or ISO8601 format. Return the
+   * Literal Object.
+   */
+  public static long tryParseTimestamp(String partitionValue) {
+    // ISO8601 format contains 'T' separator, standard format uses space
+    Optional<Long> micros =
+        partitionValue.contains("T")
+            ? tryParseIsoTimestamp(partitionValue)
+            : tryParseStandardTimestamp(partitionValue);
+
+    // If the first attempt failed, try the other format as fallback (this really shouldn't happen)
+    if (!micros.isPresent()) {
+      micros =
+          partitionValue.contains("T")
+              ? tryParseStandardTimestamp(partitionValue)
+              : tryParseIsoTimestamp(partitionValue);
+    }
+
+    return micros.orElseThrow(
+        () -> DeltaErrorsInternal.invalidTimestampFormatForPartitionValue(partitionValue));
+  }
+
   protected static Literal literalForPartitionValue(DataType dataType, String partitionValue) {
     if (partitionValue == null) {
       return Literal.ofNull(dataType);
@@ -443,7 +517,7 @@ public class PartitionUtils {
           new BigDecimal(partitionValue), decimalType.getPrecision(), decimalType.getScale());
     }
     if (dataType instanceof TimestampType) {
-      return Literal.ofTimestamp(InternalUtils.microsSinceEpoch(Timestamp.valueOf(partitionValue)));
+      return Literal.ofTimestamp(tryParseTimestamp(partitionValue));
     }
     if (dataType instanceof TimestampNTZType) {
       // Both the timestamp and timestamp_ntz have no timezone info, so they are interpreted

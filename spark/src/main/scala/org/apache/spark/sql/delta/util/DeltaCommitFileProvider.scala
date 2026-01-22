@@ -26,7 +26,7 @@ import org.apache.hadoop.fs.Path
  * This class is part of the changes introduced to accommodate the adoption of coordinated-commits
  * in Delta Lake. Previously, certain code paths assumed the existence of delta files for a specific
  * version at a predictable path `_delta_log/$version.json`. With coordinated-commits, delta files
- * may alternatively be located at `_delta_log/_commits/$version.$uuid.json`.
+ * may alternatively be located at `_delta_log/_staged_commits/$version.$uuid.json`.
  * DeltaCommitFileProvider attempts to locate the correct delta files from the Snapshot's
  * LogSegment.
  *

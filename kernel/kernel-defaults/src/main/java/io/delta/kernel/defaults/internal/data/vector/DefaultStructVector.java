@@ -48,7 +48,7 @@ public class DefaultStructVector extends AbstractColumnVector {
 
   @Override
   public ColumnVector getChild(int ordinal) {
-    checkArgument(ordinal >= 0 && ordinal < memberVectors.length, "Invalid ordinal " + ordinal);
+    checkArgument(ordinal >= 0 && ordinal < memberVectors.length, "Invalid ordinal %s", ordinal);
     return memberVectors[ordinal];
   }
 }

@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# Function to prompt for user confirmation
+confirm() {
+    while true; do
+        read -p "Confirm that you want to upgrade packages? (y/n): " yn
+        case $yn in
+            [Yy]* ) return 0;;
+            [Nn]* ) echo "Upgrade cancelled."; exit 1;;
+            * ) echo "Please answer yes or no.";;
+        esac
+    done
+}
+
+# Check for outdated dependencies
+echo "Checking for outdated dependencies..."
+if pnpm outdated --recursive; then
+    echo "✅ All packages are up to date! No upgrades needed."
+    exit 0
+fi
+
+# Ask for confirmation before proceeding
+echo "⚠️ This script will upgrade Astro and all other dependencies to their latest versions."
+confirm
+echo "Starting upgrade process..."
+
+# Upgrade astro first
+pnpm dlx @astrojs/upgrade
+
+# Upgrade remaining packages
+pnpm upgrade --latest
+
+echo "✅ Upgrade process completed! Please verify that things work as expected."

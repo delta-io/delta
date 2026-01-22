@@ -20,6 +20,7 @@ import java.io.{IOException, ObjectInputStream}
 
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor
+import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.dv.DeletionVectorStore
 import org.apache.hadoop.fs.Path
@@ -70,7 +71,10 @@ case class DeletionVectorStoredBitmap(
     val bitmap = if (isEmpty) {
       new RoaringBitmapArray()
     } else if (isInline) {
-      RoaringBitmapArray.readFrom(dvDescriptor.inlineData)
+      DeletionVectorUtils.deserialize(
+        dvDescriptor.inlineData,
+        tableDataPath,
+        debugInfo = Map("dvDescriptor" -> dvDescriptor))
     } else {
       assert(isOnDisk)
       dvStore.read(onDiskPath.get, dvDescriptor.offset.getOrElse(0), dvDescriptor.sizeInBytes)

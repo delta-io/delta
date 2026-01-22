@@ -19,8 +19,10 @@ package org.apache.spark.sql.delta.columnmapping
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.RemoveColumnMapping
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import com.fasterxml.jackson.databind.ObjectMapper
 
 import org.apache.spark.sql.DataFrame
@@ -66,19 +68,19 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     val comment = "test comment"
     sql(s"ALTER TABLE $testTableName ALTER COLUMN $logicalColumnName COMMENT '$comment'")
 
-    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName = testTableName))
-    val originalSnapshot = deltaLog.update()
+    val table = DeltaTableV2(spark, TableIdentifier(tableName = testTableName))
+    val originalSnapshot = table.update()
 
     assert(originalSnapshot.schema.head.getComment().get == comment,
       "Renamed column should preserve comment.")
     val originalFiles = getFiles(originalSnapshot)
-    val startingVersion = deltaLog.update().version
+    val startingVersion = table.update().version
 
     unsetColumnMappingProperty(useUnset = unsetTableProperty)
 
     verifyRewrite(
       unsetTableProperty = unsetTableProperty,
-      deltaLog,
+      table,
       originalFiles,
       startingVersion,
       originalData = originalData)
@@ -93,7 +95,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
    */
   protected def verifyRewrite(
       unsetTableProperty: Boolean,
-      deltaLog: DeltaLog,
+      table: DeltaTableV2,
       originalFiles: Array[AddFile],
       startingVersion: Long,
       originalData: Array[Row],
@@ -101,7 +103,7 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     checkAnswer(
       spark.table(tableName = testTableName).select(logicalColumnName),
       originalData)
-    val newSnapshot = deltaLog.update()
+    val newSnapshot = table.update()
     val versionsAddedByRewrite = if (droppedFeature) {
       2
     } else {
@@ -110,8 +112,9 @@ trait RemoveColumnMappingSuiteUtils extends QueryTest with DeltaColumnMappingSui
     assert(newSnapshot.version - startingVersion == versionsAddedByRewrite,
       s"Should rewrite the table in $versionsAddedByRewrite commits.")
 
-    val rewriteVersion = deltaLog.update().version - versionsAddedByRewrite + 1
-    val history = deltaLog.history.getHistory(rewriteVersion, Some(rewriteVersion))
+    val rewriteVersion = newSnapshot.version - versionsAddedByRewrite + 1
+    val history =
+      table.deltaLog.history.getHistory(rewriteVersion, Some(rewriteVersion), table.catalogTable)
     verifyColumnMappingOperationIsRecordedInHistory(history)
 
     assert(newSnapshot.schema.head.name == logicalColumnName, "Should rename the first column.")

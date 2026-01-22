@@ -187,7 +187,8 @@ case class DeltaSharingFileIndex(
         limit = overrideLimit.orElse(limitHint),
         versionAsOf = params.options.versionAsOf,
         timestampAsOf = params.options.timestampAsOf,
-        jsonPredicateHints = jsonPredicateHints
+        jsonPredicateHints = jsonPredicateHints,
+        useRefreshToken = true
       ),
       expirationTimestamp =
         if (CachedTableManager.INSTANCE
@@ -212,7 +213,7 @@ case class DeltaSharingFileIndex(
       partitionFilters: Seq[Expression],
       dataFilters: Seq[Expression]): TahoeLogFileIndex = {
     val deltaLog = fetchFilesAndConstructDeltaLog(partitionFilters, dataFilters, None)
-    TahoeLogFileIndex(params.spark, deltaLog)
+    TahoeLogFileIndex(params.spark, deltaLog, catalogTableOpt = None)
   }
 
   override def listFiles(

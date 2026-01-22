@@ -16,6 +16,20 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+/** Class containing usage logs emitted by Catalog Owned. */
+object CatalogOwnedUsageLogs {
+  /** Common prefix for all catalog-owned usage logs. */
+  val PREFIX = "delta.catalogOwned"
+
+  /**
+   * Usage log emitted when we populate the commit coordinator via invalid path-based access.
+   * I.e., No catalog table is present when trying to populate commit coordinator, which is
+   *       almost a bug case for CC tables.
+   */
+  val COMMIT_COORDINATOR_POPULATION_INVALID_PATH_BASED_ACCESS =
+    s"$PREFIX.commitCoordinatorPopulation.invalidPathBasedAccess"
+}
+
 /** Class containing usage logs emitted by Coordinated Commits. */
 object CoordinatedCommitsUsageLogs {
 
@@ -44,7 +58,7 @@ object CoordinatedCommitsUsageLogs {
   val FS_COMMIT_COORDINATOR_LISTING_UNEXPECTED_GAPS =
     s"$PREFIX.listDeltaAndCheckpointFiles.unexpectedGapsInResults"
 
-  // Usage log emitted when a requested Commit Coordinator implementation is missing
+  // Usage log emitted when a requested Commit Coordinator implementation is missing.
   val COMMIT_COORDINATOR_MISSING_IMPLEMENTATION =
     s"$PREFIX.commitCoordinator.missingImplementation"
 

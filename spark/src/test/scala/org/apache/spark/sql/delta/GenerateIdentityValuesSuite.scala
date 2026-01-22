@@ -26,6 +26,7 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.test.SharedSparkSession
 
 class GenerateIdentityValuesSuite extends QueryTest with SharedSparkSession {
+  import testImplicits._
   private val colName = "id"
 
   /**

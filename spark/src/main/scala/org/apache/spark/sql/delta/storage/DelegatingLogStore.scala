@@ -74,7 +74,7 @@ class DelegatingLogStore(hadoopConf: Configuration)
               case lsa: LogStoreAdaptor => s"LogStoreAdapter(${lsa.logStoreImpl.getClass.getName})"
               case _ => logStore.getClass.getName
             }
-            logInfo(log"LogStore ${MDC(DeltaLogKeys.CLASS_NAME, actualLogStoreClassName)} " +
+            logInfo(log"LogStore ${MDC(DeltaLogKeys.SYSTEM_CLASS_NAME, actualLogStoreClassName)} " +
               log"is used for scheme ${MDC(DeltaLogKeys.FILE_SYSTEM_SCHEME, scheme)}")
 
             logStore

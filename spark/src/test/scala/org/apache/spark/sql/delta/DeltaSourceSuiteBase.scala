@@ -19,15 +19,40 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.Format
+import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.streaming.StreamTest
 import org.apache.spark.sql.types.StructType
+import org.scalactic.source.Position
+import org.scalatest.Tag
+
+/**
+ * Trait that provides abstraction for testing both DSv1 and DSv2 connectors.
+ */
+trait DeltaSourceConnectorTrait {
+  self: DeltaSQLTestUtils =>
+
+  protected def useDsv2: Boolean = false
+
+  protected def loadStreamWithOptions(path: String, options: Map[String, String]): DataFrame = {
+    val reader = spark.readStream
+    options.foreach { case (k, v) => reader.option(k, v) }
+    if (useDsv2) {
+      // This will route through DeltaCatalog which checks V2_ENABLE_MODE
+      reader.table(s"delta.`$path`")
+    } else {
+      reader.format("delta").load(path)
+    }
+  }
+}
 
 trait DeltaSourceSuiteBase extends StreamTest
-  with DeltaSQLTestUtils {
+  with DeltaSQLTestUtils
+  with CoordinatedCommitsBaseSuite
+  with DeltaSourceConnectorTrait {
 
   /**
    * Creates 3 temporary directories for use within a function.
@@ -91,13 +116,21 @@ trait DeltaSourceSuiteBase extends StreamTest
     val baseMetadata = tableId.map { tId => txn.metadata.copy(id = tId) }.getOrElse(txn.metadata)
     // We need to fill up the missing id/physical name in column mapping mode
     // while maintaining existing metadata if there is any
-    val updatedMetadata = copyOverMetadata(
+    val updatedSchema = copyOverMetadata(
       schema, baseMetadata.schema,
       baseMetadata.columnMappingMode)
+    // Configure coordinated commits
+    val updatedConfiguration = if (coordinatedCommitsEnabledInTests) {
+      baseMetadata.configuration +
+        (DeltaConfigs.COORDINATED_COMMITS_COORDINATOR_NAME.key -> defaultCommitsCoordinatorName)
+    } else {
+      baseMetadata.configuration
+    }
     txn.commit(
       DeltaColumnMapping.assignColumnIdAndPhysicalName(
         baseMetadata.copy(
-          schemaString = updatedMetadata.json,
+          schemaString = updatedSchema.json,
+          configuration = updatedConfiguration,
           format = Format(format)),
         baseMetadata,
         isChangingModeOnExistingTable = false,

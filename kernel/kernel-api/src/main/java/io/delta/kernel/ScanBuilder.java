@@ -17,9 +17,11 @@
 package io.delta.kernel;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.StructType;
+import java.util.Optional;
 
 /**
  * Builder to construct {@link Scan} object.
@@ -49,22 +51,30 @@ public interface ScanBuilder {
    * read from the scan files (returned by {@link Scan#getScanFiles(Engine)}) to completely filter
    * out the data that doesn't satisfy the filter.```
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param predicate a {@link Predicate} to prune the metadata or data.
    * @return A {@link ScanBuilder} with filter applied.
    */
-  ScanBuilder withFilter(Engine engine, Predicate predicate);
+  ScanBuilder withFilter(Predicate predicate);
 
   /**
    * Apply the given <i>readSchema</i>. If the builder already has a projection applied, calling
    * this again replaces the existing projection.
    *
-   * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param readSchema Subset of columns to read from the Delta table.
    * @return A {@link ScanBuilder} with projection pruning.
    */
-  ScanBuilder withReadSchema(Engine engine, StructType readSchema);
+  ScanBuilder withReadSchema(StructType readSchema);
 
   /** @return Build the {@link Scan instance} */
   Scan build();
+
+  /**
+   * Build a Paginated Scan with a required page size and an optional page token.
+   *
+   * @param pageSize Maximum number of Scan Files to return in this page.
+   * @param pageToken Optional page token representing the current scan position; empty to start
+   *     from the beginning.
+   * @return A {@link PaginatedScan} configured for pagination.
+   */
+  PaginatedScan buildPaginated(long pageSize, Optional<Row> pageToken);
 }

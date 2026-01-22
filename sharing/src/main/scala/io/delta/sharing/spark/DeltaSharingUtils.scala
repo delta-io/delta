@@ -22,16 +22,8 @@ import java.util.{TimeZone, UUID}
 
 import scala.reflect.ClassTag
 
-import org.apache.spark.sql.delta.{
-  ColumnMappingTableFeature,
-  DeletionVectorsTableFeature,
-  DeltaLog,
-  DeltaParquetFileFormat,
-  SnapshotDescriptor,
-  TimestampNTZTableFeature
-}
-import org.apache.spark.sql.delta.VariantTypeTableFeature
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.actions.{DeletionVectorDescriptor, Metadata, Protocol}
 import com.google.common.hash.Hashing
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
@@ -51,14 +43,23 @@ object DeltaSharingUtils extends Logging {
       DeletionVectorsTableFeature.name,
       ColumnMappingTableFeature.name,
       TimestampNTZTableFeature.name,
-      VariantTypeTableFeature.name
+      TypeWideningPreviewTableFeature.name,
+      TypeWideningTableFeature.name,
+      VariantTypePreviewTableFeature.name,
+      VariantTypeTableFeature.name,
+      VariantShreddingPreviewTableFeature.name
     )
+
   val SUPPORTED_READER_FEATURES: Seq[String] =
     Seq(
       DeletionVectorsTableFeature.name,
       ColumnMappingTableFeature.name,
       TimestampNTZTableFeature.name,
-      VariantTypeTableFeature.name
+      TypeWideningPreviewTableFeature.name,
+      TypeWideningTableFeature.name,
+      VariantTypePreviewTableFeature.name,
+      VariantTypeTableFeature.name,
+      VariantShreddingPreviewTableFeature.name
     )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
@@ -135,21 +136,37 @@ object DeltaSharingUtils extends Logging {
     )
   }
 
+  // Only absolute path (which is pre-signed url) need to be put in IdToUrl mapping.
+  // inline DV should be processed in place, and UUID should throw error.
+  def requiresIdToUrlForDV(deletionVectorOpt: Option[DeletionVectorDescriptor]): Boolean = {
+    deletionVectorOpt.isDefined &&
+      deletionVectorOpt.get.storageType == DeletionVectorDescriptor.PATH_DV_MARKER
+  }
+
   private def getTableRefreshResult(tableFiles: DeltaTableFiles): TableRefreshResult = {
     var minUrlExpiration: Option[Long] = None
+    // Collect the id to url mapping from the table files, which includes the file actions
+    // and deletion vectors.
     val idToUrl = tableFiles.lines
-      .map(
-        JsonUtils.fromJson[model.DeltaSharingSingleAction](_).unwrap
-      )
+      .map(JsonUtils.fromJson[model.DeltaSharingSingleAction](_).unwrap)
       .collect {
         case fileAction: model.DeltaSharingFileAction =>
+          val baseEntries = Seq(fileAction.id -> fileAction.path)
+          val dvEntries = if (requiresIdToUrlForDV(fileAction.getDeletionVectorOpt)) {
+            Seq(
+              fileAction.deletionVectorFileId -> fileAction.getDeletionVectorOpt.get.pathOrInlineDv
+            )
+          } else {
+            Seq.empty
+          }
           if (fileAction.expirationTimestamp != null) {
             minUrlExpiration = minUrlExpiration
               .filter(_ < fileAction.expirationTimestamp)
               .orElse(Some(fileAction.expirationTimestamp))
           }
-          fileAction.id -> fileAction.path
+          baseEntries ++ dvEntries
       }
+      .flatten
       .toMap
 
     TableRefreshResult(idToUrl, minUrlExpiration, tableFiles.refreshToken)
@@ -168,8 +185,10 @@ object DeltaSharingUtils extends Logging {
       limit: Option[Long],
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
-      jsonPredicateHints: Option[String]): RefresherFunction = { refreshTokenOpt =>
+      jsonPredicateHints: Option[String],
+      useRefreshToken: Boolean): RefresherFunction = { refreshTokenOpt =>
     {
+      // If versionAsOf is specified, ignore refresh token (e.g., in streaming queries)
       val tableFiles = client
         .getFiles(
           table = table,
@@ -178,7 +197,7 @@ object DeltaSharingUtils extends Logging {
           versionAsOf = versionAsOf,
           timestampAsOf = timestampAsOf,
           jsonPredicateHints = jsonPredicateHints,
-          refreshToken = refreshTokenOpt
+          refreshToken = if (useRefreshToken) refreshTokenOpt else None
         )
       getTableRefreshResult(tableFiles)
     }

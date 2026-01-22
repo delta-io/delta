@@ -20,12 +20,12 @@ import java.io.File
 
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.PatienceConfiguration.Timeout
 
-import org.apache.spark.sql.execution.streaming.StreamExecution
 import org.apache.spark.sql.streaming.{StreamTest, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
 
@@ -406,13 +406,100 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
         expectations = expectations)
     }
   }
+
+  test("multiple deletion vectors per file with initial snapshot") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+
+      // V0: 10 rows in a single file
+      (0 until 10).toDF("value").coalesce(1).write.format("delta").save(path)
+
+      // V1: Delete row 0
+      sql(s"DELETE FROM delta.`$path` WHERE value = 0")
+
+      // V2: Delete row 1
+      sql(s"DELETE FROM delta.`$path` WHERE value = 1")
+
+      // V3: Delete row 2
+      sql(s"DELETE FROM delta.`$path` WHERE value = 2")
+
+      // Verify DVs are present
+      assert(getFilesWithDeletionVectors(deltaLog).nonEmpty,
+        "This test requires deletion vectors to be present")
+
+      val df = spark.readStream
+        .format("delta")
+        .load(path)
+
+      testStream(df)(
+        // Process the initial snapshot
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        CheckAnswer((3 until 10): _*)
+      )
+    }
+  }
+
+  private val multiDVSourceOptions = Seq(
+    List(DeltaOptions.IGNORE_FILE_DELETION_OPTION),
+    List(DeltaOptions.IGNORE_CHANGES_OPTION))
+    .map(options => options.map(key => key -> "true"))
+
+  for (sourceOptions <- multiDVSourceOptions)
+  test(s"multiple deletion vectors per file - $sourceOptions") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+
+      // V0: 10 rows in a single file
+      (0 until 10).toDF("value").coalesce(1).write.format("delta").save(path)
+
+      val df = spark.readStream
+        .format("delta")
+        .options(sourceOptions.toMap)
+        .load(path)
+
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        CheckAnswer((0 until 10): _*),
+        AssertOnQuery { q =>
+          // V1: Delete row 0 - creates first DV (version 1)
+          sql(s"DELETE FROM delta.`$path` WHERE value = 0")
+          true
+        },
+        AssertOnQuery { q =>
+          // V2: Delete row 1 - updates DV (version 2). DV is cumulative: {0, 1}
+          sql(s"DELETE FROM delta.`$path` WHERE value = 1")
+          true
+        },
+        AssertOnQuery { q =>
+          // Verify DVs are present
+          assert(getFilesWithDeletionVectors(deltaLog).nonEmpty,
+            "This test requires deletion vectors to be present")
+          true
+        },
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        // One file is read out 3 times!
+        // This matches the expectation for ignoreChanges & ignoreFileDeletion:
+        // After a data changing operation, unchanged rows are re-emitted.
+        // - v0: rows 0-9
+        // - v1: file re-added with rows 1-9 (DV excludes 0)
+        // - v2: file re-added with rows 2-9 (DV excludes 0,1)
+        CheckAnswer((0 until 10) ++ (1 until 10) ++ (2 until 10): _*))
+    }
+  }
 }
 
 class DeltaSourceDeletionVectorsSuite extends DeltaSourceSuiteBase
   with DeltaSQLCommandTest
-  with DeltaSourceDeletionVectorTests {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
-}
+  with DeltaSourceDeletionVectorTests
+  with PersistentDVEnabled

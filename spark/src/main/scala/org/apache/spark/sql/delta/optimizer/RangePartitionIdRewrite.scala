@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.optimizer
 
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.expressions.{PartitionerExpr, RangePartitionId}
 
 import org.apache.spark.{RangePartitioner, SparkContext}

@@ -23,6 +23,7 @@ import io.delta.kernel.data.{ColumnarBatch, ColumnVector}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.types.{BooleanType, StructType}
+
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
@@ -41,7 +42,9 @@ class DefaultPredicateEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBas
     .add("right", BooleanType.BOOLEAN)
 
   private val batch = new DefaultColumnarBatch(
-    testLeftCol.getSize, testSchema, Array(testLeftCol, testRightCol))
+    testLeftCol.getSize,
+    testSchema,
+    Array(testLeftCol, testRightCol))
 
   private val left = comparator("=", new Column("left"), Literal.ofBoolean(true))
   private val right = comparator("=", new Column("right"), Literal.ofBoolean(true))
@@ -53,7 +56,9 @@ class DefaultPredicateEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBas
 
   test("evaluate predicate: with no starting selection vector") {
     val batch = new DefaultColumnarBatch(
-      testLeftCol.getSize, testSchema, Array(testLeftCol, testRightCol))
+      testLeftCol.getSize,
+      testSchema,
+      Array(testLeftCol, testRightCol))
 
     val actOutputVector = evalOr(batch)
     checkBooleanVectors(actOutputVector, expOrOutput)
@@ -87,7 +92,8 @@ class DefaultPredicateEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBas
   }
 
   def evalOr(
-    batch: ColumnarBatch, existingSelVector: Optional[ColumnVector] = empty()): ColumnVector = {
+      batch: ColumnarBatch,
+      existingSelVector: Optional[ColumnVector] = empty()): ColumnVector = {
     val evaluator = new DefaultPredicateEvaluator(batch.getSchema, orPredicate)
     evaluator.eval(batch, existingSelVector)
   }

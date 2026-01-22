@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.util.Random
 import scala.util.control.NonFatal
 
+import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.{DeltaErrors, SerializableFileStatus}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -39,8 +40,6 @@ import org.apache.spark.{SparkEnv, SparkException, TaskContext}
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
-import org.apache.spark.sql.execution.streaming.CheckpointFileManager
-import org.apache.spark.sql.execution.streaming.CheckpointFileManager.CancellableFSDataOutputStream
 import org.apache.spark.util.{SerializableConfiguration, ThreadUtils}
 
 /**
@@ -128,7 +127,7 @@ object DeltaFileOperations extends DeltaLogging {
       base: Int = 100,
       jitter: Int = 1000): Unit = {
     val sleepTime = Random.nextInt(jitter) + base
-    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime)} ms to rate limit " +
+    logWarning(log"Sleeping for ${MDC(DeltaLogKeys.TIME_MS, sleepTime.toLong)} ms to rate limit " +
       log"${MDC(DeltaLogKeys.OP_NAME, opName)}", t)
     Thread.sleep(sleepTime)
   }

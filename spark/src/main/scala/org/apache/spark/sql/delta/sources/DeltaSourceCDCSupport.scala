@@ -109,7 +109,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     def filterFiles(
         fromVersion: Long,
         fromIndex: Long,
-        limits: Option[AdmissionLimits],
+        limits: Option[DeltaSource.AdmissionLimits],
         endOffset: Option[DeltaSourceOffset] = None): Iterator[IndexedFile] = {
 
       if (limits.isEmpty) {
@@ -213,6 +213,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
           endOffset.reservoirVersion,
           groupedFileAndCommitInfoActions,
           spark,
+          catalogTableOpt,
           isStreaming = true)
         .fileChangeDf
     }
@@ -238,7 +239,7 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       fromVersion: Long,
       fromIndex: Long,
       isInitialSnapshot: Boolean,
-      limits: Option[AdmissionLimits],
+      limits: Option[DeltaSource.AdmissionLimits],
       endOffset: Option[DeltaSourceOffset],
       verifyMetadataAction: Boolean = true
   ): Iterator[(Long, Iterator[IndexedFile], Option[CommitInfo])] = {
@@ -250,7 +251,8 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       //    in that case, we need to recompute the start snapshot and evolve the schema if needed
       require(options.failOnDataLoss || !trackingMetadataChange,
         "Using schema from schema tracking log cannot tolerate missing commit files.")
-      deltaLog.getChanges(startVersion, options.failOnDataLoss).map { case (version, actions) =>
+      deltaLog.getChanges(
+          startVersion, catalogTableOpt, options.failOnDataLoss).map { case (version, actions) =>
         // skipIndexedFile must be applied after creating IndexedFile so that
         // IndexedFile.index is consistent across all versions.
         val (fileActions, skipIndexedFile, metadataOpt, protocolOpt, commitInfoOpt) =

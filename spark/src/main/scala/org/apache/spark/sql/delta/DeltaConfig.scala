@@ -24,8 +24,8 @@ import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeat
 import org.apache.spark.sql.delta.hooks.AutoCompactType
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.{DataSkippingReader, StatisticsCollection}
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.stats.{DataSkippingReaderConf, StatisticsCollection}
+import org.apache.spark.sql.delta.util.{DeltaSqlParserUtils, JsonUtils}
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.util.{DateTimeConstants, IntervalUtils}
@@ -43,13 +43,32 @@ case class DeltaConfig[T](
     alternateKeys: Seq[String] = Seq.empty) {
   /**
    * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
-   * alternate keys, returning defaultValue if none match.
+   * alternate keys, returning defaultValue if none matches.
    */
   def fromMetaData(metadata: Metadata): T = {
-    for (usedKey <- key +: alternateKeys) {
-      metadata.configuration.get(usedKey).map { value => return fromString(value) }
+    fromMap(metadata.configuration)
+  }
+
+  /**
+   * Recover the saved value of this configuration from `Metadata`. If undefined, fall back to
+   * alternate keys, returning `None` if none matches.
+   */
+  protected[delta] def fromMetaDataOption(metadata: Metadata): Option[T] = {
+    fromMapOption(metadata.configuration)
+  }
+
+  def fromMap(configs: Map[String, String]): T = {
+    fromMapOption(configs).getOrElse(fromString(defaultValue))
+  }
+
+  protected[delta] def fromMapOption(configs: Map[String, String]): Option[T] = {
+    for (k <- key +: alternateKeys) {
+      configs.get(k) match {
+        case Some(value) => return Some(fromString(value))
+        case None => // keep looking
+      }
     }
-    fromString(defaultValue)
+    None
   }
 
   /** Validate the setting for this configuration */
@@ -137,7 +156,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val sqlConfPrefix = "spark.databricks.delta.properties.defaults."
 
-  private val entries = new HashMap[String, DeltaConfig[_]]
+  private[delta] val entries = new HashMap[String, DeltaConfig[_]]
 
   protected def buildConfig[T](
       key: String,
@@ -177,7 +196,14 @@ trait DeltaConfigsBase extends DeltaLogging {
           lKey -> value
         case lKey if lKey.startsWith("delta.") =>
           Option(entries.get(lKey.stripPrefix("delta."))) match {
-            case Some(deltaConfig) => deltaConfig(value) // validate the value
+            case Some(deltaConfig) if (
+              lKey == DeltaConfigs.TOMBSTONE_RETENTION.key.toLowerCase(Locale.ROOT) ||
+              lKey == DeltaConfigs.LOG_RETENTION.key.toLowerCase(Locale.ROOT)) =>
+              val ret = deltaConfig(value) // validate the value
+              validateTombstoneAndLogRetentionDurationCompatibility(configurations)
+              ret
+            case Some(deltaConfig) =>
+              deltaConfig(value) // validate the value
             case None if lKey.startsWith(DELTA_UNIVERSAL_FORMAT_CONFIG_PREFIX) =>
               // always allow any delta universal format config with key converted to lower case
               lKey -> value
@@ -305,6 +331,41 @@ trait DeltaConfigsBase extends DeltaLogging {
     i.days * DateTimeConstants.MICROS_PER_DAY + i.microseconds
   }
 
+  private def validateTombstoneAndLogRetentionDurationCompatibility(
+    configs: Map[String, String]): Unit = {
+    if (!SparkSession.active.sessionState.conf
+      .getConf(DeltaSQLConf.ENFORCE_DELETED_FILE_AND_LOG_RETENTION_DURATION_COMPATIBILITY)) {
+      return
+    }
+    val lowerCaseConfigs = configs.iterator.map {
+      case (k, v) => k.toLowerCase(Locale.ROOT) -> v
+    }.toMap
+    val logRetention = DeltaConfigs.LOG_RETENTION
+    val tombstoneRetention = DeltaConfigs.TOMBSTONE_RETENTION
+    val logRetentionDuration: CalendarInterval = logRetention.fromString(
+      lowerCaseConfigs.get(logRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(logRetention.defaultValue))
+    val tombstoneRetentionDuration: CalendarInterval = tombstoneRetention.fromString(
+      lowerCaseConfigs.get(tombstoneRetention.key.toLowerCase(Locale.ROOT))
+        .getOrElse(tombstoneRetention.defaultValue))
+
+    val logRetentionFound = lowerCaseConfigs.get(
+      logRetention.key.toLowerCase(Locale.ROOT)).isDefined
+
+    val errorMessage = if (logRetentionFound) {
+      s"The table property ${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString}) " +
+        s"needs to be greater than or equal to ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString})."
+    } else {
+      s"The table property ${DeltaConfigs.TOMBSTONE_RETENTION.key}" +
+        s"(${tombstoneRetentionDuration.toString}) needs to be less than or equal to " +
+        s"${DeltaConfigs.LOG_RETENTION.key}(${logRetentionDuration.toString})."
+    }
+
+    require(getMilliSeconds(logRetentionDuration) >= getMilliSeconds(tombstoneRetentionDuration),
+      errorMessage)
+  }
+
   /**
    * For configs accepting an interval, we require the user specified string must obey:
    *
@@ -405,6 +466,37 @@ trait DeltaConfigsBase extends DeltaLogging {
     _.toInt,
     _ > 0,
     "needs to be a positive integer.")
+
+  /**
+   * This is the property that describes the table redirection detail. It is a JSON string format
+   * of the `TableRedirectConfiguration` class, which includes following attributes:
+   * - type(String): The type of redirection.
+   * - state(String): The current state of the redirection:
+   *                  ENABLE-REDIRECT-IN-PROGRESS, REDIRECT-READY, DROP-REDIRECT-IN-PROGRESS.
+   * - spec(JSON String): The specification of accessing redirect destination table. This is free
+   *                      form json object. Each delta service provider can customize its own
+   *                      implementation.
+   */
+  val REDIRECT_READER_WRITER: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectReaderWriter-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect reader writer feature.")
+
+  /**
+   * This table feature is same as REDIRECT_READER_WRITER except it is a writer only table feature.
+   */
+  val REDIRECT_WRITER_ONLY: DeltaConfig[Option[String]] =
+    buildConfig[Option[String]](
+      "redirectWriterOnly-preview",
+      null,
+      v => Option(v),
+      _ => true,
+      "A JSON representation of the TableRedirectConfiguration class, which contains all " +
+        "information of redirect writer only feature.")
 
   /**
    * Enable auto compaction for a Delta table. When enabled, we will check if files already
@@ -518,6 +610,13 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean.")
 
+  val ENABLE_VARIANT_SHREDDING = buildConfig[Boolean](
+    key = "enableVariantShredding",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
   /**
    * Whether this table will automatically optimize the layout of files during writes.
    */
@@ -537,7 +636,7 @@ trait DeltaConfigsBase extends DeltaLogging {
    */
   val DATA_SKIPPING_NUM_INDEXED_COLS = buildConfig[Int](
     "dataSkippingNumIndexedCols",
-    DataSkippingReader.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
+    DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE.toString,
     _.toInt,
     a => a >= -1,
     "needs to be larger than or equal to -1.")
@@ -556,7 +655,7 @@ trait DeltaConfigsBase extends DeltaLogging {
     "dataSkippingStatsColumns",
     null,
     v => Option(v),
-    vOpt => vOpt.forall(v => StatisticsCollection.parseDeltaStatsColumnNames(v).isDefined),
+    vOpt => vOpt.forall(v => DeltaSqlParserUtils.parseMultipartColumnList(v).isDefined),
     """
       |The dataSkippingStatsColumns parameter is a comma-separated list of case-insensitive column
       |identifiers. Each column identifier can consist of letters, digits, and underscores.
@@ -692,6 +791,22 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean.")
 
   /**
+   * Controls whether row tracking operations should be suspended. It blocks the assignment of new
+   * baseRowIds as well as copying existing baseRowIds. It is intended to be used when dropping
+   * row tracking. It can be enabled after setting `delta.enableRowTracking` to false.
+   *
+   * WARNING 1: Should never be enabled when `delta.enableRowTracking` is set to true.
+   * WARNING 2: It should never be manually set. It is only safe to be used in the context of
+   *            DROP FEATURE.
+   */
+  val ROW_TRACKING_SUSPENDED = buildConfig[Boolean](
+    key = "rowTrackingSuspended",
+    defaultValue = false.toString,
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "needs to be a boolean.")
+
+  /**
    * Convert the table's metadata into other storage formats after each Delta commit.
    * Only Iceberg is supported for now
    */
@@ -724,6 +839,22 @@ trait DeltaConfigsBase extends DeltaLogging {
     helpMessage = "needs to be a boolean."
   )
 
+  val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](
+    key = "castIcebergTimeType",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Casting Iceberg TIME type to Spark Long type enabled"
+  )
+
+  val IGNORE_ICEBERG_BUCKET_PARTITION = buildConfig[Boolean](
+    key = "ignoreIcebergBucketPartition",
+    defaultValue = "false",
+    fromString = _.toBoolean,
+    validationFunction = _ => true,
+    helpMessage = "Ignore Iceberg bucket partition, which means " +
+      "converting source iceberg table to a non-partition delta table"
+  )
   /**
    * Enable optimized writes into a Delta table. Optimized writes adds an adaptive shuffle before
    * the write to write compacted files into a Delta table during a write.
@@ -804,6 +935,35 @@ trait DeltaConfigsBase extends DeltaLogging {
     v => Option(v).map(_.toLong),
     validationFunction = _ => true,
     "needs to be a long.")
+
+  /**
+   * This property is used by CheckpointProtectionTableFeature and denotes the
+   * version up to which the checkpoints are required to be cleaned up only together with the
+   * corresponding commits. If this is not possible, and metadata cleanup creates a new checkpoint
+   * prior to requireCheckpointProtectionBeforeVersion, it should validate write support against
+   * all protocols included in the commits that are being removed, or else abort. This is needed
+   * to make sure that the writer understands how to correctly create a checkpoint for the
+   * historic commit.
+   *
+   * Note, this is an internal config and should never be manually altered.
+   */
+  val REQUIRE_CHECKPOINT_PROTECTION_BEFORE_VERSION = buildConfig[Long](
+    "requireCheckpointProtectionBeforeVersion",
+    "0",
+    _.toLong,
+    _ >= 0,
+    "needs to be greater or equal to zero.")
+
+  /**
+   * If true, enables the MaterializePartitionColumns table feature which requires partition
+   * columns to be materialized for future parquet data files.
+   */
+  val ENABLE_MATERIALIZE_PARTITION_COLUMNS_FEATURE = buildConfig[Option[Boolean]](
+    "enableMaterializePartitionColumnsFeature",
+    null,
+    v => Option(v).map(_.toBoolean),
+    _ => true,
+    "needs to be a boolean.")
 }
 
 object DeltaConfigs extends DeltaConfigsBase

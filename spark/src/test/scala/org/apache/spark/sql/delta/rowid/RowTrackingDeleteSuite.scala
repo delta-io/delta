@@ -28,8 +28,6 @@ import org.apache.spark.sql.functions.col
 trait RowTrackingDeleteTestDimension
   extends QueryTest
   with RowIdTestUtils {
-  protected def deletionVectorEnabled: Boolean = false
-  protected def cdfEnabled: Boolean = false
   val testTableName = "rowIdDeleteTable"
   val initialNumRows = 5000
 
@@ -110,9 +108,7 @@ trait RowTrackingDeleteTestDimension
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, cdfEnabled.toString)
-      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey,
-        deletionVectorEnabled.toString)
+      .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "false")
   }
 }
 
@@ -192,6 +188,9 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
               DeltaLog.forTableWithSnapshot(spark, TableIdentifier(testTableName))
             val currentNumFiles = snapshot.allFiles.count()
 
+            val deletionVectorEnabled = spark.conf
+              .getOption(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey)
+              .contains("true")
             val expectedNumFiles = if (deletionVectorEnabled) {
               if (isPartitioned) 100 else 10
             } else {
@@ -243,14 +242,7 @@ trait RowTrackingDeleteSuiteBase extends RowTrackingDeleteTestDimension {
 
 trait RowTrackingDeleteDvBase
   extends RowTrackingDeleteTestDimension
-  with DeletionVectorsTestUtils {
-
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    enableDeletionVectorsInNewTables(spark.conf)
-  }
-
-  override protected def deletionVectorEnabled = true
+  with PersistentDVEnabled {
 
   for (isPartitioned <- BOOLEAN_DOMAIN) {
     test(s"DELETE with persistent DVs disabled, isPartitioned=$isPartitioned") {
@@ -263,38 +255,3 @@ trait RowTrackingDeleteDvBase
     }
   }
 }
-
-trait RowTrackingDeleteCDCBase extends RowTrackingDeleteTestDimension {
-  override protected def cdfEnabled = true
-}
-
-// No Column Mapping concrete test suites
-class RowTrackingDeleteSuite extends RowTrackingDeleteSuiteBase
-
-class RowTrackingDeleteDvSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteDvBase
-
-class RowTrackingDeleteCDCSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-
-class RowTrackingDeleteCDCDvSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-  with RowTrackingDeleteDvBase
-
-// Name Column Mapping concrete test suites
-class RowTrackingDeleteNameColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with DeltaColumnMappingEnableNameMode
-
-class RowTrackingDeleteCDCDvNameColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-  with RowTrackingDeleteDvBase
-  with DeltaColumnMappingEnableNameMode
-
-// ID Column Mapping concrete test suites
-class RowTrackingDeleteIdColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with DeltaColumnMappingEnableIdMode
-
-class RowTrackingDeleteCDCDvIdColumnMappingSuite extends RowTrackingDeleteSuiteBase
-  with RowTrackingDeleteCDCBase
-  with RowTrackingDeleteDvBase
-  with DeltaColumnMappingEnableIdMode

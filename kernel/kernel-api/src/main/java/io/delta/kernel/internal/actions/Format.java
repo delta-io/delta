@@ -23,9 +23,11 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.*;
+import java.io.Serializable;
 import java.util.*;
 
-public class Format {
+public class Format implements Serializable {
+  private static final long serialVersionUID = 1L;
 
   public static Format fromColumnVector(ColumnVector vector, int rowId) {
     if (vector.isNullAt(rowId)) {
@@ -84,5 +86,19 @@ public class Format {
   @Override
   public String toString() {
     return "Format{" + "provider='" + provider + '\'' + ", options=" + options + '}';
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    Format format = (Format) o;
+    return provider.equals(format.provider) && options.equals(format.options);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(provider, options);
   }
 }

@@ -22,13 +22,14 @@ import java.util.regex.Pattern
 
 import scala.annotation.tailrec
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaLog, DeltaTestUtils, TypeWideningMode}
 import org.apache.spark.sql.delta.RowCommitVersion
 import org.apache.spark.sql.delta.RowId
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables.DeltaTable
@@ -36,7 +37,7 @@ import org.scalatest.GivenWhenThen
 
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.catalyst.analysis.{caseInsensitiveResolution, caseSensitiveResolution, UnresolvedAttribute}
 import org.apache.spark.sql.catalyst.expressions.{Alias, Cast, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Project}
 import org.apache.spark.sql.functions._
@@ -50,6 +51,7 @@ class SchemaUtilsSuite extends QueryTest
   with DeltaSQLTestUtils
   with DeltaSQLCommandTest {
   import SchemaUtils._
+  import TypeWideningMode._
   import testImplicits._
 
   private def expectFailure(shouldContain: String*)(f: => Unit): Unit = {
@@ -71,8 +73,11 @@ class SchemaUtilsSuite extends QueryTest
       s"Error message '${e.getMessage}' didn't contain the patterns: $shouldContainPatterns")
   }
 
-  private def expectAnalysisErrorClass(errorClass: String, params: Map[String, String])
-                                      (f: => Unit): Unit = {
+  private def expectAnalysisErrorClass(
+      errorClass: String,
+      params: Map[String, String],
+      matchPVals: Boolean = true)(
+      f: => Unit): Unit = {
     val e = intercept[AnalysisException] {
       f
     }
@@ -90,7 +95,7 @@ class SchemaUtilsSuite extends QueryTest
       err.get,
       errorClass,
       parameters = params,
-      matchPVals = true)
+      matchPVals = matchPVals)
   }
 
   /////////////////////////////
@@ -1566,61 +1571,66 @@ class SchemaUtilsSuite extends QueryTest
   /////////////////////////////////
   // normalizeColumnNamesInDataType
   /////////////////////////////////
-
-  private def checkNormalizedColumnNamesInDataType(
+  private def runNormalizeColumnNamesInDataType(
       sourceDataType: DataType,
-      tableDataType: DataType,
-      expectedDataType: DataType): Unit = {
-    assert(normalizeColumnNamesInDataType(
+      tableDataType: DataType): DataType = {
+    normalizeColumnNamesInDataType(
       deltaLog = null,
       sourceDataType,
       tableDataType,
       sourceParentFields = Seq.empty,
-      tableSchema = new StructType()) == expectedDataType)
+      tableSchema = new StructType())
   }
 
-  test("normalize column names in data type - atomic types") {
+  test("normalize column names in data type - top-level atomic types") {
     val source = new StructType()
       .add("a", IntegerType)
       .add("b", StringType)
-    val table = new StructType()
-      .add("B", StringType)
-      .add("A", IntegerType)
-    val expected = new StructType()
-      .add("A", IntegerType)
-      .add("B", StringType)
-    checkNormalizedColumnNamesInDataType(source, table, expected)
-  }
-
-  test("normalize column names in data type - incompatible atomic types") {
-    val source = new StructType()
-      .add("a", IntegerType)
-      .add("b", StringType)
-    val table = new StructType()
-      .add("B", StringType)
-      .add("A", StringType) // StringType != IntegerType
-    val exception = intercept[AssertionError] {
-      normalizeColumnNamesInDataType(
-        deltaLog = null,
-        source,
-        table,
-        sourceParentFields = Seq.empty,
-        tableSchema = new StructType())
-    }
-    assert(exception.getMessage.contains("Types without nesting should match"))
-  }
-
-  test("normalize column names in data type - different integral types") {
-    val source = new StructType()
-      .add("a", IntegerType)
-      .add("b", StringType)
+      .add("c", LongType)
+      .add("d", DateType)
     val table = new StructType()
       .add("B", StringType)
       .add("A", LongType) // LongType != IntegerType
+      .add("D", DecimalType(10, 0)) // DecimalType != DateType
+      .add("C", StringType) // StringType != LongType
     val expected = new StructType()
       .add("A", IntegerType)
       .add("B", StringType)
-    checkNormalizedColumnNamesInDataType(source, table, expected)
+      .add("C", LongType)
+      .add("D", DateType)
+    assert(runNormalizeColumnNamesInDataType(source, table) == expected)
+  }
+
+  test("normalize column names in data type - incompatible top-level types") {
+    val schema1a = new StructType()
+      .add("a", IntegerType)
+      .add("b", StringType)
+    val schema1b = new StructType()
+      .add("B", StringType)
+      .add("A", new StructType()) // StructType != IntegerType
+    intercept[AssertionError] {
+      runNormalizeColumnNamesInDataType(schema1a, schema1b)
+    }
+    intercept[AssertionError] {
+      runNormalizeColumnNamesInDataType(schema1b, schema1a)
+    }
+
+    val schema2a = new StructType()
+      .add("x", StringType)
+      .add("y", new StructType()
+        .add("z", IntegerType)
+      )
+    val schema2b = new StructType()
+      .add("x", StringType)
+      .add("Y", new StructType()
+        .add("z", ArrayType(IntegerType)) // ArrayType != IntegerType
+      )
+    intercept[AssertionError] {
+      runNormalizeColumnNamesInDataType(schema2a, schema2b)
+    }
+    intercept[AssertionError] {
+      runNormalizeColumnNamesInDataType(schema2b, schema2a)
+    }
   }
 
   test("normalize column names in data type - nested structs") {
@@ -1669,10 +1679,10 @@ class SchemaUtilsSuite extends QueryTest
         .add("D1", IntegerType)
         .add("D2", LongType)
       )
-    checkNormalizedColumnNamesInDataType(source, table, expected)
+    assert(runNormalizeColumnNamesInDataType(source, table) == expected)
   }
 
-  test("normalize column names in data type - incompatible types in a struct") {
+  test("normalize column names in data type - different atomic types in a map") {
     val source = new StructType()
       .add("a", new StructType()
       .add("b", new StructType()
@@ -1685,8 +1695,33 @@ class SchemaUtilsSuite extends QueryTest
       .add("A", new StructType()
       .add("B", new StructType()
       .add("C", MapType(StringType, IntegerType))))
-    assertThrows[AssertionError] {
-      checkNormalizedColumnNamesInDataType(source, table, expected)
+    assert(runNormalizeColumnNamesInDataType(source, table) == expected)
+  }
+
+  test("normalize column names in data type - incompatible nested types") {
+    val schema1 = new StructType()
+      .add("a", new StructType()
+      .add("b", new StructType()
+      .add("c", IntegerType)))
+    val schema2 = new StructType()
+      .add("A", new StructType()
+      .add("B", new StructType()
+      .add("C", ArrayType(IntegerType))))
+    val schema3 = new StructType()
+      .add("A", new StructType()
+      .add("b", new StructType()
+      .add("C", new StructType())))
+    val schemas = Seq(schema1, schema2, schema3)
+
+    for (left <- schemas; right <- schemas) {
+      if (left == right) {
+        // Make sure there's no error when the schemas are the same.
+        assert(runNormalizeColumnNamesInDataType(left, right) == left)
+      } else {
+        intercept[AssertionError] {
+          runNormalizeColumnNamesInDataType(left, right)
+        }
+      }
     }
   }
 
@@ -1713,7 +1748,7 @@ class SchemaUtilsSuite extends QueryTest
       ArrayType(new StructType()
         .add("Aa", IntegerType)
         .add("Bb", StringType)))
-    checkNormalizedColumnNamesInDataType(source, table, expected)
+    assert(runNormalizeColumnNamesInDataType(source, table) == expected)
   }
 
   test("normalize column names in data type - missing column") {
@@ -1770,14 +1805,14 @@ class SchemaUtilsSuite extends QueryTest
           nullable = true, comment = "comment for b3"),
         nullable = false, comment = "comment for a2"
       )
-    checkNormalizedColumnNamesInDataType(source, table, expected)
+    assert(runNormalizeColumnNamesInDataType(source, table) == expected)
   }
 
   test("normalize column names in data type - empty source struct") {
     val source = new StructType()
     val table = new StructType().add("a", IntegerType)
     val expected = new StructType()
-    checkNormalizedColumnNamesInDataType(source, table, expected)
+    assert(runNormalizeColumnNamesInDataType(source, table) == expected)
   }
 
   ////////////////////////////
@@ -2082,7 +2117,10 @@ class SchemaUtilsSuite extends QueryTest
           col("*"),
           col("_metadata.row_id").as("row_id")
         )
-        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
+        .withMetadata(
+          "row_id",
+          RowId.RowIdMetadataStructField.metadata("name", shouldSetIcebergReservedFieldId = false)
+        )
 
       val tableSchema = new StructType().add("id", LongType)
       val normalized =
@@ -2105,8 +2143,14 @@ class SchemaUtilsSuite extends QueryTest
           col("_metadata.row_id").as("row_id"),
           col("_metadata.row_commit_version").as("row_commit_version")
         )
-        .withMetadata("row_id", RowId.RowIdMetadataStructField.metadata("name"))
-        .withMetadata("row_commit_version", RowCommitVersion.MetadataStructField.metadata("name"))
+        .withMetadata(
+          "row_id",
+          RowId.RowIdMetadataStructField.metadata("name", shouldSetIcebergReservedFieldId = false))
+        .withMetadata(
+          "row_commit_version",
+          RowCommitVersion.MetadataStructField.metadata(
+            "name", shouldSetIcebergReservedFieldId = false)
+        )
 
       val tableSchema = new StructType().add("id", LongType)
         val normalized =
@@ -2428,6 +2472,443 @@ class SchemaUtilsSuite extends QueryTest
     testParquetUpcast()
 
   }
+
+  test("schema merging non struct root type") {
+    // Array root type
+    val base1 = ArrayType(new StructType().add("a", IntegerType))
+    val update1 = ArrayType(new StructType().add("b", IntegerType))
+    val mergedType1 =
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false,
+        overrideMetadata = false)
+    assert(mergedType1 === ArrayType(new StructType().add("a", IntegerType).add("b", IntegerType)))
+
+    // Map root type
+    val base2 = MapType(
+      new StructType().add("a", IntegerType),
+      new StructType().add("b", IntegerType)
+    )
+    val update2 = MapType(
+      new StructType().add("b", IntegerType),
+      new StructType().add("c", IntegerType)
+    )
+    val mergedType2 =
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false,
+        overrideMetadata = false)
+    assert(mergedType2 ===
+      MapType(
+        new StructType().add("a", IntegerType).add("b", IntegerType),
+        new StructType().add("b", IntegerType).add("c", IntegerType)
+      ))
+  }
+
+  test("schema merging allow override") {
+    // override root type
+    val base1 = new StructType().add("a", IntegerType)
+    val update1 = ArrayType(LongType)
+    val mergedSchema1 =
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = true,
+        overrideMetadata = false)
+    assert(mergedSchema1 === ArrayType(LongType))
+
+    // override nested type
+    val base2 = ArrayType(new StructType().add("a", IntegerType).add("b", StringType))
+    val update2 = ArrayType(new StructType().add("a", MapType(StringType, StringType)))
+    val mergedSchema2 =
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = true,
+        overrideMetadata = false)
+    assert(mergedSchema2 ===
+      ArrayType(new StructType().add("a", MapType(StringType, StringType)).add("b", StringType)))
+  }
+
+  test("keepExistingType and typeWideningMode both set allows both widening and " +
+    "preserving non-widenable existing types") {
+    val base = new StructType()
+      .add("widened", ShortType)
+      .add("struct", new StructType()
+        .add("b", ByteType)
+        .add("a", StringType))
+      .add("map", MapType(ShortType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+
+    val update = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", IntegerType))
+      .add("map", MapType(IntegerType, StringType))
+      .add("array", ArrayType(ByteType))
+      .add("nonwidened", StringType)
+
+    val expected = new StructType()
+      .add("widened", IntegerType)
+      .add("struct", new StructType()
+        .add("b", IntegerType)
+        .add("a", StringType))
+      .add("map", MapType(IntegerType, IntegerType))
+      .add("array", ArrayType(StringType))
+      .add("nonwidened", IntegerType)
+
+    val mergedSchema =
+      mergeSchemas(
+        base,
+        update,
+        typeWideningMode = TypeWideningMode.TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        keepExistingType = true
+      )
+    assert(mergedSchema === expected)
+  }
+
+  private val allTypeWideningModes = Set(
+    NoTypeWidening,
+    AllTypeWidening,
+    TypeEvolution(
+      uniformIcebergCompatibleOnly = false,
+      allowAutomaticWidening = AllowAutomaticWideningMode.default),
+    TypeEvolution(
+      uniformIcebergCompatibleOnly = true,
+      allowAutomaticWidening = AllowAutomaticWideningMode.default),
+    AllTypeWideningToCommonWiderType,
+    TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+    TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+    AllTypeWideningWithDecimalCoercion,
+    TypeEvolutionWithDecimalCoercion
+  )
+
+  test("typeWideningMode - byte->short->int is always allowed") {
+    val narrow = new StructType()
+      .add("a", ByteType)
+      .add("b", ByteType)
+      .add("c", ShortType)
+      .add("s", new StructType().add("x", ByteType))
+      .add("m", MapType(ByteType, ShortType))
+      .add("ar", ArrayType(ByteType))
+
+    val wide = new StructType()
+      .add("a", ShortType)
+      .add("b", IntegerType)
+      .add("c", IntegerType)
+      .add("s", new StructType().add("x", IntegerType))
+      .add("m", MapType(ShortType, IntegerType))
+      .add("ar", ArrayType(IntegerType))
+
+    for (typeWideningMode <- allTypeWideningModes) {
+      // byte, short, int are all stored as INT64 in parquet, [[mergeSchemas]] always allows
+      // widening between them. This was already the case before typeWideningMode was introduced.
+      val merged1 = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      assert(merged1 === wide)
+      val merged2 = mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      assert(merged2 === wide)
+    }
+  }
+
+  // These type changes will only be available once Delta uses Spark 4.0.
+  for ((fromType, toType) <- Seq(
+    IntegerType -> LongType,
+    new StructType().add("x", IntegerType) -> new StructType().add("x", LongType),
+    MapType(IntegerType, IntegerType) -> MapType(LongType, LongType),
+    ArrayType(IntegerType) -> ArrayType(LongType)
+  ))
+  test(s"typeWideningMode ${fromType.sql} -> ${toType.sql}") {
+    val narrow = new StructType().add("a", fromType)
+    val wide = new StructType().add("a", toType)
+
+    for (typeWideningMode <- Seq(
+        NoTypeWidening,
+        AllTypeWidening,
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        AllTypeWideningWithDecimalCoercion,
+        TypeEvolutionWithDecimalCoercion)) {
+      // Narrowing is not allowed.
+      expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+
+    for (typeWideningMode <- Seq(
+        AllTypeWideningToCommonWiderType,
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
+      // These modes don't enforce an order on the inputs, widening from second schema to first
+      // is allowed.
+      val merged = mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      assert(merged === wide)
+    }
+
+    for (typeWideningMode <- allTypeWideningModes -- Set(NoTypeWidening)) {
+      // Widening is allowed, unless mode is NoTypeWidening.
+      val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      assert(merged === wide)
+    }
+    expectAnalysisErrorClass("DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+      Map("currentDataType" -> "LongType", "updateDataType" -> "IntegerType")) {
+      mergeSchemas(wide, narrow, typeWideningMode = NoTypeWidening)
+    }
+  }
+
+  for ((fromType, toType) <- Seq(
+    ShortType -> DoubleType,
+    IntegerType -> DecimalType(10, 0)
+  ))
+  test(
+    s"typeWideningMode - blocked type evolution ${fromType.sql} -> ${toType.sql}") {
+    val narrow = new StructType().add("a", fromType)
+    val wide = new StructType().add("a", toType)
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.SAME_FAMILY_TYPE),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.SAME_FAMILY_TYPE),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+        TypeEvolutionWithDecimalCoercion)) {
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        Map("currentDataType" -> fromType.toString, "updateDataType" -> toType.toString),
+        matchPVals = false) {
+        mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      }
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DATATYPE",
+        Map("currentDataType" -> toType.toString, "updateDataType" -> fromType.toString),
+        matchPVals = false) {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+  }
+
+  for ((fromType, toType) <- Seq(
+    DateType -> TimestampNTZType,
+    DecimalType(10, 2) -> DecimalType(12, 4)
+  ))
+  test(
+      s"typeWideningMode - Uniform Iceberg compatibility ${fromType.sql} -> ${toType.sql}") {
+    val narrow = new StructType().add("a", fromType)
+    val wide = new StructType().add("a", toType)
+
+    def checkAnalysisException(f: => Unit): Unit = {
+      val ex = intercept[DeltaAnalysisException](f).getCause.asInstanceOf[AnalysisException]
+      // Decimal scale increase return a slightly different error class.
+      assert(ex.errorClass.contains("DELTA_MERGE_INCOMPATIBLE_DATATYPE") ||
+        ex.errorClass.contains("DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE"))
+    }
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = false,
+          allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false))) {
+        // Unsupported type changes by Iceberg are allowed without Iceberg compatibility.
+      val merged = mergeSchemas(narrow, wide, typeWideningMode = typeWideningMode)
+      assert(merged === wide)
+    }
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.ALWAYS),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true))) {
+      // Widening is blocked for unsupported type changes with Iceberg compatibility.
+      checkAnalysisException {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+
+    // These modes don't enforce an order on the inputs, widening from second schema to first
+    // is allowed without Iceberg compatibility.
+    val merged = mergeSchemas(wide, narrow,
+      typeWideningMode = TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false))
+    assert(merged === wide)
+
+    for (typeWideningMode <- Seq(
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default),
+        TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = true),
+        TypeEvolution(
+          uniformIcebergCompatibleOnly = true,
+          allowAutomaticWidening = AllowAutomaticWideningMode.default))) {
+      // Rejected either because this is a narrowing type change, or for the bidirectional mode,
+      // because it is not supported by Iceberg.
+      checkAnalysisException {
+        mergeSchemas(wide, narrow, typeWideningMode = typeWideningMode)
+      }
+    }
+  }
+
+  test(
+    s"typeWideningMode - widen to common wider decimal") {
+    val left = new StructType().add("a", DecimalType(10, 2))
+    val right = new StructType().add("a", DecimalType(5, 4))
+    val wider = new StructType().add("a", DecimalType(12, 4))
+
+    val modesCanWidenToCommonWiderDecimal = Set(
+      // Increasing decimal scale isn't supported by Iceberg, so only possible when we don't enforce
+      // Iceberg compatibility.
+      TypeEvolutionToCommonWiderType(uniformIcebergCompatibleOnly = false),
+      AllTypeWideningToCommonWiderType,
+      AllTypeWideningWithDecimalCoercion,
+      TypeEvolutionWithDecimalCoercion
+    )
+
+    for (typeWideningMode <- modesCanWidenToCommonWiderDecimal) {
+      assert(mergeSchemas(left, right, typeWideningMode = typeWideningMode) === wider)
+      assert(mergeSchemas(right, left, typeWideningMode = typeWideningMode) === wider)
+    }
+
+    for (typeWideningMode <- allTypeWideningModes -- modesCanWidenToCommonWiderDecimal) {
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 10 and 5 & scale 2 and 4"),
+        matchPVals = false) {
+        mergeSchemas(left, right, typeWideningMode = typeWideningMode)
+      }
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 5 and 10 & scale 4 and 2"),
+        matchPVals = false) {
+        mergeSchemas(right, left, typeWideningMode = typeWideningMode)
+      }
+    }
+
+  }
+
+  test(
+    s"typeWideningMode - widen to common wider decimal exceeds max decimal precision") {
+    // We'd need a DecimalType(40, 19) to fit both types, which exceeds max decimal precision of 38.
+    val left = new StructType().add("a", DecimalType(20, 19))
+    val right = new StructType().add("a", DecimalType(21, 0))
+
+    for (typeWideningMode <- allTypeWideningModes) {
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 20 and 21 & scale 19 and 0"),
+        matchPVals = false) {
+        mergeSchemas(left, right, typeWideningMode = typeWideningMode)
+      }
+      expectAnalysisErrorClass(
+        "DELTA_MERGE_INCOMPATIBLE_DECIMAL_TYPE",
+        Map("decimalRanges" -> "precision 21 and 20 & scale 0 and 19"),
+        matchPVals = false) {
+        mergeSchemas(right, left, typeWideningMode = typeWideningMode)
+      }
+    }
+  }
+
+  test(s"typeWideningMode - widen integral type to common wider decimal") {
+    val left = new StructType()
+      .add("a", ByteType)
+      .add("b", ShortType)
+      .add("c", IntegerType)
+      .add("d", LongType)
+    val right = new StructType()
+      .add("a", DecimalType(2, 1))
+      .add("b", DecimalType(2, 1))
+      .add("c", DecimalType(2, 1))
+      .add("d", DecimalType(2, 1))
+    val wider = new StructType()
+      .add("a", DecimalType(4, 1))
+      .add("b", DecimalType(6, 1))
+      .add("c", DecimalType(11, 1))
+      .add("d", DecimalType(21, 1))
+
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningWithDecimalCoercion)
+      == wider)
+  }
+
+  test("schema merging override field metadata") {
+    val base1 = new StructType()
+      .add("a", IntegerType)
+    val update1 = new StructType()
+      .add("a", IntegerType, nullable = true, new MetadataBuilder().putString("x", "1").build())
+    val mergedSchema1 =
+      mergeDataTypes(
+        current = base1,
+        update = update1,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false,
+        overrideMetadata = true
+      )
+    assert(mergedSchema1 ===
+      new StructType()
+        .add("a", IntegerType, nullable = true,
+          new MetadataBuilder().putString("x", "1").build()))
+
+    // override nested metadata
+    val base2 = ArrayType(new StructType()
+      .add("a", new StructType()
+        .add("b", IntegerType)
+        .add("c", IntegerType)))
+    val update2 = ArrayType(new StructType()
+      .add("a", new StructType()
+        .add("b", IntegerType)
+        .add("c", IntegerType, nullable = true,
+          new MetadataBuilder().putString("c_metadata", "2").build()),
+        nullable = true,
+        new MetadataBuilder().putString("a_metadata", "3").build()))
+    val mergedSchema2 =
+      mergeDataTypes(
+        current = base2,
+        update = update2,
+        allowImplicitConversions = false,
+        keepExistingType = false,
+        typeWideningMode = TypeWideningMode.NoTypeWidening,
+        caseSensitive = false,
+        allowOverride = false,
+        overrideMetadata = true
+      )
+    assert(mergedSchema2 ===
+      ArrayType(new StructType()
+        .add("a", new StructType()
+          .add("b", IntegerType)
+          .add("c", IntegerType, nullable = true,
+            new MetadataBuilder().putString("c_metadata", "2").build()),
+          nullable = true,
+          new MetadataBuilder().putString("a_metadata", "3").build())))
+  }
+
   ////////////////////////////
   // transformColumns
   ////////////////////////////
@@ -2970,6 +3451,100 @@ class SchemaUtilsSuite extends QueryTest
     assert(udts.map(_.getClass.getName).toSet == Set(classOf[PointUDT].getName))
   }
 
+
+  test("check if column affects given dependent expressions") {
+    val schema = StructType(Seq(
+      StructField("cArray", ArrayType(StringType)),
+      StructField("cStruct", StructType(Seq(
+        StructField("cMap", MapType(IntegerType, ArrayType(BooleanType))),
+        StructField("cMapWithComplexKey", MapType(StructType(Seq(
+          StructField("a", ArrayType(StringType)),
+          StructField("b", BooleanType)
+        )), IntegerType))
+      )))
+    ))
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray"),
+        exprString = "cast(cStruct.cMap as string) == '{}'",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    // Extracting value from map uses key type as well.
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "cStruct.cMap['random_key'] == 'string'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cstruct"),
+        exprString = "size(cStruct.cMap) == 0",
+        schema,
+        caseSensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "size(cArray) == 1",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMap", "key"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === false
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray", "element"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cStruct", "cMapWithComplexKey", "key", "b"),
+        exprString = "cStruct.cMapWithComplexKey[struct(cArray, false)] == 0",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("cArray", "element"),
+        exprString = "concat_ws('', cArray) == 'string'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("CARRAY"),
+        exprString = "cArray[0] > 'a'",
+        schema,
+        caseInsensitiveResolution) === true
+    )
+    assert(
+      SchemaUtils.containsDependentExpression(
+        spark,
+        columnToChange = Seq("CARRAY", "element"),
+        exprString = "cArray[0] > 'a'",
+        schema,
+        caseSensitiveResolution) === false
+    )
+  }
 }
 
 object UnsupportedDataType extends DataType {

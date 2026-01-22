@@ -21,7 +21,6 @@ import java.io.File
 
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
-import org.apache.spark.sql.delta.DeltaExcludedBySparkVersionTestMixinShims
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.hooks.{AutoCompact, AutoCompactType}
@@ -33,9 +32,10 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.expressions.Literal
+import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StringType
 import org.apache.spark.unsafe.types.UTF8String
@@ -55,14 +55,18 @@ trait AutoCompactTestUtils {
  * This class extends the [[CompactionSuiteBase]] and runs all the [[CompactionSuiteBase]] tests
  * with AutoCompaction.
  *
- * It also tests any AutoCompaction specific behavior.
+ * It also tests AutoCompaction specific behavior around configuration settings.
  */
-class AutoCompactSuite extends
+class AutoCompactConfigurationSuite extends
     CompactionTestHelperForAutoCompaction
   with DeltaSQLCommandTest
   with SharedSparkSession
-  with AutoCompactTestUtils
-  with DeltaExcludedBySparkVersionTestMixinShims {
+  with AutoCompactTestUtils {
+
+  private def setTableProperty(log: DeltaLog, key: String, value: String): Unit = {
+    spark.sql(s"ALTER TABLE delta.`${log.dataPath}` SET TBLPROPERTIES " +
+      s"($key = $value)")
+  }
 
   test("auto-compact-type: test table properties") {
     withTempDir { tempDir =>
@@ -106,6 +110,19 @@ class AutoCompactSuite extends
     }
   }
 
+}
+
+/**
+ * This class extends the [[CompactionSuiteBase]] and runs all the [[CompactionSuiteBase]] tests
+ * with AutoCompaction.
+ *
+ * It also tests AutoCompaction specific behavior around compaction execution.
+ */
+class AutoCompactExecutionSuite extends
+    CompactionTestHelperForAutoCompaction
+  with DeltaSQLCommandTest
+  with SharedSparkSession
+  with AutoCompactTestUtils {
   private def testBothModesViaProperty(testName: String)(f: String => Unit): Unit = {
     def runTest(autoCompactConfValue: String): Unit = {
       withTempDir { dir =>
@@ -222,7 +239,7 @@ class AutoCompactSuite extends
     checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
-  testSparkMasterOnly("variant auto compact kicks in when enabled - table config") {
+  test("variant auto compact kicks in when enabled - table config") {
     withTempDir { dir =>
       withSQLConf(
           "spark.databricks.delta.properties.defaults.autoOptimize.autoCompact" -> "true",
@@ -234,7 +251,7 @@ class AutoCompactSuite extends
     }
   }
 
-  testSparkMasterOnly("variant auto compact kicks in when enabled - session config") {
+  test("variant auto compact kicks in when enabled - session config") {
     withTempDir { dir =>
       withSQLConf(
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
@@ -312,10 +329,10 @@ class AutoCompactSuite extends
 
   testBothModesViaProperty("ensure no NPE in auto compact UDF with null " +
     "partition values") { dir =>
-      Seq(null, "", " ").map(UTF8String.fromString).zipWithIndex.foreach { case (partValue, i) =>
+      Seq(null, "", " ").zipWithIndex.foreach { case (partValue, i) =>
         val path = new File(dir, i.toString).getCanonicalPath
-        val df1 = spark.range(5).withColumn("part", Column(Literal(partValue, StringType)))
-        val df2 = spark.range(5, 10).withColumn("part", Column(Literal("1")))
+        val df1 = spark.range(5).withColumn("part", lit(partValue))
+        val df2 = spark.range(5, 10).withColumn("part", lit("1"))
         val isLogged = checkAutoOptimizeLogging {
           // repartition to increase number of files written
           df1.union(df2).repartition(4)
@@ -350,12 +367,22 @@ class AutoCompactSuite extends
   }
 }
 
-class AutoCompactIdColumnMappingSuite extends AutoCompactSuite
+class AutoCompactConfigurationIdColumnMappingSuite extends AutoCompactConfigurationSuite
   with DeltaColumnMappingEnableIdMode {
   override def runAllTests: Boolean = true
 }
 
-class AutoCompactNameColumnMappingSuite extends AutoCompactSuite
+class AutoCompactExecutionIdColumnMappingSuite extends AutoCompactExecutionSuite
+  with DeltaColumnMappingEnableIdMode {
+  override def runAllTests: Boolean = true
+}
+
+class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigurationSuite
+  with DeltaColumnMappingEnableNameMode {
+  override def runAllTests: Boolean = true
+}
+
+class AutoCompactExecutionNameColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableNameMode {
   override def runAllTests: Boolean = true
 }

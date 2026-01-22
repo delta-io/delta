@@ -17,16 +17,19 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.{Locale, TimeZone}
+
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
-import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorClient, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
+import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -38,7 +41,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
-import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -57,6 +60,12 @@ trait SnapshotDescriptor {
 
   protected[delta] def numOfFilesIfKnown: Option[Long]
   protected[delta] def sizeInBytesIfKnown: Option[Long]
+
+  /** Whether the table has [[CatalogOwnedTableFeature]] enabled */
+  def isCatalogOwned: Boolean = {
+    version >= 0 &&
+      protocol.readerAndWriterFeatureNames.contains(CatalogOwnedTableFeature.name)
+  }
 }
 
 /**
@@ -88,6 +97,7 @@ class Snapshot(
   with StateCache
   with StatisticsCollection
   with DataSkippingReader
+  with ValidateChecksum
   with DeltaLogging {
 
   import Snapshot._
@@ -144,7 +154,9 @@ class Snapshot(
                 "checkpointVersion" -> logSegment.checkpointProvider.version,
                 "durationMs" -> (System.currentTimeMillis() - startTime),
                 "exceptionMessage" -> exception.map(_.getMessage).getOrElse(""),
-                "exceptionStackTrace" -> exception.map(_.getStackTrace.mkString("\n")).getOrElse("")
+                "exceptionStackTrace" ->
+                  exception.map(_.getStackTrace.mkString("\n")).getOrElse(""),
+                "isCRCPresent" -> checksumOpt.isDefined
               )
             )
           }
@@ -170,7 +182,7 @@ class Snapshot(
    * check, if we can reuse the post commit snapshot or if we need to create a new snapshot.
    * The update performs a listing and creates a new LogSegment and the criteria for
    * keeping or replacing the old snapshot is whether the old snapshot's LogSegment is equal
-   * to the LogSegment created by the update() call (see getSnapshotForLogSegmentInternal).
+   * to the LogSegment created by the update() call (see getSnapshotForLogSegment).
    *
    * If an unbackfilled commit has been backfilled before update() is called, the new LogSegment
    * would contain the backfilled version of this commit and so the old and new LogSegments are
@@ -322,6 +334,8 @@ class Snapshot(
           CoordinatedCommitsUsageLogs.COMMIT_COORDINATOR_MISSING_IMPLEMENTATION_WRITE,
           data = Map(
             "commitCoordinatorName" -> coordinatorName.get,
+            "registeredCommitCoordinators" ->
+              CommitCoordinatorProvider.getRegisteredCoordinatorNames.mkString(", "),
             "readVersion" -> version.toString
           )
         )
@@ -361,7 +375,8 @@ class Snapshot(
 
   /** All unexpired tombstones. */
   def tombstones: Dataset[RemoveFile] = {
-    stateDS.where("remove IS NOT NULL").select(col("remove").as[RemoveFile])
+    // Temporary workarround for SPARK-51356.
+    stateDS.where("remove IS NOT NULL").map(_.remove)
   }
 
   def deltaFileSizeInBytes(): Long = deltaFileIndexOpt.map(_.sizeInBytes).getOrElse(0L)
@@ -371,6 +386,41 @@ class Snapshot(
   override def metadata: Metadata = _reconstructedProtocolMetadataAndICT.metadata
 
   override def protocol: Protocol = _reconstructedProtocolMetadataAndICT.protocol
+
+  /**
+   * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
+   * checksum file. If the checksum file is not present or if the protocol or metadata is missing
+   * this will return None.
+   */
+  protected def getProtocolMetadataAndIctFromCrc(checksumOpt: Option[VersionChecksum]):
+    Option[Array[ReconstructedProtocolMetadataAndICT]] = {
+      if (!spark.sessionState.conf.getConf(
+          DeltaSQLConf.USE_PROTOCOL_AND_METADATA_FROM_CHECKSUM_ENABLED)) {
+        return None
+      }
+      checksumOpt.map(c => (c.protocol, c.metadata, c.inCommitTimestampOpt)).flatMap {
+        case (p: Protocol, m: Metadata, ict: Option[Long]) =>
+          Some(Array((p, null, None), (null, m, None), (null, null, ict))
+            .map(ReconstructedProtocolMetadataAndICT.tupled))
+
+        case (p, m, _) if p != null || m != null =>
+          // One was missing from the .crc file... warn and fall back to an optimized query
+          val protocolStr = Option(p).map(_.toString).getOrElse("null")
+          val metadataStr = Option(m).map(_.toString).getOrElse("null")
+          recordDeltaEvent(
+            deltaLog,
+            opType = "delta.assertions.missingEitherProtocolOrMetadataFromChecksum",
+            data = Map(
+              "version" -> version.toString, "protocol" -> protocolStr, "source" -> metadataStr))
+          logWarning(log"Either protocol or metadata is null from checksum; " +
+            log"version:${MDC(DeltaLogKeys.VERSION, version)} " +
+            log"protocol:${MDC(DeltaLogKeys.PROTOCOL, protocolStr)} " +
+            log"metadata:${MDC(DeltaLogKeys.DELTA_METADATA, metadataStr)}")
+          None
+
+        case _ => None // both missing... fall back to an optimized query
+      }
+  }
 
   /**
    * Pulls the protocol and metadata of the table from the files that are used to compute the
@@ -388,6 +438,10 @@ class Snapshot(
   protected def protocolMetadataAndICTReconstruction():
       Array[ReconstructedProtocolMetadataAndICT] = {
     import implicits._
+
+    getProtocolMetadataAndIctFromCrc(checksumOpt).foreach { protocolMetadataAndIctFromCrc =>
+      return protocolMetadataAndIctFromCrc
+    }
 
     val schemaToUse = Action.logSchema(Set("protocol", "metaData", "commitInfo"))
     val checkpointOpt = checkpointProvider.topLevelFileIndex.map { index =>
@@ -458,7 +512,7 @@ class Snapshot(
         .mapPartitions { iter =>
           val state: LogReplay =
             new InMemoryLogReplay(
-              localMinFileRetentionTimestamp,
+              Some(localMinFileRetentionTimestamp),
               localMinSetTransactionRetentionTimestamp)
           state.append(0, iter.map(_.unwrap))
           state.checkpoint.map(_.wrap)
@@ -510,17 +564,38 @@ class Snapshot(
    */
   def computeChecksum: VersionChecksum = VersionChecksum(
     txnId = None,
-    tableSizeBytes = sizeInBytes,
-    numFiles = numOfFiles,
-    numMetadata = numOfMetadata,
-    numProtocol = numOfProtocol,
     inCommitTimestampOpt = getInCommitTimestampOpt,
-    setTransactions = checksumOpt.flatMap(_.setTransactions),
-    domainMetadata = domainMetadatasIfKnown,
     metadata = metadata,
     protocol = protocol,
-    histogramOpt = fileSizeHistogram,
-    allFiles = checksumOpt.flatMap(_.allFiles))
+    allFiles = checksumOpt.flatMap(_.allFiles),
+    tableSizeBytes = checksumOpt.map(_.tableSizeBytes).getOrElse(sizeInBytes),
+    numFiles = checksumOpt.map(_.numFiles).getOrElse(numOfFiles),
+    numMetadata = checksumOpt.map(_.numMetadata).getOrElse(numOfMetadata),
+    numProtocol = checksumOpt.map(_.numProtocol).getOrElse(numOfProtocol),
+    // Only return setTransactions and domainMetadata if they are either already present
+    // in the checksum or if they have already been computed in the current snapshot.
+    setTransactions = checksumOpt.flatMap(_.setTransactions)
+      .orElse {
+        Option.when(_computedStateTriggered &&
+            // Only extract it from the current snapshot if set transaction
+            // writes are enabled.
+            spark.conf.get(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC)) {
+          setTransactions
+        }
+      },
+    domainMetadata = checksumOpt.flatMap(_.domainMetadata)
+      .orElse(Option.when(_computedStateTriggered)(domainMetadata)),
+    numDeletedRecordsOpt = checksumOpt.flatMap(_.numDeletedRecordsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletedRecordsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    numDeletionVectorsOpt = checksumOpt.flatMap(_.numDeletionVectorsOpt)
+      .orElse(Option.when(_computedStateTriggered)(numDeletionVectorsOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndMetricsEnabled),
+    deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
+      .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
+      .filter(_ => deletionVectorsReadableAndHistogramEnabled),
+    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+  )
 
   /** Returns the data schema of the table, used for reading stats */
   def tableSchema: StructType = metadata.dataSchema
@@ -534,22 +609,7 @@ class Snapshot(
 
   /** Return the set of properties of the table. */
   def getProperties: mutable.Map[String, String] = {
-    val base = new mutable.LinkedHashMap[String, String]()
-    metadata.configuration.foreach { case (k, v) =>
-      if (k != "path") {
-        base.put(k, v)
-      }
-    }
-    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
-    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
-    if (protocol.supportsTableFeatures) {
-      val features = protocol.readerAndWriterFeatureNames.map(name =>
-        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
-          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
-      base ++ features.toSeq.sorted
-    } else {
-      base
-    }
+    Snapshot.getProperties(metadata, protocol)
   }
 
   /** The [[CheckpointProvider]] for the underlying checkpoint */
@@ -573,15 +633,20 @@ class Snapshot(
    * @throws IllegalStateException
    *   if the delta file for the current version is not found after backfilling.
    */
-  def ensureCommitFilesBackfilled(tableIdentifierOpt: Option[TableIdentifier]): Unit = {
-    val tableCommitCoordinatorClient = getTableCommitCoordinatorForWrites.getOrElse {
+  def ensureCommitFilesBackfilled(catalogTableOpt: Option[CatalogTable]): Unit = {
+    val tableCommitCoordinatorClientOpt = if (isCatalogOwned) {
+      CatalogOwnedTableUtils.populateTableCommitCoordinatorFromCatalog(spark, catalogTableOpt, this)
+    } else {
+      getTableCommitCoordinatorForWrites
+    }
+    val tableCommitCoordinatorClient = tableCommitCoordinatorClientOpt.getOrElse {
       return
     }
     val minUnbackfilledVersion = DeltaCommitFileProvider(this).minUnbackfilledVersion
     if (minUnbackfilledVersion <= version) {
       val hadoopConf = deltaLog.newDeltaHadoopConf()
       tableCommitCoordinatorClient.backfillToVersion(
-        tableIdentifierOpt,
+        catalogTableOpt.map(_.identifier),
         version,
         lastKnownBackfilledVersion = Some(minUnbackfilledVersion - 1))
       val fs = deltaLog.logPath.getFileSystem(hadoopConf)
@@ -648,20 +713,135 @@ object Snapshot extends DeltaLogging {
       }
     }
   }
+
+  /** Whether to write allFiles in [[VersionChecksum.allFiles]] */
+  private[delta] def allFilesInCrcWritePathEnabled(
+      spark: SparkSession,
+      snapshot: Snapshot): Boolean = {
+    // disable if config is off.
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED)) return false
+
+    // Also disable if all stats (structs/json) are disabled in checkpoints.
+    // When checkpoint stats are disabled (both in terms of structs/json), then the
+    // snapshot.allFiles from state reconstruction may/may not have stats (files coming from
+    // checkpoint won't have stats and files coming from deltas will have stats).
+    // But CRC.allFiles will have stats as VersionChecksum.allFiles is created
+    // incrementally using each commit. To prevent this inconsistency, we disable the feature when
+    // both json/struct stats are disabled for checkpoint.
+    if (!Checkpoints.shouldWriteStatsAsJson(snapshot) &&
+      !Checkpoints.shouldWriteStatsAsStruct(spark.sessionState.conf, snapshot)) {
+      return false
+    }
+
+    // Disable if table is configured to collect stats on more than the default number of columns
+    // to avoid bloating the .crc file.
+    val numIndexedColsThreshold = spark.sessionState.conf
+      .getConf(DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_THRESHOLD_INDEXED_COLS)
+      .getOrElse(DataSkippingReaderConf.DATA_SKIPPING_NUM_INDEXED_COLS_DEFAULT_VALUE)
+    val configuredNumIndexCols =
+      DeltaConfigs.DATA_SKIPPING_NUM_INDEXED_COLS.fromMetaData(snapshot.metadata)
+    if (configuredNumIndexCols > numIndexedColsThreshold) return false
+
+    true
+  }
+
+  /**
+   * If true, force a verification of [[VersionChecksum.allFiles]] irrespective of the value of
+   * DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED flag (if they're written).
+   */
+  private[delta] def allFilesInCrcVerificationForceEnabled(
+      spark: SparkSession): Boolean = {
+    val forceVerificationForNonUTCEnabled = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED)
+    if (!forceVerificationForNonUTCEnabled) return false
+
+    // This is necessary because timestamps for older dates (pre-1883) are not correctly serialized
+    // in non-UTC timezones due to unusual historical offsets (e.g. -07:52:58 for LA).
+    // These serialization discrepancies can lead to spurious CRC verification failures.
+    // By forcing verification of all files in non-UTC environments, we can continue to detect and
+    // work towards fixing this issues.
+    // Note: Display Name for UTC is Etc/UTC, so we check for UTC substring in the timezone.
+    val sparkSessionTimeZone = spark.sessionState.conf.sessionLocalTimeZone
+    val defaultJVMTimeZone = TimeZone.getDefault.getID
+    val systemTimeZone = System.getProperty("user.timezone", "Etc/UTC")
+
+    val isNonUtcTimeZone = List(sparkSessionTimeZone, defaultJVMTimeZone, systemTimeZone)
+      .exists(!_.toLowerCase(Locale.ROOT).contains("utc"))
+
+    isNonUtcTimeZone
+  }
+
+  /**
+   * If true, do verification of [[VersionChecksum.allFiles]] computed by incremental commit CRC
+   * by doing state-reconstruction.
+   */
+  private[delta] def allFilesInCrcVerificationEnabled(
+      spark: SparkSession,
+      snapshot: Snapshot): Boolean = {
+    val verificationConfEnabled = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_VERIFICATION_MODE_ENABLED)
+    val shouldVerify = verificationConfEnabled || allFilesInCrcVerificationForceEnabled(spark)
+    allFilesInCrcWritePathEnabled(spark, snapshot) && shouldVerify
+  }
+
+  /**
+   * Don't include [[AddFile]]s in CRC if this commit is modifying the schema of table in some
+   * way. This is to make sure we don't carry any DROPPED column from previous CRC to this CRC
+   * forever and can start fresh from next commit.
+   * If the oldSnapshot itself is missing, we don't incrementally compute the checksum.
+   */
+  private[delta] def shouldIncludeAddFilesInCrc(
+      spark: SparkSession, snapshot: Snapshot, metadata: Metadata): Boolean = {
+    allFilesInCrcWritePathEnabled(spark, snapshot) &&
+      (snapshot.version == -1 || snapshot.metadata.schema == metadata.schema)
+  }
+
+  /**
+   * Return the set of properties for a given metadata and protocol.
+   */
+  def getProperties(metadata: Metadata, protocol: Protocol): mutable.Map[String, String] = {
+    val base = new mutable.LinkedHashMap[String, String]()
+    metadata.configuration.foreach { case (k, v) =>
+      if (k != "path") {
+        base.put(k, v)
+      }
+    }
+    base.put(Protocol.MIN_READER_VERSION_PROP, protocol.minReaderVersion.toString)
+    base.put(Protocol.MIN_WRITER_VERSION_PROP, protocol.minWriterVersion.toString)
+    if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
+      val features = protocol.readerAndWriterFeatureNames.map(name =>
+        s"${TableFeatureProtocolUtils.FEATURE_PROP_PREFIX}$name" ->
+          TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED)
+      base ++ features.toSeq.sorted
+    } else {
+      base
+    }
+  }
 }
 
 /**
- * An initial snapshot with only metadata specified. Useful for creating a DataFrame from an
- * existing parquet table during its conversion to delta.
+ * A dummy snapshot with only metadata and protocol specified. It is used for a targeted table
+ * version that does not exist yet before commiting a change. This can be used to create a
+ * DataFrame, or to derive the stats schema from an existing Parquet table when converting it to
+ * Delta or cloning it to a Delta table prior to the actual snapshot being available after a commit.
+ *
+ * Note that the snapshot state reconstruction contains only the protocol and metadata - it does not
+ * include add/remove actions, appids, or metadata domains, even if the actual table currently has
+ * or will have them in the future.
  *
  * @param logPath the path to transaction log
  * @param deltaLog the delta log object
  * @param metadata the metadata of the table
+ * @param protocolOpt the protocol version of the table (optional). If not specified, a default
+ *                    protocol will be computed based on the metadata. This must be explicitly
+ *                    specified when replacing an existing Delta table, otherwise using the metadata
+ *                    to compute the protocol might result in a protocol downgrade for the table.
  */
-class InitialSnapshot(
+class DummySnapshot(
     val logPath: Path,
     override val deltaLog: DeltaLog,
-    override val metadata: Metadata)
+    override val metadata: Metadata,
+    protocolOpt: Option[Protocol] = None)
   extends Snapshot(
     path = logPath,
     version = -1,
@@ -685,9 +865,12 @@ class InitialSnapshot(
 
   override def stateDS: Dataset[SingleAction] = emptyDF.as[SingleAction]
   override def stateDF: DataFrame = emptyDF
-  override protected lazy val computedState: SnapshotState = initialState(metadata)
-  override def protocol: Protocol = computedState.protocol
+  override def protocol: Protocol =
+    protocolOpt.getOrElse(Protocol.forNewTable(spark, Some(metadata)))
+
+  override protected lazy val computedState: SnapshotState = initialState(metadata, protocol)
   override protected lazy val getInCommitTimestampOpt: Option[Long] = None
+  _computedStateTriggered = true
 
   // The [[InitialSnapshot]] is not backed by any external commit-coordinator.
   override val tableCommitCoordinatorClientOpt: Option[TableCommitCoordinatorClient] = None

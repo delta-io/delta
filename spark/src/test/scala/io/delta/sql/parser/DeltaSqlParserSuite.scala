@@ -24,11 +24,10 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterByTransform
 import org.apache.spark.sql.delta.CloneTableSQLTestUtils
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.{UnresolvedPathBasedDeltaTable, UnresolvedPathBasedTable}
-import org.apache.spark.sql.delta.commands.{DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable}
+import org.apache.spark.sql.delta.commands.{DeltaOptimizeContext, DescribeDeltaDetailCommand, DescribeDeltaHistory, OptimizeTableCommand, DeltaReorgTable}
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.{TableIdentifier, TimeTravel}
 import org.apache.spark.sql.catalyst.analysis.{UnresolvedAttribute, UnresolvedRelation, UnresolvedTable}
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.catalyst.expressions.Literal
 import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.SQLHelper
@@ -41,26 +40,29 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     // Setting `delegate` to `null` is fine. The following tests don't need to touch `delegate`.
     val parser = new DeltaSqlParser(null)
     assert(parser.parsePlan("vacuum 123_") ===
-      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM"), None, None, None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("123_"), "VACUUM"), None, None, None, false, None))
     assert(parser.parsePlan("vacuum 1a.123_") ===
-      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM"), None, None, None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("1a", "123_"), "VACUUM"), None, None, None, false,
+        None))
     assert(parser.parsePlan("vacuum a.123A") ===
-      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM"), None, None, None, false))
+      VacuumTableCommand(UnresolvedTable(Seq("a", "123A"), "VACUUM"), None, None, None, false,
+        None))
     assert(parser.parsePlan("vacuum a.123E3_column") ===
       VacuumTableCommand(UnresolvedTable(Seq("a", "123E3_column"), "VACUUM"),
-        None, None, None, false))
+        None, None, None, false, None))
     assert(parser.parsePlan("vacuum a.123D_column") ===
       VacuumTableCommand(UnresolvedTable(Seq("a", "123D_column"), "VACUUM"),
-        None, None, None, false))
+        None, None, None, false, None))
     assert(parser.parsePlan("vacuum a.123BD_column") ===
       VacuumTableCommand(UnresolvedTable(Seq("a", "123BD_column"), "VACUUM"),
-        None, None, None, false))
+        None, None, None, false, None))
     assert(parser.parsePlan("vacuum delta.`/tmp/table`") ===
       VacuumTableCommand(UnresolvedTable(Seq("delta", "/tmp/table"), "VACUUM"),
-        None, None, None, false))
+        None, None, None, false, None))
     assert(parser.parsePlan("vacuum \"/tmp/table\"") ===
       VacuumTableCommand(
-        UnresolvedPathBasedDeltaTable("/tmp/table", Map.empty, "VACUUM"), None, None, None, false))
+        UnresolvedPathBasedDeltaTable("/tmp/table", Map.empty, "VACUUM"), None, None, None, false,
+        None))
   }
 
   test("Restore command is parsed as expected") {
@@ -148,6 +150,31 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE tbl WHERE part = 1 ZORDER BY (col1, col2.subcol)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Seq("part = 1"))(
         Seq(unresolvedAttr("col1"), unresolvedAttr("col2", "subcol"))))
+
+    // Validate OPTIMIZE works correctly with FULL keyword.
+    parsedCmd = parser.parsePlan("OPTIMIZE tbl FULL")
+    assert(parsedCmd ===
+      OptimizeTableCommand(None, Some(tblId("tbl")), Nil, DeltaOptimizeContext(isFull = true))(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("tbl"), "OPTIMIZE"))
+
+    parsedCmd = parser.parsePlan("OPTIMIZE catalog_foo.db.tbl FULL")
+    assert(parsedCmd === OptimizeTableCommand(
+      None, Some(tblId("tbl", "db", "catalog_foo")), Nil, DeltaOptimizeContext(isFull = true))(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("catalog_foo", "db", "tbl"), "OPTIMIZE"))
+
+    parsedCmd = parser.parsePlan("OPTIMIZE '/path/to/tbl' FULL")
+    assert(parsedCmd === OptimizeTableCommand(
+      Some("/path/to/tbl"), None, Nil, DeltaOptimizeContext(isFull = true))(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedPathBasedDeltaTable("/path/to/tbl", Map.empty, "OPTIMIZE"))
+
+    parsedCmd = parser.parsePlan("OPTIMIZE delta.`/path/to/tbl` FULL")
+    assert(parsedCmd === OptimizeTableCommand(
+      None, Some(tblId("/path/to/tbl", "delta")), Nil, DeltaOptimizeContext(isFull = true))(Nil))
+    assert(parsedCmd.asInstanceOf[OptimizeTableCommand].child ===
+      UnresolvedTable(Seq("delta", "/path/to/tbl"), "OPTIMIZE"))
   }
 
   test("OPTIMIZE command new tokens are non-reserved keywords") {
@@ -161,15 +188,18 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
     assert(parser.parsePlan("OPTIMIZE zorder") ===
       OptimizeTableCommand(None, Some(tblId("zorder")), Nil)(Nil))
 
+    assert(parser.parsePlan("OPTIMIZE full") ===
+      OptimizeTableCommand(None, Some(tblId("full")), Nil)(Nil))
+
     // Use the new keywords in column name
-    assert(parser.parsePlan("OPTIMIZE tbl WHERE zorder = 1 and optimize = 2") ===
+    assert(parser.parsePlan("OPTIMIZE tbl WHERE zorder = 1 and optimize = 2 and full = 3") ===
       OptimizeTableCommand(None,
         Some(tblId("tbl"))
-        , Seq("zorder = 1 and optimize = 2"))(Nil))
+        , Seq("zorder = 1 and optimize = 2 and full = 3"))(Nil))
 
-    assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder)") ===
+    assert(parser.parsePlan("OPTIMIZE tbl ZORDER BY (optimize, zorder, full)") ===
       OptimizeTableCommand(None, Some(tblId("tbl")), Nil)(
-        Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"))))
+        Seq(unresolvedAttr("optimize"), unresolvedAttr("zorder"), unresolvedAttr("full"))))
   }
 
   test("DESCRIBE DETAIL command is parsed as expected") {
@@ -513,5 +543,48 @@ class DeltaSqlParserSuite extends SparkFunSuite with SQLHelper {
         }, "_LEGACY_ERROR_TEMP_0035", parameters = Map("message" -> errorMsg))
       }
     }
+  }
+
+  test("string coalescing") {
+    val parser = new DeltaSqlParser(new SparkSqlParser())
+
+    val pathToTable = "/path/to/table"
+    val partedPathes = Seq(
+      "'/path/to/table'",
+      "'/path/to' '/table'",
+      "'/path' '/to' '/table'"
+    )
+
+    partedPathes.foreach { path =>
+      // CLONE LOCATION
+      val cloneCmd = parser.parsePlan(
+        s"CREATE TABLE t1 SHALLOW CLONE source LOCATION $path")
+      assert(cloneCmd.asInstanceOf[CloneTableStatement].targetLocation === Some(pathToTable))
+
+      // OPTIMIZE
+      val optimizeCmd = parser.parsePlan(s"OPTIMIZE $path")
+      assert(optimizeCmd ===
+        OptimizeTableCommand(Some(pathToTable), None, Nil)(Nil))
+
+      // DESCRIBE HISTORY
+      var describeHistoryCmd = parser.parsePlan(s"DESCRIBE HISTORY $path")
+      assert(describeHistoryCmd.asInstanceOf[DescribeDeltaHistory].child ===
+        UnresolvedPathBasedDeltaTable(pathToTable, Map.empty, DescribeDeltaHistory.COMMAND_NAME))
+
+      // DESCRIBE DETAIL
+      val describeDetailCmd = parser.parsePlan(s"DESCRIBE DETAIL $path")
+      assert(describeDetailCmd ===
+        DescribeDeltaDetailCommand(
+          UnresolvedPathBasedTable(pathToTable, Map.empty, DescribeDeltaDetailCommand.CMD_NAME),
+          Map.empty))
+
+      // VACUUM
+      val vacuumCmd = parser.parsePlan(s"VACUUM $path")
+      assert(vacuumCmd ===
+        VacuumTableCommand(
+          UnresolvedPathBasedDeltaTable(pathToTable, Map.empty, "VACUUM"),
+          None, None, None, false, None))
+      }
+
   }
 }

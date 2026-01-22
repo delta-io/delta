@@ -15,9 +15,16 @@
  */
 package io.delta.kernel;
 
+import static java.util.Objects.requireNonNull;
+
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.hook.PostCommitHook;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.metrics.TransactionReport;
 import io.delta.kernel.utils.CloseableIterable;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Contains the result of a successful transaction commit. Returned by {@link
@@ -28,11 +35,19 @@ import io.delta.kernel.utils.CloseableIterable;
 @Evolving
 public class TransactionCommitResult {
   private final long version;
-  private final boolean isReadyForCheckpoint;
+  private final List<PostCommitHook> postCommitHooks;
+  private final TransactionReport transactionReport;
+  private final Optional<SnapshotImpl> postCommitSnapshotOpt;
 
-  public TransactionCommitResult(long version, boolean isReadyForCheckpoint) {
+  public TransactionCommitResult(
+      long version,
+      List<PostCommitHook> postCommitHooks,
+      TransactionReport transactionReport,
+      Optional<SnapshotImpl> postCommitSnapshotOpt) {
     this.version = version;
-    this.isReadyForCheckpoint = isReadyForCheckpoint;
+    this.postCommitHooks = requireNonNull(postCommitHooks);
+    this.transactionReport = requireNonNull(transactionReport);
+    this.postCommitSnapshotOpt = requireNonNull(postCommitSnapshotOpt);
   }
 
   /**
@@ -45,13 +60,34 @@ public class TransactionCommitResult {
   }
 
   /**
-   * Is the table ready for checkpoint (i.e. there are enough commits since the last checkpoint)? If
-   * yes the connector can choose to checkpoint as the version the transaction is committed as using
-   * {@link Table#checkpoint(Engine, long)}
+   * Operations for connector to trigger post-commit.
    *
-   * @return Is the table ready for checkpointing?
+   * <p>Usage:
+   *
+   * <ul>
+   *   <li>Async: Call {@link PostCommitHook#threadSafeInvoke(Engine)} in separate thread.
+   *   <li>Sync: Direct call {@link PostCommitHook#threadSafeInvoke(Engine)} and block until
+   *       operation ends.
+   * </ul>
+   *
+   * @return list of post-commit operations
    */
-  public boolean isReadyForCheckpoint() {
-    return isReadyForCheckpoint;
+  public List<PostCommitHook> getPostCommitHooks() {
+    return postCommitHooks;
+  }
+
+  /** @return the report and metrics for this transaction */
+  public TransactionReport getTransactionReport() {
+    return transactionReport;
+  }
+
+  /**
+   * Return the snapshot at the committed version.
+   *
+   * <p>Currently, Kernel does not support getting the post-commit snapshot for transactions that
+   * experienced conflicts.
+   */
+  public Optional<Snapshot> getPostCommitSnapshot() {
+    return postCommitSnapshotOpt.map(s -> s); // Map needed to upcast to Optional<Snapshot>
   }
 }

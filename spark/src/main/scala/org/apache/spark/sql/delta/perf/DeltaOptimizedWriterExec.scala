@@ -160,7 +160,7 @@ case class DeltaOptimizedWriterExec(
       getStats()
     } catch {
       case e: FetchFailedException =>
-        logWarning("Failed to fetch shuffle blocks for the optimized writer. Retrying", e)
+        logWarning(log"Failed to fetch shuffle blocks for the optimized writer. Retrying", e)
         awaitShuffleMapStage()
         getStats()
     }

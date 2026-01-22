@@ -32,10 +32,10 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.streaming.MemoryStream
 import org.apache.spark.sql.streaming.StreamingQueryException
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
@@ -415,18 +415,20 @@ class InvariantEnforcementSuite extends QueryTest
         val e = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, 50, null)")
         }
-        checkConstraintException(e,
-          s"""CHECK constraint mychk (valueA < valueB) violated by row with values:
-             | - valueA : 100
-             | - valueB : 50""".stripMargin)
+        checkConstraintException(
+          e,
+          "CHECK constraint mychk (valueA < valueB) violated by row with values:",
+          " - valueA : 100",
+          " - valueB : 50")
 
         val e2 = intercept[InvariantViolationException] {
           spark.sql("INSERT INTO constraint VALUES (100, null, null)")
         }
-        checkConstraintException(e2,
-          s"""CHECK constraint mychk (valueA < valueB) violated by row with values:
-             | - valueA : 100
-             | - valueB : null""".stripMargin)
+        checkConstraintException(
+          e2,
+          "CHECK constraint mychk (valueA < valueB) violated by row with values:",
+          " - valueA : 100",
+          " - valueB : null")
       }
     }
   }

@@ -19,6 +19,7 @@ import io.delta.kernel.internal.snapshot.MetadataCleanup.cleanupExpiredLogs
 import io.delta.kernel.internal.util.ManualClock
 import io.delta.kernel.test.{MockFileSystemClientUtils, MockListFromDeleteFileSystemClient}
 import io.delta.kernel.utils.FileStatus
+
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
@@ -52,8 +53,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
       DeletedFileList(), // expected deleted files - none of them should be deleted
       200, // current time
       0 // retention period
-    )
-  ).foreach {
+    )).foreach {
     case (testName, expectedDeletedFiles, currentTime, retentionPeriod) =>
       // _deltalog directory contents - contains only delta files
       val logFiles = deltaFileStatuses(Seq(0, 1, 2, 3, 4, 5, 6))
@@ -118,10 +118,13 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
         Seq(), // expDeletedDeltaVersions
         200, // current time
         200 // retention period
-      )
-    ).foreach {
-      case (testName, expDeletedDeltaVersions, expDeletedCheckpointVersions,
-      currentTime, retentionPeriod) =>
+      )).foreach {
+      case (
+            testName,
+            expDeletedDeltaVersions,
+            expDeletedCheckpointVersions,
+            currentTime,
+            retentionPeriod) =>
 
         val expectedDeletedFiles = DeletedFileList(
           deltaVersions = expDeletedDeltaVersions,
@@ -139,8 +142,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
             case "v2" => expDeletedCheckpointVersions
             case "hybrid" => expDeletedCheckpointVersions.filter(_ == 9)
             case _ => Seq.empty
-          }
-        )
+          })
 
         test(s"metadataCleanup: $checkpointType: $testName: $currentTime, $retentionPeriod") {
           cleanupAndVerify(logFiles, expectedDeletedFiles.fileList(), currentTime, retentionPeriod)
@@ -164,18 +166,13 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
         30, // retention period
         DeletedFileList(
           deltaVersions = Seq(25, 26, 27, 28),
-          multipartCheckpointVersions = Seq(25)
-        )
-      ),
+          multipartCheckpointVersions = Seq(25))),
       (
         330, // current time
         10, // retention period
         DeletedFileList(
           deltaVersions = Seq(25, 26, 27, 28),
-          multipartCheckpointVersions = Seq(25)
-        )
-      )
-    ).foreach {
+          multipartCheckpointVersions = Seq(25)))).foreach {
       case (currentTime, retentionPeriod, expectedDeletedFiles) =>
         cleanupAndVerify(logFiles, expectedDeletedFiles.fileList(), currentTime, retentionPeriod)
     }
@@ -222,17 +219,15 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
         Seq(3L, 6L), // expDeletedCheckpointVersions,
         130, // current time
         20 // retention period
-      )
-    ).foreach {
-      case (expDeletedDeltaVersions, expDeletedCheckpointVersions,
-      currentTime, retentionPeriod) =>
+      )).foreach {
+      case (expDeletedDeltaVersions, expDeletedCheckpointVersions, currentTime, retentionPeriod) =>
 
         val expectedDeletedFiles = (deltaFileStatuses(expDeletedDeltaVersions) ++
           expDeletedCheckpointVersions.flatMap {
-            case v@3 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
-              .filterNot(_.getPath.contains(s"%010d.%010d".format(2, 4)))
-            case v@6 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
-            case v@9 => v2CPFileStatuses(Seq(v))
+            case v @ 3 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
+                .filterNot(_.getPath.contains(s"%010d.%010d".format(2, 4)))
+            case v @ 6 => multiCheckpointFileStatuses(Seq(v), multiPartCheckpointPartsSize)
+            case v @ 9 => v2CPFileStatuses(Seq(v))
           }).map(_.getPath)
 
         cleanupAndVerify(logFiles, expectedDeletedFiles, currentTime, retentionPeriod)
@@ -258,8 +253,7 @@ class MetadataCleanupSuite extends AnyFunSuite with MockFileSystemClientUtils {
       mockEngine(fsClient),
       new ManualClock(currentTimeMillis),
       logPath,
-      retentionPeriodMillis
-    )
+      retentionPeriodMillis)
 
     assert(resultDeletedCount === expectedDeletedFiles.size)
     assert(fsClient.getDeleteCalls.toSet === expectedDeletedFiles.toSet)
@@ -272,17 +266,16 @@ object MetadataCleanupSuite extends MockFileSystemClientUtils {
 
   /** Case class containing the list of expected files in the deleted metadata log file list */
   case class DeletedFileList(
-    deltaVersions: Seq[Long] = Seq.empty,
-    classicCheckpointVersions: Seq[Long] = Seq.empty,
-    multipartCheckpointVersions: Seq[Long] = Seq.empty,
-    v2CheckpointVersions: Seq[Long] = Seq.empty) {
+      deltaVersions: Seq[Long] = Seq.empty,
+      classicCheckpointVersions: Seq[Long] = Seq.empty,
+      multipartCheckpointVersions: Seq[Long] = Seq.empty,
+      v2CheckpointVersions: Seq[Long] = Seq.empty) {
 
     def fileList(): Seq[String] = {
       (deltaFileStatuses(deltaVersions) ++
         singularCheckpointFileStatuses(classicCheckpointVersions) ++
         multiCheckpointFileStatuses(multipartCheckpointVersions, multiPartCheckpointPartsSize) ++
-        v2CPFileStatuses(v2CheckpointVersions)
-        ).sortBy(_.getPath).map(_.getPath)
+        v2CPFileStatuses(v2CheckpointVersions)).sortBy(_.getPath).map(_.getPath)
     }
   }
 
@@ -298,11 +291,11 @@ object MetadataCleanupSuite extends MockFileSystemClientUtils {
 
     v2CheckpointFileStatuses(
       versions.map(v => (v, true, 20)), // to (version, useUUID, numSidecars)
-      "parquet"
-    ).map(_._1)
-      .map(f => FileStatus.of(
-        uuidPattern.replaceAllIn(f.getPath, standardUUID),
-        f.getSize,
-        f.getModificationTime))
+      "parquet").map(_._1)
+      .map(f =>
+        FileStatus.of(
+          uuidPattern.replaceAllIn(f.getPath, standardUUID),
+          f.getSize,
+          f.getModificationTime))
   }
 }

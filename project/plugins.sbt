@@ -30,9 +30,9 @@ addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "1.1.3")
 
 addSbtPlugin("com.simplytyped" % "sbt-antlr4" % "0.8.3")
 
-addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.9.15")
+addSbtPlugin("org.xerial.sbt" % "sbt-sonatype" % "3.11.3")
 
-addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.11")
+addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.0")
 //Upgrade sbt-scoverage to 2.0.3+ because 2.0.0 is not compatible to Scala 2.12.17:
 //sbt.librarymanagement.ResolveException: Error downloading org.scoverage:scalac-scoverage-plugin_2.12.17:2.0.0
 
@@ -45,7 +45,7 @@ addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.0.11")
 //The following fix the conflict:
 libraryDependencySchemes += "org.scala-lang.modules" %% "scala-xml" % VersionScheme.Always % "test"
 
-addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
+addSbtPlugin("com.github.sbt.junit" % "sbt-jupiter-interface" % "0.17.0")
 
 addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the
@@ -55,3 +55,5 @@ dependencyOverrides += "com.puppycrawl.tools" % "checkstyle" % "9.3"
 addSbtPlugin("com.thesamet" % "sbt-protoc" % "1.0.7")
 
 addSbtPlugin("com.lightbend.sbt" % "sbt-java-formatter" % "0.8.0")
+
+addSbtPlugin("org.scalameta" % "sbt-scalafmt" % "2.5.4")

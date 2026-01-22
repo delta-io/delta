@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -32,7 +33,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.execution.streaming.{StreamExecution, StreamingExecutionRelation}
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.StreamingExecutionRelation
 import org.apache.spark.sql.streaming.{DataStreamReader, StreamTest}
 import org.apache.spark.sql.types.{StringType, StructType}
 import org.apache.spark.util.Utils
@@ -54,24 +55,24 @@ trait ColumnMappingStreamingTestUtils extends StreamTest with DeltaColumnMapping
   protected def isColumnMappingSchemaIncompatibleFailure(
       t: Throwable,
       detectedDuringStreaming: Boolean): Boolean = t match {
-    case e: DeltaStreamingColumnMappingSchemaIncompatibleException =>
+    case e: DeltaStreamingNonAdditiveSchemaIncompatibleException =>
       e.additionalProperties.get("detectedDuringStreaming")
         .exists(_.toBoolean == detectedDuringStreaming)
     case _ => false
   }
 
   protected val ExpectStreamStartInCompatibleSchemaFailure =
-    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException] { t =>
+    ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = false))
     }
 
   protected val ExpectInStreamSchemaChangeFailure =
-    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException] { t =>
+    ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException] { t =>
       assert(isColumnMappingSchemaIncompatibleFailure(t, detectedDuringStreaming = true))
     }
 
   protected val ExpectGenericSchemaIncompatibleFailure =
-    ExpectFailure[DeltaStreamingColumnMappingSchemaIncompatibleException]()
+    ExpectFailure[DeltaStreamingNonAdditiveSchemaIncompatibleException]()
 
   // Failure thrown by the current DeltaSource schema change incompatible check
   protected val ExistingRetryableInStreamSchemaChangeFailure = Execute { q =>
@@ -303,7 +304,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
 
       // upgrade to name mode
       val protocol = deltaLog.snapshot.protocol
-        val (r, w) = if (protocol.supportsTableFeatures) {
+        val (r, w) = if (protocol.supportsReaderFeatures || protocol.supportsWriterFeatures) {
         (TableFeatureProtocolUtils.TABLE_FEATURES_MIN_READER_VERSION,
           TableFeatureProtocolUtils.TABLE_FEATURES_MIN_WRITER_VERSION)
       } else {
@@ -334,7 +335,9 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
     }
   }
 
-  test("column mapping + streaming: blocking workflow - drop column") {
+  test(
+    "column mapping + streaming: blocking workflow - drop column"
+  ) {
     val schemaAlterQuery = "DROP COLUMN value"
     val schemaRestoreQuery = "ADD COLUMN (value string)"
 
@@ -403,7 +406,8 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       if (isCdcTest) {
         checkStreamStartBlocked(df2, checkpointDir, ExpectGenericSchemaIncompatibleFailure)
       } else {
-        checkStreamStartBlocked(df2, checkpointDir, ExpectStreamStartInCompatibleSchemaFailure)
+        val expectedError = ExpectStreamStartInCompatibleSchemaFailure
+        checkStreamStartBlocked(df2, checkpointDir, expectedError)
       }
 
       // Case 2 - Specifically we use startingVersion=0 to simulate serving the entire table's data
@@ -432,6 +436,7 @@ trait ColumnMappingStreamingBlockedWorkflowSuiteBase extends ColumnMappingStream
       }
     }
   }
+
 
   test("column mapping + streaming: blocking workflow - rename column") {
     val schemaAlterQuery = "RENAME COLUMN value TO value2"

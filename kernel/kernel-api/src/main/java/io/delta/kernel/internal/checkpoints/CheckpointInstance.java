@@ -23,6 +23,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
+// TODO: Delete this in favor of ParsedCheckpointData.
 /** Metadata about Delta checkpoint. */
 public class CheckpointInstance implements Comparable<CheckpointInstance> {
 

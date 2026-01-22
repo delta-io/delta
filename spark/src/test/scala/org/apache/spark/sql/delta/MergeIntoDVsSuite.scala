@@ -16,18 +16,15 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.cdc.MergeCDCTests
+import org.apache.spark.sql.delta.cdc.MergeCDCMixin
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.sql.execution.datasources.FileFormat.FILE_PATH
-import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
+import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.functions.col
 
-trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils {
+trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -36,16 +33,16 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
 
   override def excluded: Seq[String] = {
     val miscFailures = Seq(
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: true skippingEnabled: false useSqlView: true",
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: true skippingEnabled: false useSqlView: false",
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: false skippingEnabled: false useSqlView: true",
-      "basic case - merge to view on a Delta table by path, " +
+      "basic case - merge to view on a Delta table, " +
         "partitioned: false skippingEnabled: false useSqlView: false",
-      "basic case - merge to Delta table by name, isPartitioned: false skippingEnabled: false",
-      "basic case - merge to Delta table by name, isPartitioned: true skippingEnabled: false",
+      "basic case - merge to Delta table, isPartitioned: false skippingEnabled: false",
+      "basic case - merge to Delta table, isPartitioned: true skippingEnabled: false",
       "not matched by source - all 3 clauses - no changes - " +
         "isPartitioned: true - cdcEnabled: true",
       "not matched by source - all 3 clauses - no changes - " +
@@ -64,15 +61,10 @@ trait MergeIntoDVsTests extends MergeIntoSQLSuite with DeletionVectorsTestUtils 
     "delta.dml.merge")
 }
 
-class MergeIntoDVsSuite extends MergeIntoDVsTests {
+trait MergeIntoDVsTests extends MergeIntoDVsMixin {
   import testImplicits._
 
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "false")
-  }
-
-  def assertOperationalDVMetrics(
+  private def assertOperationalDVMetrics(
       tablePath: String,
       numDeletedRows: Long,
       numUpdatedRows: Long,
@@ -97,21 +89,20 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
   test(s"Merge with DVs metrics - Incremental Updates") {
     withTempDir { dir =>
       val sourcePath = s"$dir/source"
-      val targetPath = s"$dir/target"
 
       spark.range(0, 10, 2).write.format("delta").save(sourcePath)
-      spark.range(10).write.format("delta").save(targetPath)
+      append(spark.range(10).toDF())
 
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = updateNotMatched(set = "id = t.id * 10"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(0, 10, 2, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 0,
         numUpdatedRows = 5,
         numCopiedRows = 0,
@@ -121,15 +112,15 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
         numDeletionVectorsUpdated = 0)
 
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = delete(condition = "t.id = 2"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(0, 10, 30, 4, 50, 6, 70, 8, 90).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 1,
         numUpdatedRows = 0,
         numCopiedRows = 0,
@@ -140,15 +131,15 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
 
       // Delete all rows from a file.
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = delete(condition = "t.id < 5"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(10, 30, 50, 6, 70, 8, 90).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(10, 30, 50, 6, 70, 8, 90).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 2,
         numUpdatedRows = 0,
         numCopiedRows = 0,
@@ -162,21 +153,20 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
   test(s"Merge with DVs metrics - delete entire file") {
     withTempDir { dir =>
       val sourcePath = s"$dir/source"
-      val targetPath = s"$dir/target"
 
       spark.range(0, 7).write.format("delta").save(sourcePath)
-      spark.range(10).write.format("delta").save(targetPath)
+      append(spark.range(10).toDF())
 
       executeMerge(
-        tgt = s"delta.`$targetPath` t",
+        tgt = s"$tableSQLIdentifier t",
         src = s"delta.`$sourcePath` s",
         cond = "t.id = s.id",
         clauses = update(set = "id = t.id * 10"))
 
-      checkAnswer(readDeltaTable(targetPath), Seq(0, 10, 20, 30, 40, 50, 60, 7, 8, 9).toDF("id"))
+      checkAnswer(readDeltaTableByIdentifier(), Seq(0, 10, 20, 30, 40, 50, 60, 7, 8, 9).toDF("id"))
 
       assertOperationalDVMetrics(
-        targetPath,
+        deltaLog.dataPath.toString,
         numDeletedRows = 0,
         numUpdatedRows = 7,
         numCopiedRows = 0, // No rows were copied.
@@ -226,7 +216,9 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
           tableHasDVs = true,
           targetDf = sourceDF.as("s").join(targetDFWithMetadata.as("t"), condition),
           candidateFiles = corruptedFiles,
-          condition = condition.expr
+          condition = condition.expr,
+          fileNameColumnOpt = Option(col("s._metadata.file_name")),
+          rowIndexColumnOpt = Option(col("s._metadata.row_index"))
         )
       }
       assert(e.getCause.getMessage.contains("Encountered a non matched file path."))
@@ -234,7 +226,7 @@ class MergeIntoDVsSuite extends MergeIntoDVsTests {
   }
 }
 
-trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
+trait MergeCDCWithDVsMixin extends QueryTest with MergeCDCMixin with DeletionVectorsTestUtils {
   override def beforeAll(): Unit = {
     super.beforeAll()
     enableDeletionVectors(spark, merge = true)
@@ -248,25 +240,5 @@ trait MergeCDCWithDVsTests extends MergeCDCTests with DeletionVectorsTestUtils {
     val miscFailures = "merge CDC - all conditions failed for all rows"
 
     super.excluded :+ miscFailures
-  }
-}
-/**
- * Includes the entire MergeIntoSQLSuite with CDC enabled.
- */
-class MergeIntoDVsCDCSuite extends MergeIntoDVsTests with MergeCDCWithDVsTests
-
-class MergeIntoDVsWithPredicatePushdownSuite extends MergeIntoDVsTests {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
-  }
-}
-
-class MergeIntoDVsWithPredicatePushdownCDCSuite
-    extends MergeIntoDVsTests
-    with MergeCDCWithDVsTests {
-  override def beforeAll(): Unit = {
-    super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX.key, "true")
   }
 }

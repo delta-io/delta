@@ -13,9 +13,7 @@ def get_version_from_sbt():
         version = fp.read().strip()
     return version.split('"')[1]
 
-
 VERSION = get_version_from_sbt()
-
 
 class VerifyVersionCommand(install):
     """Custom command to verify that the git tag matches our version"""
@@ -33,6 +31,9 @@ class VerifyVersionCommand(install):
 
 with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
+
+install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
+python_requires_arg = '>=3.10'
 
 setup(
     name="delta-spark",
@@ -60,15 +61,12 @@ setup(
     ],
     keywords='delta.io',
     package_dir={'': 'python'},
-    packages=['delta'],
+    packages=['delta', 'delta.connect', 'delta.connect.proto', 'delta.exceptions'],
     package_data={
         'delta': ['py.typed'],
     },
-    install_requires=[
-        'pyspark>=3.5.3,<3.6.0',
-        'importlib_metadata>=1.0.0',
-    ],
-    python_requires='>=3.6',
+    install_requires=install_requires_arg,
+    python_requires=python_requires_arg,
     cmdclass={
         'verify': VerifyVersionCommand,
     }

@@ -18,12 +18,15 @@ package org.apache.spark.sql.delta.util
 
 import scala.util.Random
 
-import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.Metadata
 
-import org.apache.spark.sql.{Column, Dataset}
+import org.apache.hadoop.fs.Path
+
+import org.apache.spark.sql.{functions, Column, Dataset}
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.ElementAt
-import org.apache.spark.sql.functions.lit
 
 /**
  * Various utility methods used by Delta.
@@ -53,6 +56,22 @@ object Utils {
   }
 
   /**
+   * Construct a delta log from either the catalog table or a path.
+   *
+   * If catalogTableOpt is defined, use it to construct the delta log; otherwise, fall back to use
+   * path-based delta log construction.
+   */
+  def getDeltaLogFromTableOrPath(
+      sparkSession: SparkSession,
+      catalogTableOpt: Option[CatalogTable],
+      path: Path,
+      options: Map[String, String] = Map.empty): DeltaLog = {
+    catalogTableOpt
+      .map(catalogTable => DeltaLog.forTable(sparkSession, catalogTable, options))
+      .getOrElse(DeltaLog.forTable(sparkSession, path, options))
+  }
+
+  /**
    * Indicates whether Delta is currently running unit tests.
    */
   def isTesting: Boolean = {
@@ -64,8 +83,6 @@ object Utils {
    * otherwise.
    */
   def try_element_at(mapColumn: Column, key: Any): Column = {
-    Column {
-      ElementAt(mapColumn.expr, lit(key).expr, failOnError = false)
-    }
+    functions.try_element_at(mapColumn, functions.lit(key))
   }
 }

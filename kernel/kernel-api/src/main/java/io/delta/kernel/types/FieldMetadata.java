@@ -87,6 +87,10 @@ public final class FieldMetadata {
     return get(key, String.class);
   }
 
+  public MetadataColumnSpec getMetadataColumnSpec(String key) {
+    return get(key, MetadataColumnSpec.class);
+  }
+
   public FieldMetadata getMetadata(String key) {
     return get(key, FieldMetadata.class);
   }
@@ -115,13 +119,53 @@ public final class FieldMetadata {
   public String toString() {
     return metadata.entrySet().stream()
         .map(
-            entry ->
-                entry.getKey()
-                    + "="
-                    + (entry.getValue().getClass().isArray()
-                        ? Arrays.toString((Object[]) entry.getValue())
-                        : entry.getValue().toString()))
+            entry -> {
+              String key = entry.getKey();
+              Object value = entry.getValue();
+              if (value == null) {
+                return key + "=null";
+              }
+              String valueStr =
+                  value.getClass().isArray() ? Arrays.toString((Object[]) value) : value.toString();
+
+              return key + "=" + valueStr;
+            })
         .collect(Collectors.joining(", ", "{", "}"));
+  }
+
+  /** Are the metadata same, ignoring the specified keys? */
+  public boolean equalsIgnoreKeys(FieldMetadata other, Set<String> keys) {
+    Preconditions.checkArgument(keys != null, "keys must not be null");
+    if (this == other) {
+      return true;
+    }
+    if (other == null) {
+      return false;
+    }
+
+    Map<String, Object> filteredMetadata = new HashMap<>();
+    for (Map.Entry<String, Object> entry : this.metadata.entrySet()) {
+      if (!keys.contains(entry.getKey())) {
+        filteredMetadata.put(entry.getKey(), entry.getValue());
+      }
+    }
+    Map<String, Object> otherFilteredMetadata = new HashMap<>();
+    for (Map.Entry<String, Object> entry : other.metadata.entrySet()) {
+      if (!keys.contains(entry.getKey())) {
+        otherFilteredMetadata.put(entry.getKey(), entry.getValue());
+      }
+    }
+
+    if (filteredMetadata.size() != otherFilteredMetadata.size()) {
+      return false;
+    }
+    return filteredMetadata.entrySet().stream()
+        .allMatch(
+            e -> {
+              Object value = e.getValue();
+              Object otherValue = otherFilteredMetadata.get(e.getKey());
+              return Objects.deepEquals(value, otherValue);
+            });
   }
 
   @Override
@@ -213,6 +257,11 @@ public final class FieldMetadata {
       return this;
     }
 
+    public Builder putMetadataColumnSpec(String key, MetadataColumnSpec value) {
+      metadata.put(key, value);
+      return this;
+    }
+
     public Builder putFieldMetadata(String key, FieldMetadata value) {
       metadata.put(key, value);
       return this;
@@ -258,6 +307,25 @@ public final class FieldMetadata {
     /** @return a new {@link FieldMetadata} with the mappings added to the builder */
     public FieldMetadata build() {
       return new FieldMetadata(this.metadata);
+    }
+
+    public FieldMetadata getMetadata(String key) {
+      Object value = metadata.get(key);
+      if (null == value) {
+        return null;
+      }
+      if (value instanceof FieldMetadata) {
+        return (FieldMetadata) value;
+      }
+      throw new io.delta.kernel.exceptions.KernelException(
+          String.format(
+              "Expected '%s' to be of type 'FieldMetadata' but was '%s'",
+              value, value.getClass().getName()));
+    }
+
+    public Builder remove(String s) {
+      metadata.remove(s);
+      return this;
     }
   }
 }

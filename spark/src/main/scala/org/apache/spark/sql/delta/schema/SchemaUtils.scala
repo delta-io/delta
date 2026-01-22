@@ -20,27 +20,31 @@ import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening}
+import org.apache.spark.sql.delta.Relocated._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMappingMode, DeltaErrors, DeltaLog, GeneratedColumn, NoMapping, TypeWidening, TypeWideningMode}
 import org.apache.spark.sql.delta.{RowCommitVersion, RowId}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils._
+import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils.GENERATION_EXPRESSION_METADATA_KEY
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.util.ScalaExtensions._
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
-import org.apache.spark.sql.catalyst.expressions.AttributeReference
-import org.apache.spark.sql.catalyst.util.CharVarcharUtils
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.catalyst.expressions.{Alias, AttributeReference, Expression, GetArrayItem, GetArrayStructFields, GetMapValue, GetStructField}
+import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
+import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumnsUtils}
+import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
-import org.apache.spark.util.Utils
 
 object SchemaUtils extends DeltaLogging {
   // We use case insensitive resolution while writing into Delta
@@ -136,19 +140,22 @@ object SchemaUtils extends DeltaLogging {
             Some(generateSelectExpr(f, nameStack :+ sf.name))
           }
         }
-        struct(nested: _*).alias(sf.name)
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
+        when(col(colName).isNull, null)
+          .otherwise(struct(nested: _*))
+          .alias(sf.name)
       case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
       case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "NullType"))
       case _ =>
-        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).name
+        val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         col(colName).alias(sf.name)
     }
 
@@ -159,23 +166,68 @@ object SchemaUtils extends DeltaLogging {
   }
 
   /**
-   * Converts StringType to CHAR/VARCHAR if that is the true type as per the metadata
-   * and also strips this metadata from fields.
+   * A char(x)/varchar(x) related types are internally stored as string type with the constraint
+   * information stored in the metadata. For example:
+   *  + char(10) is (string, char_varchar_metadata = "char(10)")
+   *  + array[varchar(10)] is (array[string], char_varchar_metadata = "array[varchar(10)]")
+   * This method converts the string + metadata representation to the actual type.
+   *  + (string, char_varchar_metadata = "char(10)") -> (char(10), char_varchar_metadata = "")
+   *  + (array[string], char_varchar_metadata = "array[varchar(10)]")
+   *    -> (array[varchar(10)], char_varchar_metadata = "")
    */
-  def getRawSchemaWithoutCharVarcharMetadata(schema: StructType): StructType = {
-    val fields = schema.map { field =>
-      val rawField = CharVarcharUtils.getRawType(field.metadata)
-        .map(dt => field.copy(dataType = dt))
-        .getOrElse(field)
-      val throwAwayAttrRef = AttributeReference(
-        rawField.name,
-        rawField.dataType,
-        nullable = rawField.nullable,
-        rawField.metadata)()
-      val cleanedMetadata = CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
-      rawField.copy(metadata = cleanedMetadata)
+  private def getRawFieldWithoutCharVarcharMetadata(field: StructField): StructField = {
+    val rawField = CharVarcharUtils.getRawType(field.metadata)
+      .map(dt => field.copy(dataType = dt))
+      .getOrElse(field)
+    val throwAwayAttrRef = AttributeReference(
+      rawField.name,
+      rawField.dataType,
+      nullable = rawField.nullable,
+      rawField.metadata)()
+    val cleanedMetadata = CharVarcharUtils.cleanAttrMetadata(throwAwayAttrRef).metadata
+    rawField.copy(metadata = cleanedMetadata)
+  }
+
+  /**
+   * Sets a data type to a field in a char/varchar-safe manner. A char(x)/varchar(x) related types
+   * consists of two parts: a string-based type and the constraint information stored in the
+   * metadata. Simply changing the data type will lead to unexpected results.
+   *
+   * For example, an array[varchar(10)] type is internally represented as
+   * (array[string], char_varchar_metadata = "array[varchar(10)]"). If we convert it into an
+   * array[string] simply by setting the data type part, the metadata part will still be there, and
+   * the type will still stay as array[varchar(10)].
+   *
+   * This method first converts the field into its raw type without the metadata part, then sets the
+   * data type part to the new data type, and finally converts the whole thing back to the original
+   * representation.
+   *
+   * In the above example, this methods will convert the array[varchar(10)] representation into
+   * (array[varchar(10)], char_varchar_metadata = ""), set the data type to array[string]
+   * (array[string], char_varchar_metadata = ""), and finally convert it back to
+   * (array[string], char_varchar_metadata = ""), which happens to be the same.
+   */
+  def setFieldDataTypeCharVarcharSafe(field: StructField, newDataType: DataType): StructField = {
+    val byPassCharVarcharToStringFix =
+      SparkSession.active.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)
+    // Convert the field into its raw type without the metadata part
+    val rawField = if (byPassCharVarcharToStringFix) {
+      field
+    } else {
+      getRawFieldWithoutCharVarcharMetadata(field)
     }
-    StructType(fields)
+
+    // Set the new data type
+    val rawFieldWithNewDataType = rawField.copy(dataType = newDataType)
+
+    // Convert it back to the original representation
+    if (byPassCharVarcharToStringFix) {
+      rawFieldWithNewDataType
+    } else {
+      val throwAwayStructType = StructType(Seq(rawFieldWithNewDataType))
+      CharVarcharUtils.replaceCharVarcharWithStringInSchema(throwAwayStructType)
+        .head
+    }
   }
 
   /**
@@ -283,11 +335,13 @@ def normalizeColumnNamesInDataType(
         // When schema evolution adds a new column during MERGE, it can be represented with
         // a NullType in the schema of the data written by the MERGE.
         sourceDataType
-      case (_: IntegralType, _: IntegralType) =>
-        // The integral types can be cast to each other later on.
+      case (_: AtomicType, _: AtomicType) =>
+        // Some atomic types (e.g. integral types) can be cast to each other later on. For now,
+        // it's enough to know that there are no nested fields inside the atomic types that might
+        // require normalization.
         sourceDataType
       case _ =>
-        if (Utils.isTesting) {
+        if (DeltaUtils.isTesting) {
           assert(sourceDataType == tableDataType,
             s"Types without nesting should match but $sourceDataType != $tableDataType")
         } else if (sourceDataType != tableDataType) {
@@ -360,7 +414,12 @@ def normalizeColumnNamesInDataType(
         }
         expression
       }
-      data.select(aliasExpressions: _*)
+      data.queryExecution match {
+        case incrementalExecution: IncrementalExecution =>
+          DeltaStreamUtils.selectFromStreamingDataFrame(
+            incrementalExecution, data.toDF(), aliasExpressions: _*)
+        case _ => data.select(aliasExpressions: _*)
+      }
     }
   }
 
@@ -379,9 +438,10 @@ def normalizeColumnNamesInDataType(
    * As the Delta snapshots update, the schema may change as well. This method defines whether the
    * new schema of a Delta table can be used with a previously analyzed LogicalPlan. Our
    * rules are to return false if:
-   *   - Dropping any column that was present in the existing schema, if not allowMissingColumns
-   *   - Any change of datatype, if not allowTypeWidening. Any non-widening change of datatype
-   *     otherwise.
+   *   - Dropping any column or struct field that was present in the existing schema, if not
+   *     allowMissingColumns
+   *   - Any change of datatype, unless eligible for widening. The caller specifies eligible type
+   *     changes via `typeWideningMode`.
    *   - Change of partition columns. Although analyzed LogicalPlan is not changed,
    *     physical structure of data is changed and thus is considered not read compatible.
    *   - If `forbidTightenNullability` = true:
@@ -402,7 +462,7 @@ def normalizeColumnNamesInDataType(
       readSchema: StructType,
       forbidTightenNullability: Boolean = false,
       allowMissingColumns: Boolean = false,
-      allowTypeWidening: Boolean = false,
+      typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       newPartitionColumns: Seq[String] = Seq.empty,
       oldPartitionColumns: Seq[String] = Seq.empty): Boolean = {
 
@@ -417,7 +477,11 @@ def normalizeColumnNamesInDataType(
     def isDatatypeReadCompatible(existing: DataType, newtype: DataType): Boolean = {
       (existing, newtype) match {
         case (e: StructType, n: StructType) =>
-          isReadCompatible(e, n, forbidTightenNullability, allowTypeWidening = allowTypeWidening)
+          isReadCompatible(e, n,
+            forbidTightenNullability,
+            typeWideningMode = typeWideningMode,
+            allowMissingColumns = allowMissingColumns
+          )
         case (e: ArrayType, n: ArrayType) =>
           // if existing elements are non-nullable, so should be the new element
           isNullabilityCompatible(e.containsNull, n.containsNull) &&
@@ -427,8 +491,8 @@ def normalizeColumnNamesInDataType(
           isNullabilityCompatible(e.valueContainsNull, n.valueContainsNull) &&
             isDatatypeReadCompatible(e.keyType, n.keyType) &&
             isDatatypeReadCompatible(e.valueType, n.valueType)
-        case (e: AtomicType, n: AtomicType) if allowTypeWidening =>
-          TypeWidening.isTypeChangeSupportedForSchemaEvolution(e, n)
+        case (e: AtomicType, n: AtomicType)
+          if typeWideningMode.shouldWidenTo(fromType = e, toType = n) => true
         case (a, b) => a == b
       }
     }
@@ -1051,6 +1115,43 @@ def normalizeColumnNamesInDataType(
   }
 
   /**
+   * Copy the nested data type between two data types in a char/varchar safe manner.
+   * See documentation of [[getRawFieldWithoutCharVarcharMetadata]] and
+   * [[setFieldDataTypeCharVarcharSafe]] for more context.
+   *
+   * This method uses [[getRawFieldWithoutCharVarcharMetadata]] on both the source and
+   * target fields to ensure that the metadata information is included in the data type
+   * before changing the data type. For example, to convert from a varchar(1) to varchar(10),
+   * we first change their representation:
+   *
+   * Source: (string, char_varchar_metadata = "varchar(1)")
+   *  -> (varchar(1), char_varchar_metadata = "")
+   * Target: (string, char_varchar_metadata = "varchar(10)")
+   *  -> (varchar(10), char_varchar_metadata = "")
+   *
+   * Then, we change the data type of the target to that of the source:
+   * (varchar(1), char_varchar_metadata = "") -> (varchar(10), char_varchar_metadata = "")
+   *
+   * Finally, we set the metadata back to the target:
+   * (varchar(10), char_varchar_metadata = "") -> (string, char_varchar_metadata = "varchar(10)")
+   */
+  def changeFieldDataTypeCharVarcharSafe(
+      fromField: StructField,
+      toField: StructField,
+      resolver: Resolver): StructField = {
+    val (safeFromField, safeToField) =
+      if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_BYPASS_CHARVARCHAR_TO_STRING_FIX)) {
+        (fromField, toField)
+      } else {
+        (getRawFieldWithoutCharVarcharMetadata(fromField),
+         getRawFieldWithoutCharVarcharMetadata(toField))
+      }
+    val newDataType = SchemaUtils.changeDataType(
+      safeFromField.dataType, safeToField.dataType, resolver)
+    setFieldDataTypeCharVarcharSafe(fromField, newDataType)
+  }
+
+  /**
    * Copy the nested data type between two data types.
    */
   def changeDataType(from: DataType, to: DataType, resolver: Resolver): DataType = {
@@ -1269,20 +1370,58 @@ def normalizeColumnNamesInDataType(
   // identifier with back-ticks.
   def quoteIdentifier(part: String): String = s"`${part.replace("`", "``")}`"
 
-  /**
-   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
-   * the column to change itself or any of its descendent column is referenced by expression.
-   * For example:
-   *  - a, length(a) -> true
-   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
-   *  - b.c, (cast b as string) -> false, because you can change b.c to b.c1 without affecting b.
-   */
-  def containsDependentExpression(
+  private def analyzeExpression(
       spark: SparkSession,
+      expr: Expression,
+      schema: StructType): Expression = {
+    // Workaround for `exp` analyze
+    val relation = LocalRelation(schema)
+    val relationWithExp = Project(Seq(Alias(expr, "validate_column")()), relation)
+    val analyzedPlan = spark.sessionState.analyzer.execute(relationWithExp)
+    analyzedPlan.collectFirst {
+      case Project(Seq(a: Alias), _: LocalRelation) => a.child
+    }.get
+  }
+
+  /**
+   * Collects all attribute references in the given expression tree as a list of paths.
+   * In particular, generates paths for nested fields accessed using extraction expressions.
+   * For example:
+   * - GetStructField(AttributeReference("struct"), "a") -> ["struct.a"]
+   * - Size(AttributeReference("array")) -> ["array"]
+   */
+  private def collectUsedColumns(expression: Expression): Seq[Seq[String]] = {
+    val result = new collection.mutable.ArrayBuffer[Seq[String]]()
+
+    // Firstly, try to get referenced column for a child's expression.
+    // If it exists then we try to extend it by current expression.
+    // In case if we cannot extend one, we save the received column path (it's as long as possible).
+    def traverseAllPaths(exp: Expression): Option[Seq[String]] = exp match {
+      case GetStructField(child, _, Some(name)) => traverseAllPaths(child).map(_ :+ name)
+      case GetMapValue(child, key) =>
+        traverseAllPaths(key).foreach(result += _)
+        traverseAllPaths(child).map { childPath =>
+          result += childPath :+ "key"
+          childPath :+ "value"
+        }
+      case arrayExtract: GetArrayItem => traverseAllPaths(arrayExtract.child).map(_ :+ "element")
+      case arrayExtract: GetArrayStructFields =>
+        traverseAllPaths(arrayExtract.child).map(_ :+ "element" :+ arrayExtract.field.name)
+      case refCol: AttributeReference => Some(Seq(refCol.name))
+      case _ =>
+        exp.children.foreach(child => traverseAllPaths(child).foreach(result += _))
+        None
+    }
+
+    traverseAllPaths(expression).foreach(result += _)
+
+    result.toSeq
+  }
+
+  private def fallbackContainsDependentExpression(
+      expression: Expression,
       columnToChange: Seq[String],
-      exprString: String,
       resolver: Resolver): Boolean = {
-    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
     expression.foreach {
       case refCol: UnresolvedAttribute =>
         // columnToChange is the referenced column or its prefix
@@ -1292,6 +1431,51 @@ def normalizeColumnNamesInDataType(
       case _ =>
     }
     false
+  }
+
+  /**
+   * Will a column change, e.g., rename, need to be populated to the expression. This is true when
+   * the column to change itself or any of its descendent column is referenced by expression.
+   * For example:
+   *  - a, length(a) -> true
+   *  - b, (b.c + 1) -> true, because renaming b1 will need to change the expr to (b1.c + 1).
+   *  - b.c, (cast b as string) -> true, because change b.c to b.c1 affects (b as string) result.
+   */
+  def containsDependentExpression(
+      spark: SparkSession,
+      columnToChange: Seq[String],
+      exprString: String,
+      schema: StructType,
+      resolver: Resolver): Boolean = {
+    val expression = spark.sessionState.sqlParser.parseExpression(exprString)
+    if (spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2)) {
+      try {
+        val analyzedExpr = analyzeExpression(spark, expression, schema)
+        val exprColumns = collectUsedColumns(analyzedExpr)
+        exprColumns.exists { exprColumn =>
+          // Changed column violates expression's column only when:
+          // 1) the changed column is a prefix of the referenced column,
+          // for example changing type of `col` affects `hash(col[0]) == 0`;
+          // 2) or the referenced column is a prefix of the changed column,
+          // for example changing type of `col.element` affects `concat_ws('', col) == 'abc'`;
+          // 3) or they are equal.
+          exprColumn.zip(columnToChange).forall {
+            case (exprFieldName, changedFieldName) => resolver(exprFieldName, changedFieldName)
+          }
+        }
+      } catch {
+        case NonFatal(e) =>
+          deltaAssert(
+            check = false,
+            name = "containsDependentExpression.checkV2Error",
+            msg = "Exception during dependent expression V2 checking: " + e.getMessage
+          )
+          fallbackContainsDependentExpression(expression, columnToChange, resolver)
+      }
+    } else {
+      fallbackContainsDependentExpression(expression, columnToChange, resolver)
+    }
   }
 
   /**
@@ -1318,7 +1502,7 @@ def normalizeColumnNamesInDataType(
    * Returns 'true' if any VariantType exists in the table schema.
    */
   def checkForVariantTypeColumnsRecursively(schema: StructType): Boolean = {
-    SchemaUtils.typeExistsRecursively(schema)(VariantShims.isVariantType(_))
+    SchemaUtils.typeExistsRecursively(schema)(_.isInstanceOf[VariantType])
   }
 
   /**
@@ -1353,7 +1537,7 @@ def normalizeColumnNamesInDataType(
     case DateType =>
     case TimestampType =>
     case TimestampNTZType =>
-    case dt if VariantShims.isVariantType(dt) =>
+    case dt if dt.isInstanceOf[VariantType] =>
     case BinaryType =>
     case _: DecimalType =>
     case a: ArrayType =>
@@ -1402,7 +1586,7 @@ def normalizeColumnNamesInDataType(
       SchemaMergingUtils.transformColumns(schema) { (_, field, _) =>
         GeneratedColumn.getGenerationExpressionStr(field.metadata).foreach { exprStr =>
           val needsToChangeExpr = SchemaUtils.containsDependentExpression(
-            sparkSession, targetColumn, exprStr, sparkSession.sessionState.conf.resolver)
+            sparkSession, targetColumn, exprStr, schema, sparkSession.sessionState.conf.resolver)
           if (needsToChangeExpr) dependentGenCols += field.name -> exprStr
         }
         field
@@ -1441,6 +1625,77 @@ def normalizeColumnNamesInDataType(
         logWarning(log"Failed to log undefined types for table " +
           log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}", e)
     }
+  }
+
+  // Helper method to validate that two logical column names are equal using the Delta column
+  // resolver (case insensitive comparison).
+  def areLogicalNamesEqual(col1: Seq[String], col2: Seq[String]): Boolean = {
+    col1.length == col2.length && col1.zip(col2).forall(DELTA_COL_RESOLVER.tupled)
+  }
+
+  def removeExistsDefaultMetadata(schema: StructType): StructType = {
+    // 'EXISTS_DEFAULT' is not used in Delta because it is not allowed to add a column with a
+    // default value. Spark does though still add the metadata key when a column with a default
+    // value is added at table creation.
+    // We remove the metadata field here because it is not part of the Delta protocol and
+    // having it in the schema prohibits CTAS from a table with a dropped default value.
+    // @TODO: Clarify if active default values should be propagated to the target table in CTAS or
+    //        not and if not also remove 'CURRENT_DEFAULT' in CTAS.
+    SchemaUtils.transformSchema(schema) {
+      case (_, StructType(fields), _)
+        if fields.exists(_.metadata.contains(
+          ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)) =>
+        val newFields = fields.map { field =>
+          val builder = new MetadataBuilder()
+            .withMetadata(field.metadata)
+            .remove(ResolveDefaultColumnsUtils.EXISTS_DEFAULT_COLUMN_METADATA_KEY)
+
+          field.copy(metadata = builder.build())
+        }
+        StructType(newFields)
+      case (_, other, _) => other
+    }
+  }
+
+  /**
+   * Renames a column in the metadata, given the old column path, new column path, and an optional
+   * list of column names. If the column names are provided, they will be updated to reflect the
+   * new path.
+   *
+   * @param oldColumnPath The original physical name path of the column to be renamed.
+   * @param newColumnPath The new physical name path for the column.
+   * @param columnNameOpt An optional sequence of unresolved attributes representing the column
+   *                      logical name.
+   * @param deltaConfig   The configuration key for columns that need to be renamed from metadata.
+   * @return              A map containing the updated Delta configuration with new column paths.
+   */
+  def renameColumnForConfig(
+      oldColumnPath: Seq[String],
+      newColumnPath: Seq[String],
+      columnNameOpt: Option[Seq[UnresolvedAttribute]],
+      deltaConfig: String): Map[String, String] = {
+    columnNameOpt.map { deltaColumnsNames =>
+      val deltaColumnsPath = deltaColumnsNames
+        .map(_.nameParts)
+        .map { attributeNameParts =>
+          val commonPrefix = oldColumnPath.zip(attributeNameParts)
+            .takeWhile { case (left, right) => left == right }
+            .size
+          if (commonPrefix == oldColumnPath.size) {
+            newColumnPath ++ attributeNameParts.takeRight(attributeNameParts.size - commonPrefix)
+          } else {
+            attributeNameParts
+          }
+        }
+        .map(columnParts =>
+          if (SparkSession.active.conf.get(DeltaSQLConf.DELTA_RENAME_COLUMN_ESCAPE_NAME)) {
+            UnresolvedAttribute(columnParts).sql
+          } else {
+            UnresolvedAttribute(columnParts).name
+          }
+        )
+      Map(deltaConfig -> deltaColumnsPath.mkString(","))
+    }.getOrElse(Map.empty[String, String])
   }
 }
 

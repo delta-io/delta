@@ -18,6 +18,7 @@ package io.delta.sharing.spark
 
 import scala.collection.mutable.ArrayBuffer
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sharing.client.{
   DeltaSharingClient,
@@ -29,7 +30,8 @@ import io.delta.sharing.client.model.{
   DeltaTableFiles,
   DeltaTableMetadata,
   SingleAction,
-  Table
+  Table,
+  TemporaryCredentials
 }
 
 import org.apache.spark.SparkEnv
@@ -43,14 +45,16 @@ import org.apache.spark.storage.BlockId
 private[spark] class TestClientForDeltaFormatSharing(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
     maxFilesPerReq: Int = 100000,
+    endStreamActionEnabled: Boolean = false,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
     asyncQueryMaxDuration: Long = 600000L,
@@ -59,16 +63,22 @@ private[spark] class TestClientForDeltaFormatSharing(
     tokenRenewalThresholdInSeconds: Int = 600)
     extends DeltaSharingClient {
 
+  private val supportedReaderFeatures: Seq[String] = Seq(
+    DeletionVectorsTableFeature,
+    ColumnMappingTableFeature,
+    TimestampNTZTableFeature,
+    TypeWideningPreviewTableFeature,
+    TypeWideningTableFeature,
+    VariantTypePreviewTableFeature,
+    VariantTypeTableFeature,
+    VariantShreddingPreviewTableFeature
+  ).map(_.name)
+
   assert(
     responseFormat == DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET ||
-    (
-      readerFeatures.contains("deletionVectors") &&
-      readerFeatures.contains("columnMapping") &&
-      readerFeatures.contains("timestampNtz") &&
-      readerFeatures.contains("variantType-preview")
-    ),
-    "deletionVectors, columnMapping, timestampNtz, variantType-preview should be supported in " +
-    "all types of queries."
+      supportedReaderFeatures.forall(readerFeatures.split(",").contains),
+    s"${supportedReaderFeatures.diff(readerFeatures.split(",")).mkString(", ")} " +
+      s"should be supported in all types of queries."
   )
 
   import TestClientForDeltaFormatSharing._
@@ -94,7 +104,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table")) {
+    if (table.name.contains("shared_parquet_table") &&
+      responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
       val metadata = JsonUtils.fromJson[SingleAction](lines(1)).metaData
@@ -162,7 +173,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     while (iterator.hasNext) {
       linesBuilder += iterator.next()
     }
-    if (table.name.contains("shared_parquet_table")) {
+    if (table.name.contains("shared_parquet_table") &&
+      responseFormat.contains(DeltaSharingRestClient.RESPONSE_FORMAT_PARQUET)) {
       val lines = linesBuilder.result()
       val protocol = JsonUtils.fromJson[SingleAction](lines(0)).protocol
       val metadata = JsonUtils.fromJson[SingleAction](lines(1)).metaData
@@ -258,6 +270,12 @@ private[spark] class TestClientForDeltaFormatSharing(
       lines = linesBuilder.result(),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
+  }
+
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
   }
 
   override def getForStreaming(): Boolean = forStreaming

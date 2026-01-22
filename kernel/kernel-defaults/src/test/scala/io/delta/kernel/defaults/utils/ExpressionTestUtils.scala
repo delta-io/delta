@@ -59,6 +59,10 @@ trait ExpressionTestUtils {
 
   def str(value: String): Literal = Literal.ofString(value)
 
+  def nullSafeEquals(e1: Expression, e2: Expression): Predicate = {
+    new Predicate("IS NOT DISTINCT FROM", e1, e2)
+  }
+
   def unsupported(colName: String): Predicate = predicate("UNSUPPORTED", col(colName));
 
   /* ---------- NOT-YET SUPPORTED EXPRESSIONS ----------- */
@@ -69,8 +73,6 @@ trait ExpressionTestUtils {
   predicate to evaluate. As we add support for these expressions we'll adjust the tests that use
   them to expect skipped files. If they are ever actually evaluated they will throw an exception.
    */
-
-  def nullSafeEquals(e1: Expression, e2: Expression): Predicate = new Predicate("<=>", e1, e2)
 
   def notEquals(e1: Expression, e2: Expression): Predicate = new Predicate("<>", e1, e2)
 

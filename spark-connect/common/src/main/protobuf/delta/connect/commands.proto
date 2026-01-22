@@ -19,6 +19,7 @@ syntax = 'proto3';
 package delta.connect;
 
 import "delta/connect/base.proto";
+import "spark/connect/types.proto";
 
 option java_multiple_files = true;
 option java_package = "io.delta.connect.proto";
@@ -27,6 +28,12 @@ option java_package = "io.delta.connect.proto";
 message DeltaCommand {
   oneof command_type {
     CloneTable clone_table = 1;
+    VacuumTable vacuum_table = 2;
+    UpgradeTableProtocol upgrade_table_protocol = 3;
+    Generate generate = 4;
+    CreateDeltaTable create_delta_table = 5;
+    AddFeatureSupport add_feature_support = 6;
+    DropFeatureSupport drop_feature_support = 7;    
   }
 }
 
@@ -56,4 +63,129 @@ message CloneTable {
   // (Required) User-defined table properties that override properties with the same key in the
   // source table.
   map<string, string> properties = 7;
+}
+
+// Command that deletes files and directories in the table that are not needed by the table for
+// maintaining older versions up to the given retention threshold.
+message VacuumTable {
+  // (Required) The Delta table to vacuum.
+  DeltaTable table = 1;
+
+  // (Optional) Number of hours retain history for. If not specified, then the default retention
+  // period will be used.
+  optional double retention_hours = 2;
+}
+
+// Command to updates the protocol version of the table so that new features can be used.
+message UpgradeTableProtocol {
+  // (Required) The Delta table to upgrade the protocol of.
+  DeltaTable table = 1;
+
+  // (Required) The minimum required reader protocol version.
+  int32 reader_version = 2;
+
+  // (Required) The minimum required writer protocol version.
+  int32 writer_version = 3;
+}
+
+// Command that generates manifest files for a given Delta table.
+message Generate {
+  // (Required) The Delta table to generate the manifest files for.
+  DeltaTable table = 1;
+
+  // (Required) The type of manifest file to be generated.
+  string mode = 2;
+}
+
+// Command that creates or replace a Delta table (depending on the mode).
+message CreateDeltaTable {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    // Create the table if it does not exist, and throw an error otherwise.
+    MODE_CREATE = 1;
+    // Create the table if it does not exist, and do nothing otherwise.
+    MODE_CREATE_IF_NOT_EXISTS = 2;
+    // Replace the table if it already exists, and throw an error otherwise.
+    MODE_REPLACE = 3;
+    // Create the table if it does not exist, and replace it otherwise.
+    MODE_CREATE_OR_REPLACE = 4;
+  }
+
+  // Column in the schema of the table.
+  message Column {
+    message IdentityInfo {
+      // (Required) The start value of the identity column.
+      int64 start = 1;
+
+      // (Required) The increment value of the identity column.
+      int64 step = 2;
+
+      // (Required) Whether the identity column is BY DEFAULT (true) or ALWAYS (false).
+      bool allow_explicit_insert = 3;
+    }
+
+    // (Required) Name of the column.
+    string name = 1;
+
+    // (Required) Data type of the column.
+    spark.connect.DataType data_type = 2;
+
+    // (Required) Whether the column is nullable.
+    bool nullable = 3;
+
+    // (Optional) SQL Expression that is used to generate the values in the column.
+    optional string generated_always_as = 4;
+
+    // (Optional) Comment to describe the column.
+    optional string comment = 5;
+
+    // (Optional) Identity information for the column.
+    optional IdentityInfo identity_info = 6;
+  }
+
+  // (Required) Mode that determines what to do when a table with the given name or location
+  // already exists.
+  Mode mode = 1;
+
+  // (Optional) Qualified name of the table.
+  optional string table_name = 2;
+
+  // (Optional) Path to the directory where the table date is stored.
+  optional string location = 3;
+
+  // (Optional) Comment describing the table.
+  optional string comment = 4;
+
+  // (Optional) Columns in the schema of the table.
+  repeated Column columns = 5;
+
+  // (Optional) Columns used for partitioning the table.
+  repeated string partitioning_columns = 6;
+
+  // (Optional) Properties of the table.
+  map<string, string> properties = 7;
+
+  // (Optional) Columns used for clustering the table.
+  repeated string clustering_columns = 8;
+}
+
+// Command to add a supported feature to the table by modifying the protocol.
+message AddFeatureSupport {
+  // (Required) The Delta table to add the supported feature to.
+  DeltaTable table = 1;
+
+  // (Required) The name of the supported feature to add.
+  string feature_name = 2;
+}
+
+// Command to drop a supported feature from the table by modifying the protocol.
+message DropFeatureSupport {
+  // (Required) The Delta table to drop the supported feature from.
+  DeltaTable table = 1;
+
+  // (Required) The name of the supported feature to drop.
+  string feature_name = 2;
+
+  // (optional) Whether to truncate history. When not specified, history is not truncated.
+  optional bool truncate_history = 3;
 }

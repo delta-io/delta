@@ -30,6 +30,9 @@ import java.util.Optional;
  */
 @Evolving
 public class CollationIdentifier {
+  /** The default Spark UTF8_BINARY collation. */
+  public static final CollationIdentifier SPARK_UTF8_BINARY =
+      new CollationIdentifier("SPARK", "UTF8_BINARY");
 
   private final String provider;
   private final String name;
@@ -64,6 +67,11 @@ public class CollationIdentifier {
     return version;
   }
 
+  /** @return if this collation is the default Spark UTF8_BINARY collation. */
+  public boolean isSparkUTF8BinaryCollation() {
+    return equals(SPARK_UTF8_BINARY);
+  }
+
   /**
    * @param identifier collation identifier in string form of <br>
    *     {@code PROVIDER.COLLATION_NAME[.COLLATION_VERSION]}.
@@ -71,7 +79,7 @@ public class CollationIdentifier {
    */
   public static CollationIdentifier fromString(String identifier) {
     long numDots = identifier.chars().filter(ch -> ch == '.').count();
-    checkArgument(numDots > 0, String.format("Invalid collation identifier: %s", identifier));
+    checkArgument(numDots > 0, "Invalid collation identifier: %s", identifier);
     if (numDots == 1) {
       String[] parts = identifier.split("\\.");
       return new CollationIdentifier(parts[0], parts[1]);

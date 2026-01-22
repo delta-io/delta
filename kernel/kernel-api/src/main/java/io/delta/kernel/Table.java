@@ -143,4 +143,19 @@ public interface Table {
    */
   void checkpoint(Engine engine, long version)
       throws TableNotFoundException, CheckpointAlreadyExistsException, IOException;
+
+  /**
+   * Computes and writes a checksum file for the table at given version. If a checksum file already
+   * exists, this method does nothing.
+   *
+   * <p>Note: For very large tables, this operation may be expensive as it requires scanning the log
+   * to compute table statistics.
+   *
+   * @param engine {@link Engine} instance to use.
+   * @param version Version to generate checksum file for.
+   * @throws TableNotFoundException if the table is not found
+   * @throws IOException for any I/O error.
+   * @since 4.0.0
+   */
+  void checksum(Engine engine, long version) throws TableNotFoundException, IOException;
 }

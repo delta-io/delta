@@ -236,7 +236,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ExpressionTransformResult visitCoalesce(ScalarExpression coalesce) {
       List<ExpressionTransformResult> children =
           coalesce.getChildren().stream().map(this::visit).collect(Collectors.toList());
-      if (children.size() == 0) {
+      if (children.isEmpty()) {
         throw unsupportedExpressionException(coalesce, "Coalesce requires at least one expression");
       }
       // TODO support least-common-type resolution
@@ -245,14 +245,37 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
         throw unsupportedExpressionException(
             coalesce, "Coalesce is only supported for arguments of the same type");
       }
-      // TODO support other data types besides boolean (just needs tests)
-      if (!(children.get(0).outputType instanceof BooleanType)) {
-        throw unsupportedExpressionException(
-            coalesce, "Coalesce is only supported for boolean type expressions");
-      }
       return new ExpressionTransformResult(
           new ScalarExpression(
               "COALESCE", children.stream().map(e -> e.expression).collect(Collectors.toList())),
+          children.get(0).outputType);
+    }
+
+    @Override
+    ExpressionTransformResult visitAdd(ScalarExpression add) {
+      List<ExpressionTransformResult> children =
+          add.getChildren().stream().map(this::visit).collect(Collectors.toList());
+      if (children.size() != 2) {
+        throw unsupportedExpressionException(
+            add, "ADD requires exactly two arguments: left and right operands");
+      }
+      if (!children.get(0).outputType.equivalent(children.get(1).outputType)) {
+        throw unsupportedExpressionException(
+            add, "ADD is only supported for arguments of the same type");
+      }
+      if (!(children.get(0).outputType instanceof ByteType
+          || children.get(0).outputType instanceof ShortType
+          || children.get(0).outputType instanceof IntegerType
+          || children.get(0).outputType instanceof LongType
+          || children.get(0).outputType instanceof FloatType
+          || children.get(0).outputType instanceof DoubleType)) {
+        throw unsupportedExpressionException(
+            add, "ADD is only supported for numeric types: byte, short, int, long, float, double");
+      }
+
+      return new ExpressionTransformResult(
+          new ScalarExpression(
+              "ADD", Arrays.asList(children.get(0).expression, children.get(1).expression)),
           children.get(0).outputType);
     }
 
@@ -287,6 +310,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ExpressionTransformResult visitSubstring(ScalarExpression substring) {
+      List<ExpressionTransformResult> children =
+          substring.getChildren().stream().map(this::visit).collect(toList());
+      ScalarExpression transformedExpression =
+          SubstringEvaluator.validateAndTransform(
+              substring,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, StringType.STRING);
+    }
+
+    @Override
     ExpressionTransformResult visitLike(final Predicate like) {
       List<ExpressionTransformResult> children =
           like.getChildren().stream().map(this::visit).collect(toList());
@@ -296,6 +331,33 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               children.stream().map(e -> e.expression).collect(toList()),
               children.stream().map(e -> e.outputType).collect(toList()));
 
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitStartsWith(Predicate startsWith) {
+      List<ExpressionTransformResult> children =
+          startsWith.getChildren().stream().map(this::visit).collect(toList());
+      Predicate transformedExpression =
+          StartsWithExpressionEvaluator.validateAndTransform(
+              startsWith,
+              children.stream().map(e -> e.expression).collect(toList()),
+              children.stream().map(e -> e.outputType).collect(toList()));
+      return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitIn(In in) {
+      ExpressionTransformResult visitedValue = visit(in.getValueExpression());
+      List<ExpressionTransformResult> visitedInList =
+          in.getInListElements().stream().map(this::visit).collect(toList());
+      In transformedExpression =
+          InExpressionEvaluator.validateAndTransform(
+              in,
+              visitedValue.expression,
+              visitedValue.outputType,
+              visitedInList.stream().map(e -> e.expression).collect(toList()),
+              visitedInList.stream().map(e -> e.outputType).collect(toList()));
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
     }
 
@@ -315,6 +377,20 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
       ExpressionTransformResult rightResult = visit(getRight(predicate));
       Expression left = leftResult.expression;
       Expression right = rightResult.expression;
+
+      if (predicate.getCollationIdentifier().isPresent()) {
+        CollationIdentifier collationIdentifier = predicate.getCollationIdentifier().get();
+        checkIsUTF8BinaryCollation(predicate, collationIdentifier);
+
+        for (DataType dataType : Arrays.asList(leftResult.outputType, rightResult.outputType)) {
+          checkIsStringType(
+              dataType,
+              predicate,
+              format("Predicate %s expects STRING type inputs", predicate.getName()));
+        }
+        return new Predicate(predicate.getName(), left, right, collationIdentifier);
+      }
+
       if (!leftResult.outputType.equivalent(rightResult.outputType)) {
         if (canCastTo(leftResult.outputType, rightResult.outputType)) {
           left = new ImplicitCastExpression(left, rightResult.outputType);
@@ -566,6 +642,49 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ColumnVector visitAdd(ScalarExpression add) {
+      List<ColumnVector> childResults =
+          add.getChildren().stream().map(this::visit).collect(toList());
+
+      // NOTE: The current implementation only supports operands of the same type, and it does not
+      // check for overflows (i.e., values will wrap around when overflowing).
+      return DefaultExpressionUtils.arithmeticVector(
+          childResults.get(0),
+          childResults.get(1),
+          new ArithmeticOperator() {
+            @Override
+            public byte apply(byte a, byte b) {
+              return (byte) (a + b);
+            }
+
+            @Override
+            public short apply(short a, short b) {
+              return (short) (a + b);
+            }
+
+            @Override
+            public int apply(int a, int b) {
+              return a + b;
+            }
+
+            @Override
+            public long apply(long a, long b) {
+              return a + b;
+            }
+
+            @Override
+            public float apply(float a, float b) {
+              return a + b;
+            }
+
+            @Override
+            public double apply(double a, double b) {
+              return a + b;
+            }
+          });
+    }
+
+    @Override
     ColumnVector visitTimeAdd(ScalarExpression timeAdd) {
       ColumnVector timestampColumn = visit(timeAdd.getChildren().get(0));
       ColumnVector durationVector = visit(timeAdd.getChildren().get(1));
@@ -604,10 +723,28 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ColumnVector visitSubstring(ScalarExpression subString) {
+      return SubstringEvaluator.eval(
+          subString.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
     ColumnVector visitLike(final Predicate like) {
       List<Expression> children = like.getChildren();
       return LikeExpressionEvaluator.eval(
           children, children.stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStartsWith(Predicate startsWith) {
+      return StartsWithExpressionEvaluator.eval(
+          startsWith.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitIn(In in) {
+      return InExpressionEvaluator.eval(
+          in.getChildren().stream().map(this::visit).collect(toList()));
     }
 
     /**

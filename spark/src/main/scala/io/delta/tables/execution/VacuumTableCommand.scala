@@ -21,7 +21,6 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.UnresolvedTable
-import org.apache.spark.sql.catalyst.analysis.UnresolvedTableImplicits._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils, UnresolvedDeltaPathOrIdentifier}
 import org.apache.spark.sql.delta.commands.DeltaCommand
@@ -43,7 +42,8 @@ case class VacuumTableCommand(
     horizonHours: Option[Double],
     inventoryTable: Option[LogicalPlan],
     inventoryQuery: Option[String],
-    dryRun: Boolean) extends RunnableCommand with UnaryNode with DeltaCommand {
+    dryRun: Boolean,
+    vacuumType: Option[String]) extends RunnableCommand with UnaryNode with DeltaCommand {
 
   override val output: Seq[Attribute] =
     Seq(AttributeReference("path", StringType, nullable = true)())
@@ -63,8 +63,8 @@ case class VacuumTableCommand(
     val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
         .map(p => Some(getDeltaTable(p, "VACUUM").toDf(sparkSession)))
         .getOrElse(inventoryQuery.map(sparkSession.sql))
-    VacuumCommand.gc(sparkSession, deltaTable.deltaLog, dryRun, horizonHours,
-      inventory).collect()
+    VacuumCommand.gc(sparkSession, deltaTable, dryRun, horizonHours,
+      inventory, vacuumType).collect()
   }
 }
 
@@ -75,9 +75,12 @@ object VacuumTableCommand {
       inventoryTable: Option[TableIdentifier],
       inventoryQuery: Option[String],
       horizonHours: Option[Double],
-      dryRun: Boolean): VacuumTableCommand = {
-    val child = UnresolvedDeltaPathOrIdentifier(path, table, "VACUUM")
+      dryRun: Boolean,
+      vacuumType: Option[String],
+      options: Map[String, String]): VacuumTableCommand = {
+    val child = UnresolvedDeltaPathOrIdentifier(path, table, options, "VACUUM")
     val unresolvedInventoryTable = inventoryTable.map(rt => UnresolvedTable(rt.nameParts, "VACUUM"))
-    VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun)
+    VacuumTableCommand(child, horizonHours, unresolvedInventoryTable, inventoryQuery, dryRun,
+      vacuumType)
   }
 }

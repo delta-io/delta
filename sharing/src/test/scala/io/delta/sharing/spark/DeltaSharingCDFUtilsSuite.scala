@@ -24,7 +24,7 @@ import io.delta.sharing.client.{
   DeltaSharingProfileProvider,
   DeltaSharingRestClient
 }
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -73,14 +73,16 @@ private object CDFTesTUtils {
 class TestDeltaSharingClientForCDFUtils(
     profileProvider: DeltaSharingProfileProvider,
     timeoutInSeconds: Int = 120,
-    numRetries: Int = 10,
+    numRetries: Int = 3,
     maxRetryDuration: Long = Long.MaxValue,
+    retrySleepInterval: Long = 1000,
     sslTrustAll: Boolean = false,
     forStreaming: Boolean = false,
     responseFormat: String = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
     readerFeatures: String = "",
     queryTablePaginationEnabled: Boolean = false,
     maxFilesPerReq: Int = 100000,
+    endStreamActionEnabled: Boolean = false,
     enableAsyncQuery: Boolean = false,
     asyncQueryPollIntervalMillis: Long = 10000L,
     asyncQueryMaxDuration: Long = 600000L,
@@ -150,6 +152,12 @@ class TestDeltaSharingClientForCDFUtils(
     )
   }
 
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
+  }
+
   override def getForStreaming(): Boolean = forStreaming
 
   override def getProfileProvider: DeltaSharingProfileProvider = profileProvider
@@ -193,7 +201,7 @@ class DeltaSharingCDFUtilsSuite
       def test(): Unit = {
         val profilePath = profileFile.getCanonicalPath
         val tablePath = new Path(s"$profilePath#$shareName.$schemaName.$sharedTableName")
-        val client = DeltaSharingRestClient(profilePath, false, "delta")
+        val client = DeltaSharingRestClient(profilePath, Map.empty, false, "delta")
         val dsTable = Table(share = shareName, schema = schemaName, name = sharedTableName)
 
         val options = new DeltaSharingOptions(Map("path" -> tablePath.toString))

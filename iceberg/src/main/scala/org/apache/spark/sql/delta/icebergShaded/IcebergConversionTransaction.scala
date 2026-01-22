@@ -17,26 +17,31 @@
 package org.apache.spark.sql.delta.icebergShaded
 
 import java.util.ConcurrentModificationException
+import java.util.function.Consumer
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{DeltaFileProviderUtils, IcebergConstants, Snapshot}
+import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DummySnapshot, IcebergConstants, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata, RemoveFile}
-import org.apache.spark.sql.delta.icebergShaded.IcebergSchemaUtils._
 import org.apache.spark.sql.delta.icebergShaded.IcebergTransactionUtils._
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DeleteFiles, OverwriteFiles, PendingUpdate, RewriteFiles, Transaction => IcebergTransaction}
-import shadedForDelta.org.apache.iceberg.ExpireSnapshots
+import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.MetadataUpdate
+import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
+import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 sealed trait IcebergTableOp
@@ -44,6 +49,11 @@ case object CREATE_TABLE extends IcebergTableOp
 case object WRITE_TABLE extends IcebergTableOp
 case object REPLACE_TABLE extends IcebergTableOp
 
+sealed trait IcebergConversionMode  {
+}
+// Used by Post-commit Delta UniForm (Iceberg conversion in Delta post commit hook)
+case object UNIFORM_POST_COMMIT_MODE extends IcebergConversionMode {
+}
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Iceberg table located
  * at the same path as [[postCommitSnapshot]]
@@ -56,31 +66,69 @@ case object REPLACE_TABLE extends IcebergTableOp
  * @param lastConvertedDeltaVersion the delta version this Iceberg txn starts from.
  */
 class IcebergConversionTransaction(
+    protected val spark: SparkSession,
     protected val catalogTable: CatalogTable,
     protected val conf: Configuration,
     protected val postCommitSnapshot: Snapshot,
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
     protected val lastConvertedIcebergSnapshotId: Option[Long] = None,
-    protected val lastConvertedDeltaVersion: Option[Long] = None) extends DeltaLogging {
+    protected val lastConvertedDeltaVersion: Option[Long] = None,
+    protected val metadataUpdates: java.util.ArrayList[MetadataUpdate] =
+      new java.util.ArrayList[MetadataUpdate]()
+    ) extends DeltaLogging {
 
   ///////////////////////////
   // Nested Helper Classes //
   ///////////////////////////
 
-  protected abstract class TransactionHelper(impl: PendingUpdate[_]) {
-    private var committed = false
+  implicit class AddFileConversion(addFile: AddFile) {
+    def toDataFile: DataFile =
+      convertDeltaAddFileToIcebergDataFile(
+        addFile,
+        tablePath,
+        currentPartitionSpec,
+        logicalToPhysicalPartitionNames,
+        statsParser,
+        postCommitSnapshot)
+  }
+
+  implicit class RemoveFileConversion(removeFile: RemoveFile) {
+    def toDataFile: DataFile =
+      convertDeltaRemoveFileToIcebergDataFile(
+        removeFile,
+        tablePath,
+        currentPartitionSpec,
+        logicalToPhysicalPartitionNames,
+        postCommitSnapshot)
+  }
+
+  protected abstract class TransactionHelper(protected val impl: PendingUpdate[_]) {
+    protected var committed = false
+    var writeSize = 0L
 
     def opType: String
 
-    def commit(): Unit = {
+    def add(add: AddFile): Unit = throw new UnsupportedOperationException
+    def add(remove: RemoveFile): Unit = throw new UnsupportedOperationException
+
+    def commit(expectedSequenceNumber: Long): Unit = {
       assert(!committed, "Already committed.")
       impl.commit()
       committed = true
     }
 
     private[icebergShaded]def hasCommitted: Boolean = committed
+
+    protected def currentSnapshotId: Option[Long] =
+      Option(txn.table().currentSnapshot()).map(_.snapshotId())
   }
 
+  class NullHelper extends TransactionHelper(null) {
+    override def opType: String = "null"
+    override def add(add: AddFile): Unit = {}
+    override def add(remove: RemoveFile): Unit = {}
+    override def commit(deltaCommitVersion: Long): Unit = {}
+  }
   /**
    * API for appending new files in a table.
    *
@@ -90,17 +138,9 @@ class IcebergConversionTransaction(
 
     override def opType: String = "append"
 
-    def add(add: AddFile): Unit = {
-      appender.appendFile(
-        convertDeltaAddFileToIcebergDataFile(
-          add,
-          tablePath,
-          partitionSpec,
-          logicalToPhysicalPartitionNames,
-          statsParser,
-          postCommitSnapshot
-        )
-      )
+    override def add(add: AddFile): Unit = {
+      writeSize += add.size
+      appender.appendFile(add.toDataFile)
     }
   }
 
@@ -113,7 +153,7 @@ class IcebergConversionTransaction(
 
     override def opType: String = "delete"
 
-    def remove(remove: RemoveFile): Unit = {
+    override def add(remove: RemoveFile): Unit = {
       // We can just use the canonical RemoveFile.path instead of converting RemoveFile to DataFile.
       // Note that in other helper APIs, converting a FileAction to a DataFile will also take care
       // of canonicalizing the path.
@@ -130,28 +170,13 @@ class IcebergConversionTransaction(
 
     override def opType: String = "overwrite"
 
-    def add(add: AddFile): Unit = {
-      overwriter.addFile(
-        convertDeltaAddFileToIcebergDataFile(
-          add,
-          tablePath,
-          partitionSpec,
-          logicalToPhysicalPartitionNames,
-          statsParser,
-          postCommitSnapshot
-        )
-      )
+    override def add(add: AddFile): Unit = {
+      writeSize += add.size
+      overwriter.addFile(add.toDataFile)
     }
 
-    def remove(remove: RemoveFile): Unit = {
-      overwriter.deleteFile(
-        convertDeltaRemoveFileToIcebergDataFile(
-          remove,
-          tablePath,
-          partitionSpec,
-          logicalToPhysicalPartitionNames,
-          postCommitSnapshot)
-      )
+    override def add(remove: RemoveFile): Unit = {
+      overwriter.deleteFile(remove.toDataFile)
     }
   }
 
@@ -165,35 +190,41 @@ class IcebergConversionTransaction(
 
     override def opType: String = "rewrite"
 
-    def rewrite(removes: Seq[RemoveFile], adds: Seq[AddFile]): Unit = {
-      val dataFilesToDelete = removes.map { f =>
-        assert(!f.dataChange, "Rewrite operation should not add data")
-        convertDeltaRemoveFileToIcebergDataFile(
-          f,
-          tablePath,
-          partitionSpec,
-          logicalToPhysicalPartitionNames,
-          postCommitSnapshot)
-      }.toSet.asJava
+    private val addBuffer: mutable.HashSet[DataFile] = new mutable.HashSet[DataFile]
+    private val removeBuffer: mutable.HashSet[DataFile] = new mutable.HashSet[DataFile]
 
-      val dataFilesToAdd = adds.map { f =>
-        assert(!f.dataChange, "Rewrite operation should not add data")
-        convertDeltaAddFileToIcebergDataFile(
-          f,
-          tablePath,
-          partitionSpec,
-          logicalToPhysicalPartitionNames,
-          statsParser,
-          postCommitSnapshot
-        )
-      }.toSet.asJava
+    override def add(add: AddFile): Unit = {
+      writeSize += add.size
+      assert(!add.dataChange, "Rewrite operation should not add data")
+      addBuffer += add.toDataFile
+    }
 
-      rewriter.rewriteFiles(dataFilesToDelete, dataFilesToAdd, 0)
+    override def add(remove: RemoveFile): Unit = {
+      assert(!remove.dataChange, "Rewrite operation should not add data")
+      removeBuffer += remove.toDataFile
+    }
+
+    override def commit(deltaCommitVersion: Long): Unit = {
+      if (removeBuffer.nonEmpty) {
+        rewriter.rewriteFiles(removeBuffer.asJava, addBuffer.asJava, 0)
+      }
+      currentSnapshotId.foreach(rewriter.validateFromSnapshot)
+      super.commit(deltaCommitVersion)
     }
   }
 
   class ExpireSnapshotHelper(expireSnapshot: ExpireSnapshots)
       extends TransactionHelper(expireSnapshot) {
+
+    def cleanExpiredFiles(clean: Boolean): ExpireSnapshotHelper = {
+      expireSnapshot.cleanExpiredFiles(clean)
+      this
+    }
+
+    def deleteWith(newDeleteFunc: Consumer[String]): ExpireSnapshotHelper = {
+      expireSnapshot.deleteWith(newDeleteFunc)
+      this
+    }
 
     override def opType: String = "expireSnapshot"
   }
@@ -203,11 +234,20 @@ class IcebergConversionTransaction(
   //////////////////////
 
   protected val tablePath = postCommitSnapshot.deltaLog.dataPath
-  protected val icebergSchema =
-    convertDeltaSchemaToIcebergSchema(postCommitSnapshot.metadata.schema)
-  protected val partitionSpec =
-    createPartitionSpec(icebergSchema, postCommitSnapshot.metadata.partitionColumns)
-  private val logicalToPhysicalPartitionNames =
+
+  protected val convert = new DeltaToIcebergConverter(postCommitSnapshot, catalogTable)
+
+  protected def icebergSchema: IcebergSchema = convert.schema
+
+  // Initial partition spec converted from Delta
+  protected def partitionSpec: PartitionSpec = convert.partition
+
+  // Current partition spec from iceberg table
+  def currentPartitionSpec: PartitionSpec = {
+    Some(txn.table()).map(_.spec()).getOrElse(partitionSpec)
+  }
+
+  protected val logicalToPhysicalPartitionNames =
     getPartitionPhysicalNameMapping(postCommitSnapshot.metadata.partitionSchema)
 
   /** Parses the stats JSON string to convert Delta stats to Iceberg stats. */
@@ -221,7 +261,7 @@ class IcebergConversionTransaction(
   private var committed = false
 
   /** Tracks the file updates (add, remove, overwrite, rewrite) made to this table. */
-  private val fileUpdates = new ArrayBuffer[TransactionHelper]()
+  protected val fileUpdates = new ArrayBuffer[TransactionHelper]()
 
   /** Tracks if this transaction updates only the differences between a prev and new metadata. */
   private var isMetadataUpdate = false
@@ -229,26 +269,27 @@ class IcebergConversionTransaction(
   /////////////////
   // Public APIs //
   /////////////////
+  def getNullHelper: NullHelper = new NullHelper()
 
-  def getAppendOnlyHelper(): AppendOnlyHelper = {
+  def getAppendOnlyHelper: AppendOnlyHelper = {
     val ret = new AppendOnlyHelper(txn.newAppend())
     fileUpdates += ret
     ret
   }
 
-  def getRemoveOnlyHelper(): RemoveOnlyHelper = {
+  def getRemoveOnlyHelper: RemoveOnlyHelper = {
     val ret = new RemoveOnlyHelper(txn.newDelete())
     fileUpdates += ret
     ret
   }
 
-  def getOverwriteHelper(): OverwriteHelper = {
+  def getOverwriteHelper: OverwriteHelper = {
     val ret = new OverwriteHelper(txn.newOverwrite())
     fileUpdates += ret
     ret
   }
 
-  def getRewriteHelper(): RewriteHelper = {
+  def getRewriteHelper: RewriteHelper = {
     val ret = new RewriteHelper(txn.newRewrite())
     fileUpdates += ret
     ret
@@ -266,9 +307,11 @@ class IcebergConversionTransaction(
    * - schema update -> sets the full new schema
    * - properties update -> applies only the new properties
    */
-  def updateTableMetadata(newMetadata: Metadata, prevMetadata: Metadata): Unit = {
+  def updateTableMetadata(prevMetadata: Metadata): Unit = {
     assert(!isMetadataUpdate, "updateTableMetadata already called")
     isMetadataUpdate = true
+
+    val newMetadata = postCommitSnapshot.metadata
 
     // Throws if partition evolution detected
     if (newMetadata.partitionColumns != prevMetadata.partitionColumns) {
@@ -280,19 +323,16 @@ class IcebergConversionTransaction(
     // the schema as part of this transaction
     if (newMetadata.schema != prevMetadata.schema || tableOp == REPLACE_TABLE) {
       val differenceStr = SchemaUtils.reportDifferences(prevMetadata.schema, newMetadata.schema)
-      if (newMetadata.schema != prevMetadata.schema) {
-        logInfo(log"Detected Delta schema update for table with name=" +
-          log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}, " +
-          log"id=${MDC(DeltaLogKeys.METADATA_ID, newMetadata.id)}:\n" +
-          log"${MDC(DeltaLogKeys.SCHEMA_DIFF, differenceStr)}; Setting new Iceberg schema:\n " +
-          log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
-      } else {
-        logInfo(log"Detected REPLACE_TABLE operation for table with name=" +
-          log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}." +
-          log" Setting new Iceberg schema:\n ${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}")
-      }
-
-      txn.setSchema(icebergSchema).commit()
+      logInfo(
+        log"Detected schema update for table with name=" +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, newMetadata.name)}, " +
+        log"id=${MDC(DeltaLogKeys.METADATA_ID, newMetadata.id)}:\n" +
+        log"${MDC(DeltaLogKeys.SCHEMA_DIFF, differenceStr)}, " +
+        s"tableOp=$tableOp, " +
+        log"Setting new Iceberg schema:\n " +
+        log"${MDC(DeltaLogKeys.SCHEMA, icebergSchema)}"
+      )
+      metadataUpdates.add(new AddSchema(icebergSchema, convert.maxFieldId))
 
       recordDeltaEvent(
         postCommitSnapshot.deltaLog,
@@ -305,8 +345,26 @@ class IcebergConversionTransaction(
       )
     }
 
-    val (propertyDeletes, propertyAdditions) =
-      detectPropertiesChange(newMetadata.configuration, prevMetadata.configuration)
+    // Compute and apply properties changes
+    val (propertyDeletes, propertyAdditions) = {
+      val newIcebergProperties = convert.properties
+      val prevIcebergProperties = new DeltaToIcebergConverter(
+        new DummySnapshot(
+          logPath = postCommitSnapshot.path,
+          deltaLog = postCommitSnapshot.deltaLog,
+          metadata = prevMetadata),
+        catalogTable
+      ).properties
+
+      if (prevIcebergProperties == newIcebergProperties) {
+        (Set.empty, Map.empty)
+      } else {
+        (
+          prevIcebergProperties.keySet.diff(newIcebergProperties.keySet),
+          newIcebergProperties
+        )
+      }
+    }
 
     if (propertyDeletes.nonEmpty || propertyAdditions.nonEmpty) {
       val updater = txn.updateProperties()
@@ -337,16 +395,21 @@ class IcebergConversionTransaction(
 
     val nameMapping = NameMappingParser.toJson(MappingUtil.create(icebergSchema))
 
-    // hard code dummy delta version as -1 for CREATE_TABLE, which will be later
-    // set to correct version in setSchemaTxn. -1 is chosen because it is less than the smallest
-    // possible legitimate Delta version which is 0.
-    val deltaVersion = if (tableOp == CREATE_TABLE) -1 else postCommitSnapshot.version
-
-    txn.updateProperties()
-      .set(IcebergConverter.DELTA_VERSION_PROPERTY, deltaVersion.toString)
+    var updateTxn = txn.updateProperties()
+    updateTxn = updateTxn.set(IcebergConverter.DELTA_VERSION_PROPERTY,
+        postCommitSnapshot.version.toString)
       .set(IcebergConverter.DELTA_TIMESTAMP_PROPERTY, postCommitSnapshot.timestamp.toString)
       .set(IcebergConstants.ICEBERG_NAME_MAPPING_PROPERTY, nameMapping)
-      .commit()
+
+    val includeBaseVersion = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_UNIFORM_ICEBERG_INCLUDE_BASE_CONVERTED_VERSION)
+    updateTxn = lastConvertedDeltaVersion match {
+      case Some(v) if includeBaseVersion =>
+        updateTxn.set(IcebergConverter.BASE_DELTA_VERSION_PROPERTY, v.toString)
+      case _ =>
+        updateTxn.remove(IcebergConverter.BASE_DELTA_VERSION_PROPERTY)
+    }
+    updateTxn.commit()
 
     // We ensure the iceberg txns are serializable by only allowing them to commit against
     // lastConvertedIcebergSnapshotId.
@@ -368,19 +431,21 @@ class IcebergConversionTransaction(
       )
     }
     try {
-      txn.commitTransaction()
+      // Iceberg CREATE_TABLE reassigns the field id in schema, which
+      // is overwritten by setting Delta schema with Delta generated field id to ensure
+      // consistency between field id in Iceberg schema after conversion and field id in
+      // parquet files written by Delta.
       if (tableOp == CREATE_TABLE) {
-        // Iceberg CREATE_TABLE reassigns the field id in schema, which
-        // is overwritten by setting Delta schema with Delta generated field id to ensure
-        // consistency between field id in Iceberg schema after conversion and field id in
-        // parquet files written by Delta.
-        val setSchemaTxn = createIcebergTxn(Some(WRITE_TABLE))
-        setSchemaTxn.setSchema(icebergSchema).commit()
-        setSchemaTxn.updateProperties()
-          .set(IcebergConverter.DELTA_VERSION_PROPERTY, postCommitSnapshot.version.toString)
-          .commit()
-        setSchemaTxn.commitTransaction()
+        metadataUpdates.add(
+          new AddSchema(icebergSchema, postCommitSnapshot.metadata.columnMappingMaxId.toInt)
+        )
+        if (postCommitSnapshot.metadata.partitionColumns.nonEmpty) {
+          metadataUpdates.add(
+            new AddPartitionSpec(partitionSpec)
+          )
+        }
       }
+      txn.commitTransaction()
       recordIcebergCommit()
     } catch {
       case NonFatal(e) =>
@@ -397,21 +462,17 @@ class IcebergConversionTransaction(
 
   protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
       IcebergTransaction = {
-    val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf)
+    val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf, metadataUpdates)
     val icebergTableId = IcebergTransactionUtils
       .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
 
     val tableExists = hiveCatalog.tableExists(icebergTableId)
 
     def tableBuilder = {
-      val properties = getIcebergPropertiesFromDeltaProperties(
-        postCommitSnapshot.metadata.configuration
-      )
-
       hiveCatalog
         .buildTable(icebergTableId, icebergSchema)
         .withPartitionSpec(partitionSpec)
-        .withProperties(properties.asJava)
+        .withProperties(convert.properties.asJava)
     }
 
     tableOpOpt.getOrElse(tableOp) match {
@@ -475,7 +536,9 @@ class IcebergConversionTransaction(
         "version" -> postCommitSnapshot.version,
         "timestamp" -> postCommitSnapshot.timestamp,
         "tableOp" -> tableOp.getClass.getSimpleName.stripSuffix("$"),
-        "prevConvertedDeltaVersion" -> lastConvertedDeltaVersion
+        "prevConvertedDeltaVersion" -> lastConvertedDeltaVersion,
+        "tableSize" -> postCommitSnapshot.sizeInBytes,
+        "commitWriteSize" -> fileUpdates.map(_.writeSize).sum
       ) ++ icebergTxnTypes ++ errorData
     )
   }

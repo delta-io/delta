@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo}
-import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, FileNames, JsonUtils}
 import org.apache.hadoop.fs.Path
 
 object InCommitTimestampTestUtils {
@@ -54,5 +54,33 @@ object InCommitTimestampTestUtils {
       Iterator(JsonUtils.toJson(checksumWithNoICT)),
       overwrite = true,
       deltaLog.newDeltaHadoopConf())
+  }
+
+  /**
+   * Retrieves the in-commit timestamp for a specific version of the Delta Log.
+   */
+  def getInCommitTimestamp(deltaLog: DeltaLog, version: Long): Long = {
+    val deltaFile = DeltaCommitFileProvider(deltaLog.unsafeVolatileSnapshot).deltaFile(version)
+    val commitInfo = DeltaHistoryManager.getCommitInfoOpt(
+      deltaLog.store,
+      deltaFile,
+      deltaLog.newDeltaHadoopConf())
+    assert(commitInfo.isDefined, s"CommitInfo should exist for version $version")
+    assert(commitInfo.get.inCommitTimestamp.isDefined,
+      s"InCommitTimestamp should exist for CommitInfo's version $version")
+    commitInfo.get.inCommitTimestamp.get
+  }
+
+  /**
+   * Retrieves a map of file modification times for Delta Log versions within a specified version
+   * range.
+   */
+  def getFileModificationTimesMap(
+      deltaLog: DeltaLog, start: Long, end: Long): Map[Long, Long] = {
+    deltaLog.store.listFrom(
+        FileNames.listingPrefix(deltaLog.logPath, start), deltaLog.newDeltaHadoopConf())
+      .collect { case FileNames.DeltaFile(fs, v) => v -> fs.getModificationTime }
+      .takeWhile(_._1 <= end)
+      .toMap
   }
 }

@@ -19,31 +19,42 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.FileSourceConstantMetadataStructField
 import org.apache.spark.sql.types
 import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructField}
 
 object DefaultRowCommitVersion {
   def assignIfMissing(
+      spark: SparkSession,
       protocol: Protocol,
+      snapshot: Snapshot,
       actions: Iterator[Action],
       version: Long): Iterator[Action] = {
-    // Type Widening relies on default row commit versions to be set.
-    if (!RowTracking.isSupported(protocol) && !TypeWidening.isSupported(protocol)) {
+    if (!RowTracking.isSupported(protocol)) {
       return actions
     }
-    actions.map {
-      case a: AddFile if a.defaultRowCommitVersion.isEmpty =>
-        a.copy(defaultRowCommitVersion = Some(version))
-      case a =>
-        a
+    // Do not propagate defaultRowCommitVersions if generation is suspended.
+    if (RowTracking.isSuspended(spark, snapshot.metadata)) {
+      actions.map {
+        case a: AddFile if a.defaultRowCommitVersion.isDefined =>
+          a.copy(defaultRowCommitVersion = None)
+        case a => a
+      }
+    } else {
+      actions.map {
+        case a: AddFile if a.defaultRowCommitVersion.isEmpty =>
+          a.copy(defaultRowCommitVersion = Some(version))
+        case a =>
+          a
+      }
     }
   }
 
   def createDefaultRowCommitVersionField(
-      protocol: Protocol, metadata: Metadata): Option[StructField] = {
+      protocol: Protocol, metadata: Metadata, nullable: Boolean): Option[StructField] = {
     Option.when(RowTracking.isEnabled(protocol, metadata)) {
-      MetadataStructField()
+      MetadataStructField(nullable)
     }
   }
 
@@ -52,11 +63,11 @@ object DefaultRowCommitVersion {
   private object MetadataStructField {
     private val METADATA_COL_ATTR_KEY = "__default_row_version_metadata_col"
 
-    def apply(): StructField =
+    def apply(nullable: Boolean): StructField =
       StructField(
         METADATA_STRUCT_FIELD_NAME,
         LongType,
-        nullable = false,
+        nullable,
         metadata = metadata)
 
     def unapply(field: StructField): Option[StructField] =
