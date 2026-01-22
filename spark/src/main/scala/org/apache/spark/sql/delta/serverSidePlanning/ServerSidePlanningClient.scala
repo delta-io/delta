@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.sources.Filter
 
 /**
@@ -70,40 +71,96 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
 }
 
 /**
- * Registry for client factories. Can be configured for testing or to provide
- * production implementations (e.g., IcebergRESTCatalogPlanningClientFactory).
+ * Registry for client factories. Automatically discovers and registers implementations
+ * using reflection-based auto-discovery on first access to the factory.
  *
- * By default, no factory is registered. Production code should register an appropriate
- * factory implementation before attempting to create clients.
+ * When delta-iceberg JAR is on the classpath, IcebergRESTCatalogPlanningClientFactory
+ * is automatically registered via reflection with a hardcoded class name. Manual registration
+ * using setFactory() is only needed for testing or to override the auto-discovered factory.
  */
-private[serverSidePlanning] object ServerSidePlanningClientFactory {
+private[serverSidePlanning] object ServerSidePlanningClientFactory extends DeltaLogging {
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
+  @volatile private var serviceLoaderAttempted: Boolean = false
+
+  // ========== REFLECTION-BASED AUTO-REGISTRATION ==========
+  // Lazy initialization - only runs when getFactory() is called and no factory is set.
+  // Uses reflection to load the hardcoded IcebergRESTCatalogPlanningClientFactory class.
+  private def tryAutoRegisterFactory(): Unit = {
+    // Double-checked locking pattern to ensure initialization happens only once
+    if (!serviceLoaderAttempted) {
+      synchronized {
+        if (!serviceLoaderAttempted) {
+          serviceLoaderAttempted = true
+          
+          try {
+            // Use reflection to load the Iceberg factory class
+            val clazz = Class.forName(
+              "org.apache.spark.sql.delta.serverSidePlanning.IcebergRESTCatalogPlanningClientFactory")
+            val factory = clazz.getConstructor().newInstance()
+              .asInstanceOf[ServerSidePlanningClientFactory]
+            registeredFactory = Some(factory)
+          } catch {
+            case _: ClassNotFoundException =>
+              // delta-iceberg not on classpath, no factory available
+              // This is fine - server-side planning just won't be available
+            case e: Exception =>
+              // Unexpected error during reflection - log but don't fail
+              logWarning(s"Failed to load server-side planning factory: ${e.getMessage}")
+          }
+        }
+      }
+    }
+  }
+  // ========== END REFLECTION-BASED AUTO-REGISTRATION ==========
 
   /**
-   * Set a factory for production use or testing.
+   * Set a factory, overriding any auto-registered factory.
+   * Primarily useful for testing or providing custom implementations.
    */
   private[serverSidePlanning] def setFactory(factory: ServerSidePlanningClientFactory): Unit = {
     registeredFactory = Some(factory)
   }
 
   /**
-   * Clear the registered factory.
+   * Clear the registered factory. Primarily useful for testing to reset state between tests.
+   * This also resets the ServiceLoader discovery state, allowing it to be re-triggered on
+   * the next getFactory() call.
    */
   private[serverSidePlanning] def clearFactory(): Unit = {
     registeredFactory = None
+    serviceLoaderAttempted = false
   }
 
   /**
    * Get the currently registered factory.
-   * Throws IllegalStateException if no factory has been registered.
+   * Throws IllegalStateException if no factory has been registered (either via ServiceLoader
+   * auto-discovery or explicit setFactory() call).
    */
   def getFactory(): ServerSidePlanningClientFactory = {
+    // Try auto-registration if not already attempted and no factory is manually set
+    if (registeredFactory.isEmpty) {
+      tryAutoRegisterFactory()
+    }
+    
     registeredFactory.getOrElse {
       throw new IllegalStateException(
         "No ServerSidePlanningClientFactory has been registered. " +
-        "Call ServerSidePlanningClientFactory.setFactory() to register an implementation.")
+        "Ensure delta-iceberg JAR is on the classpath for auto-registration, " +
+        "or call ServerSidePlanningClientFactory.setFactory() to register manually.")
     }
   }
+
+  /**
+   * Check if a factory is currently registered (either via ServiceLoader or setFactory()).
+   * Useful for testing or conditional logic.
+   */
+  def isFactoryRegistered(): Boolean = registeredFactory.isDefined
+
+  /**
+   * Get information about the currently registered factory for debugging/logging.
+   * Returns None if no factory is registered.
+   */
+  def getFactoryInfo(): Option[String] = registeredFactory.map(_.getClass.getName)
 
   /**
    * Convenience method to create a client from metadata using the registered factory.

@@ -32,6 +32,8 @@ class JarSuite extends AnyFunSuite {
     "scala/",
     // e.g. org/apache/spark/sql/delta/icebergShaded/IcebergTransactionUtils.class
     "org/apache/spark/sql/delta/icebergShaded/",
+    // Server-side planning support for Unity Catalog (FGAC)
+    "org/apache/spark/sql/delta/serverSidePlanning/",
     // We explicitly include all the /delta/commands/convert classes we want, to ensure we don't
     // accidentally pull in some from delta-spark package.
     "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
