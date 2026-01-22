@@ -388,4 +388,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       assert(gtFilter.get.value == 10, s"Expected GreaterThan value 10, got ${gtFilter.get.value}")
     }
   }
+
+  test("avoid planInputPartitions call during Spark query planning") {
+    withPushdownCapturingEnabled {
+      sql("EXPLAIN EXTENDED SELECT id, name FROM test_db.shared_test").collect()
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isEmpty, "Should not fire a planTable request for EXPLAIN")
+    }
+  }
 }

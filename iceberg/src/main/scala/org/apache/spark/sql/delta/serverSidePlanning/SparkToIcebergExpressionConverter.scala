@@ -168,6 +168,15 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     case v: java.sql.Timestamp =>
       // Iceberg expects microseconds since epoch as Long
       DateTimeUtils.fromJavaTimestamp(v): java.lang.Long
+    case v: java.time.Instant =>
+      // Iceberg expects microseconds since epoch as Long (for TIMESTAMP WITH TIMEZONE)
+      DateTimeUtils.instantToMicros(v): java.lang.Long
+    case v: java.time.LocalDateTime =>
+      // Iceberg expects microseconds since epoch as Long (for TIMESTAMP_NTZ)
+      DateTimeUtils.localDateTimeToMicros(v): java.lang.Long
+    case v: java.time.LocalDate =>
+      // Iceberg expects days since epoch (1970-01-01) as Int (for DATE)
+      v.toEpochDay.toInt: Integer
     // Type coercion (Scala to Java boxed types)
     case v: Int => v: Integer
     case v: Long => v: java.lang.Long

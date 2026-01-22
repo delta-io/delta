@@ -45,6 +45,7 @@ import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
@@ -133,6 +134,22 @@ public class SparkMicroBatchStream
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
 
+  // Cache for the initial snapshot files to avoid re-sorting on repeated access.
+  private static class InitialSnapshotCache {
+    final Long version;
+    final List<IndexedFile> files;
+
+    InitialSnapshotCache(Long version, List<IndexedFile> files) {
+      this.version = version;
+      this.files = files;
+    }
+  }
+
+  private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
+      new AtomicReference<>(null);
+
+  private final int maxInitialSnapshotFiles;
+
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
       Snapshot snapshotAtSourceInit,
@@ -177,6 +194,12 @@ public class SparkMicroBatchStream
             "shouldValidateOffsets is null");
     this.schemaReadOptions =
         Objects.requireNonNull(constructSchemaReadOptions(), "schemaReadOptions is null");
+    this.maxInitialSnapshotFiles =
+        (Integer)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
   }
 
   private DeltaStreamUtils.SchemaReadOptions constructSchemaReadOptions() {
@@ -466,7 +489,7 @@ public class SparkMicroBatchStream
 
   @Override
   public void stop() {
-    // TODO(#5318): unpersist any cached initial snapshot.
+    cachedInitialSnapshot.set(null);
   }
 
   ///////////////////////
@@ -972,23 +995,49 @@ public class SparkMicroBatchStream
    * @return An iterator of IndexedFile representing the snapshot files
    */
   private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
-    // TODO(#5318): Cache the sorted snapshot files.
-    // Load snapshot at the specified version
+    InitialSnapshotCache cache = cachedInitialSnapshot.get();
+
+    if (cache != null && cache.version != null && cache.version == version) {
+      return Utils.toCloseableIterator(cache.files.iterator());
+    }
+
+    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version);
+
+    cachedInitialSnapshot.set(
+        new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
+
+    return Utils.toCloseableIterator(indexedFiles.iterator());
+  }
+
+  /** Loads snapshot files at the specified version. */
+  private List<IndexedFile> loadAndValidateSnapshot(long version) {
     Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
 
-    // Build scan to get all files
     Scan scan = snapshot.getScanBuilder().build();
 
-    // TODO(#5318): add memory protection for large snapshots.
     List<AddFile> addFiles = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
         ColumnarBatch batch = filteredBatch.getData();
+
         // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
         // (checkpoint files) files.
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          StreamingHelper.getAddFile(batch, rowId).ifPresent(addFiles::add);
+          Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
+          if (addOpt.isPresent()) {
+            addFiles.add(addOpt.get());
+
+            // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
+            // etc.).
+            // This limit aims to prevent OOM for large tables.
+            // TODO(#5318): support large tables and remove this limit.
+            if (addFiles.size() > maxInitialSnapshotFiles) {
+              throw (RuntimeException)
+                  DeltaErrors.initialSnapshotTooLargeForStreaming(
+                      version, addFiles.size(), maxInitialSnapshotFiles, tablePath);
+            }
+          }
         }
       }
     } catch (IOException e) {
@@ -1015,6 +1064,6 @@ public class SparkMicroBatchStream
     // Add END sentinel
     indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
 
-    return Utils.toCloseableIterator(indexedFiles.iterator());
+    return indexedFiles;
   }
 }

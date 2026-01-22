@@ -377,6 +377,31 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("caseSensitive=false sent to IRC server") {
+    withTempTable("caseSensitiveTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.caseSensitiveTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        server.clearCaptured()
+
+        // Call planScan - the client sets caseSensitive=false in the request
+        val scanPlan = client.planScan(defaultNamespace.toString, "caseSensitiveTest")
+
+        // Verify the scan succeeds and returns files
+        assert(scanPlan.files.nonEmpty,
+          "Expected planScan to return files for the test table")
+
+        // Verify server captured caseSensitive=false
+        val capturedCaseSensitive = server.getCapturedCaseSensitive()
+        assert(capturedCaseSensitive == false,
+          s"Expected server to capture caseSensitive=false, got $capturedCaseSensitive")
+      } finally {
+        client.close()
+      }
+    }
+  }
+
   // Test case class for parameterized credential tests
   private case class CredentialTestCase(
     description: String,
@@ -602,6 +627,9 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         BigDecimal(i).bigDecimal, // decimalCol
         java.sql.Date.valueOf("2024-01-01"), // dateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+        java.sql.Date.valueOf("2024-01-01"), // localDateCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // localDateTimeCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // instantCol
         Row(i * 100), // address.intCol
         Row(s"meta_$i") // metadata.stringCol
       ))

@@ -58,7 +58,8 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
   private static volatile List<String> capturedProjection = null;
-  
+  private static volatile Boolean capturedCaseSensitive = null;
+
   // Static field for test credential injection - credentials to inject into /plan responses
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Map<String, String> testCredentials = null;
@@ -106,15 +107,23 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Boolean getCapturedCaseSensitive() {
+    return capturedCaseSensitive;
+  }
+
+  /**
    * Set test credentials to inject into /plan responses.
    * Package-private for test access.
-   * 
+   *
    * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
    */
   static void setTestCredentials(Map<String, String> credentials) {
     testCredentials = credentials;
   }
-  
+
   /**
    * Get the test credentials configured for injection into /plan responses.
    * Package-private for servlet access.
@@ -122,7 +131,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   static Map<String, String> getTestCredentials() {
     return testCredentials;
   }
-  
+
   /**
    * Clear captured filter and projection. Call between tests to avoid pollution.
    * Package-private for test access.
@@ -130,6 +139,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   static void clearCaptured() {
     capturedFilter = null;
     capturedProjection = null;
+    capturedCaseSensitive = null;
     testCredentials = null;
   }
 
@@ -233,8 +243,15 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     // Capture filter and projection for test verification
     capturedFilter = planRequest.filter();
     capturedProjection = planRequest.select();
+    capturedCaseSensitive = planRequest.caseSensitive();
     LOG.debug("Captured filter: {}", capturedFilter);
     LOG.debug("Captured projection: {}", capturedProjection);
+    LOG.debug("Captured caseSensitive: {}", capturedCaseSensitive);
+
+    // Validate caseSensitive=false requirement
+    if (planRequest.caseSensitive()) {
+      throw new IllegalArgumentException("caseSensitive=true is not supported");
+    }
 
     // Validate that unsupported features are not requested
     if (planRequest.startSnapshotId() != null) {

@@ -41,6 +41,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("stringCol", "test", "String"),
     ("dateCol", java.sql.Date.valueOf("2024-01-01"), "Date"),
     ("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 12:00:00"), "Timestamp"),
+    ("localDateCol", java.time.LocalDate.of(2024, 1, 1), "LocalDate"),
+    ("localDateTimeCol", java.time.LocalDateTime.of(2024, 1, 1, 12, 0, 0), "LocalDateTime"),
+    ("instantCol", java.time.Instant.parse("2024-01-01T12:00:00Z"), "Instant"),
     ("address.intCol", 42, "Nested Int"),
     ("metadata.stringCol", "test", "Nested String")
   )
@@ -249,6 +252,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         Array(v, new java.sql.Date(v.getTime + 86400000L)) // +1 day in millis
       case v: java.sql.Timestamp =>
         Array(v, new java.sql.Timestamp(v.getTime + 3600000L)) // +1 hour in millis
+      case v: java.time.LocalDate =>
+        Array(v, v.plusDays(1), v.plusDays(2))
+      case v: java.time.LocalDateTime =>
+        Array(v, v.plusHours(1), v.plusHours(2))
+      case v: java.time.Instant =>
+        Array(v, v.plusSeconds(3600), v.plusSeconds(7200)) // +1 hour, +2 hours
       case _ => Array(value)
     }
 
@@ -491,6 +500,17 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     val expectedTimestampMicros =
       testTimestamp.getTime * 1000 + (testTimestamp.getNanos % 1000000) / 1000
 
+    // java.time types
+    val testLocalDate = java.time.LocalDate.of(2024, 1, 1)
+    val expectedLocalDateDays = testLocalDate.toEpochDay.toInt
+
+    val testLocalDateTime = java.time.LocalDateTime.of(2024, 1, 1, 12, 30, 45)
+    val expectedLocalDateTimeMicros = testLocalDateTime.toEpochSecond(
+      java.time.ZoneOffset.UTC) * 1000000 + testLocalDateTime.getNano / 1000
+
+    val testInstant = java.time.Instant.parse("2024-01-01T12:30:45.123456Z")
+    val expectedInstantMicros = testInstant.getEpochSecond * 1000000 + testInstant.getNano / 1000
+
     val testCases = Seq(
       // Date/Timestamp: Spark sends java.sql types, but we convert to Int/Long for Iceberg
       ExprConvTestCase(
@@ -502,6 +522,23 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "Timestamp converted to microseconds since epoch",
         EqualTo("timestampCol", testTimestamp),
         Some(Expressions.equal("timestampCol", expectedTimestampMicros: java.lang.Long))
+      ),
+
+      // java.time types: converted to Int (days) or Long (microseconds)
+      ExprConvTestCase(
+        "LocalDate converted to days since epoch",
+        EqualTo("localDateCol", testLocalDate),
+        Some(Expressions.equal("localDateCol", expectedLocalDateDays: Integer))
+      ),
+      ExprConvTestCase(
+        "LocalDateTime converted to microseconds since epoch",
+        EqualTo("localDateTimeCol", testLocalDateTime),
+        Some(Expressions.equal("localDateTimeCol", expectedLocalDateTimeMicros: java.lang.Long))
+      ),
+      ExprConvTestCase(
+        "Instant converted to microseconds since epoch",
+        EqualTo("instantCol", testInstant),
+        Some(Expressions.equal("instantCol", expectedInstantMicros: java.lang.Long))
       ),
 
       // Boundary values
