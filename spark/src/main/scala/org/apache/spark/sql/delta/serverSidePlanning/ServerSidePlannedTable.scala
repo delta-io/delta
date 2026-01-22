@@ -285,7 +285,7 @@ class ServerSidePlannedScanBuilder(
 
   override def pushLimit(limit: Int): Boolean = {
     _limit = Some(limit)
-    true
+    true  // Return true to indicate the limit is fully pushed down to the server
   }
 
   override def isPartiallyPushed(): Boolean = {
@@ -469,21 +469,32 @@ class ServerSidePlannedFilePartitionReader(
     length = partition.fileSizeInBytes
   )
 
-  // Call the pre-built reader function with our PartitionedFile
-  // This happens on the executor and doesn't need SparkSession
-  private lazy val readerIterator: Iterator[InternalRow] = {
-    readerBuilder(partitionedFile)
+  // Track the iterator so we can close it properly
+  // Using Option to avoid initializing the iterator if close() is called before next()
+  private var readerIterator: Option[Iterator[InternalRow]] = None
+
+  // Get or create the reader iterator
+  private def getIterator: Iterator[InternalRow] = {
+    readerIterator.getOrElse {
+      val iter = readerBuilder(partitionedFile)
+      readerIterator = Some(iter)
+      iter
+    }
   }
 
   override def next(): Boolean = {
-    readerIterator.hasNext
+    getIterator.hasNext
   }
 
   override def get(): InternalRow = {
-    readerIterator.next()
+    getIterator.next()
   }
 
   override def close(): Unit = {
-    // Reader cleanup is handled by Spark
+    // Close the iterator if it implements AutoCloseable (which Parquet iterators do)
+    readerIterator.foreach {
+      case closeable: AutoCloseable => closeable.close()
+      case _ => // No cleanup needed
+    }
   }
 }
