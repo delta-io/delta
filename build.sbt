@@ -81,6 +81,8 @@ Global / targetJvm := "11"
 lazy val javaVersion = sys.props.getOrElse("java.version", "Unknown")
 lazy val javaVersionInt = javaVersion.split("\\.")(0).toInt
 
+// Test - some random change
+
 lazy val commonSettings = Seq(
   organization := "io.delta",
   scalaVersion := default_scala_version.value,
