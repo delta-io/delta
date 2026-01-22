@@ -72,7 +72,7 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
 
 /**
  * Registry for client factories. Automatically discovers and registers implementations
- * using reflection-based auto-discovery on first access to the factory. Manual registration 
+ * using reflection-based auto-discovery on first access to the factory. Manual registration
  * using setFactory() is only needed for testing or to override the auto-discovered factory.
  */
 private[serverSidePlanning] object ServerSidePlanningClientFactory extends DeltaLogging {
@@ -87,12 +87,14 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
       synchronized {
         if (!autoRegistrationAttempted) {
           autoRegistrationAttempted = true
-          
+
           try {
             // Use reflection to load the Iceberg factory class
+            // scalastyle:off classforname
             val clazz = Class.forName(
               "org.apache.spark.sql.delta.serverSidePlanning." +
               "IcebergRESTCatalogPlanningClientFactory")
+            // scalastyle:on classforname
             val factory = clazz.getConstructor().newInstance()
               .asInstanceOf[ServerSidePlanningClientFactory]
             registeredFactory = Some(factory)
@@ -117,7 +119,7 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
   }
 
   /**
-   * Clear the registered factory. 
+   * Clear the registered factory.
    */
   private[serverSidePlanning] def clearFactory(): Unit = {
     registeredFactory = None
@@ -134,7 +136,7 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
     if (registeredFactory.isEmpty) {
       tryAutoRegisterFactory()
     }
-    
+
     registeredFactory.getOrElse {
       throw new IllegalStateException(
         "No ServerSidePlanningClientFactory has been registered. " +
