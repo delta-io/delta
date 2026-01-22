@@ -592,4 +592,123 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     assertConvert(testCases)
   }
+
+  // ========================================================================
+  // COLUMN NAMES WITH DOTS
+  // ========================================================================
+
+  test("column names with dots (literal column names, not nested fields)") {
+    val testCases = Seq(
+      // Simple column without dot
+      ExprConvTestCase(
+        "Column name without dot", // Test case label
+        EqualTo("id", 5), // Spark filter builder
+        Some(Expressions.equal("id", 5)) // Iceberg expression builder
+      ),
+
+      // Column name with single dot (literal column name, not nested field access)
+      ExprConvTestCase(
+        "Column name with single dot (literal column name)",
+        EqualTo("address.city", "Seattle"),
+        Some(Expressions.equal("address.city", "Seattle"))
+      ),
+
+      // Column name with multiple dots
+      ExprConvTestCase(
+        "Column name with multiple dots",
+        EqualTo("a.b.c", "value"),
+        Some(Expressions.equal("a.b.c", "value"))
+      ),
+
+      // Test escaping with different operators - comparison operators
+      ExprConvTestCase(
+        "LessThan with dotted column name",
+        LessThan("location.state", 100),
+        Some(Expressions.lessThan("location.state", 100))
+      ),
+      ExprConvTestCase(
+        "GreaterThan with dotted column name",
+        GreaterThan("person.age", 50L),
+        Some(Expressions.greaterThan("person.age", 50L))
+      ),
+      ExprConvTestCase(
+        "LessThanOrEqual with dotted column name",
+        LessThanOrEqual("data.value", 99.9),
+        Some(Expressions.lessThanOrEqual("data.value", 99.9))
+      ),
+      ExprConvTestCase(
+        "GreaterThanOrEqual with dotted column name",
+        GreaterThanOrEqual("user.score", 75.5),
+        Some(Expressions.greaterThanOrEqual("user.score", 75.5))
+      ),
+
+      // Test escaping with null checks
+      ExprConvTestCase(
+        "IsNull with dotted column name",
+        IsNull("address.city"),
+        Some(Expressions.isNull("address.city"))
+      ),
+      ExprConvTestCase(
+        "IsNotNull with dotted column name",
+        IsNotNull("user.email"),
+        Some(Expressions.notNull("user.email"))
+      ),
+
+      // Test escaping with IN operator
+      ExprConvTestCase(
+        "In with dotted column name",
+        In("address.city", Array("Seattle", "Portland", "Denver")),
+        Some(Expressions.in("address.city", "Seattle", "Portland", "Denver"))
+      ),
+
+      // Test escaping with string operations
+      ExprConvTestCase(
+        "StringStartsWith with dotted column name",
+        StringStartsWith("user.email", "admin"),
+        Some(Expressions.startsWith("user.email", "admin"))
+      ),
+
+      // Test escaping with Not(EqualTo) - special case
+      ExprConvTestCase(
+        "Not(EqualTo) with dotted column name",
+        Not(EqualTo("address.city", "Seattle")),
+        Some(Expressions.notEqual("address.city", "Seattle"))
+      ),
+      ExprConvTestCase(
+        "Not(EqualTo(col, null)) with dotted column name (IS NOT NULL)",
+        Not(EqualTo("user.name", null)),
+        Some(Expressions.notNull("user.name"))
+      ),
+
+      // Test escaping with logical operators combining dotted and non-dotted columns
+      ExprConvTestCase(
+        "AND with dotted and non-dotted columns",
+        And(
+          EqualTo("id", 5),
+          EqualTo("address.city", "Seattle")
+        ),
+        Some(
+          Expressions.and(
+            Expressions.equal("id", 5),
+            Expressions.equal("address.city", "Seattle")
+          )
+        )
+      ),
+      ExprConvTestCase(
+        "OR with multiple dotted columns",
+        Or(
+          EqualTo("address.city", "Seattle"),
+          EqualTo("work.city", "Portland")
+        ),
+        Some(
+          Expressions.or(
+            Expressions.equal("address.city", "Seattle"),
+            Expressions.equal("work.city", "Portland")
+          )
+        )
+      )
+    )
+
+    assertConvert(testCases)
+  }
 }
