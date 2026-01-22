@@ -149,6 +149,19 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
+    ExpressionTransformResult visitSTIntersectBoxes(Predicate predicate) {
+      ExpressionTransformResult leftResult = visit(getLeft(predicate));
+      ExpressionTransformResult rightResult = visit(getRight(predicate));
+      Expression left = leftResult.expression;
+      Expression right = rightResult.expression;
+
+      return new ExpressionTransformResult(
+          STIntersectBoxesEvaluator.validateAndTransform(
+              predicate, left, leftResult.outputType, right, rightResult.outputType),
+          BooleanType.BOOLEAN);
+    }
+
+    @Override
     ExpressionTransformResult visitLiteral(Literal literal) {
       // nothing to validate or rewrite
       return new ExpressionTransformResult(literal, literal.getDataType());
@@ -537,6 +550,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           throw new IllegalStateException(
               String.format("%s is not a recognized comparator", predicate.getName()));
       }
+    }
+
+    @Override
+    ColumnVector visitSTIntersectBoxes(Predicate predicate) {
+      ColumnVector left = visit(getLeft(predicate));
+      ColumnVector right = visit(getRight(predicate));
+      checkArgument(
+          left.getSize() == right.getSize(),
+          "Left and right operand returned different results: left=%d, right=%d",
+          left.getSize(),
+          right.getSize());
+      return STIntersectBoxesEvaluator.eval(left, right);
     }
 
     @Override
