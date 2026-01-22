@@ -198,16 +198,19 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================================================
-  // NULL CHECK OPERATORS (IsNull, IsNotNull)
+  // NULL CHECK OPERATORS (IsNull, IsNotNull, Not(IsNull))
   // ========================================================================
 
-  test("null check operators (IsNull, IsNotNull) on all types") {
+  test("null check operators (IsNull, IsNotNull, Not(IsNull)) on all types") {
     val nullCheckOpMappings = Seq(
       ("IsNull",  // Test case label
         (col: String, _: Any) => IsNull(col),              // Spark filter builder
         (col: String, _: Any) => Expressions.isNull(col)),  // Iceberg expression builder
       ("IsNotNull",
         (col: String, _: Any) => IsNotNull(col),
+        (col: String, _: Any) => Expressions.notNull(col)),
+      ("Not(IsNull)",
+        (col: String, _: Any) => Not(IsNull(col)),
         (col: String, _: Any) => Expressions.notNull(col))
     )
 
@@ -226,16 +229,16 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================================================
-  // IN OPERATOR
+  // IN AND NOT IN OPERATORS
   // ========================================================================
 
-  // IN operator requires special handling because:
-  // - It accepts arrays of values, requiring per-element type coercion
+  // IN and NOT IN operators require special handling because:
+  // - They accept arrays of values, requiring per-element type coercion
   // - Null values must be filtered out (SQL semantics: col IN (1, NULL) = col IN (1))
-  // - Empty arrays after null filtering result in always-false predicates
+  // - Empty arrays after null filtering result in always-false/true predicates
   // - Type conversion needed for each array element (Scala -> Java types)
-  test("IN operator with type coercion and null handling") {
-    // Helper to generate multiple test values for IN operator
+  test("IN and NOT IN operators with type coercion and null handling") {
+    // Helper to generate multiple test values for IN/NOT IN operators
     def generateInValues(value: Any): Array[Any] = value match {
       case v: Int => Array(v, v + 1, v + 2)
       case v: Long => Array(v, v + 1L, v + 2L)
@@ -252,60 +255,117 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       case _ => Array(value)
     }
 
-    // Test IN operator for all types
-    val inTestCases = allTypesTestCases.map { case (col, value, typeDesc) =>
+    val inOpMappings = Seq(
+      ("In",
+        (col: String, values: Array[Any]) => In(col, values),
+        (col: String, values: Array[Any]) => Expressions.in(col, values: _*)),
+      ("Not(In)",
+        (col: String, values: Array[Any]) => Not(In(col, values)),
+        (col: String, values: Array[Any]) => Expressions.notIn(col, values: _*))
+    )
+
+    // Test IN and NOT IN operators for all types
+    val typeTests = for {
+      (col, value, typeDesc) <- allTypesTestCases
+      (opName, sparkOp, icebergOp) <- inOpMappings
+    } yield {
       val values = generateInValues(value)
       val icebergValues = values.map(v =>
         SparkToIcebergExpressionConverter.toIcebergValue(v, supportBoolean = true))
       ExprConvTestCase(
-        s"In with $typeDesc", // Test case label
-        In(col, values), // Spark filter builder
-        Some(Expressions.in(col, icebergValues: _*)) // Iceberg expression builder
+        s"$opName with $typeDesc",
+        sparkOp(col, values),
+        Some(icebergOp(col, icebergValues))
       )
     }
 
-    val nullHandlingTests = Seq(
-      // Null handling: nulls are filtered out
+    // Null handling tests for both In and Not(In)
+    val nullHandlingTests = for {
+      (opName, sparkOp, icebergOp) <- inOpMappings
+    } yield Seq(
       ExprConvTestCase(
-        "In with null values (nulls filtered)",
-        In("stringCol", Array(null, "value1", "value2")),
-        Some(Expressions.in("stringCol", "value1", "value2"))
+        s"$opName with null values (nulls filtered)",
+        sparkOp("stringCol", Array(null, "value1", "value2")),
+        Some(icebergOp("stringCol", Array("value1", "value2")))
       ),
       ExprConvTestCase(
-        "In with null and integers",
-        In("intCol", Array(null, 1, 2)),
-        Some(Expressions.in("intCol", 1: Integer, 2: Integer))
+        s"$opName with null and integers",
+        sparkOp("intCol", Array(null, 1, 2)),
+        Some(icebergOp("intCol", Array(1: Integer, 2: Integer)))
       ),
-      // Edge case: In with only null becomes empty In (always false)
       ExprConvTestCase(
-        "In with only null",
-        In("stringCol", Array(null)),
-        Some(Expressions.in("stringCol"))
+        s"$opName with only null",
+        sparkOp("stringCol", Array(null)),
+        Some(icebergOp("stringCol", Array()))
+      ),
+      ExprConvTestCase(
+        s"$opName with empty array",
+        sparkOp("intCol", Array()),
+        Some(icebergOp("intCol", Array()))
       )
     )
 
-    assertConvert(inTestCases ++ nullHandlingTests)
+    // Specific examples for both In and Not(In)
+    val specificExamples = for {
+      (opName, sparkOp, icebergOp) <- inOpMappings
+    } yield Seq(
+      ExprConvTestCase(
+        s"$opName with string values",
+        sparkOp("stringCol", Array("value1", "value2")),
+        Some(icebergOp("stringCol", Array("value1", "value2")))
+      ),
+      ExprConvTestCase(
+        s"$opName with single value",
+        sparkOp("intCol", Array(42)),
+        Some(icebergOp("intCol", Array(42: Integer)))
+      ),
+      ExprConvTestCase(
+        s"$opName with nested column",
+        sparkOp("address.intCol", Array(1, 2, 3)),
+        Some(icebergOp("address.intCol", Array(1: Integer, 2: Integer, 3: Integer)))
+      )
+    )
+
+    assertConvert(typeTests ++ nullHandlingTests.flatten ++ specificExamples.flatten)
   }
 
   // ========================================================================
   // STRING OPERATIONS
   // ========================================================================
 
-  test("string operations (startsWith supported, endsWith/contains unsupported)") {
-    val testCases = Seq(
-      // Supported: StringStartsWith
-      ExprConvTestCase(
-        "StringStartsWith on top-level column", // Test case label
-        StringStartsWith("stringCol", "prefix"), // Spark filter builder
-        Some(Expressions.startsWith("stringCol", "prefix")) // Iceberg expression builder
-      ),
-      ExprConvTestCase(
-        "StringStartsWith on nested column",
-        StringStartsWith("metadata.stringCol", "test"),
-        Some(Expressions.startsWith("metadata.stringCol", "test"))
-      ),
+  test("string operations (startsWith/notStartsWith supported, endsWith/contains unsupported)") {
+    val stringOpMappings = Seq(
+      ("StringStartsWith",
+        (col: String, prefix: String) => StringStartsWith(col, prefix),
+        (col: String, prefix: String) => Expressions.startsWith(col, prefix)),
+      ("Not(StringStartsWith)",
+        (col: String, prefix: String) => Not(StringStartsWith(col, prefix)),
+        (col: String, prefix: String) => Expressions.notStartsWith(col, prefix))
+    )
 
-      // Unsupported: StringEndsWith, StringContains
+    val stringColumns = Seq(
+      ("stringCol", "string column"),
+      ("metadata.stringCol", "nested string column")
+    )
+
+    val prefixTestCases = Seq(
+      ("prefix", "basic prefix"),
+      ("", "empty prefix")
+    )
+
+    // Generate all combinations: string columns x prefixes x [startsWith, notStartsWith]
+    val supportedTests = for {
+      (col, colDesc) <- stringColumns
+      (prefix, prefixDesc) <- prefixTestCases
+      (opName, sparkOp, icebergOp) <- stringOpMappings
+    } yield ExprConvTestCase(
+      s"$opName with $prefixDesc on $colDesc",
+      sparkOp(col, prefix),
+      Some(icebergOp(col, prefix))
+    )
+
+    // Unsupported: StringEndsWith, StringContains
+    val unsupportedTests = Seq(
       ExprConvTestCase(
         "StringEndsWith (unsupported)",
         StringEndsWith("stringCol", "suffix"),
@@ -318,7 +378,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       )
     )
 
-    assertConvert(testCases)
+    assertConvert(supportedTests ++ unsupportedTests)
   }
 
   // ========================================================================
@@ -423,35 +483,18 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   }
 
   // ========================================================================
-  // NOT OPERATOR
+  // NOT OPERATOR (unsupported cases)
   // ========================================================================
 
-  test("NOT operator (NOT EqualTo, NOT IN, NOT IsNull, and NOT StringStartsWith are supported)") {
+  test("NOT operator with unsupported inner filters") {
+    // Note: Supported NOT patterns are tested in their respective operator pair tests:
+    // - Not(EqualTo) tested in equality operators
+    // - Not(In) tested in IN and NOT IN operators
+    // - Not(IsNull) tested in null check operators
+    // - Not(StringStartsWith) tested in string operations
+    //
+    // This test only covers unsupported NOT patterns
     val testCases = Seq(
-      // Supported: Not(EqualTo) with regular values, null, and NaN are all tested in the
-      // equality operators test. This test case is included for completeness of the NOT
-      // operator test.
-      ExprConvTestCase(
-        "Not(EqualTo) converts to NotEqualTo (supported)", // Test case label
-        Not(EqualTo("intCol", 42)), // Spark filter builder
-        Some(Expressions.notEqual("intCol", 42)) // Iceberg expression builder
-      ),
-
-      // Supported: Not(IsNull) converts to notNull
-      ExprConvTestCase(
-        "Not(IsNull) converts to notNull (supported)",
-        Not(IsNull("stringCol")),
-        Some(Expressions.notNull("stringCol"))
-      ),
-
-      // Supported: Not(StringStartsWith) converts to notStartsWith
-      ExprConvTestCase(
-        "Not(StringStartsWith) converts to notStartsWith (supported)",
-        Not(StringStartsWith("stringCol", "prefix")),
-        Some(Expressions.notStartsWith("stringCol", "prefix"))
-      ),
-
-      // Unsupported: Not with other operators
       ExprConvTestCase(
         "Not(LessThan) is unsupported",
         Not(LessThan("intCol", 5)),
@@ -461,139 +504,11 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "Not(GreaterThan) is unsupported",
         Not(GreaterThan("longCol", 100L)),
         None
-      )
-    )
-
-    assertConvert(testCases)
-  }
-
-  // ========================================================================
-  // NOT IN OPERATOR
-  // ========================================================================
-
-  test("NOT IN operator with type coercion and null handling") {
-    // Helper to generate multiple test values for NOT IN operator
-    def generateNotInValues(value: Any): Array[Any] = value match {
-      case v: Int => Array(v, v + 1, v + 2)
-      case v: Long => Array(v, v + 1L, v + 2L)
-      case v: Float => Array(v, v + 1.0f, v + 2.0f)
-      case v: Double => Array(v, v + 1.0, v + 2.0)
-      case v: String => Array(v, s"${v}_2", s"${v}_3")
-      case v: java.math.BigDecimal =>
-        Array(v, v.add(java.math.BigDecimal.ONE), v.add(java.math.BigDecimal.TEN))
-      case v: Boolean => Array(v, !v)
-      case v: java.sql.Date =>
-        Array(v, new java.sql.Date(v.getTime + 86400000L)) // +1 day in millis
-      case v: java.sql.Timestamp =>
-        Array(v, new java.sql.Timestamp(v.getTime + 3600000L)) // +1 hour in millis
-      case _ => Array(value)
-    }
-
-    // Test NOT IN operator for all types
-    val notInTestCases = allTypesTestCases.map { case (col, value, typeDesc) =>
-      val values = generateNotInValues(value)
-      val icebergValues = values.map(v =>
-        SparkToIcebergExpressionConverter.toIcebergValue(v, supportBoolean = true))
-      ExprConvTestCase(
-        s"Not(In) with $typeDesc", // Test case label
-        Not(In(col, values)), // Spark filter builder
-        Some(Expressions.notIn(col, icebergValues: _*)) // Iceberg expression builder
-      )
-    }
-
-    val nullHandlingTests = Seq(
-      // Null handling: nulls are filtered out
-      ExprConvTestCase(
-        "Not(In) with null values (nulls filtered)",
-        Not(In("stringCol", Array(null, "value1", "value2"))),
-        Some(Expressions.notIn("stringCol", "value1", "value2"))
       ),
       ExprConvTestCase(
-        "Not(In) with null and integers",
-        Not(In("intCol", Array(null, 1, 2))),
-        Some(Expressions.notIn("intCol", 1: Integer, 2: Integer))
-      ),
-      // Edge case: Not(In) with only null becomes empty NotIn
-      ExprConvTestCase(
-        "Not(In) with only null",
-        Not(In("stringCol", Array(null))),
-        Some(Expressions.notIn("stringCol"))
-      ),
-      // Edge case: Not(In) with empty array
-      ExprConvTestCase(
-        "Not(In) with empty array",
-        Not(In("intCol", Array())),
-        Some(Expressions.notIn("intCol"))
-      )
-    )
-
-    val specificExamples = Seq(
-      ExprConvTestCase(
-        "NOT IN with string values", // Test case label
-        Not(In("stringCol", Array("value1", "value2"))), // Spark filter builder
-        Some(Expressions.notIn("stringCol", "value1", "value2")) // Iceberg expression builder
-      ),
-      ExprConvTestCase(
-        "NOT IN with single value",
-        Not(In("intCol", Array(42))),
-        Some(Expressions.notIn("intCol", 42: Integer))
-      ),
-      ExprConvTestCase(
-        "NOT IN with nested column",
-        Not(In("address.intCol", Array(1, 2, 3))),
-        Some(Expressions.notIn("address.intCol", 1: Integer, 2: Integer, 3: Integer))
-      )
-    )
-
-    assertConvert(notInTestCases ++ nullHandlingTests ++ specificExamples)
-  }
-
-  // ========================================================================
-  // NOT IsNull OPERATOR
-  // ========================================================================
-
-  test("NOT IsNull operator") {
-    val testCases = Seq(
-      ExprConvTestCase(
-        "Not(IsNull) on string column", // Test case label
-        Not(IsNull("stringCol")), // Spark filter builder
-        Some(Expressions.notNull("stringCol")) // Iceberg expression builder
-      ),
-      ExprConvTestCase(
-        "Not(IsNull) on integer column",
-        Not(IsNull("intCol")),
-        Some(Expressions.notNull("intCol"))
-      ),
-      ExprConvTestCase(
-        "Not(IsNull) on nested column",
-        Not(IsNull("address.intCol")),
-        Some(Expressions.notNull("address.intCol"))
-      )
-    )
-
-    assertConvert(testCases)
-  }
-
-  // ========================================================================
-  // NOT StringStartsWith OPERATOR
-  // ========================================================================
-
-  test("NOT StringStartsWith operator") {
-    val testCases = Seq(
-      ExprConvTestCase(
-        "Not(StringStartsWith) on string column", // Test case label
-        Not(StringStartsWith("stringCol", "prefix")), // Spark filter builder
-        Some(Expressions.notStartsWith("stringCol", "prefix")) // Iceberg expression builder
-      ),
-      ExprConvTestCase(
-        "Not(StringStartsWith) with empty prefix",
-        Not(StringStartsWith("stringCol", "")),
-        Some(Expressions.notStartsWith("stringCol", ""))
-      ),
-      ExprConvTestCase(
-        "Not(StringStartsWith) on nested column",
-        Not(StringStartsWith("metadata.stringCol", "test")),
-        Some(Expressions.notStartsWith("metadata.stringCol", "test"))
+        "Not(And) is unsupported",
+        Not(And(EqualTo("intCol", 1), EqualTo("longCol", 2L))),
+        None
       )
     )
 
