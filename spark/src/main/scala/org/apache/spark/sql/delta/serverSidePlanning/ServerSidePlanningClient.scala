@@ -91,15 +91,17 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
           try {
             // Use reflection to load the Iceberg factory class
             val clazz = Class.forName(
-              "org.apache.spark.sql.delta.serverSidePlanning.IcebergRESTCatalogPlanningClientFactory")
+              "org.apache.spark.sql.delta.serverSidePlanning." +
+              "IcebergRESTCatalogPlanningClientFactory")
             val factory = clazz.getConstructor().newInstance()
               .asInstanceOf[ServerSidePlanningClientFactory]
             registeredFactory = Some(factory)
           } catch {
             case e: Exception =>
               throw new IllegalStateException(
-                "Unable to load IcebergRESTCatalogPlanningClientFactory for server-side planning. " +
-                "Ensure the delta-iceberg JAR is on the classpath and compatible with this Delta version.",
+                "Unable to load IcebergRESTCatalogPlanningClientFactory " +
+                "for server-side planning. Ensure the delta-iceberg JAR is on the " +
+                "classpath and compatible with this Delta version.",
                 e)
           }
         }
