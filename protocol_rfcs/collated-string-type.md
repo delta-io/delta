@@ -12,8 +12,9 @@ This protocol change adds support for collated strings. It consists of three cha
 # Collations Table Feature
 
 To support this feature:
-* The table must have Writer Version 7. A feature name `collations` must exist in the table's `writerFeatures`.
-* The feature `domainMetadata` is required in the table protocol's `writerFeatures`. 
+* The table must have Writer Version 7. 
+* The feature `collations` must exist in the table's `writerFeatures`.
+* The feature `domainMetadata` must exist in the table's `writerFeatures`. 
 
 ## Reader Requirements for Collations:
 
@@ -24,11 +25,11 @@ When Collations is supported (when the `writerFeatures` field of a table's proto
 ## Writer Requirements for Collations:
 
 When Collations is supported (when the `writerFeatures` field of a table's protocol action contains `collations`), then:
-- Writers must write the collation identifier in the schema metadata for a column with non-default collation (utf8 binary).
+- Writers must write the collation identifier in the schema metadata for a column with non-default collation, i.e., any collation that is not utf8 binary.
 - Writer must not write the collation identifier in the schema metadata for a column with default collation (utf8 binary).
 - Writers could write per-file statistics for string columns with collations other than utf8 binary collation in `statsWithCollation`. See [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics) for more details.
 - Writers could collect per-file statistics for collation versions that are specified in the `domainMetadata` for the `collations` table feature.
-- Writers could remove a collation version from the `domainMetadata` for the `collations` table feature if the collation version is no longer present in the statistics of any AddFile.
+- Writers could remove a collation version from the `domainMetadata` for the `collations` table feature if stats collection for the collation version is no longer desired.
 - If a writer adds per-file statistics for a new version of a collation, the writer should also update the DomainMetadata for the `collations` table feature to include the new collation versions that are used to collect statistics.
 
 > ***Add a new section in front of the [Primitive Types](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#primitive-types) section.***
