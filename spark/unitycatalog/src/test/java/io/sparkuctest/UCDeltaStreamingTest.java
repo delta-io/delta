@@ -154,6 +154,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           try {
             List<List<String>> expected = new ArrayList<>();
             // Seed an initial commit (required for managed tables, harmless for external).
+            // TODO: Remove manual V2/V1 switch when V2 to V1 AUTO mode is supported.
             spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
             expected.add(List.of("0", "seed"));
