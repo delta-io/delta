@@ -50,7 +50,6 @@ jobs:
         id: spark-details
         run: |
           # Get JVM version, package suffix, iceberg support for this Spark version
-          build/sbt exportSparkVersionsJson
           JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
           SPARK_PACKAGE_SUFFIX=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" packageSuffix | jq -r)
           SUPPORT_ICEBERG=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" supportIceberg | jq -r)

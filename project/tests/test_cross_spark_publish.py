@@ -40,7 +40,7 @@ SPARK_RELATED_JAR_TEMPLATES = [
 
 # Iceberg-related modules - only built for Spark versions with supportIceberg=true
 # See CrossSparkVersions.scala for which versions support iceberg
-SPARK_ICEBERG_JAR_TEMPLATES = [
+DELTA_ICEBERG_JAR_TEMPLATES = [
     "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
 
@@ -77,7 +77,7 @@ class SparkVersionSpec:
         if self.support_iceberg:
             self.iceberg_jars = [
                 jar.format(suffix=self.suffix, version="{version}")
-                for jar in SPARK_ICEBERG_JAR_TEMPLATES
+                for jar in DELTA_ICEBERG_JAR_TEMPLATES
             ]
         else:
             self.iceberg_jars = []
@@ -94,7 +94,7 @@ class SparkVersionSpec:
 # Spark versions to test (key = full version string, value = spec with suffix)
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),   # Non-default, supports iceberg
+    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),   # Spark 4.0.1 supports iceberg
     "4.1.0": SparkVersionSpec(suffix="", support_iceberg=False)       # Default Spark version, no iceberg support
 }
 
