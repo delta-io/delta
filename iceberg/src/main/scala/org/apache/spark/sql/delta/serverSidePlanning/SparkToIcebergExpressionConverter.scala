@@ -160,17 +160,17 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
   }
 
   /**
-   * Check if a value is a supported primitive type that can be pushed down to Iceberg.
+   * Check if a value is a supported type that can be pushed down to Iceberg.
    * Only explicitly supported types are allowed. Unknown types (e.g., VARIANT, complex types)
-   * will be rejected by default for safety.
+   * will be rejected by default.
    *
    * @param value The value to check
    * @param supportBoolean Whether Boolean type is supported in this context
-   * @return true if the value is a supported primitive type, false otherwise
+   * @return true if the value is a supported type, false otherwise
    */
   private def isSupportedType(value: Any, supportBoolean: Boolean): Boolean = {
     value match {
-      case null => true  // null is handled specially
+      case null => true
       case _: java.sql.Date => true
       case _: java.sql.Timestamp => true
       case _: java.time.Instant => true
@@ -183,7 +183,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
       case _: java.math.BigDecimal => true
       case _: String => true
       case _: Boolean => supportBoolean
-      case _ => false  // Unknown types default to "rejected"
+      case _ => false  // Reject other types
     }
   }
 
@@ -198,15 +198,10 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
       supportBoolean: Boolean = false): Any = {
     // Reject unsupported types - only allow known primitive types
     if (!isSupportedType(value, supportBoolean)) {
-      throw new UnsupportedOperationException(
-        s"Cannot convert type to Iceberg literal: ${value.getClass.getName}. " +
-        "Only primitive types (Int, Long, Float, Double, String, Date, Timestamp, " +
-        "Decimal, Boolean) are supported in Iceberg filter expressions.")
+      throw new UnsupportedOperationException(s"Cannot convert type to Iceberg literal: ${value.getClass.getName}.")
     }
 
     value match {
-      // Date/Timestamp conversion (semantic change) because
-      // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
       case v: java.sql.Date =>
       // Iceberg expects days since epoch (1970-01-01) as Int
       DateTimeUtils.fromJavaDate(v): Integer
