@@ -35,12 +35,12 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
     "delta-contribs{suffix}_2.13-{version}.jar",
+    "delta-hudi{suffix}_2.13-{version}.jar",
 ]
 
-# Spark-related modules that are only compiled with one Spark version 4.0
-# These modules will get a version suffix based on whether 4.0 is the default version.
-SPARK_4_0_ONLY_JAR_TEMPLATES = [
-    "delta-hudi_2.13-{version}.jar",
+# Iceberg-related modules - only built for Spark versions with supportIceberg=true
+# See CrossSparkVersions.scala for which versions support iceberg
+SPARK_ICEBERG_JAR_TEMPLATES = [
     "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
 
@@ -58,8 +58,12 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
 
 @dataclass
 class SparkVersionSpec:
-    """Configuration for a specific Spark version."""
+    """Configuration for a specific Spark version.
+
+    Mirrors the SparkVersionSpec in CrossSparkVersions.scala.
+    """
     suffix: str  # e.g., "" for default, "_X.Y" for other versions
+    support_iceberg: bool = False  # Whether this Spark version supports iceberg integration
 
     def __post_init__(self):
         """Generate JAR templates with the suffix applied."""
@@ -69,30 +73,34 @@ class SparkVersionSpec:
             for jar in SPARK_RELATED_JAR_TEMPLATES
         ]
 
-        # Generate Spark-4.0-only JAR templates with the suffix
-        self.spark_4_0_only_jars = [
-            jar.format(suffix=self.suffix, version="{version}")
-            for jar in SPARK_4_0_ONLY_JAR_TEMPLATES
-        ]
+        # Generate iceberg JAR templates with the suffix (only if this version supports iceberg)
+        if self.support_iceberg:
+            self.iceberg_jars = [
+                jar.format(suffix=self.suffix, version="{version}")
+                for jar in SPARK_ICEBERG_JAR_TEMPLATES
+            ]
+        else:
+            self.iceberg_jars = []
 
         # Non-Spark-related JAR templates are the same for all Spark versions
         self.non_spark_related_jars = list(NON_SPARK_RELATED_JAR_TEMPLATES)
 
     @property
     def all_jars(self) -> List[str]:
-        """All JAR templates for this Spark version (Spark-related + non-Spark-related)."""
-        return self.spark_related_jars + self.non_spark_related_jars + self.spark_4_0_only_jars
+        """All JAR templates for this Spark version (Spark-related + non-Spark-related + iceberg if supported)."""
+        return self.spark_related_jars + self.non_spark_related_jars + self.iceberg_jars
 
 
 # Spark versions to test (key = full version string, value = spec with suffix)
+# These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(""),      # Default Spark version without suffix
-    "4.1.0": SparkVersionSpec("_4.1")
+    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),   # Non-default, supports iceberg
+    "4.1.0": SparkVersionSpec(suffix="", support_iceberg=False)       # Default Spark version, no iceberg support
 }
 
 # The default Spark version (no suffix in artifact names)
 # This is intentionally hardcoded here to explicitly test the default version.
-DEFAULT_SPARK = "4.0.1"
+DEFAULT_SPARK = "4.1.0"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
@@ -227,7 +235,7 @@ class CrossSparkPublishTest:
             return False
 
         expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version) | \
-            substitute_xversion(spark_spec.spark_4_0_only_jars, self.delta_version)
+            substitute_xversion(spark_spec.iceberg_jars, self.delta_version)
 
         return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
 
@@ -259,12 +267,12 @@ class CrossSparkPublishTest:
             ):
                 return False
 
-        # Build expected JARs: Spark-related for all versions + non-Spark-related once
+        # Build expected JARs: Spark-related for all versions + non-Spark-related once + iceberg for supported versions
         expected = set()
         for spark_spec in SPARK_VERSIONS.values():
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
+            expected.update(substitute_xversion(spark_spec.iceberg_jars, self.delta_version))
         expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
-        expected.update(substitute_xversion(SPARK_VERSIONS["4.0.1"].spark_4_0_only_jars, self.delta_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
 
