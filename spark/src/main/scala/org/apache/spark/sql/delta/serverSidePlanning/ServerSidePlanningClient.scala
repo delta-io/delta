@@ -99,9 +99,25 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
             case _: ClassNotFoundException =>
               // delta-iceberg not on classpath, no factory available
               // This is fine - server-side planning just won't be available
+            case e: NoSuchMethodException =>
+              throw new IllegalStateException(
+                "IcebergRESTCatalogPlanningClientFactory found but has no no-arg constructor. " +
+                "This indicates a version mismatch or corrupted delta-iceberg JAR.", e)
+            case e: InstantiationException =>
+              throw new IllegalStateException(
+                "Failed to instantiate IcebergRESTCatalogPlanningClientFactory. " +
+                "The class may be abstract or the delta-iceberg JAR may be corrupted.", e)
+            case e: IllegalAccessException =>
+              throw new IllegalStateException(
+                "Cannot access IcebergRESTCatalogPlanningClientFactory constructor. " +
+                "This indicates an access control issue with the delta-iceberg JAR.", e)
+            case e: ClassCastException =>
+              throw new IllegalStateException(
+                "IcebergRESTCatalogPlanningClientFactory does not implement " +
+                "ServerSidePlanningClientFactory. This indicates a version mismatch.", e)
             case e: Exception =>
-              // Unexpected error during reflection - log but don't fail
-              logWarning(s"Failed to load server-side planning factory: ${e.getMessage}")
+              throw new IllegalStateException(
+                s"Unexpected error loading IcebergRESTCatalogPlanningClientFactory: ${e.getMessage}", e)
           }
         }
       }
@@ -125,7 +141,7 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory extends Delta
 
   /**
    * Get the currently registered factory.
-   * Throws IllegalStateException if no factory has been registered (either via ServiceLoader
+   * Throws IllegalStateException if no factory has been registered (either via reflection-based
    * auto-discovery or explicit setFactory() call).
    */
   def getFactory(): ServerSidePlanningClientFactory = {
