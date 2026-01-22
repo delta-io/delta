@@ -28,6 +28,24 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     iceberg: Option[Expression]
   )
 
+  // Data Type Coverage:
+  //
+  // TESTED types (with Iceberg support):
+  // - Numeric: Int, Long, Float, Double, Decimal
+  // - Text: String
+  // - Temporal: Date, Timestamp
+  // - Boolean: Boolean
+  // - Binary: Binary (supported via ByteBuffer conversion)
+  // - Nested: Struct fields (via dot notation like "address.field")
+  //
+  // NOT TESTED (Iceberg limitations or not applicable):
+  // - Variant: Not a standard Iceberg type, requires separate investigation
+  // - NullType: Cannot be used in filter expressions (no meaningful comparisons)
+  // - CalendarInterval, DayTimeInterval, YearMonthInterval: Not supported by Iceberg
+  // - Complex types in literals: Array, Map, Struct values in filters not supported
+  //
+  // Reference: https://github.com/apache/spark/blob/master/docs/sql-ref-datatypes.md
+
   // Types that support equality and ordering operations
   // (EqualTo, NotEqualTo, LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
   // Note: Spark Filter API sends Date/Timestamp as java.sql.Date/Timestamp, but our converter
