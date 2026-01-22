@@ -110,6 +110,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private long estimatedSizeInBytes = 0L;
   private volatile boolean planned = false;
 
+  // Runtime filters applied after planning (using Set for order-independent comparison)
+  private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
+      appliedRuntimeFilters = new HashSet<>();
+
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
       Snapshot initialSnapshot,
@@ -301,12 +305,49 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
   }
 
-  /** Ensure the scan is planned exactly once in a thread\-safe manner. */
-  private synchronized void ensurePlanned() {
+  /**
+   * Ensure the scan is planned exactly once in a thread-safe manner, optionally applying runtime
+   * filters.
+   */
+  private synchronized void ensurePlanned(List<RuntimeFilter> runtimeFilters) {
+    // First, ensure planning is done
     if (!planned) {
       planScanFiles();
       planned = true;
     }
+
+    // Then apply runtime filters if provided
+    if (runtimeFilters != null && !runtimeFilters.isEmpty()) {
+      // Record the applied predicates for equals/hashCode comparison
+      for (RuntimeFilter filter : runtimeFilters) {
+        appliedRuntimeFilters.add(filter.predicate);
+      }
+
+      List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+      for (PartitionedFile pf : this.partitionedFiles) {
+        InternalRow partitionValues = pf.partitionValues();
+        boolean allMatch =
+            runtimeFilters.stream().allMatch(filter -> filter.evaluator.eval(partitionValues));
+        if (allMatch) {
+          runtimeFilteredPartitionedFiles.add(pf);
+        }
+      }
+
+      // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is
+      // filtered out
+      if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
+        this.partitionedFiles = runtimeFilteredPartitionedFiles;
+        this.totalBytes =
+            runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+        this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
+      }
+    }
+  }
+
+  /** Ensure the scan is planned exactly once in a thread-safe manner. */
+  private void ensurePlanned() {
+    // Pass null to indicate no runtime filter should be applied - just perform the scan planning
+    ensurePlanned(null);
   }
 
   StructType getDataSchema() {
@@ -340,7 +381,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
 
     // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
-    List<InterpretedPredicate> evaluators = new ArrayList<>();
+    // Only track predicates that successfully convert to evaluators
+    List<RuntimeFilter> runtimeFilters = new ArrayList<>();
     for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
       // only the predicates on partition columns will be converted
       Optional<Expression> catalystExpr =
@@ -349,30 +391,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         InterpretedPredicate predicateEvaluator =
             org.apache.spark.sql.catalyst.expressions.Predicate.createInterpreted(
                 catalystExpr.get());
-        evaluators.add(predicateEvaluator);
-      }
-    }
-    if (evaluators.isEmpty()) {
-      return;
-    }
-
-    // Filter existing partitionedFiles with runtime filter evaluators
-    ensurePlanned();
-    List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
-    for (PartitionedFile pf : this.partitionedFiles) {
-      InternalRow partitionValues = pf.partitionValues();
-      boolean allMatch = evaluators.stream().allMatch(evaluator -> evaluator.eval(partitionValues));
-      if (allMatch) {
-        runtimeFilteredPartitionedFiles.add(pf);
+        runtimeFilters.add(new RuntimeFilter(predicate, predicateEvaluator));
       }
     }
 
-    // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is filtered
-    // out
-    if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
-      this.partitionedFiles = runtimeFilteredPartitionedFiles;
-      this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
-      this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
+    if (!runtimeFilters.isEmpty()) {
+      // Apply runtime filters within the synchronized ensurePlanned method
+      ensurePlanned(runtimeFilters);
     }
   }
 
@@ -427,7 +452,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         && Arrays.equals(dataFilters, that.dataFilters)
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
-        && Objects.equals(options, that.options);
+        && Objects.equals(options, that.options)
+        && Objects.equals(appliedRuntimeFilters, that.appliedRuntimeFilters);
   }
 
   @Override
@@ -439,9 +465,22 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             dataSchema,
             partitionSchema,
             readDataSchema,
-            options);
+            options,
+            appliedRuntimeFilters);
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
     result = 31 * result + Arrays.hashCode(dataFilters);
     return result;
+  }
+
+  private static class RuntimeFilter {
+    final org.apache.spark.sql.connector.expressions.filter.Predicate predicate;
+    final InterpretedPredicate evaluator;
+
+    RuntimeFilter(
+        org.apache.spark.sql.connector.expressions.filter.Predicate predicate,
+        InterpretedPredicate evaluator) {
+      this.predicate = predicate;
+      this.evaluator = evaluator;
+    }
   }
 }

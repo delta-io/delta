@@ -541,4 +541,128 @@ public class SparkScanTest extends DeltaV2TestBase {
         scan.estimateStatistics().sizeInBytes().getAsLong(),
         "Statistics sizeInBytes should be 0 after filtering out all files");
   }
+
+  // ================================================================================================
+  // Tests for equals and hashCode with runtime filters
+  // ================================================================================================
+
+  @Test
+  public void testEqualsAndHashCodeWithRuntimeFilters() {
+    // Test case 1: Same filter applied to both scans (same instance)
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {cityPredicate});
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+
+    // Test case 2: Equivalent filters (different instances)
+    SparkScanBuilder builder3 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan3 = (SparkScan) builder3.build();
+    Predicate cityPredicateCopy =
+        new Predicate(
+            "=",
+            new Expression[] {
+              FieldReference.apply("city"), LiteralValue.apply("hz", DataTypes.StringType)
+            });
+    scan3.filter(new Predicate[] {cityPredicateCopy});
+
+    assertEquals(scan1, scan3);
+    assertEquals(scan1.hashCode(), scan3.hashCode());
+
+    // Test case 3: Multiple filters in same order
+    SparkScanBuilder builder4 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan4 = (SparkScan) builder4.build();
+    SparkScanBuilder builder5 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan5 = (SparkScan) builder5.build();
+
+    scan4.filter(new Predicate[] {cityPredicate, datePredicate});
+    scan5.filter(new Predicate[] {cityPredicate, datePredicate});
+
+    assertEquals(scan4, scan5);
+    assertEquals(scan4.hashCode(), scan5.hashCode());
+
+    // Test case 4: Filter idempotency - applying same filter once vs twice
+    SparkScanBuilder builder6 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan6 = (SparkScan) builder6.build();
+    SparkScanBuilder builder7 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan7 = (SparkScan) builder7.build();
+
+    scan6.filter(new Predicate[] {cityPredicate});
+    scan7.filter(new Predicate[] {cityPredicate});
+    scan7.filter(new Predicate[] {cityPredicate}); // Apply same filter twice
+
+    assertEquals(scan6, scan7);
+    assertEquals(scan6.hashCode(), scan7.hashCode());
+
+    // Test case 5: Multiple separate filter() calls vs single call with multiple filters
+    SparkScanBuilder builder8 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan8 = (SparkScan) builder8.build();
+    SparkScanBuilder builder9 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan9 = (SparkScan) builder9.build();
+
+    scan8.filter(new Predicate[] {cityPredicate});
+    scan8.filter(new Predicate[] {datePredicate});
+    scan9.filter(new Predicate[] {cityPredicate, datePredicate});
+
+    assertEquals(scan8, scan9);
+    assertEquals(scan8.hashCode(), scan9.hashCode());
+
+    // Test case 6: Same filters in different order (order-independent)
+    SparkScanBuilder builder10 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan10 = (SparkScan) builder10.build();
+    SparkScanBuilder builder11 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan11 = (SparkScan) builder11.build();
+
+    scan10.filter(new Predicate[] {cityPredicate, datePredicate});
+    scan11.filter(new Predicate[] {datePredicate, cityPredicate});
+
+    assertEquals(scan10, scan11);
+    assertEquals(scan10.hashCode(), scan11.hashCode());
+
+    // Test case 7: Non-partition column predicates should not affect equality
+    // Only partition column predicates should be tracked
+    SparkScanBuilder builder12 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan12 = (SparkScan) builder12.build();
+    SparkScanBuilder builder13 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan13 = (SparkScan) builder13.build();
+
+    // cityPredicate is on partition column, dataPredicate is on non-partition column (cnt)
+    scan12.filter(new Predicate[] {cityPredicate});
+    scan13.filter(new Predicate[] {cityPredicate, dataPredicate});
+
+    // They should be equal because dataPredicate doesn't produce an evaluator
+    assertEquals(scan12, scan13);
+    assertEquals(scan12.hashCode(), scan13.hashCode());
+  }
+
+  @Test
+  public void testNotEqualsWithRuntimeFilters() {
+    // Test case 1: Different filters
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {datePredicate});
+
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+
+    // Test case 2: One with filter, one without
+    SparkScanBuilder builder3 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan3 = (SparkScan) builder3.build();
+    SparkScanBuilder builder4 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan4 = (SparkScan) builder4.build();
+
+    scan4.filter(new Predicate[] {cityPredicate});
+
+    assertNotEquals(scan3, scan4);
+    assertNotEquals(scan3.hashCode(), scan4.hashCode());
+  }
 }
