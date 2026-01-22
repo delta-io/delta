@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.sources.Filter
 
 /**
@@ -75,7 +74,7 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
  * using reflection-based auto-discovery on first access to the factory. Manual registration
  * using setFactory() is only needed for testing or to override the auto-discovered factory.
  */
-private[serverSidePlanning] object ServerSidePlanningClientFactory extends DeltaLogging {
+private[serverSidePlanning] object ServerSidePlanningClientFactory {
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
   @volatile private var autoRegistrationAttempted: Boolean = false
 
