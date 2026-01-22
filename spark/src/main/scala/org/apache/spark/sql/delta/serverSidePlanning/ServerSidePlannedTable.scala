@@ -250,6 +250,10 @@ class ServerSidePlannedScan(
 
   override def toBatch: Batch = this
 
+  override def columnarSupportMode(): Scan.ColumnarSupportMode = {
+    Scan.ColumnarSupportMode.UNSUPPORTED
+  }
+
   // Convert pushed filters to a single Spark Filter for the API call.
   // If no filters, pass None. If filters exist, combine them into a single filter.
   private val combinedFilter: Option[Filter] = {
