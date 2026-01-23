@@ -190,6 +190,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               check(queryName, expected);
             }
           } finally {
+            // TODO: remove additional processAllAvailable once interrupt is handled gracefully
             query.processAllAvailable();
             query.stop();
             query.awaitTermination();
