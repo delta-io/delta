@@ -22,9 +22,6 @@ import org.apache.spark.sql.test.SharedSparkSession
 /**
  * Unit tests for ServerSidePlanningClientFactory core functionality.
  * Tests manual factory registration, state management, and lifecycle.
- *
- * Note: Auto-registration tests are in the iceberg module since they test
- * the IcebergRESTCatalogPlanningClientFactory implementation.
  */
 class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSession {
 
@@ -63,7 +60,7 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
     assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
       s"${prefix}Factory should be registered")
 
-    val factoryInfo = ServerSidePlanningClientFactory.getFactoryInfo()
+    val factoryInfo = ServerSidePlanningClientFactory.getRegisteredFactoryName()
     assert(factoryInfo.isDefined,
       s"${prefix}Factory info should be defined")
     assert(factoryInfo.get.contains(expectedType),
@@ -78,46 +75,11 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
 
     assert(!ServerSidePlanningClientFactory.isFactoryRegistered(),
       s"${prefix}Factory should not be registered")
-    assert(ServerSidePlanningClientFactory.getFactoryInfo().isEmpty,
+    assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().isEmpty,
       s"${prefix}Factory info should be empty")
   }
 
   // ========== Tests ==========
-
-  test("isFactoryRegistered correctly reports registration state") {
-    withCleanFactory {
-      // Initially not registered
-      assertNoFactory("initially")
-
-      // After manual registration
-      val testFactory = new TestServerSidePlanningClientFactory()
-      ServerSidePlanningClientFactory.setFactory(testFactory)
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Should be registered after setFactory()")
-
-      // After clearFactory
-      ServerSidePlanningClientFactory.clearFactory()
-      assertNoFactory("after clearFactory")
-    }
-  }
-
-  test("getFactoryInfo returns correct factory class information") {
-    withCleanFactory {
-      // Returns None when no factory registered
-      assert(ServerSidePlanningClientFactory.getFactoryInfo().isEmpty,
-        "getFactoryInfo() should return None when no factory is registered")
-
-      // Returns correct class name for test factory
-      val testFactory = new TestServerSidePlanningClientFactory()
-      ServerSidePlanningClientFactory.setFactory(testFactory)
-      assertFactoryType("TestServerSidePlanningClientFactory", "after setFactory")
-
-      // Updates correctly when factory changes
-      val anotherFactory = new TestServerSidePlanningClientFactory()
-      ServerSidePlanningClientFactory.setFactory(anotherFactory)
-      assertFactoryType("TestServerSidePlanningClientFactory", "after replacement")
-    }
-  }
 
   test("manual setFactory registers and returns factory") {
     withCleanFactory {

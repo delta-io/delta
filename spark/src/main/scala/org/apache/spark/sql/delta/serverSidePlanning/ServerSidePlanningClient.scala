@@ -154,7 +154,7 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
 
   def isFactoryRegistered(): Boolean = registeredFactory.isDefined
 
-  def getFactoryInfo(): Option[String] = registeredFactory.map(_.getClass.getName)
+  def getRegisteredFactoryName(): Option[String] = registeredFactory.map(_.getClass.getName)
 
   /**
    * Convenience method to create a client from metadata using the registered factory.
