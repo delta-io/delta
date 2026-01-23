@@ -285,52 +285,56 @@ class ServerSidePlannedScan(
 
   /**
    * Escape column names with dots for projection pushdown.
+   * Traverses the requiredSchema StructType and builds dot-notation field paths.
    * Literal dotted columns (e.g., "address.city" as a single field) need backticks.
    * Nested field access (e.g., address.intCol) should not be escaped.
    */
   private def escapeProjectedColumns(
       requiredSchema: StructType,
       tableSchema: StructType): Seq[String] = {
-    requiredSchema.fieldNames.map { fieldName =>
-      escapeColumnNameIfNeeded(fieldName, tableSchema)
-    }.toSeq
+    flattenSchema(requiredSchema, tableSchema, prefix = "")
   }
 
   /**
-   * Recursively escape a column name if it contains dots and is a literal field.
+   * Recursively flatten a StructType into dot-notation field paths with proper escaping.
    *
-   * @param name The column name (potentially with dots)
-   * @param schema The schema to check against
-   * @return The escaped name if it's a literal field, otherwise recursively processed
+   * @param schema The schema to flatten
+   * @param tableSchema The full table schema for checking if field names are literal
+   * @param prefix The current path prefix (e.g., "address")
+   * @return Sequence of flattened field paths
    */
-  private def escapeColumnNameIfNeeded(name: String, schema: StructType): String = {
-    if (!name.contains(".")) {
-      return name
-    }
+  private def flattenSchema(
+      schema: StructType,
+      tableSchema: StructType,
+      prefix: String): Seq[String] = {
+    schema.fields.flatMap { field =>
+      val fieldName = field.name
 
-    // Check if this is a top-level field with dots in its name
-    schema.fields.find(_.name == name) match {
-      case Some(_) =>
-        // It's a literal column name with dots -> escape it
-        s"`$name`"
-      case None =>
-        // Not a top-level field, check if it's nested access
-        val parts = name.split("\\.", 2)
-        if (parts.length == 2) {
-          val (parentName, remainingPath) = (parts(0), parts(1))
-          schema.fields.find(_.name == parentName) match {
-            case Some(field) if field.dataType.isInstanceOf[StructType] =>
-              // Nested access - recursively process the remaining path
-              val nestedSchema = field.dataType.asInstanceOf[StructType]
-              val escapedRemaining = escapeColumnNameIfNeeded(remainingPath, nestedSchema)
-              s"$parentName.$escapedRemaining"
-            case _ =>
-              name
-          }
-        } else {
-          name
+      // Check if this field name contains dots (potential literal column name)
+      if (fieldName.contains(".") && prefix.isEmpty) {
+        // Top-level field with dots in name -> it's a literal, escape it
+        field.dataType match {
+          case nested: StructType =>
+            // Literal dotted column that is also a struct -> recurse with escaped prefix
+            flattenSchema(nested, tableSchema, s"`$fieldName`")
+          case _ =>
+            // Leaf literal dotted column -> escape it
+            Seq(s"`$fieldName`")
         }
-    }
+      } else {
+        // Normal field name (no dots) or nested field
+        val fullPath = if (prefix.isEmpty) fieldName else s"$prefix.$fieldName"
+
+        field.dataType match {
+          case nested: StructType =>
+            // Struct field -> recurse to flatten nested fields
+            flattenSchema(nested, tableSchema, fullPath)
+          case _ =>
+            // Leaf field -> return the full path
+            Seq(fullPath)
+        }
+      }
+    }.toSeq
   }
 
   // Call the server-side planning API to get the scan plan with files AND credentials
