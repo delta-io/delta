@@ -36,6 +36,8 @@ import shadedForDelta.org.apache.iceberg.rest.responses.ErrorResponse;
 import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -58,6 +60,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Expression capturedFilter = null;
   private static volatile List<String> capturedProjection = null;
+  private static volatile Long capturedMinRowsRequested = null;
   private static volatile Boolean capturedCaseSensitive = null;
 
   // Static field for test credential injection - credentials to inject into /plan responses
@@ -107,6 +110,14 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
+   * Get the min-rows-requested captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static Long getCapturedMinRowsRequested() {
+    return capturedMinRowsRequested;
+  }
+
+  /**
    * Get the caseSensitive flag captured from the most recent /plan request.
    * Package-private for test access.
    */
@@ -133,12 +144,13 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
-   * Clear captured filter and projection. Call between tests to avoid pollution.
+   * Clear captured filter, projection, and limit. Call between tests to avoid pollution.
    * Package-private for test access.
    */
   static void clearCaptured() {
     capturedFilter = null;
     capturedProjection = null;
+    capturedMinRowsRequested = null;
     capturedCaseSensitive = null;
     testCredentials = null;
   }
@@ -201,6 +213,25 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     return TableIdentifier.of(namespace, tableName);
   }
 
+  /**
+   * Extract min-rows-requested from JSON string using Jackson.
+   * Iceberg 1.11 added this field, but we're on 1.10.0, so we parse it from JSON.
+   */
+  private Long extractMinRowsRequested(String jsonBody) {
+    if (jsonBody == null || jsonBody.trim().isEmpty()) {
+      return null;
+    }
+    try {
+      ObjectMapper mapper = new ObjectMapper();
+      JsonNode root = mapper.readTree(jsonBody);
+      JsonNode minRowsNode = root.get("min-rows-requested");
+      return minRowsNode != null ? minRowsNode.asLong() : null;
+    } catch (Exception e) {
+      LOG.warn("Failed to extract min-rows-requested from JSON: {}", e.getMessage());
+      return null;
+    }
+  }
+
   private PlanTableScanRequest parsePlanRequest(HTTPRequest request) {
     // The request body should be a JSON string
     Object body = request.body();
@@ -221,8 +252,19 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     TableIdentifier tableIdent = extractTableIdentifier(request.path());
     LOG.debug("Table identifier: {}", tableIdent);
 
+    // Extract JSON body for parsing both the request and min-rows-requested
+    Object body = request.body();
+    if (body == null) {
+      throw new IllegalArgumentException("Request body is null");
+    }
+    String jsonBody = body.toString();
+
+    // Extract min-rows-requested (not supported in Iceberg 1.10, so parse from JSON)
+    Long minRowsRequested = extractMinRowsRequested(jsonBody);
+    LOG.debug("Extracted min-rows-requested: {}", minRowsRequested);
+
     // Parse request
-    PlanTableScanRequest planRequest = parsePlanRequest(request);
+    PlanTableScanRequest planRequest = PlanTableScanRequestParser.fromJson(jsonBody);
     LOG.debug("Plan request parsed: snapshotId={}", planRequest.snapshotId());
 
     // Load table from catalog
@@ -240,12 +282,14 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
       LOG.debug("Using current snapshot (snapshotId was null or 0)");
     }
 
-    // Capture filter and projection for test verification
+    // Capture filter, projection, and limit for test verification
     capturedFilter = planRequest.filter();
     capturedProjection = planRequest.select();
+    capturedMinRowsRequested = minRowsRequested;
     capturedCaseSensitive = planRequest.caseSensitive();
     LOG.debug("Captured filter: {}", capturedFilter);
     LOG.debug("Captured projection: {}", capturedProjection);
+    LOG.debug("Captured min-rows-requested: {}", capturedMinRowsRequested);
     LOG.debug("Captured caseSensitive: {}", capturedCaseSensitive);
 
     // Validate caseSensitive=false requirement

@@ -367,13 +367,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     withPushdownCapturingEnabled {
       sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()
 
-      // Verify projection was pushed with exactly the expected columns
-      // Spark needs 'id' for SELECT and 'value' for WHERE clause
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isDefined, "Projection should be pushed down")
       val projectedFields = capturedProjection.get.toSet
-      assert(projectedFields == Set("id", "value"),
-        s"Expected projection with exactly {id, value}, got {${projectedFields.mkString(", ")}}")
+      assert(projectedFields == Set("id"),
+        s"Expected projection with only SELECT columns {id}, " +
+        s"got {${projectedFields.mkString(", ")}}")
 
       // Verify filter was also pushed
       val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
@@ -386,6 +385,85 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       }
       assert(gtFilter.isDefined, "Expected GreaterThan filter on 'value'")
       assert(gtFilter.get.value == 10, s"Expected GreaterThan value 10, got ${gtFilter.get.value}")
+    }
+  }
+
+  test("projection and limit pushed together") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id FROM test_db.shared_test LIMIT 5").collect()
+
+      // Verify projection was pushed (only 'id' column)
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      val projectedFields = capturedProjection.get.toSet
+      assert(projectedFields == Set("id"),
+        s"Expected projection with just {id}, got {${projectedFields.mkString(", ")}}")
+
+      // Verify limit was pushed
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined, "Limit should be pushed down")
+      assert(capturedLimit.get == 5, s"Expected limit 5, got ${capturedLimit.get}")
+    }
+  }
+
+  test("limit pushed to planning client") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test LIMIT 2").collect()
+
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined, "Limit should be pushed down")
+      assert(capturedLimit.get == 2, s"Expected limit 2, got ${capturedLimit.get}")
+    }
+  }
+
+  test("no limit pushed when no LIMIT clause") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test").collect()
+
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isEmpty, "No limit should be pushed when there's no LIMIT clause")
+    }
+  }
+
+  test("filter and limit pushed together when all filters are convertible") {
+    withPushdownCapturingEnabled {
+      // Query with convertible filter (GreaterThan) AND limit
+      sql("SELECT id FROM test_db.shared_test WHERE value > 10 LIMIT 5").collect()
+
+      // Verify filter was captured
+      val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed to server")
+
+      // Verify limit was captured (this is the key test - limit pushdown with filters)
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined,
+        "Limit should be pushed to server when all filters are convertible")
+      assert(capturedLimit.get == 5, s"Expected limit 5, got ${capturedLimit.get}")
+    }
+  }
+
+  test("limit NOT pushed when any filter is unconvertible") {
+    withPushdownCapturingEnabled {
+      // Configure the test client to treat filters as unconvertible
+      // This simulates a scenario where the filter cannot be converted to server's native format
+      TestServerSidePlanningClient.setFiltersConvertible(false)
+
+      try {
+        // Query with filter AND limit
+        sql("SELECT id FROM test_db.shared_test WHERE value > 10 LIMIT 5").collect()
+
+        // Verify filter was still captured (server receives it)
+        val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+        assert(capturedFilter.isDefined, "Filter should still be sent to server")
+
+        // Verify limit was NOT captured (because residual filters blocked pushdown)
+        val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+        assert(capturedLimit.isEmpty,
+          "Limit should NOT be pushed when any filter is unconvertible")
+      } finally {
+        // Reset to default (convertible) for other tests
+        TestServerSidePlanningClient.setFiltersConvertible(true)
+      }
     }
   }
 
