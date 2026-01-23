@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIte
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
@@ -1216,10 +1217,8 @@ object Checkpoints
   }
 
   def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
-    val statsAsStructForceDisabled =
-      conf.getConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED).getOrElse(false)
     DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata) &&
-      !statsAsStructForceDisabled
+      !conf.getConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED).getOrElse(false)
   }
 
   def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
@@ -1257,11 +1256,9 @@ object Checkpoints
   /** Parse the stats from JSON and keep as a struct field when available. */
   def extractStats(statsSchema: StructType, statsColName: String): Option[Column] = {
     import org.apache.spark.sql.functions.from_json
-    if (includeStatsParsedInCheckpoint() && statsSchema.nonEmpty) {
-      Some(from_json(col(statsColName), statsSchema, DeltaFileProviderUtils.jsonStatsParseOption)
-        .as(Checkpoints.STRUCT_STATS_COL_NAME))
-    } else {
-      None
+    Option.when(includeStatsParsedInCheckpoint() && statsSchema.nonEmpty) {
+      from_json(col(statsColName), statsSchema, DeltaFileProviderUtils.jsonStatsParseOption)
+        .as(Checkpoints.STRUCT_STATS_COL_NAME)
     }
   }
 }
