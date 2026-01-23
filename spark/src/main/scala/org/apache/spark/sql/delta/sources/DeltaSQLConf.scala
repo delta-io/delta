@@ -2866,17 +2866,12 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .internal()
     .doc(
       """
-        |If enabled, Spark writes to Delta will collect data skipping stats for Variant columns."""
+        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
+        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
+        | Variant stats."""
         .stripMargin)
     .booleanConf
     .createWithDefault(true)
-
-  val DELTA_STATS_LIMIT_PER_VARIANT =
-    buildConf("stats.limitPerVariant")
-    .internal()
-    .doc("The maximum number of data skipping stats to collect from each Variant column")
-    .intConf
-    .createWithDefault(10)
 
   ///////////
   // TESTING

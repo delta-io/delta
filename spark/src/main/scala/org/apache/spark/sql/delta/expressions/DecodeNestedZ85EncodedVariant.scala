@@ -33,7 +33,7 @@ import org.apache.spark.unsafe.types.VariantVal
  * contain the Z85 string representation. This expression walks through the result and decodes
  * any Z85-encoded variants to their proper binary representation.
  *
- * @param child The expression producing the row with Z85-encoded variants
+ * @param child The expression producing the row with Z85-encoded variants.
  */
 case class DecodeNestedZ85EncodedVariant(child: Expression)
   extends UnaryExpression with CodegenFallback {
@@ -56,6 +56,7 @@ case class DecodeNestedZ85EncodedVariant(child: Expression)
     }
   }
 
+  // The data type cannot contain arrays or maps since stats structs do not have arrays or maps yet.
   private def isValidType(dataType: DataType): Boolean = {
     dataType match {
       case _: ArrayType => false

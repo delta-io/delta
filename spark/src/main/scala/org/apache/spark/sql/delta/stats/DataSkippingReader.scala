@@ -22,6 +22,7 @@ import java.io.Closeable
 import scala.collection.mutable.ArrayBuffer
 
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
@@ -268,6 +269,9 @@ trait DataSkippingReaderBase
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
     val parsedStats = from_json(col("stats"), statsSchema)
+    // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
+    // expression has no way to decode a VariantVal from an encoded Z85 string.
+    // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
     val decodedStats = Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
     allFiles.withColumn("stats", decodedStats)
   }

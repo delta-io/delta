@@ -27,11 +27,7 @@ import org.apache.spark.sql.delta.util.Codec.Base85Codec
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
 
-/**
- * Serializer that writes VariantVal as Z85-encoded string.
- * This is a standalone class (not an inner class) to avoid memory leaks from
- * retaining references to parent objects.
- */
+// Serializer to help serialize VariantVal's as Z85 strings in JSON.
 class VariantValJsonSerializer extends StdSerializer[VariantVal](classOf[VariantVal]) {
   override def serialize(
       v: VariantVal,
@@ -42,11 +38,7 @@ class VariantValJsonSerializer extends StdSerializer[VariantVal](classOf[Variant
   }
 }
 
-/**
- * Deserializer that reads Z85-encoded strings as VariantVal.
- * This is a standalone class (not an inner class) to avoid memory leaks from
- * retaining references to parent objects.
- */
+// Deserializer to help deserialize VariantVal's from Z85 strings.
 class VariantValJsonDeserializer extends StdDeserializer[VariantVal](classOf[VariantVal]) {
   override def deserialize(
       p: JsonParser,
