@@ -1433,8 +1433,12 @@ lazy val flink = (project in file("flink"))
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
 
+      // Test dependencies
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
-      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
       "org.apache.flink" % "flink-clients" % flinkVersion % "test",
       "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,
       "org.apache.flink" % "flink-table-planner-loader" % flinkVersion % Test,
@@ -1442,6 +1446,11 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-test-utils-junit" % flinkVersion  % Test,
       "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
       "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
+    ),
+    // Use jupiter
+    excludeDependencies ++= Seq(
+      ExclusionRule("junit", "junit"),
+      ExclusionRule("org.junit.vintage", "junit-vintage-engine")
     )
   )
 
