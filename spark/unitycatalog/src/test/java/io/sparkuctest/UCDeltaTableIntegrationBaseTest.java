@@ -210,46 +210,24 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       TestCode testCode)
       throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
-
-    // Create th partition cause.
-    StringBuilder partitionCause = new StringBuilder();
-    if (partitionFields != null && !partitionFields.trim().isEmpty()) {
-      partitionCause.append(String.format("PARTITIONED BY (%s)", partitionFields));
+    TableSetup tableSetup =
+        new TableSetup()
+            .setCatalogName(uc.catalogName())
+            .setSchemaName(uc.schemaName())
+            .setTableName(tableName)
+            .setTableSchema(tableSchema)
+            .setTableType(tableType);
+    if (partitionFields != null && !partitionFields.isEmpty()) {
+      tableSetup.setPartitionFields(partitionFields);
     }
 
-    // Build table properties clause
-    StringBuilder tblPropertiesClause = new StringBuilder();
-    if (tableType == TableType.MANAGED) {
-      tblPropertiesClause.append("'delta.feature.catalogManaged'='supported'");
-    }
-    if (tableProperties != null && !tableProperties.trim().isEmpty()) {
-      if (tblPropertiesClause.length() > 0) {
-        tblPropertiesClause.append(", ");
-      }
-      tblPropertiesClause.append(tableProperties);
-    }
-
-    final String tblPropertiesSql;
-    if (tblPropertiesClause.length() > 0) {
-      tblPropertiesSql = "TBLPROPERTIES (" + tblPropertiesClause + ")";
-    } else {
-      tblPropertiesSql = "";
-    }
-
+    String fullTableName = tableSetup.fullTableName();
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
       withTempDir(
           (Path dir) -> {
-            Path tablePath = new Path(dir, tableName);
-            sql(
-                "CREATE TABLE %s (%s) USING DELTA %s %s LOCATION '%s'",
-                fullTableName,
-                tableSchema,
-                partitionCause.toString(),
-                tblPropertiesSql,
-                tablePath.toString());
-
+            tableSetup.setExternalLocation(new Path(dir, tableName).toString());
+            sql(tableSetup.toSql());
             try {
               testCode.run(fullTableName);
             } finally {
@@ -257,12 +235,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
             }
           });
     } else {
-      // Managed table - Spark manages the location
-      // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
-      sql(
-          "CREATE TABLE %s (%s) USING DELTA %s %s",
-          fullTableName, tableSchema, partitionCause.toString(), tblPropertiesSql);
-
+      // Managed table requires 'delta.feature.catalogManaged'='supported' table property.
+      sql(tableSetup.toSql());
       try {
         testCode.run(fullTableName);
       } finally {

@@ -19,7 +19,6 @@ package io.sparkuctest;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
@@ -31,17 +30,11 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import lombok.Getter;
-import lombok.Setter;
-import lombok.ToString;
-import lombok.experimental.Accessors;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
@@ -83,8 +76,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       EXPECTED_MANAGED_TABLE_FEATURES.stream()
           .collect(Collectors.toMap(Function.identity(), k -> SUPPORTED));
 
-  private static final String EXTERNAL_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
-
   String tempDir;
   private Set<String> tablesToCleanUp = new HashSet<>();
 
@@ -103,130 +94,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       }
     }
     tablesToCleanUp.clear();
-  }
-
-  /** Helper class for controlling table creation options during tests. */
-  @Accessors(chain = true)
-  @Getter
-  @Setter
-  @ToString
-  private class TableSetupOptions {
-
-    private TableType tableType;
-    private String catalogName;
-    private String schemaName;
-    private String tableName;
-    private Optional<String> partitionColumn = Optional.empty();
-    private Optional<String> clusterColumn = Optional.empty();
-    private Optional<Pair<Integer, String>> asSelect = Optional.empty();
-    private Optional<String> comment = Optional.empty();
-    private boolean replaceTable = false;
-
-    public TableSetupOptions() {}
-
-    public TableSetupOptions setPartitionColumn(String column) {
-      Preconditions.checkArgument(List.of("i", "s").contains(column));
-      Preconditions.checkState(
-          clusterColumn.isEmpty(), "Can not have both PARTITIONED BY and CLUSTER BY.");
-      partitionColumn = Optional.of(column);
-      return this;
-    }
-
-    public TableSetupOptions setClusterColumn(String column) {
-      Preconditions.checkArgument(List.of("i", "s").contains(column));
-      Preconditions.checkState(
-          partitionColumn.isEmpty(), "Can not have both PARTITIONED BY and CLUSTER BY.");
-      clusterColumn = Optional.of(column);
-      return this;
-    }
-
-    public TableSetupOptions setAsSelect(int i, String s) {
-      asSelect = Optional.of(Pair.of(i, s));
-      return this;
-    }
-
-    public TableSetupOptions setComment(String c) {
-      comment = Optional.of(c);
-      return this;
-    }
-
-    public String partitionClause() {
-      return partitionColumn.map(c -> String.format("PARTITIONED BY (%s)", c)).orElse("");
-    }
-
-    public String clusterClause() {
-      return clusterColumn.map(c -> String.format("CLUSTER BY (%s)", c)).orElse("");
-    }
-
-    public String columnsClause() {
-      if (asSelect.isEmpty()) {
-        return "(i INT, s STRING)";
-      } else {
-        // "AS SELECT" can't specify columns
-        return "";
-      }
-    }
-
-    public String asSelectClause() {
-      return asSelect
-          .map(x -> String.format("AS SELECT %d AS i, '%s' AS s", x.getLeft(), x.getRight()))
-          .orElse("");
-    }
-
-    public String commentClause() {
-      return comment.map(c -> String.format("COMMENT '%s'", c)).orElse("");
-    }
-
-    public String ddlCommand() {
-      return replaceTable ? "REPLACE" : "CREATE";
-    }
-
-    private String createManagedTableSql() {
-      return String.format(
-          "%s TABLE %s.%s.%s %s USING DELTA %s %s %s %s %s",
-          ddlCommand(),
-          catalogName,
-          schemaName,
-          tableName,
-          columnsClause(),
-          partitionClause(),
-          clusterClause(),
-          MANAGED_TBLPROPERTIES_CLAUSE,
-          commentClause(),
-          asSelectClause());
-    }
-
-    public String getExternalTableLocation() {
-      return tempDir + "/" + tableName;
-    }
-
-    private String createExternalTableSql() {
-      return String.format(
-          "%s TABLE %s.%s.%s %s USING DELTA %s %s %s %s LOCATION '%s' %s",
-          ddlCommand(),
-          catalogName,
-          schemaName,
-          tableName,
-          columnsClause(),
-          partitionClause(),
-          clusterClause(),
-          EXTERNAL_TBLPROPERTIES_CLAUSE,
-          commentClause(),
-          getExternalTableLocation(),
-          asSelectClause());
-    }
-
-    public String createTableSql() {
-      if (tableType == TableType.MANAGED) {
-        return createManagedTableSql();
-      } else {
-        return createExternalTableSql();
-      }
-    }
-
-    public String fullTableName() {
-      return String.join(".", catalogName, schemaName, tableName);
-    }
   }
 
   @TestFactory
@@ -282,26 +149,36 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     final String schemaName = uc.schemaName();
     String tableName = "test_delta_table_" + count;
 
-    TableSetupOptions options =
-        new TableSetupOptions()
-            .setCatalogName(catalogName)
-            .setSchemaName(schemaName)
-            .setTableName(tableName)
-            .setTableType(tableType)
-            .setReplaceTable(replaceTable)
-            .setComment(comment);
+    TableSetup tableSetup = new TableSetup();
+    tableSetup
+        .setDdlCommand(replaceTable ? "REPLACE" : "CREATE")
+        .setCatalogName(catalogName)
+        .setSchemaName(schemaName)
+        .setTableName(tableName)
+        .setTableComment(comment)
+        .setTableType(tableType)
+        .setTableProperties("'Foo'='Bar'");
+
     if (withPartition) {
-      options.setPartitionColumn("i");
+      tableSetup.setPartitionFields("i");
     }
     if (withCluster) {
-      options.setClusterColumn("s");
+      tableSetup.setClusterFields("s");
     }
     if (withAsSelect) {
-      options.setAsSelect(1, "a");
+      tableSetup.setAsSelect("1 AS i, 'a' AS s");
+    } else {
+      tableSetup.setTableSchema("i INT, s STRING");
     }
-    LOG.info("Running table creation test: " + options);
 
-    String fullTableName = options.fullTableName();
+    String externalLocation = String.format("%s/%s", tempDir, tableName);
+    if (tableType == TableType.EXTERNAL) {
+      tableSetup.setExternalLocation(externalLocation);
+    }
+
+    LOG.info("Running table creation test: " + tableSetup.toSql());
+
+    String fullTableName = tableSetup.fullTableName();
     if (replaceTable) {
       // First, create a different table to replace.
       sql(
@@ -310,7 +187,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       tablesToCleanUp.add(fullTableName);
     }
     // Create table
-    sql(options.createTableSql());
+    sql(tableSetup.toSql());
     tablesToCleanUp.add(fullTableName);
     // Basic read/write test
     sql("INSERT INTO %s SELECT 2, 'b'", fullTableName);
@@ -327,7 +204,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         List.of("i", "s"),
         Map.of("Foo", "Bar"),
         comment,
-        options.getExternalTableLocation());
+        externalLocation);
   }
 
   @Test
