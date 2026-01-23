@@ -171,6 +171,14 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Get the limit (min-rows-requested) captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public Long getCapturedLimit() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedMinRowsRequested();
+  }
+
+  /**
    * Get the caseSensitive flag captured from the most recent /plan request.
    * For test verification.
    */

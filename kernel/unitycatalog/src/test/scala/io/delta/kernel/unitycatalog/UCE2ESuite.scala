@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
-import io.delta.kernel.Operation
+import io.delta.kernel.{CommitRange, Operation}
 import io.delta.kernel.Snapshot
 import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.engine.Engine
@@ -33,6 +33,8 @@ import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
 
 class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
+
+  import UCE2ESuite._
 
   private val testUcTableId = "testUcTableId"
 
@@ -163,31 +165,6 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     withTempDirAndEngine { case (tablePathUnresolved, engine) =>
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
 
-      // Create a custom UCClient that can limit maxRatifiedVersion when needed
-      class ConfigurableMaxVersionUCClient extends InMemoryUCClient("ucMetastoreId") {
-        @volatile private var maxVersionLimit: Option[Long] = None
-
-        def setMaxVersionLimit(limit: Long): Unit = {
-          maxVersionLimit = Some(limit)
-        }
-
-        override def getCommits(
-            tableId: String,
-            tableUri: java.net.URI,
-            startVersion: Optional[java.lang.Long],
-            endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
-          val response = super.getCommits(tableId, tableUri, startVersion, endVersion)
-          maxVersionLimit match {
-            case Some(limit) =>
-              // Filter commits and limit maxRatifiedVersion
-              val filteredCommits = response.getCommits.asScala.filter(_.getVersion <= limit)
-              new GetCommitsResponse(filteredCommits.asJava, limit)
-            case None =>
-              response
-          }
-        }
-      }
-
       val ucClient = new ConfigurableMaxVersionUCClient()
       val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
 
@@ -231,6 +208,115 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       assert(
         snapshot.getLogSegment.getMaxPublishedDeltaVersion.get() === 1,
         "Should recognize published version 1 but not go beyond it")
+    }
+  }
+
+  test("CommitRange respects maxCatalogVersion") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+      val ucClient = new ConfigurableMaxVersionUCClient()
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+      // Step 1: CREATE -- v0.json
+      val result0 = ucCatalogManagedClient
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+
+      // Step 2: WRITE multiple versions
+      val postCommitSnapshot1 = writeDataAndVerify(
+        engine,
+        result0.getPostCommitSnapshot.get(),
+        ucClient,
+        expCommitVersion = 1,
+        expNumCatalogCommits = 1)
+
+      val postCommitSnapshot2 = writeDataAndVerify(
+        engine,
+        postCommitSnapshot1,
+        ucClient,
+        expCommitVersion = 2,
+        expNumCatalogCommits = 2)
+
+      val postCommitSnapshot3 = writeDataAndVerify(
+        engine,
+        postCommitSnapshot2,
+        ucClient,
+        expCommitVersion = 3,
+        expNumCatalogCommits = 3)
+
+      // Step 3: Publish all versions
+      postCommitSnapshot3.publish(engine)
+
+      // Step 4: Load CommitRange with end boundary (should go from 0 to 3)
+      val commitRange1: CommitRange = ucCatalogManagedClient.loadCommitRange(
+        engine,
+        testUcTableId,
+        tablePath,
+        Optional.of(0),
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt)
+
+      assert(commitRange1.getStartVersion === 0)
+      assert(commitRange1.getEndVersion === 3, "Should respect maxCatalogVersion of 3")
+
+      // Step 5: Configure UC client to limit maxRatifiedVersion to 2
+      ucClient.setMaxVersionLimit(2)
+
+      // Step 6: Load CommitRange again (should now be limited to version 2)
+      val commitRange2: CommitRange = ucCatalogManagedClient.loadCommitRange(
+        engine,
+        testUcTableId,
+        tablePath,
+        Optional.of(0),
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt)
+
+      assert(commitRange2.getStartVersion === 0)
+      assert(commitRange2.getEndVersion === 2, "Should respect maxCatalogVersion of 2")
+
+      // Step 8: Load CommitRange with start version at maxCatalogVersion (should work)
+      val commitRange3: CommitRange = ucCatalogManagedClient.loadCommitRange(
+        engine,
+        testUcTableId,
+        tablePath,
+        Optional.of(2),
+        emptyLongOpt,
+        emptyLongOpt,
+        emptyLongOpt)
+
+      assert(commitRange3.getStartVersion === 2)
+      assert(commitRange3.getEndVersion === 2)
+    }
+  }
+}
+
+object UCE2ESuite {
+  // Custom UCClient that can configure maxRatifiedVersion for testing withMaxCatalogVersion
+  class ConfigurableMaxVersionUCClient extends InMemoryUCClient("ucMetastoreId") {
+    @volatile private var maxVersionLimit: Option[Long] = None
+
+    def setMaxVersionLimit(limit: Long): Unit = {
+      maxVersionLimit = Some(limit)
+    }
+
+    override def getCommits(
+        tableId: String,
+        tableUri: java.net.URI,
+        startVersion: Optional[java.lang.Long],
+        endVersion: Optional[java.lang.Long]): GetCommitsResponse = {
+      val response = super.getCommits(tableId, tableUri, startVersion, endVersion)
+      maxVersionLimit match {
+        case Some(limit) =>
+          // Filter commits and limit maxRatifiedVersion
+          val filteredCommits = response.getCommits.asScala.filter(_.getVersion <= limit)
+          new GetCommitsResponse(filteredCommits.asJava, limit)
+        case None =>
+          response
+      }
     }
   }
 }
