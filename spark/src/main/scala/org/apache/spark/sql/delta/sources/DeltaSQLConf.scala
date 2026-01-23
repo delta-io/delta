@@ -1254,6 +1254,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(30)
 
+  val USE_CHECKPOINT_SCHEMA_FROM_CHECKPOINT_METADATA =
+    buildConf("checkpointSchema.useFromCheckpointMetadata")
+      .internal()
+      .doc("If enabled, use checkpoint schema from checkpoint metadata file instead of reading it" +
+        " from the checkpoint file")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
