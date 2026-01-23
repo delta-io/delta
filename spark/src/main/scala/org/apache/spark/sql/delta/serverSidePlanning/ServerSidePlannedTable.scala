@@ -279,7 +279,57 @@ class ServerSidePlannedScan(
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(requiredSchema.fieldNames.toSeq)
+      Some(escapeProjectedColumns(requiredSchema, tableSchema))
+    }
+  }
+
+  /**
+   * Escape column names with dots for projection pushdown.
+   * Literal dotted columns (e.g., "address.city" as a single field) need backticks.
+   * Nested field access (e.g., address.intCol) should not be escaped.
+   */
+  private def escapeProjectedColumns(
+      requiredSchema: StructType,
+      tableSchema: StructType): Seq[String] = {
+    requiredSchema.fieldNames.map { fieldName =>
+      escapeColumnNameIfNeeded(fieldName, tableSchema)
+    }.toSeq
+  }
+
+  /**
+   * Recursively escape a column name if it contains dots and is a literal field.
+   *
+   * @param name The column name (potentially with dots)
+   * @param schema The schema to check against
+   * @return The escaped name if it's a literal field, otherwise recursively processed
+   */
+  private def escapeColumnNameIfNeeded(name: String, schema: StructType): String = {
+    if (!name.contains(".")) {
+      return name
+    }
+
+    // Check if this is a top-level field with dots in its name
+    schema.fields.find(_.name == name) match {
+      case Some(_) =>
+        // It's a literal column name with dots -> escape it
+        s"`$name`"
+      case None =>
+        // Not a top-level field, check if it's nested access
+        val parts = name.split("\\.", 2)
+        if (parts.length == 2) {
+          val (parentName, remainingPath) = (parts(0), parts(1))
+          schema.fields.find(_.name == parentName) match {
+            case Some(field) if field.dataType.isInstanceOf[StructType] =>
+              // Nested access - recursively process the remaining path
+              val nestedSchema = field.dataType.asInstanceOf[StructType]
+              val escapedRemaining = escapeColumnNameIfNeeded(remainingPath, nestedSchema)
+              s"$parentName.$escapedRemaining"
+            case _ =>
+              name
+          }
+        } else {
+          name
+        }
     }
   }
 

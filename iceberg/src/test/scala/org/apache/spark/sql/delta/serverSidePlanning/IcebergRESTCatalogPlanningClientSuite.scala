@@ -325,6 +325,10 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
             EqualTo("longCol", 2L),
             Seq("intCol", "stringCol")),
           FilterProjectionTestCase(
+            "nested field in both filter and projection",
+            EqualTo("address.intCol", 200),
+            Seq("intCol", "address.intCol")),
+          FilterProjectionTestCase(
             "literal dotted column name in both filter and projection",
             EqualTo("address.city", "city_1"),
             Seq("intCol", "address.city"))
