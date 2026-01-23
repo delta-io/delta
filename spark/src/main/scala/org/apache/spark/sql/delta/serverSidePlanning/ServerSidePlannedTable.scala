@@ -245,6 +245,62 @@ class ServerSidePlannedScanBuilder(
 }
 
 /**
+ * Companion object with utilities for escaping column names in projections.
+ */
+private[serverSidePlanning] object ServerSidePlannedScan {
+  /**
+   * Escape column names with dots for projection pushdown.
+   * Traverses the requiredSchema StructType and builds dot-notation field paths.
+   * Literal dotted columns (e.g., "address.city" as a single field) need backticks.
+   * Nested field access (e.g., address.intCol) should not be escaped.
+   */
+  def escapeProjectedColumns(
+      requiredSchema: StructType,
+      tableSchema: StructType): Seq[String] = {
+    flattenSchema(requiredSchema, tableSchema, prefix = "")
+  }
+
+  /**
+   * Recursively flatten a StructType into dot-notation field paths with proper escaping.
+   *
+   * @param schema The schema to flatten
+   * @param tableSchema The full table schema (unused, kept for future use)
+   * @param prefix The current path prefix (e.g., "address")
+   * @return Sequence of flattened field paths
+   */
+  def flattenSchema(
+      schema: StructType,
+      tableSchema: StructType,
+      prefix: String): Seq[String] = {
+    schema.fields.flatMap { field =>
+      val fieldName = field.name
+
+      // If field name contains dots, it's a literal field name at this level
+      // (schema.fields iteration only returns actual field names)
+      // Escape it to disambiguate from nested access
+      val escapedFieldName = if (fieldName.contains(".")) {
+        s"`$fieldName`"
+      } else {
+        fieldName
+      }
+
+      // Build the full path
+      val fullPath = if (prefix.isEmpty) escapedFieldName else s"$prefix.$escapedFieldName"
+
+      // Recurse if this is a struct
+      field.dataType match {
+        case nested: StructType =>
+          // Struct field -> recurse to flatten nested fields
+          flattenSchema(nested, tableSchema, fullPath)
+        case _ =>
+          // Leaf field -> return the full path
+          Seq(fullPath)
+      }
+    }.toSeq
+  }
+}
+
+/**
  * Scan implementation that calls the server-side planning API to get file list.
  */
 class ServerSidePlannedScan(
@@ -275,63 +331,13 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
+  // Use the companion object methods for projection escaping
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(escapeProjectedColumns(requiredSchema, tableSchema))
+      Some(ServerSidePlannedScan.escapeProjectedColumns(requiredSchema, tableSchema))
     }
-  }
-
-  /**
-   * Escape column names with dots for projection pushdown.
-   * Traverses the requiredSchema StructType and builds dot-notation field paths.
-   * Literal dotted columns (e.g., "address.city" as a single field) need backticks.
-   * Nested field access (e.g., address.intCol) should not be escaped.
-   */
-  private def escapeProjectedColumns(
-      requiredSchema: StructType,
-      tableSchema: StructType): Seq[String] = {
-    flattenSchema(requiredSchema, tableSchema, prefix = "")
-  }
-
-  /**
-   * Recursively flatten a StructType into dot-notation field paths with proper escaping.
-   *
-   * @param schema The schema to flatten
-   * @param tableSchema The full table schema (unused, kept for future use)
-   * @param prefix The current path prefix (e.g., "address")
-   * @return Sequence of flattened field paths
-   */
-  private def flattenSchema(
-      schema: StructType,
-      tableSchema: StructType,
-      prefix: String): Seq[String] = {
-    schema.fields.flatMap { field =>
-      val fieldName = field.name
-
-      // If field name contains dots, it's a literal field name at this level
-      // (schema.fields iteration only returns actual field names)
-      // Escape it to disambiguate from nested access
-      val escapedFieldName = if (fieldName.contains(".")) {
-        s"`$fieldName`"
-      } else {
-        fieldName
-      }
-
-      // Build the full path
-      val fullPath = if (prefix.isEmpty) escapedFieldName else s"$prefix.$escapedFieldName"
-
-      // Recurse if this is a struct
-      field.dataType match {
-        case nested: StructType =>
-          // Struct field -> recurse to flatten nested fields
-          flattenSchema(nested, tableSchema, fullPath)
-        case _ =>
-          // Leaf field -> return the full path
-          Seq(fullPath)
-      }
-    }.toSeq
   }
 
   // Call the server-side planning API to get the scan plan with files AND credentials

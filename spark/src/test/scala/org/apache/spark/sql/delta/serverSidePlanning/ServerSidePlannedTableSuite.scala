@@ -363,6 +363,140 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
+  test("escapeProjectedColumns - unit test with various dotted field patterns") {
+    import org.apache.spark.sql.types._
+
+    // Build comprehensive test schema
+    val tableSchema = StructType(Seq(
+      // Top-level with dots
+      StructField("a.b.c", StringType),
+
+      // Normal nested (no dots anywhere)
+      StructField("parent", StructType(Seq(
+        StructField("child", StringType)
+      ))),
+
+      // Multi-level nested (no dots)
+      StructField("level1", StructType(Seq(
+        StructField("level2", StructType(Seq(
+          StructField("level3", StringType)
+        )))
+      ))),
+
+      // Nested where leaf has dots
+      StructField("data", StructType(Seq(
+        StructField("field.name", StringType)
+      ))),
+
+      // Nested where struct itself has dots
+      StructField("root.struct", StructType(Seq(
+        StructField("value", StringType)
+      )))
+    ))
+
+    val testCases = Seq(
+      // (description, requiredSchema, expected output)
+      (
+        "top-level column with dots",
+        StructType(Seq(StructField("a.b.c", StringType))),
+        Seq("`a.b.c`")
+      ),
+
+      (
+        "normal nested - no dots",
+        StructType(Seq(StructField("parent", StructType(Seq(
+          StructField("child", StringType)
+        ))))),
+        Seq("parent.child")
+      ),
+
+      (
+        "multi-level nested - no dots",
+        StructType(Seq(StructField("level1", StructType(Seq(
+          StructField("level2", StructType(Seq(
+            StructField("level3", StringType)
+          )))
+        ))))),
+        Seq("level1.level2.level3")
+      ),
+
+      (
+        "nested where leaf field has dots",
+        StructType(Seq(StructField("data", StructType(Seq(
+          StructField("field.name", StringType)
+        ))))),
+        Seq("data.`field.name`")
+      ),
+
+      (
+        "struct name has dots, field does not",
+        StructType(Seq(StructField("root.struct", StructType(Seq(
+          StructField("value", StringType)
+        ))))),
+        Seq("`root.struct`.value")
+      ),
+
+      (
+        "mixed - multiple fields with different patterns",
+        StructType(Seq(
+          StructField("a.b.c", StringType),
+          StructField("parent", StructType(Seq(
+            StructField("child", StringType)
+          ))),
+          StructField("data", StructType(Seq(
+            StructField("field.name", StringType)
+          )))
+        )),
+        Seq("`a.b.c`", "parent.child", "data.`field.name`")
+      )
+    )
+
+    // Test the companion object method directly (it's package-private for unit testing)
+    testCases.foreach { case (description, requiredSchema, expected) =>
+      val result = ServerSidePlannedScan.escapeProjectedColumns(requiredSchema, tableSchema)
+      assert(result == expected,
+        s"$description: expected [${expected.mkString(", ")}], got [${result.mkString(", ")}]")
+    }
+  }
+
+  test("projection with struct column - verify Spark behavior") {
+    withTable("struct_test") {
+      sql("""
+        CREATE TABLE struct_test (
+          id INT,
+          address STRUCT<city: STRING, zip: INT>
+        ) USING parquet
+      """)
+      sql("""INSERT INTO struct_test VALUES (1, struct('Seattle', 98101))""")
+
+      withPushdownCapturingEnabled {
+        // Test: SELECT entire struct column
+        sql("SELECT address FROM struct_test").collect()
+
+        val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+        assert(capturedProjection.isDefined, "Projection should be pushed down")
+
+        // Check what Spark actually sends
+        val projectedFields = capturedProjection.get
+
+        // This test documents the actual behavior
+        // If Spark sends ["address"], our flatMap logic is unnecessary
+        // If Spark sends ["address.city", "address.zip"], our flatMap logic is correct
+        // scalastyle:off println
+        println(s"=== STRUCT PROJECTION TEST ===")
+        println(s"When SELECTing struct 'address', Spark sends: ${projectedFields.mkString(", ")}")
+        println(s"Number of fields: ${projectedFields.size}")
+        println(s"=== END TEST ===")
+        // scalastyle:on println
+
+        // Verify that Spark DOES send nested fields individually, not the struct itself
+        val expected = Set("address.city", "address.zip")
+        assert(projectedFields.toSet == expected,
+          s"Expected individual nested fields, got: ${projectedFields.mkString(", ")}")
+      }
+    }
+  }
+
   test("projection and filter pushed together") {
     withPushdownCapturingEnabled {
       sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()

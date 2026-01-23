@@ -202,6 +202,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
           (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
           (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
+          (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
           (EqualTo("parent.child.name", "child_1"), "EqualTo on nested field with dotted name"),
           (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field"))
 
@@ -611,6 +612,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         java.sql.Date.valueOf("2024-01-01"), // dateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
         Row(i * 100), // address.intCol (nested struct)
+        Row(s"meta_$i"), // metadata.stringCol (nested struct)
         Row(s"child_$i"), // parent.`child.name` (nested struct with dotted field name)
         s"city_$i", // address.city (literal top-level dotted column)
         s"value_$i" // a.b.c (literal top-level dotted column)

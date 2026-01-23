@@ -42,7 +42,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("dateCol", java.sql.Date.valueOf("2024-01-01"), "Date"),
     ("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 12:00:00"), "Timestamp"),
     ("address.intCol", 42, "Nested Int"),
-    ("stringCol", "test", "Nested String")
+    ("metadata.stringCol", "test", "Nested String")
   )
 
   // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)
@@ -301,8 +301,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ),
       ExprConvTestCase(
         "StringStartsWith on nested column",
-        StringStartsWith("stringCol", "test"),
-        Some(Expressions.startsWith("stringCol", "test"))
+        StringStartsWith("metadata.stringCol", "test"),
+        Some(Expressions.startsWith("metadata.stringCol", "test"))
       ),
 
       // Unsupported: StringEndsWith, StringContains
