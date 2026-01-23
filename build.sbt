@@ -72,6 +72,7 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val flinkVersion = "2.0.1"
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -844,8 +845,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
@@ -952,8 +953,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
@@ -1017,8 +1018,8 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()
@@ -1381,6 +1382,70 @@ lazy val hudi = (project in file("hudi"))
     TestParallelization.settings
   )
 
+lazy val flink = (project in file("flink"))
+//  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(kernelUnityCatalog)
+  .settings(
+    name := "delta-flink",
+    commonSettings,
+    skipReleaseSettings,
+    javafmtCheckSettings(),
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case "parquet.thrift" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case PathList("mozilla", "public-suffix-list.txt") => MergeStrategy.discard
+      case x => MergeStrategy.first
+    },
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { entry =>
+        entry.data.getName.startsWith("bundle-") &&
+          entry.data.getName.endsWith(".jar")
+      }
+    },
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
+    Test / publishArtifact := false,
+    Test / javaOptions ++= Seq(
+      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
+    ),
+    crossPaths := false,
+    libraryDependencies ++= Seq(
+      "org.apache.flink" % "flink-core" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+      "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
+      "dev.failsafe" % "failsafe" % "3.2.0",
+      "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+
+      "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
+      "org.scalatest" %% "scalatest" % "3.2.19" % "test",
+      "org.apache.flink" % "flink-clients" % flinkVersion % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % flinkVersion % Test,
+      "org.apache.flink" % "flink-table-runtime" % flinkVersion % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % flinkVersion  % Test,
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
+      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
+    )
+  )
+
+
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
   .settings(
@@ -1457,6 +1522,15 @@ lazy val kernelGroup = project
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
+
+lazy val flinkGroup = project
+  .aggregate(flink)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
 
 /*
  ********************
