@@ -75,6 +75,10 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
  * using setFactory() is only needed for testing or to override the auto-discovered factory.
  */
 private[serverSidePlanning] object ServerSidePlanningClientFactory {
+  // Fully qualified class name for auto-registration via reflection
+  private val ICEBERG_FACTORY_CLASS_NAME =
+    "org.apache.spark.sql.delta.serverSidePlanning.IcebergRESTCatalogPlanningClientFactory"
+
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
   @volatile private var autoRegistrationAttempted: Boolean = false
 
@@ -90,9 +94,7 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
           try {
             // Use reflection to load the Iceberg factory class
             // scalastyle:off classforname
-            val clazz = Class.forName(
-              "org.apache.spark.sql.delta.serverSidePlanning." +
-              "IcebergRESTCatalogPlanningClientFactory")
+            val clazz = Class.forName(ICEBERG_FACTORY_CLASS_NAME)
             // scalastyle:on classforname
             val factory = clazz.getConstructor().newInstance()
               .asInstanceOf[ServerSidePlanningClientFactory]
@@ -112,17 +114,23 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
 
   /**
    * Set a factory, overriding any auto-registered factory.
+   * Synchronized to prevent race conditions with auto-registration.
    */
   private[serverSidePlanning] def setFactory(factory: ServerSidePlanningClientFactory): Unit = {
-    registeredFactory = Some(factory)
+    synchronized {
+      registeredFactory = Some(factory)
+    }
   }
 
   /**
    * Clear the registered factory.
+   * Synchronized to ensure atomic reset of both flags.
    */
   private[serverSidePlanning] def clearFactory(): Unit = {
-    registeredFactory = None
-    autoRegistrationAttempted = false
+    synchronized {
+      registeredFactory = None
+      autoRegistrationAttempted = false
+    }
   }
 
   /**
