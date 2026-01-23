@@ -55,6 +55,7 @@ val sparkVersion = settingKey[String]("Spark version")
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
 val hadoopVersion = "3.4.2"
+val sparkVersionForKernelTest = "4.0.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -136,6 +137,29 @@ def scalafmtCheckSettings(): Seq[Def.Setting[Task[CompileAnalysis]]] = Seq(
 //////////////////////////
 // END: Code Formatting //
 //////////////////////////
+
+/**
+ * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
+ *       setting macro.
+ */
+def runTaskOnlyOnSparkMaster[T](
+    task: sbt.TaskKey[T],
+    taskName: String,
+    projectName: String,
+    emptyValue: => T): Def.Initialize[Task[T]] = {
+  if (CrossSparkVersions.getSparkVersionSpec().isMaster) {
+    Def.task(task.value)
+  } else {
+    Def.task {
+      // scalastyle:off println
+      val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
+      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
+        s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
+      // scalastyle:on println
+      emptyValue
+    }
+  }
+}
 
 lazy val connectCommon = (project in file("spark-connect/common"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -909,10 +933,10 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       // The delta-spark and spark dependencies are mainly used for catalog-based table creation.
       // Instead of using the latest snapshot, those are fine to use the released 4.0.0.
       "io.delta" %% "delta-spark" % "4.0.0" % "test",
-      "org.apache.spark" %% "spark-hive" % "4.0.0" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % "4.0.0" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % "4.0.0" % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % "4.0.0" % "test" classifier "tests",
+      "org.apache.spark" %% "spark-hive" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersionForKernelTest % "test" classifier "tests",
     ),
     MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
