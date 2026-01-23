@@ -22,6 +22,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaErrorsInternal;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
 import io.delta.kernel.internal.files.ParsedLogData;
@@ -125,12 +126,10 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
       } else if (ctx.startBoundary.isTimestamp()) {
         long latestSnapshotVersion =
             ((SnapshotImpl) ctx.startBoundary.getLatestSnapshot()).getVersion();
-        checkArgument(
-            latestSnapshotVersion == maxVersion,
-            String.format(
-                "When using timestamp boundaries with maxCatalogVersion, the provided "
-                    + "snapshot version (%d) must equal maxCatalogVersion (%d)",
-                latestSnapshotVersion, maxVersion));
+        if (latestSnapshotVersion != maxVersion) {
+          throw DeltaErrorsInternal.invalidLatestSnapshotForMaxCatalogVersion(
+              latestSnapshotVersion, maxVersion);
+        }
       }
 
       // Validate end boundary against max catalog version
@@ -145,12 +144,10 @@ public class CommitRangeBuilderImpl implements CommitRangeBuilder {
         } else if (endBoundary.isTimestamp()) {
           long latestSnapshotVersion =
               ((SnapshotImpl) endBoundary.getLatestSnapshot()).getVersion();
-          checkArgument(
-              latestSnapshotVersion == maxVersion,
-              String.format(
-                  "When using timestamp boundaries with maxCatalogVersion, the provided "
-                      + "snapshot version (%d) must equal maxCatalogVersion (%d)",
-                  latestSnapshotVersion, maxVersion));
+          if (latestSnapshotVersion != maxVersion) {
+            throw DeltaErrorsInternal.invalidLatestSnapshotForMaxCatalogVersion(
+                latestSnapshotVersion, maxVersion);
+          }
         }
       }
 
