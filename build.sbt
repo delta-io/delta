@@ -614,11 +614,6 @@ lazy val spark = (project in file("spark-unified"))
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
     ),
 
-    // Include iceberg classes for testing auto-registration (avoids circular dependency)
-    Test / unmanagedClasspath += Attributed.blank(
-      baseDirectory.value.getParentFile / "iceberg" / "target" / "scala-2.13" / "classes"
-    ),
-
     Test / testOptions += Tests.Argument("-oDF"),
     Test / testOptions += Tests.Argument(TestFrameworks.JUnit, "-v", "-a"),
 

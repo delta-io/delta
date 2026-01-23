@@ -20,9 +20,11 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
- * Unit tests for ServerSidePlanningClientFactory auto-registration and lifecycle.
- * Tests the reflection-based auto-registration with double-checked locking,
- * manual factory registration, and factory lifecycle management.
+ * Unit tests for ServerSidePlanningClientFactory core functionality.
+ * Tests manual factory registration, state management, and lifecycle.
+ *
+ * Note: Auto-registration tests are in the iceberg module since they test
+ * the IcebergRESTCatalogPlanningClientFactory implementation.
  */
 class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSession {
 
@@ -92,202 +94,156 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
       s"${prefix}Expected same factory instance")
   }
 
-  // ========== Test Case Classes ==========
-
-  /**
-   * Test case for factory state verification scenarios.
-   */
-  private case class FactoryStateTestCase(
-    description: String,
-    setup: () => Unit,
-    expectedRegistered: Boolean,
-    expectedFactoryInfo: Option[String]
-  )
-
-  /**
-   * Test case for factory registration scenarios.
-   */
-  private case class FactoryRegistrationTestCase(
-    description: String,
-    registrationSequence: Seq[() => Unit],
-    expectedFinalFactory: String,
-    additionalVerification: Option[() => Unit] = None
-  )
-
-  /**
-   * Test case for clearFactory behavior.
-   */
-  private case class ClearFactoryTestCase(
-    description: String,
-    initialSetup: () => Unit,
-    verifyCleared: () => Unit
-  )
-
-  // ========== Test Data ==========
-
-  private val stateTestCases = Seq(
-    FactoryStateTestCase(
-      "initially not registered",
-      setup = () => { /* no-op */ },
-      expectedRegistered = false,
-      expectedFactoryInfo = None
-    ),
-    FactoryStateTestCase(
-      "after manual registration",
-      setup = () => ServerSidePlanningClientFactory.setFactory(
-        new TestServerSidePlanningClientFactory()),
-      expectedRegistered = true,
-      expectedFactoryInfo = Some("TestServerSidePlanningClientFactory")
-    ),
-    FactoryStateTestCase(
-      "after auto-registration",
-      setup = () => ServerSidePlanningClientFactory.getFactory(),
-      expectedRegistered = true,
-      expectedFactoryInfo = Some("IcebergRESTCatalogPlanningClientFactory")
-    ),
-    FactoryStateTestCase(
-      "after clearFactory",
-      setup = () => {
-        ServerSidePlanningClientFactory.getFactory()
-        ServerSidePlanningClientFactory.clearFactory()
-      },
-      expectedRegistered = false,
-      expectedFactoryInfo = None
-    )
-  )
-
-  private val registrationTestCases = Seq(
-    FactoryRegistrationTestCase(
-      "auto-registration succeeds",
-      registrationSequence = Seq(() => ServerSidePlanningClientFactory.getFactory()),
-      expectedFinalFactory = "IcebergRESTCatalogPlanningClientFactory"
-    ),
-    FactoryRegistrationTestCase(
-      "manual factory overrides auto-registration",
-      registrationSequence = Seq(() => ServerSidePlanningClientFactory.setFactory(
-        new TestServerSidePlanningClientFactory())),
-      expectedFinalFactory = "TestServerSidePlanningClientFactory",
-      additionalVerification = Some(() => {
-        // Verify auto-registration was NOT triggered
-        val factory = ServerSidePlanningClientFactory.getFactory()
-        assert(factory.isInstanceOf[TestServerSidePlanningClientFactory],
-          "Should be test factory, not auto-registered")
-      })
-    ),
-    FactoryRegistrationTestCase(
-      "manual factory replaces auto-registered factory",
-      registrationSequence = Seq(
-        () => ServerSidePlanningClientFactory.getFactory(),
-        () => ServerSidePlanningClientFactory.setFactory(
-          new TestServerSidePlanningClientFactory())),
-      expectedFinalFactory = "TestServerSidePlanningClientFactory"
-    )
-  )
-
-  private val clearFactoryTestCases = Seq(
-    ClearFactoryTestCase(
-      "clears auto-registered factory",
-      initialSetup = () => ServerSidePlanningClientFactory.getFactory(),
-      verifyCleared = () => {
-        ServerSidePlanningClientFactory.clearFactory()
-        assertNoFactory("after clearing auto-registered")
-
-        // Verify can re-register
-        val newFactory = ServerSidePlanningClientFactory.getFactory()
-        assertFactoryType("IcebergRESTCatalogPlanningClientFactory", "after re-registration")
-      }
-    ),
-    ClearFactoryTestCase(
-      "clears manual factory",
-      initialSetup = () => ServerSidePlanningClientFactory.setFactory(
-        new TestServerSidePlanningClientFactory()),
-      verifyCleared = () => {
-        ServerSidePlanningClientFactory.clearFactory()
-        assertNoFactory("after clearing manual factory")
-      }
-    ),
-    ClearFactoryTestCase(
-      "allows multiple registration cycles",
-      initialSetup = () => {
-        // First cycle
-        ServerSidePlanningClientFactory.getFactory()
-        ServerSidePlanningClientFactory.clearFactory()
-        // Second cycle
-        ServerSidePlanningClientFactory.getFactory()
-        ServerSidePlanningClientFactory.clearFactory()
-      },
-      verifyCleared = () => {
-        // Third cycle should work
-        val factory = ServerSidePlanningClientFactory.getFactory()
-        assertFactoryType("IcebergRESTCatalogPlanningClientFactory", "third cycle")
-      }
-    )
-  )
-
   // ========== Tests ==========
 
-  test("factory state transitions") {
-    stateTestCases.foreach { testCase =>
-      withCleanFactory {
-        testCase.setup()
+  test("isFactoryRegistered correctly reports registration state") {
+    withCleanFactory {
+      // Initially not registered
+      assertNoFactory("initially")
 
-        assert(
-          ServerSidePlanningClientFactory.isFactoryRegistered() == testCase.expectedRegistered,
-          s"[${testCase.description}] Expected registered=${testCase.expectedRegistered}")
+      // After manual registration
+      val testFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(testFactory)
+      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
+        "Should be registered after setFactory()")
 
-        val actualInfo = ServerSidePlanningClientFactory.getFactoryInfo()
-        testCase.expectedFactoryInfo match {
-          case Some(expected) =>
-            assert(actualInfo.isDefined && actualInfo.get.contains(expected),
-              s"[${testCase.description}] Expected factory info to contain '$expected', " +
-              s"got: $actualInfo")
-          case None =>
-            assert(actualInfo.isEmpty,
-              s"[${testCase.description}] Expected no factory info, got: $actualInfo")
-        }
-      }
+      // After clearFactory
+      ServerSidePlanningClientFactory.clearFactory()
+      assertNoFactory("after clearFactory")
     }
   }
 
-  test("factory registration scenarios") {
-    registrationTestCases.foreach { testCase =>
-      withCleanFactory {
-        // Execute registration sequence
-        testCase.registrationSequence.foreach(_())
+  test("getFactoryInfo returns correct factory class information") {
+    withCleanFactory {
+      // Returns None when no factory registered
+      assert(ServerSidePlanningClientFactory.getFactoryInfo().isEmpty,
+        "getFactoryInfo() should return None when no factory is registered")
 
-        // Verify final state
-        val factoryInfo = ServerSidePlanningClientFactory.getFactoryInfo()
-        assert(factoryInfo.isDefined && factoryInfo.get.contains(testCase.expectedFinalFactory),
-          s"[${testCase.description}] Expected factory=${testCase.expectedFinalFactory}, " +
-          s"got: $factoryInfo")
+      // Returns correct class name for test factory
+      val testFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(testFactory)
+      assertFactoryType("TestServerSidePlanningClientFactory", "after setFactory")
 
-        // Additional verification if specified
-        testCase.additionalVerification.foreach(_.apply())
-      }
+      // Updates correctly when factory changes
+      val anotherFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(anotherFactory)
+      assertFactoryType("TestServerSidePlanningClientFactory", "after replacement")
     }
   }
 
-  test("clearFactory resets complete state for multiple scenarios") {
-    clearFactoryTestCases.foreach { testCase =>
-      withCleanFactory {
-        testCase.initialSetup()
-        testCase.verifyCleared()
-      }
+  test("manual setFactory registers and returns factory") {
+    withCleanFactory {
+      val testFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(testFactory)
+
+      // Verify factory is registered
+      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
+        "Factory should be registered after setFactory()")
+
+      // getFactory() should return the manually-set factory
+      val retrievedFactory = ServerSidePlanningClientFactory.getFactory()
+      assert(retrievedFactory eq testFactory,
+        "getFactory() should return the manually-set factory")
+
+      assertFactoryType("TestServerSidePlanningClientFactory", "manual registration")
+    }
+  }
+
+  test("manual setFactory can replace existing factory") {
+    withCleanFactory {
+      // Set first factory
+      val firstFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(firstFactory)
+      assert(ServerSidePlanningClientFactory.getFactory() eq firstFactory,
+        "Should return first factory")
+
+      // Replace with second factory
+      val secondFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(secondFactory)
+
+      // Verify replacement
+      val retrievedFactory = ServerSidePlanningClientFactory.getFactory()
+      assert(retrievedFactory eq secondFactory,
+        "getFactory() should return the second factory after replacement")
+      assert(!(retrievedFactory eq firstFactory),
+        "Should not return the first factory")
     }
   }
 
   test("getFactory returns same instance across multiple calls") {
     withCleanFactory {
+      val testFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(testFactory)
+
       val factory1 = ServerSidePlanningClientFactory.getFactory()
       val factory2 = ServerSidePlanningClientFactory.getFactory()
       val factory3 = ServerSidePlanningClientFactory.getFactory()
 
       assertSameInstance(factory1, factory2, "second call")
       assertSameInstance(factory2, factory3, "third call")
-      assertFactoryType("IcebergRESTCatalogPlanningClientFactory", "cached instance")
+      assert(factory1 eq testFactory, "Should return the originally set factory")
     }
   }
 
+  test("clearFactory resets registration state") {
+    withCleanFactory {
+      val testFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(testFactory)
+      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
+        "Factory should be registered")
+
+      // Clear factory
+      ServerSidePlanningClientFactory.clearFactory()
+
+      // Verify factory is no longer registered
+      assertNoFactory("after clearFactory")
+    }
+  }
+
+  test("clearFactory allows re-registration") {
+    withCleanFactory {
+      // First registration
+      val firstFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(firstFactory)
+      assert(ServerSidePlanningClientFactory.getFactory() eq firstFactory,
+        "Should return first factory")
+
+      // Clear and re-register
+      ServerSidePlanningClientFactory.clearFactory()
+      val secondFactory = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(secondFactory)
+
+      // Verify new factory is registered
+      val retrievedFactory = ServerSidePlanningClientFactory.getFactory()
+      assert(retrievedFactory eq secondFactory,
+        "Should return second factory after re-registration")
+      assertFactoryType("TestServerSidePlanningClientFactory", "after re-registration")
+    }
+  }
+
+  test("clearFactory supports multiple registration cycles") {
+    withCleanFactory {
+      // First cycle
+      val factory1 = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(factory1)
+      assert(ServerSidePlanningClientFactory.isFactoryRegistered(), "Cycle 1: should be registered")
+      ServerSidePlanningClientFactory.clearFactory()
+      assertNoFactory("Cycle 1: after clear")
+
+      // Second cycle
+      val factory2 = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(factory2)
+      assert(ServerSidePlanningClientFactory.isFactoryRegistered(), "Cycle 2: should be registered")
+      ServerSidePlanningClientFactory.clearFactory()
+      assertNoFactory("Cycle 2: after clear")
+
+      // Third cycle
+      val factory3 = new TestServerSidePlanningClientFactory()
+      ServerSidePlanningClientFactory.setFactory(factory3)
+      assert(ServerSidePlanningClientFactory.isFactoryRegistered(), "Cycle 3: should be registered")
+      assertFactoryType("TestServerSidePlanningClientFactory", "Cycle 3")
+    }
+  }
 
   test("verify test isolation - factory state doesn't leak between tests") {
     withCleanFactory {
