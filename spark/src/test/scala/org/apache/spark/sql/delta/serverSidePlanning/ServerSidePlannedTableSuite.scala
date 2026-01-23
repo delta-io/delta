@@ -142,39 +142,77 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
   }
 
   test("shouldUseServerSidePlanning() decision logic") {
-    // Case 1: Force flag enabled -> should always use server-side planning
-    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = true,
-      forceServerSidePlanning = true),
-      "Should use server-side planning when force flag is true")
+    // ============================================================
+    // Production mode: skipUCRequirementForTests = false
+    // Should return true ONLY when all three conditions are met:
+    // 1. Unity Catalog table
+    // 2. No credentials available
+    // 3. Enable flag is set
+    // ============================================================
 
-    // Case 2: Unity Catalog without credentials -> should use server-side planning
     assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
       isUnityCatalog = true,
       hasCredentials = false,
-      forceServerSidePlanning = false),
-      "Should use server-side planning for UC table without credentials")
+      enableServerSidePlanning = true,
+      skipUCRequirementForTests = false
+    ) == true, "Production: UC without credentials + flag enabled should use SSP")
 
-    // Case 3: Unity Catalog with credentials -> should NOT use server-side planning
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
+    // Group 1: flag disabled (even with valid UC setup)
+    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
+      isUnityCatalog = true,
+      hasCredentials = false,
+      enableServerSidePlanning = false,
+      skipUCRequirementForTests = false
+    ) == false, "Production: UC without credentials but flag disabled should NOT use SSP")
+
+    // Group 2: Has credentials (SSP not needed)
+    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
       isUnityCatalog = true,
       hasCredentials = true,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for UC table with credentials")
+      enableServerSidePlanning = true,
+      skipUCRequirementForTests = false
+    ) == false, "Production: UC with credentials should NOT use SSP (has creds)")
 
-    // Case 4: Non-UC catalog -> should NOT use server-side planning
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
+    assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
+      isUnityCatalog = true,
       hasCredentials = true,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for non-UC catalog")
+      enableServerSidePlanning = false,
+      skipUCRequirementForTests = false
+    ) == false, "Production: UC with credentials and no flag should NOT use SSP")
 
-    assert(!ServerSidePlannedTable.shouldUseServerSidePlanning(
-      isUnityCatalog = false,
-      hasCredentials = false,
-      forceServerSidePlanning = false),
-      "Should NOT use server-side planning for non-UC catalog (even without credentials)")
+    // Group 3: Not Unity Catalog (always false, regardless of other params)
+    for (hasCreds <- Seq(true, false)) {
+      for (enableSSP <- Seq(true, false)) {
+        assert(ServerSidePlannedTable.shouldUseServerSidePlanning(
+          isUnityCatalog = false,
+          hasCredentials = hasCreds,
+          enableServerSidePlanning = enableSSP,
+          skipUCRequirementForTests = false
+        ) == false,
+          s"Production: Non-UC should NOT use SSP (hasCreds=$hasCreds, enableSSP=$enableSSP)")
+      }
+    }
+
+    // ============================================================
+    // Test mode: skipUCRequirementForTests = true
+    // Should return true if flag is enabled (UC/creds checks bypassed)
+    // Keep as loop since logic is simple and demonstrates bypass
+    // ============================================================
+    for (isUC <- Seq(true, false)) {
+      for (hasCreds <- Seq(true, false)) {
+        for (enableSSP <- Seq(true, false)) {
+          val description = s"Test mode: isUC=$isUC, hasCreds=$hasCreds, enableSSP=$enableSSP"
+          val expected = enableSSP  // In test mode, only the flag matters
+          val result = ServerSidePlannedTable.shouldUseServerSidePlanning(
+            isUnityCatalog = isUC,
+            hasCredentials = hasCreds,
+            enableServerSidePlanning = enableSSP,
+            skipUCRequirementForTests = true
+          )
+          assert(result == expected, s"$description -> expected $expected but got $result")
+        }
+      }
+    }
   }
 
   test("ServerSidePlannedTable is read-only") {
@@ -329,13 +367,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     withPushdownCapturingEnabled {
       sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()
 
-      // Verify projection was pushed with exactly the expected columns
-      // Spark needs 'id' for SELECT and 'value' for WHERE clause
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isDefined, "Projection should be pushed down")
       val projectedFields = capturedProjection.get.toSet
-      assert(projectedFields == Set("id", "value"),
-        s"Expected projection with exactly {id, value}, got {${projectedFields.mkString(", ")}}")
+      assert(projectedFields == Set("id"),
+        s"Expected projection with only SELECT columns {id}, " +
+        s"got {${projectedFields.mkString(", ")}}")
 
       // Verify filter was also pushed
       val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
@@ -348,6 +385,93 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       }
       assert(gtFilter.isDefined, "Expected GreaterThan filter on 'value'")
       assert(gtFilter.get.value == 10, s"Expected GreaterThan value 10, got ${gtFilter.get.value}")
+    }
+  }
+
+  test("projection and limit pushed together") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id FROM test_db.shared_test LIMIT 5").collect()
+
+      // Verify projection was pushed (only 'id' column)
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      val projectedFields = capturedProjection.get.toSet
+      assert(projectedFields == Set("id"),
+        s"Expected projection with just {id}, got {${projectedFields.mkString(", ")}}")
+
+      // Verify limit was pushed
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined, "Limit should be pushed down")
+      assert(capturedLimit.get == 5, s"Expected limit 5, got ${capturedLimit.get}")
+    }
+  }
+
+  test("limit pushed to planning client") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test LIMIT 2").collect()
+
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined, "Limit should be pushed down")
+      assert(capturedLimit.get == 2, s"Expected limit 2, got ${capturedLimit.get}")
+    }
+  }
+
+  test("no limit pushed when no LIMIT clause") {
+    withPushdownCapturingEnabled {
+      sql("SELECT id, name, value FROM test_db.shared_test").collect()
+
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isEmpty, "No limit should be pushed when there's no LIMIT clause")
+    }
+  }
+
+  test("filter and limit pushed together when all filters are convertible") {
+    withPushdownCapturingEnabled {
+      // Query with convertible filter (GreaterThan) AND limit
+      sql("SELECT id FROM test_db.shared_test WHERE value > 10 LIMIT 5").collect()
+
+      // Verify filter was captured
+      val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+      assert(capturedFilter.isDefined, "Filter should be pushed to server")
+
+      // Verify limit was captured (this is the key test - limit pushdown with filters)
+      val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+      assert(capturedLimit.isDefined,
+        "Limit should be pushed to server when all filters are convertible")
+      assert(capturedLimit.get == 5, s"Expected limit 5, got ${capturedLimit.get}")
+    }
+  }
+
+  test("limit NOT pushed when any filter is unconvertible") {
+    withPushdownCapturingEnabled {
+      // Configure the test client to treat filters as unconvertible
+      // This simulates a scenario where the filter cannot be converted to server's native format
+      TestServerSidePlanningClient.setFiltersConvertible(false)
+
+      try {
+        // Query with filter AND limit
+        sql("SELECT id FROM test_db.shared_test WHERE value > 10 LIMIT 5").collect()
+
+        // Verify filter was still captured (server receives it)
+        val capturedFilter = TestServerSidePlanningClient.getCapturedFilter
+        assert(capturedFilter.isDefined, "Filter should still be sent to server")
+
+        // Verify limit was NOT captured (because residual filters blocked pushdown)
+        val capturedLimit = TestServerSidePlanningClient.getCapturedLimit
+        assert(capturedLimit.isEmpty,
+          "Limit should NOT be pushed when any filter is unconvertible")
+      } finally {
+        // Reset to default (convertible) for other tests
+        TestServerSidePlanningClient.setFiltersConvertible(true)
+      }
+    }
+  }
+
+  test("avoid planInputPartitions call during Spark query planning") {
+    withPushdownCapturingEnabled {
+      sql("EXPLAIN EXTENDED SELECT id, name FROM test_db.shared_test").collect()
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isEmpty, "Should not fire a planTable request for EXPLAIN")
     }
   }
 }

@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.DeltaSourceSuite
 /**
  * Test suite that runs DeltaSourceSuite using the V2 connector (V2_ENABLE_MODE=STRICT).
  */
-class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
+class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
   override protected def useDsv2: Boolean = true
 
@@ -47,50 +47,54 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
   }
 
   private lazy val shouldPassTests = Set(
+    // ========== Core streaming tests ==========
+    "basic",
+    "initial snapshot ends at base index of next version",
+    "new commits arrive after stream initialization - with explicit startingVersion",
+    "SC-11561: can consume new data without update",
+    "Delta sources don't write offsets with null json",
+
+    // === Schema Evolution ===
+    "restarting a query should pick up latest table schema and recover",
+    "disallow to change schema after starting a streaming query",
+    "allow to change schema before starting a streaming query",
+
+    // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",
     "startingVersion latest defined before started",
     "startingVersion latest works on defined but empty table",
-    "startingVersion specific version: new commits arrive after stream initialization"
+    "startingVersion specific version: new commits arrive after stream initialization",
+
+    // ========== Rate limiting tests ==========
+    "maxFilesPerTrigger",
+    "maxBytesPerTrigger: process at least one file",
+    "maxFilesPerTrigger: change and restart",
+    "maxFilesPerTrigger: invalid parameter",
+    "maxFilesPerTrigger: ignored when using Trigger.Once",
+    "maxBytesPerTrigger: change and restart",
+    "maxBytesPerTrigger: invalid parameter",
+    "maxBytesPerTrigger: max bytes and max files together",
+    "startingVersion should work with rate time",
+    "maxFilesPerTrigger: metadata checkpoint",
+    "maxBytesPerTrigger: metadata checkpoint"
   )
 
   private lazy val shouldFailTests = Set(
-    // === Schema Evolution ===
-    "allow to change schema before starting a streaming query",
-    "restarting a query should pick up latest table schema and recover",
-    "handling nullability schema changes",
-    "allow user specified schema if consistent: v1 source",
-    "disallow user specified schema",
-    "createSource should create source with empty or matching table schema provided",
-
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
-    "DeltaLog.createDataFrame should drop null columns with feature flag",
-    "DeltaLog.createDataFrame should not drop null columns without feature flag",
 
     // === read options ===
     "skip change commits",
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+    "excludeRegex throws good error on bad regex pattern",
     "startingVersion: user defined start works with mergeSchema",
     "startingVersion latest calls update when starting",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingTimestamp",
     "startingVersion and startingTimestamp are both set",
-
-    // === Other tests that bypass V2 by not using loadStreamWithOptions ===
-    "disallow to change schema after starting a streaming query",
-    "maxFilesPerTrigger: invalid parameter",
-    "maxBytesPerTrigger: invalid parameter",
-    "recreate the reservoir should fail the query",
-    "excludeRegex throws good error on bad regex pattern",
-    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
-    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "Delta sources should verify the protocol reader version",
-    "can delete old files of a snapshot without update",
-    "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations",
 
     // === Data Loss Detection ===
     "fail on data loss - starting from missing files",
@@ -99,44 +103,47 @@ class DeltaSourceDSv2Suite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files with option off",
 
     // === Rate Limiting / Trigger Options ===
-    "maxFilesPerTrigger",
-    "maxFilesPerTrigger: metadata checkpoint",
-    "maxFilesPerTrigger: change and restart",
-    "maxFilesPerTrigger: ignored when using Trigger.Once",
     "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: process at least one file",
-    "maxBytesPerTrigger: metadata checkpoint",
-    "maxBytesPerTrigger: change and restart",
     "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: max bytes and max files together",
     "Trigger.AvailableNow with an empty table",
-    "startingVersion should work with rate time",
     "Rate limited Delta source advances with non-data inserts",
     "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
 
-    // === Source Offset / Version Handling ===
-    "unknown sourceVersion value",
-    "invalid sourceVersion value",
-    "missing sourceVersion",
-    "unmatched reservoir id",
-    "isInitialSnapshot serializes as isStartingVersion",
-    "DeltaSourceOffset deserialization",
-    "DeltaSourceOffset deserialization error",
-    "DeltaSourceOffset serialization",
-    "DeltaSourceOffset.validateOffsets",
-
     // === Misc ===
     "no schema should throw an exception",
-    "basic",
-    "initial snapshot ends at base index of next version",
-    "Delta sources don't write offsets with null json",
-    "Delta source advances with non-data inserts and generates empty dataframe for addl files",
     "a fast writer should not starve a Delta source",
+    "recreate the reservoir should fail the query",
+    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "Delta sources should verify the protocol reader version",
+    "can delete old files of a snapshot without update",
+    "Delta source advances with non-data inserts and generates empty dataframe for " +
+      "non-data operations",
+    "Delta source advances with non-data inserts and generates empty dataframe for addl files",
     "start from corrupt checkpoint",
-    "SC-11561: can consume new data without update",
-    "make sure that the delta sources works fine",
     "should not attempt to read a non exist version",
-    "self union a Delta table should pass the catalog table assert"
+
+    // === Tests that bypass V2 by not using loadStreamWithOptions ===
+    "disallow user specified schema", // Uses .schema() directly
+    "make sure that the delta sources works fine", // Uses .delta() directly
+    "self union a Delta table should pass the catalog table assert", // Uses .table() directly
+    "handling nullability schema changes", // Uses .table() directly
+    "allow user specified schema if consistent: v1 source", // Uses DataSource directly
+    // Calls deltaSource.createSource() directly
+    "createSource should create source with empty or matching table schema provided",
+    // Unit test for internal API
+    "DeltaLog.createDataFrame should drop null columns with feature flag",
+    // Unit test for internal API
+    "DeltaLog.createDataFrame should not drop null columns without feature flag",
+    "unknown sourceVersion value", // Unit test for DeltaSourceOffset
+    "invalid sourceVersion value", // Unit test for DeltaSourceOffset
+    "missing sourceVersion", // Unit test for DeltaSourceOffset
+    "unmatched reservoir id", // Unit test for DeltaSourceOffset
+    "isInitialSnapshot serializes as isStartingVersion", // Unit test for DeltaSourceOffset
+    "DeltaSourceOffset deserialization", // Unit test for DeltaSourceOffset
+    "DeltaSourceOffset deserialization error", // Unit test for DeltaSourceOffset
+    "DeltaSourceOffset serialization", // Unit test for DeltaSourceOffset
+    "DeltaSourceOffset.validateOffsets" // Unit test for DeltaSourceOffset
   )
 
   override protected def shouldFail(testName: String): Boolean = {

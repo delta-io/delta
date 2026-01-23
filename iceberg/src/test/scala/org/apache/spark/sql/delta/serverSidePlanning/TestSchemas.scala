@@ -24,14 +24,15 @@ private[serverSidePlanning] object TestSchemas {
   /**
    * Shared test schema used across all server-side planning test suites.
    * Structure:
-   * - Flat fields (9 types): intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
-   *                          decimalCol, dateCol, timestampCol
+   * - Flat fields (12 types): intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
+   *                           decimalCol, dateCol, timestampCol, localDateCol,
+   *                           localDateTimeCol, instantCol
    * - Nested examples (to verify dot-notation pass-through):
    *   - address.intCol (numeric nested example)
    *   - metadata.stringCol (non-numeric nested example)
    */
   val testSchema = new Schema(
-    // Flat fields (IDs 1-9)
+    // Flat fields (IDs 1-12)
     Types.NestedField.required(1, "intCol", Types.IntegerType.get),
     Types.NestedField.required(2, "longCol", Types.LongType.get),
     Types.NestedField.required(3, "doubleCol", Types.DoubleType.get),
@@ -41,13 +42,16 @@ private[serverSidePlanning] object TestSchemas {
     Types.NestedField.required(7, "decimalCol", Types.DecimalType.of(10, 2)),
     Types.NestedField.required(8, "dateCol", Types.DateType.get),
     Types.NestedField.required(9, "timestampCol", Types.TimestampType.withoutZone),
+    Types.NestedField.required(10, "localDateCol", Types.DateType.get),
+    Types.NestedField.required(11, "localDateTimeCol", Types.TimestampType.withoutZone),
+    Types.NestedField.required(12, "instantCol", Types.TimestampType.withZone),
 
-    // Nested examples (IDs 10-11)
-    Types.NestedField.required(10, "address", Types.StructType.of(
+    // Nested examples (IDs 13-14)
+    Types.NestedField.required(13, "address", Types.StructType.of(
       Types.NestedField.required(101, "intCol", Types.IntegerType.get)
     )),
 
-    Types.NestedField.required(11, "metadata", Types.StructType.of(
+    Types.NestedField.required(14, "metadata", Types.StructType.of(
       Types.NestedField.required(111, "stringCol", Types.StringType.get)
     ))
   )
@@ -66,6 +70,9 @@ private[serverSidePlanning] object TestSchemas {
     StructField("decimalCol", DecimalType(10, 2), nullable = false),
     StructField("dateCol", DateType, nullable = false),
     StructField("timestampCol", TimestampType, nullable = false),
+    StructField("localDateCol", DateType, nullable = false),
+    StructField("localDateTimeCol", TimestampType, nullable = false),
+    StructField("instantCol", TimestampType, nullable = false),
     StructField("address", StructType(Seq(
       StructField("intCol", IntegerType, nullable = false)
     )), nullable = false),
