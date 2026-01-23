@@ -14,9 +14,19 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package io.sparkuctest
 
-object RelocatedUtils {
+import org.apache.spark.sql.delta.Relocated
+
+/**
+ * Test-only helpers for dealing with classes that are relocated across Spark versions.
+ *
+ * <p>Some streaming relation types are defined as Scala type aliases in [[Relocated]], which
+ * makes them difficult to reference from Java tests directly. This utility centralizes the
+ * instance checks so Java tests can call into a stable Scala API instead.
+ */
+object RelocatedTestUtils {
+  /** Returns true if the plan is a V1 streaming relation across Spark versions. */
   def isStreamingRelation(plan: Any): Boolean = {
     plan.isInstanceOf[Relocated.StreamingRelation]
   }

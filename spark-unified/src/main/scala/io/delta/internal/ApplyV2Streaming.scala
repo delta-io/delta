@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.sql
+package io.delta.internal
 
 import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._

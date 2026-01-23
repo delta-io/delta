@@ -16,6 +16,7 @@
 
 package io.delta.sql
 
+import io.delta.internal.ApplyV2Streaming
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule

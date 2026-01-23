@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.delta.sql
+package io.delta.internal
 
 import java.net.URI
 import java.util.{HashMap => JHashMap}
@@ -86,79 +86,56 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
       properties = Map.empty)
   }
 
-  private def makeStreamingRelation(
-      catalogTable: CatalogTable,
-      path: String): StreamingRelation = {
-    val dataSource = DataSource(
-      sparkSession = spark,
-      userSpecifiedSchema = None,
-      className = "delta",
-      options = Map("path" -> path),
-      catalogTable = Some(catalogTable))
-    StreamingRelation(dataSource)
-  }
+  private val relationBuilders: Seq[(String, (CatalogTable, String) => LogicalPlan)] = Seq(
+    ("streaming", (catalogTable, path) => {
+      val dataSource = DataSource(
+        sparkSession = spark,
+        userSpecifiedSchema = None,
+        className = "delta",
+        options = Map("path" -> path),
+        catalogTable = Some(catalogTable))
+      StreamingRelation(dataSource)
+    }),
+    ("non-streaming", (catalogTable, _) => {
+      val ident = Identifier.of(
+        catalogTable.identifier.database.toArray,
+        catalogTable.identifier.table)
+      val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+      DataSourceV2Relation.create(
+        table,
+        None,
+        None,
+        CaseInsensitiveStringMap.empty)
+    })
+  )
 
-  private def makeV2Relation(catalogTable: CatalogTable): DataSourceV2Relation = {
-    val ident = Identifier.of(
-      catalogTable.identifier.database.toArray,
-      catalogTable.identifier.table)
-    val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
-    DataSourceV2Relation.create(
-      table,
-      None,
-      None,
-      CaseInsensitiveStringMap.empty)
-  }
+  private val modes: Seq[(String, Boolean)] = Seq(
+    ("STRICT", true),
+    ("AUTO", false),
+    ("NONE", false)
+  )
 
-  test("ApplyV2Streaming rewrites to StreamingRelationV2 in STRICT mode") {
-    withTempDir { dir =>
-      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
-        createDeltaTable(dir.getCanonicalPath)
-        val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
-        val plan = makeStreamingRelation(catalogTable, dir.getCanonicalPath)
-        val result = applyRule(plan)
-        assertV2(result)
-      }
-    }
-  }
+  modes.foreach { case (mode, expectV2) =>
+    relationBuilders.foreach { case (relationType, buildPlan) =>
+      test(s"ApplyV2Streaming respects $mode mode for $relationType relation") {
+        withTempDir { dir =>
+          val path = dir.getCanonicalPath
+          createDeltaTable(path)
+          val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+          val plan = buildPlan(catalogTable, path)
 
-  test("ApplyV2Streaming respects AUTO mode for non-UC tables") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "AUTO") {
-        createDeltaTable(path)
-        val nonUcTable = createCatalogTable(dir.toURI, ucManaged = false)
-        val nonUcPlan = makeStreamingRelation(nonUcTable, path)
-        val nonUcResult = applyRule(nonUcPlan)
-        assertV1(nonUcResult)
-      }
-    }
-  }
-
-  test("ApplyV2Streaming does not rewrite in NONE mode") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-        createDeltaTable(path)
-        val nonUcTable = createCatalogTable(dir.toURI, ucManaged = false)
-        val nonUcPlan = makeStreamingRelation(nonUcTable, path)
-        val nonUcResult = applyRule(nonUcPlan)
-        assertV1(nonUcResult)
-      }
-    }
-  }
-
-  test("ApplyV2Streaming leaves non-streaming relations unchanged") {
-    withTempDir { dir =>
-      val path = dir.getCanonicalPath
-      createDeltaTable(path)
-      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
-      val plan = makeV2Relation(catalogTable)
-
-      Seq("STRICT", "AUTO", "NONE").foreach { mode =>
-        withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
-          val result = applyRule(plan)
-          assert(result == plan)
+          withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
+            val result = applyRule(plan)
+            if (relationType == "streaming") {
+              if (expectV2) {
+                assertV2(result)
+              } else {
+                assertV1(result)
+              }
+            } else {
+              assert(result == plan)
+            }
+          }
         }
       }
     }

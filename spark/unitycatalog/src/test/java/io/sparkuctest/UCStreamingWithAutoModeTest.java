@@ -21,11 +21,11 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import io.sparkuctest.RelocatedTestUtils;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan;
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2;
-import org.apache.spark.sql.delta.RelocatedUtils;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -88,7 +88,7 @@ public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest
                 new scala.PartialFunction<LogicalPlan, LogicalPlan>() {
                   @Override
                   public LogicalPlan apply(LogicalPlan p) {
-                    if (RelocatedUtils.isStreamingRelation(p)) {
+                    if (RelocatedTestUtils.isStreamingRelation(p)) {
                       return p;
                     }
                     throw new UnsupportedOperationException();
@@ -96,7 +96,7 @@ public class UCStreamingWithAutoModeTest extends UCDeltaTableIntegrationBaseTest
 
                   @Override
                   public boolean isDefinedAt(LogicalPlan p) {
-                    return RelocatedUtils.isStreamingRelation(p);
+                    return RelocatedTestUtils.isStreamingRelation(p);
                   }
                 })
             .iterator();
