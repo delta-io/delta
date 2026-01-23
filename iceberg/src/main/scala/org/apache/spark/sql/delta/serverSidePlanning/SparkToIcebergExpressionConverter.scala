@@ -24,10 +24,6 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
 /**
  * Converts Spark Filter expressions to Iceberg Expression objects for server-side planning.
  *
- * Limitations:
- * Only primitive types are supported in filter values. Complex types (Array, Struct, Map)
- * and unknown types (e.g., VARIANT) are NOT supported.
- *
  * Filter Mapping Table:
  * {{{
  * +-----------------------+--------------------------------+
@@ -192,8 +188,7 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     case v: Boolean if supportBoolean => v: java.lang.Boolean
     case _ =>
       throw new IllegalArgumentException(
-        s"Cannot convert value of type '${value.getClass.getName}' to Iceberg literal. " +
-        "Only primitive types are supported.")
+        s"Unsupported type for Iceberg filter pushdown: ${value.getClass.getName}")
     }
   }
 
