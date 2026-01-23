@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.serverSidePlanning
 
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.sources._
 import org.scalatest.funsuite.AnyFunSuite
 import shadedForDelta.org.apache.iceberg.expressions.{Expression, ExpressionUtil, Expressions}
@@ -670,5 +671,63 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     )
 
     assertConvert(testCases)
+  }
+
+  // ========================================================================
+  // UNSUPPORTED VALUE TYPES
+  // ========================================================================
+
+  test("filters with unsupported value types return None") {
+    // Define unsupported types for which conversion must fail
+    val unsupportedTypes = Seq(
+      (Array(1, 2, 3), "Array"),
+      (Map("key" -> 1), "Map"),
+      (Row(1, "test"), "Row/Struct"),
+      (Array[Byte](1, 2, 3), "byte array"),
+      (5.toByte, "Byte"),
+      (5.toShort, "Short")
+    )
+
+    // Define operators that must reject unsupported types
+    val operators = Seq(
+      ("EqualTo", (col: String, v: Any) => EqualTo(col, v)),
+      ("LessThan", (col: String, v: Any) => LessThan(col, v)),
+      ("GreaterThan", (col: String, v: Any) => GreaterThan(col, v)),
+      ("LessThanOrEqual", (col: String, v: Any) => LessThanOrEqual(col, v)),
+      ("GreaterThanOrEqual", (col: String, v: Any) => GreaterThanOrEqual(col, v))
+    )
+
+    // Generate all combinations: unsupported types x operators
+    val operatorTests = for {
+      (value, typeDesc) <- unsupportedTypes
+      (opName, sparkOp) <- operators
+    } yield ExprConvTestCase(
+      s"$opName with $typeDesc should be unsupported", // Test case label
+      sparkOp("intCol", value), // Spark filter builder
+      None // Iceberg expression builder
+    )
+
+    // Boolean with comparison operators (supportBoolean=false for these)
+    val booleanComparisonTests = Seq(
+      ("LessThan", (col: String, v: Any) => LessThan(col, v)),
+      ("GreaterThan", (col: String, v: Any) => GreaterThan(col, v)),
+      ("LessThanOrEqual", (col: String, v: Any) => LessThanOrEqual(col, v)),
+      ("GreaterThanOrEqual", (col: String, v: Any) => GreaterThanOrEqual(col, v))
+    ).map { case (opName, sparkOp) =>
+      ExprConvTestCase(
+        s"$opName with Boolean (unsupported for comparison)",
+        sparkOp("boolCol", true),
+        None
+      )
+    }
+
+    // Special case: In with nested Array values
+    val inWithNestedArrays = ExprConvTestCase(
+      "In with nested Array values",
+      In("intCol", Array(Array(1), Array(2))),
+      None
+    )
+
+    assertConvert(operatorTests ++ booleanComparisonTests ++ Seq(inWithNestedArrays))
   }
 }
