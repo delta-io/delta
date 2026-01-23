@@ -15,14 +15,7 @@ jobs:
   test:
     name: "DF"
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false # Allow all shards to run even if one fails
-      matrix:
-        flink_version: ["1.20.3"]
     env:
-      SCALA_VERSION: 2.13.16
-      FLINK_VERSION: ${{ matrix.flink_version }}
-      DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
       TEST_PARALLELISM_COUNT: 4
     steps:
       - name: Show runner specs
@@ -52,7 +45,7 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-flink-${{ matrix.flink_version }}
+          key: sbt-flink
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
@@ -63,4 +56,3 @@ jobs:
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test
-
