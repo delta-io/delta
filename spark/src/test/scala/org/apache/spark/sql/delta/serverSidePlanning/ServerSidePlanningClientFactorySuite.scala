@@ -82,18 +82,6 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
       s"${prefix}Factory info should be empty")
   }
 
-  /**
-   * Assert that two factory instances are the same (reference equality).
-   */
-  private def assertSameInstance(
-      factory1: ServerSidePlanningClientFactory,
-      factory2: ServerSidePlanningClientFactory,
-      context: String = ""): Unit = {
-    val prefix = if (context.nonEmpty) s"[$context] " else ""
-    assert(factory1 eq factory2,
-      s"${prefix}Expected same factory instance")
-  }
-
   // ========== Tests ==========
 
   test("isFactoryRegistered correctly reports registration state") {
@@ -179,8 +167,8 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
       val factory2 = ServerSidePlanningClientFactory.getFactory()
       val factory3 = ServerSidePlanningClientFactory.getFactory()
 
-      assertSameInstance(factory1, factory2, "second call")
-      assertSameInstance(factory2, factory3, "third call")
+      assert(factory1 eq factory2, "Second call should return same instance as first")
+      assert(factory2 eq factory3, "Third call should return same instance as second")
       assert(factory1 eq testFactory, "Should return the originally set factory")
     }
   }
