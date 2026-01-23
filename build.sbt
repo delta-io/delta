@@ -474,10 +474,10 @@ lazy val sparkV2 = (project in file("spark/v2"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
 
       // Test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       // Spark test classes for Scala/Java test utilities
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-core" % sparkVersion.value % "test" classifier "tests",
@@ -734,10 +734,10 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     libraryDependencies ++= Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JUnit 5 test dependencies
-      "org.junit.jupiter" % "junit-jupiter-api" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-engine" % "5.8.2" % "test",
-      "org.junit.jupiter" % "junit-jupiter-params" % "5.8.2" % "test",
-      "net.aichler" % "jupiter-interface" % "0.11.1" % "test",
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
       // Lombok for generating boilerplate code
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
@@ -794,7 +794,7 @@ lazy val sharing = (project in file("sharing"))
     libraryDependencies ++= Seq(
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "provided",
 
-      "io.delta" %% "delta-sharing-client" % "1.3.8",
+      "io.delta" %% "delta-sharing-client" % "1.3.9",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -844,8 +844,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
@@ -952,8 +952,8 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
@@ -1017,8 +1017,8 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()

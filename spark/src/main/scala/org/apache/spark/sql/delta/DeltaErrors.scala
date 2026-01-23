@@ -170,6 +170,29 @@ trait DeltaErrorsBase
     )
   }
 
+  def initialSnapshotTooLargeForStreaming(
+      snapshotVersion: Long,
+      numFiles: Long,
+      maxFiles: Int,
+      tablePath: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE",
+      messageParameters = Array(
+        tablePath,
+        snapshotVersion.toString,
+        numFiles.toString,
+        maxFiles.toString,
+        s"""To fix this issue, choose one of:
+           |
+           |  1. Increase spark.databricks.delta.streaming.initialSnapshotMaxFiles
+           |     (current: $maxFiles)
+           |
+           |  2. Use 'startingVersion' option to skip the initial snapshot and start
+           |     from a specific version""".stripMargin
+      )
+    )
+  }
+
   def deltaSourceIgnoreChangesError(
       version: Long,
       removedFile: String,
@@ -4039,47 +4062,32 @@ class ConcurrentTransactionException(message: String)
 
 /** A helper class in building a helpful error message in case of metadata mismatches. */
 class MetadataMismatchErrorBuilder {
-  private var bits: Seq[String] = Nil
+  private var subErrors: Seq[(String, Array[String])] = Nil
 
   def addSchemaMismatch(original: StructType, data: StructType, id: String): Unit = {
-    bits ++=
-      s"""A schema mismatch detected when writing to the Delta table (Table ID: $id).
-         |To enable schema migration using DataFrameWriter or DataStreamWriter, please set:
-         |'.option("${DeltaOptions.MERGE_SCHEMA_OPTION}", "true")'.
-         |For other operations, set the session configuration
-         |${DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key} to "true". See the documentation
-         |specific to the operation for details.
-         |
-         |Table schema:
-         |${DeltaErrors.formatSchema(original)}
-         |
-         |Data schema:
-         |${DeltaErrors.formatSchema(data)}
-         """.stripMargin :: Nil
+    subErrors :+= ("SCHEMA_MISMATCH", Array(
+      id,
+      DeltaErrors.formatSchema(original),
+      DeltaErrors.formatSchema(data)
+    ))
   }
 
   def addPartitioningMismatch(original: Seq[String], provided: Seq[String]): Unit = {
-    bits ++=
-      s"""Partition columns do not match the partition columns of the table.
-         |Given: ${DeltaErrors.formatColumnList(provided)}
-         |Table: ${DeltaErrors.formatColumnList(original)}
-         """.stripMargin :: Nil
+    subErrors :+= ("PARTITIONING_MISMATCH", Array(
+      DeltaErrors.formatColumnList(provided),
+      DeltaErrors.formatColumnList(original)
+    ))
   }
 
   def addOverwriteBit(): Unit = {
-    bits ++=
-      s"""To overwrite your schema or change partitioning, please set:
-         |'.option("${DeltaOptions.OVERWRITE_SCHEMA_OPTION}", "true")'.
-         |
-           |Note that the schema can't be overwritten when using
-         |'${DeltaOptions.REPLACE_WHERE_OPTION}'.
-         """.stripMargin :: Nil
+    subErrors :+= ("OVERWRITE_REQUIRED", Array.empty[String])
   }
 
   def finalizeAndThrow(conf: SQLConf): Unit = {
-    throw new DeltaAnalysisException(
-      errorClass = "_LEGACY_ERROR_TEMP_DELTA_0007",
-      messageParameters = Array(bits.mkString("\n"))
+    throw new DeltaAnalysisExceptionWithSubErrors(
+      errorClass = "DELTA_METADATA_MISMATCH",
+      messageParameters = Array.empty[String],
+      subErrors = subErrors
     )
   }
 }

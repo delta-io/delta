@@ -1474,7 +1474,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "instead.")
       .internal()
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK =
     buildConf("typeWidening.bypassStreamingTypeChangeCheck")
@@ -2027,7 +2027,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
            | range.
         """.stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2 =
     buildConf("changeColumn.checkDependentExpressionsUseV2")
@@ -2972,6 +2972,13 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .checkValues(Set("NONE", "STRICT"))
       .createWithDefault("NONE")
+
+  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
+    buildConf("streaming.initialSnapshotMaxFiles")
+      .internal()
+      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
+      .intConf
+      .createWithDefault(50000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
