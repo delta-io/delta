@@ -4,14 +4,10 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
-      - 'kernel/**'
-      - 'connectors/**'
   pull_request:
     paths-ignore:
       - '**.md'
       - '**.txt'
-      - 'kernel/**'
-      - 'connectors/**'
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)
