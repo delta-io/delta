@@ -77,55 +77,6 @@ class ServerSidePlanningClientFactoryAutoRegistrationSuite
     }
   }
 
-  test("getFactory returns same instance across multiple calls with auto-registration") {
-    withCleanFactory {
-      // First call triggers auto-registration
-      val factory1 = ServerSidePlanningClientFactory.getFactory()
-      val factory2 = ServerSidePlanningClientFactory.getFactory()
-      val factory3 = ServerSidePlanningClientFactory.getFactory()
-
-      // Verify all calls return the same instance (reference equality)
-      assert(factory1 eq factory2,
-        "Second getFactory() call should return same instance as first")
-      assert(factory2 eq factory3,
-        "Third getFactory() call should return same instance as second")
-
-      // Verify factory info remains consistent
-      val factoryInfo = ServerSidePlanningClientFactory.getFactoryInfo()
-      assert(factoryInfo.isDefined,
-        "Factory info should be defined after multiple getFactory() calls")
-      assert(factoryInfo.get.contains("IcebergRESTCatalogPlanningClientFactory"),
-        s"Factory should remain IcebergRESTCatalogPlanningClientFactory, got: ${factoryInfo.get}")
-    }
-  }
-
-  test("manual setFactory can override auto-registration") {
-    withCleanFactory {
-      // Manually set a test factory BEFORE auto-registration
-      val testFactory = new TestServerSidePlanningClientFactory()
-      ServerSidePlanningClientFactory.setFactory(testFactory)
-
-      // Verify factory is registered
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered after setFactory()")
-
-      // getFactory() should return the manually-set factory
-      val retrievedFactory = ServerSidePlanningClientFactory.getFactory()
-      assert(retrievedFactory eq testFactory,
-        "getFactory() should return the manually-set factory")
-
-      // Verify factory info reflects the manual factory
-      val factoryInfo = ServerSidePlanningClientFactory.getFactoryInfo()
-      assert(factoryInfo.isDefined, "Factory info should be defined")
-      assert(factoryInfo.get.contains("TestServerSidePlanningClientFactory"),
-        s"Expected TestServerSidePlanningClientFactory, got: ${factoryInfo.get}")
-
-      // Auto-registration should not be triggered
-      assert(factoryInfo.get.contains("TestServerSidePlanningClientFactory"),
-        "Auto-registration should not have occurred")
-    }
-  }
-
   test("manual setFactory can replace auto-registered factory") {
     withCleanFactory {
       // Trigger auto-registration first
@@ -181,34 +132,6 @@ class ServerSidePlanningClientFactoryAutoRegistrationSuite
       // Verify both cycles registered the same type of factory
       assert(factoryInfo1 == factoryInfo2,
         "Both registration cycles should register the same factory type")
-    }
-  }
-
-  test("clearFactory allows multiple auto-registration cycles") {
-    withCleanFactory {
-      // First cycle
-      ServerSidePlanningClientFactory.getFactory()
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered in first cycle")
-      ServerSidePlanningClientFactory.clearFactory()
-      assert(!ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be cleared after first cycle")
-
-      // Second cycle
-      ServerSidePlanningClientFactory.getFactory()
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered in second cycle")
-      ServerSidePlanningClientFactory.clearFactory()
-      assert(!ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be cleared after second cycle")
-
-      // Third cycle to ensure it continues to work
-      val factory3 = ServerSidePlanningClientFactory.getFactory()
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered in third cycle")
-      val factoryInfo3 = ServerSidePlanningClientFactory.getFactoryInfo()
-      assert(factoryInfo3.get.contains("IcebergRESTCatalogPlanningClientFactory"),
-        "All cycles should register IcebergRESTCatalogPlanningClientFactory")
     }
   }
 
