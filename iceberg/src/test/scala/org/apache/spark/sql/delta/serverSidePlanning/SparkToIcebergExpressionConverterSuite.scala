@@ -636,7 +636,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("filters with unsupported value types return None") {
-    // Define unsupported value types to test
+    // Define unsupported types for which conversion must fail
     val unsupportedTypes = Seq(
       (Array(1, 2, 3), "Array"),
       (Map("key" -> 1), "Map"),
@@ -646,7 +646,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (5.toShort, "Short")
     )
 
-    // Define operators that should reject unsupported types
+    // Define operators that must reject unsupported types
     val operators = Seq(
       ("EqualTo", (col: String, v: Any) => EqualTo(col, v)),
       ("LessThan", (col: String, v: Any) => LessThan(col, v)),
@@ -660,9 +660,9 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       (value, typeDesc) <- unsupportedTypes
       (opName, sparkOp) <- operators
     } yield ExprConvTestCase(
-      s"$opName with $typeDesc",
-      sparkOp("intCol", value),
-      None
+      s"$opName with $typeDesc should be unsupported", // Test case label
+      sparkOp("intCol", value), // Spark filter builder
+      None // Iceberg expression builder
     )
 
     // Boolean with comparison operators (supportBoolean=false for these)
