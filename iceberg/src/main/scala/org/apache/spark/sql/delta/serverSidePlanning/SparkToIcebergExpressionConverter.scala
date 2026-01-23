@@ -159,10 +159,13 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
    * @param supportBoolean if true, also handles Boolean type.
    *        Note: Comparison operators (LessThan, GreaterThan, etc.) don't support Boolean.
    *        Only equality operators (EqualTo, NotEqualTo) should set this to true.
+   * @throws IllegalArgumentException if the value is an unsupported type (complex types,
+   *         unknown types, or Boolean when supportBoolean=false)
    */
   private[serverSidePlanning] def toIcebergValue(
       value: Any,
-      supportBoolean: Boolean = false): Any = value match {
+      supportBoolean: Boolean = false): Any = {
+    value match {
     // Date/Timestamp conversion (semantic change) because
     // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
     case v: java.sql.Date =>
@@ -188,7 +191,10 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     case v: java.math.BigDecimal => v
     case v: String => v
     case v: Boolean if supportBoolean => v: java.lang.Boolean
-    case _ => value
+    case _ =>
+      throw new IllegalArgumentException(
+        s"Unsupported type for Iceberg filter pushdown: ${value.getClass.getName}")
+    }
   }
 
   /*
