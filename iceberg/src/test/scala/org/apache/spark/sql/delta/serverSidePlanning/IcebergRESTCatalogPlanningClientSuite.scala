@@ -202,7 +202,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           (And(EqualTo("longCol", 2L), EqualTo("stringCol", "bob")), "And"),
           (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
           (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
-          (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
+          (EqualTo("parent.child.name", "child_1"), "EqualTo on nested field with dotted name"),
           (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field"))
 
         testCases.foreach { case (filter, description) =>
@@ -273,13 +273,17 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
         // Nested field projections - test dot-notation string handling
         ProjectionTestCase(
-          "individual nested field",
+          "nested field access",
           Seq("address.intCol"),
           Set("address.intCol")),
         ProjectionTestCase(
-          "multiple nested fields",
-          Seq("address.intCol", "metadata.stringCol"),
-          Set("address.intCol", "metadata.stringCol"))
+          "nested field with dots in name - requires escaping",
+          Seq("parent.`child.name`"),
+          Set("parent.`child.name`")),
+        ProjectionTestCase(
+          "literal dotted column name - requires escaping",
+          Seq("`address.city`"),
+          Set("`address.city`"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -606,19 +610,10 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         BigDecimal(i).bigDecimal, // decimalCol
         java.sql.Date.valueOf("2024-01-01"), // dateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
-        Row(i * 100), // address.intCol (nested)
-        Row(s"meta_$i"), // metadata.stringCol (nested)
-        // Literal column names with dots (fields 12-21)
-        i * 1000, // id
-        s"city_$i", // address.city
-        s"abc_$i", // a.b.c
-        i * 10, // location.state
-        i.toLong * 20, // person.age
-        i * 5.5, // data.value
-        i * 3.14, // user.score
-        s"user$i@example.com", // user.email
-        s"user_$i", // user.name
-        s"work_city_$i" // work.city
+        Row(i * 100), // address.intCol (nested struct)
+        Row(s"child_$i"), // parent.`child.name` (nested struct with dotted field name)
+        s"city_$i", // address.city (literal top-level dotted column)
+        s"value_$i" // a.b.c (literal top-level dotted column)
       ))
 
     spark.createDataFrame(data, TestSchemas.sparkSchema)

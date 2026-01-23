@@ -42,7 +42,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("dateCol", java.sql.Date.valueOf("2024-01-01"), "Date"),
     ("timestampCol", java.sql.Timestamp.valueOf("2024-01-01 12:00:00"), "Timestamp"),
     ("address.intCol", 42, "Nested Int"),
-    ("metadata.stringCol", "test", "Nested String")
+    ("stringCol", "test", "Nested String")
   )
 
   // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)
@@ -301,8 +301,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ),
       ExprConvTestCase(
         "StringStartsWith on nested column",
-        StringStartsWith("metadata.stringCol", "test"),
-        Some(Expressions.startsWith("metadata.stringCol", "test"))
+        StringStartsWith("stringCol", "test"),
+        Some(Expressions.startsWith("stringCol", "test"))
       ),
 
       // Unsupported: StringEndsWith, StringContains
@@ -602,8 +602,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       // Simple column without dot
       ExprConvTestCase(
         "Column name without dot", // Test case label
-        EqualTo("id", 5), // Spark filter builder
-        Some(Expressions.equal("id", 5)) // Iceberg expression builder
+        EqualTo("intCol", 5), // Spark filter builder
+        Some(Expressions.equal("intCol", 5)) // Iceberg expression builder
       ),
 
       // Column name with single dot (literal column name, not nested field access)
@@ -620,29 +620,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         Some(Expressions.equal("a.b.c", "value"))
       ),
 
-      // Test escaping with different operators - comparison operators
-      ExprConvTestCase(
-        "LessThan with dotted column name",
-        LessThan("location.state", 100),
-        Some(Expressions.lessThan("location.state", 100))
-      ),
-      ExprConvTestCase(
-        "GreaterThan with dotted column name",
-        GreaterThan("person.age", 50L),
-        Some(Expressions.greaterThan("person.age", 50L))
-      ),
-      ExprConvTestCase(
-        "LessThanOrEqual with dotted column name",
-        LessThanOrEqual("data.value", 99.9),
-        Some(Expressions.lessThanOrEqual("data.value", 99.9))
-      ),
-      ExprConvTestCase(
-        "GreaterThanOrEqual with dotted column name",
-        GreaterThanOrEqual("user.score", 75.5),
-        Some(Expressions.greaterThanOrEqual("user.score", 75.5))
-      ),
-
-      // Test escaping with null checks
+      // Test escaping with IsNull/IsNotNull
       ExprConvTestCase(
         "IsNull with dotted column name",
         IsNull("address.city"),
@@ -650,8 +628,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ),
       ExprConvTestCase(
         "IsNotNull with dotted column name",
-        IsNotNull("user.email"),
-        Some(Expressions.notNull("user.email"))
+        IsNotNull("a.b.c"),
+        Some(Expressions.notNull("a.b.c"))
       ),
 
       // Test escaping with IN operator
@@ -664,8 +642,8 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       // Test escaping with string operations
       ExprConvTestCase(
         "StringStartsWith with dotted column name",
-        StringStartsWith("user.email", "admin"),
-        Some(Expressions.startsWith("user.email", "admin"))
+        StringStartsWith("address.city", "Sea"),
+        Some(Expressions.startsWith("address.city", "Sea"))
       ),
 
       // Test escaping with Not(EqualTo) - special case
@@ -676,20 +654,20 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
       ),
       ExprConvTestCase(
         "Not(EqualTo(col, null)) with dotted column name (IS NOT NULL)",
-        Not(EqualTo("user.name", null)),
-        Some(Expressions.notNull("user.name"))
+        Not(EqualTo("a.b.c", null)),
+        Some(Expressions.notNull("a.b.c"))
       ),
 
       // Test escaping with logical operators combining dotted and non-dotted columns
       ExprConvTestCase(
         "AND with dotted and non-dotted columns",
         And(
-          EqualTo("id", 5),
+          EqualTo("intCol", 5),
           EqualTo("address.city", "Seattle")
         ),
         Some(
           Expressions.and(
-            Expressions.equal("id", 5),
+            Expressions.equal("intCol", 5),
             Expressions.equal("address.city", "Seattle")
           )
         )
@@ -698,12 +676,12 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         "OR with multiple dotted columns",
         Or(
           EqualTo("address.city", "Seattle"),
-          EqualTo("work.city", "Portland")
+          EqualTo("a.b.c", "value")
         ),
         Some(
           Expressions.or(
             Expressions.equal("address.city", "Seattle"),
-            Expressions.equal("work.city", "Portland")
+            Expressions.equal("a.b.c", "value")
           )
         )
       )

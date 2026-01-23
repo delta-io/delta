@@ -26,12 +26,11 @@ private[serverSidePlanning] object TestSchemas {
    * Structure:
    * - Flat fields (9 types): intCol, longCol, doubleCol, floatCol, stringCol, boolCol,
    *                          decimalCol, dateCol, timestampCol
-   * - Nested examples (to verify dot-notation pass-through):
-   *   - address.intCol (numeric nested example)
-   *   - metadata.stringCol (non-numeric nested example)
-   * - Literal column names with dots (IDs 12-20): Test escaping of dots in column names
-   *   - id, address.city, a.b.c, location.state, person.age, data.value,
-   *     user.score, user.email, user.name, work.city
+   * - Nested struct (ID 10): address with intCol - tests nested field access
+   * - Nested struct with dotted field (ID 11): parent with "child.name" - tests escaping at
+   *   nested level
+   * - Literal top-level dotted columns (IDs 12-13): address.city, a.b.c - tests top-level
+   *   escaping
    */
   val testSchema = new Schema(
     // Flat fields (IDs 1-9)
@@ -45,27 +44,20 @@ private[serverSidePlanning] object TestSchemas {
     Types.NestedField.required(8, "dateCol", Types.DateType.get),
     Types.NestedField.required(9, "timestampCol", Types.TimestampType.withoutZone),
 
-    // Nested examples (IDs 10-11)
+    // Nested struct for testing nested field access (ID 10)
     Types.NestedField.required(10, "address", Types.StructType.of(
       Types.NestedField.required(101, "intCol", Types.IntegerType.get)
     )),
 
-    Types.NestedField.required(11, "metadata", Types.StructType.of(
-      Types.NestedField.required(111, "stringCol", Types.StringType.get)
+    // Nested struct with field that has dots in its name (ID 11)
+    // Tests escaping at nested level: parent.`child.name`
+    Types.NestedField.required(11, "parent", Types.StructType.of(
+      Types.NestedField.required(111, "child.name", Types.StringType.get)
     )),
 
-    // Literal column names with dots (IDs 12-21) - Test escaping
-    // These are different from the nested struct fields above to avoid conflicts
-    Types.NestedField.required(12, "id", Types.IntegerType.get),
-    Types.NestedField.required(13, "address.city", Types.StringType.get),
-    Types.NestedField.required(14, "a.b.c", Types.StringType.get),
-    Types.NestedField.required(15, "location.state", Types.IntegerType.get),
-    Types.NestedField.required(16, "person.age", Types.LongType.get),
-    Types.NestedField.required(17, "data.value", Types.DoubleType.get),
-    Types.NestedField.required(18, "user.score", Types.DoubleType.get),
-    Types.NestedField.required(19, "user.email", Types.StringType.get),
-    Types.NestedField.required(20, "user.name", Types.StringType.get),
-    Types.NestedField.required(21, "work.city", Types.StringType.get)
+    // Literal top-level column names with dots (IDs 12-13) - Test escaping
+    Types.NestedField.required(12, "address.city", Types.StringType.get),
+    Types.NestedField.required(13, "a.b.c", Types.StringType.get)
   )
 
   /**
@@ -82,23 +74,18 @@ private[serverSidePlanning] object TestSchemas {
     StructField("decimalCol", DecimalType(10, 2), nullable = false),
     StructField("dateCol", DateType, nullable = false),
     StructField("timestampCol", TimestampType, nullable = false),
+    // Nested struct for testing nested field access
     StructField("address", StructType(Seq(
       StructField("intCol", IntegerType, nullable = false)
     )), nullable = false),
-    StructField("metadata", StructType(Seq(
-      StructField("stringCol", StringType, nullable = false)
+    // Nested struct with field that has dots in its name
+    // Tests escaping at nested level: parent.`child.name`
+    StructField("parent", StructType(Seq(
+      StructField("child.name", StringType, nullable = false)
     )), nullable = false),
-    // Literal column names with dots - Test escaping
-    StructField("id", IntegerType, nullable = false),
+    // Literal top-level column names with dots - Test escaping
     StructField("address.city", StringType, nullable = false),
-    StructField("a.b.c", StringType, nullable = false),
-    StructField("location.state", IntegerType, nullable = false),
-    StructField("person.age", LongType, nullable = false),
-    StructField("data.value", DoubleType, nullable = false),
-    StructField("user.score", DoubleType, nullable = false),
-    StructField("user.email", StringType, nullable = false),
-    StructField("user.name", StringType, nullable = false),
-    StructField("work.city", StringType, nullable = false)
+    StructField("a.b.c", StringType, nullable = false)
   ))
 }
 

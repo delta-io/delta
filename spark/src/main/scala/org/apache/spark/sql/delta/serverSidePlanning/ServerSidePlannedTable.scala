@@ -299,7 +299,7 @@ class ServerSidePlannedScan(
    * Recursively flatten a StructType into dot-notation field paths with proper escaping.
    *
    * @param schema The schema to flatten
-   * @param tableSchema The full table schema for checking if field names are literal
+   * @param tableSchema The full table schema (unused, kept for future use)
    * @param prefix The current path prefix (e.g., "address")
    * @return Sequence of flattened field paths
    */
@@ -310,29 +310,26 @@ class ServerSidePlannedScan(
     schema.fields.flatMap { field =>
       val fieldName = field.name
 
-      // Check if this field name contains dots (potential literal column name)
-      if (fieldName.contains(".") && prefix.isEmpty) {
-        // Top-level field with dots in name -> it's a literal, escape it
-        field.dataType match {
-          case nested: StructType =>
-            // Literal dotted column that is also a struct -> recurse with escaped prefix
-            flattenSchema(nested, tableSchema, s"`$fieldName`")
-          case _ =>
-            // Leaf literal dotted column -> escape it
-            Seq(s"`$fieldName`")
-        }
+      // If field name contains dots, it's a literal field name at this level
+      // (schema.fields iteration only returns actual field names)
+      // Escape it to disambiguate from nested access
+      val escapedFieldName = if (fieldName.contains(".")) {
+        s"`$fieldName`"
       } else {
-        // Normal field name (no dots) or nested field
-        val fullPath = if (prefix.isEmpty) fieldName else s"$prefix.$fieldName"
+        fieldName
+      }
 
-        field.dataType match {
-          case nested: StructType =>
-            // Struct field -> recurse to flatten nested fields
-            flattenSchema(nested, tableSchema, fullPath)
-          case _ =>
-            // Leaf field -> return the full path
-            Seq(fullPath)
-        }
+      // Build the full path
+      val fullPath = if (prefix.isEmpty) escapedFieldName else s"$prefix.$escapedFieldName"
+
+      // Recurse if this is a struct
+      field.dataType match {
+        case nested: StructType =>
+          // Struct field -> recurse to flatten nested fields
+          flattenSchema(nested, tableSchema, fullPath)
+        case _ =>
+          // Leaf field -> return the full path
+          Seq(fullPath)
       }
     }.toSeq
   }
