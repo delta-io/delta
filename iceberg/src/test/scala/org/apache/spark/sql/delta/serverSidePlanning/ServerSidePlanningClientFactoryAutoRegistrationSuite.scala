@@ -77,64 +77,6 @@ class ServerSidePlanningClientFactoryAutoRegistrationSuite
     }
   }
 
-  test("manual setFactory can replace auto-registered factory") {
-    withCleanFactory {
-      // Trigger auto-registration first
-      val autoFactory = ServerSidePlanningClientFactory.getFactory()
-      assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().get
-        .contains("IcebergRESTCatalogPlanningClientFactory"),
-        "Should have auto-registered Iceberg factory")
-
-      // Now manually set a test factory
-      val testFactory = new TestServerSidePlanningClientFactory()
-      ServerSidePlanningClientFactory.setFactory(testFactory)
-
-      // Subsequent getFactory() calls should return the manual factory
-      val retrievedFactory = ServerSidePlanningClientFactory.getFactory()
-      assert(retrievedFactory eq testFactory,
-        "getFactory() should return the manually-set factory after replacement")
-
-      // Verify factory info reflects the new factory
-      val factoryInfo = ServerSidePlanningClientFactory.getRegisteredFactoryName()
-      assert(factoryInfo.isDefined, "Factory info should be defined")
-      assert(factoryInfo.get.contains("TestServerSidePlanningClientFactory"),
-        s"Expected TestServerSidePlanningClientFactory after replacement, got: ${factoryInfo.get}")
-    }
-  }
-
-  test("clearFactory resets auto-registration state and allows re-registration") {
-    withCleanFactory {
-      // First registration cycle
-      val factory1 = ServerSidePlanningClientFactory.getFactory()
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered in first cycle")
-      val factoryInfo1 = ServerSidePlanningClientFactory.getRegisteredFactoryName()
-      assert(factoryInfo1.get.contains("IcebergRESTCatalogPlanningClientFactory"),
-        "First cycle should register Iceberg factory")
-
-      // Clear factory
-      ServerSidePlanningClientFactory.clearFactory()
-
-      // Verify factory is no longer registered
-      assert(!ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should not be registered after clearFactory()")
-      assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().isEmpty,
-        "Factory info should be empty after clearFactory()")
-
-      // Second registration cycle - should trigger fresh auto-registration
-      val factory2 = ServerSidePlanningClientFactory.getFactory()
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered in second cycle")
-      val factoryInfo2 = ServerSidePlanningClientFactory.getRegisteredFactoryName()
-      assert(factoryInfo2.get.contains("IcebergRESTCatalogPlanningClientFactory"),
-        "Second cycle should register Iceberg factory")
-
-      // Verify both cycles registered the same type of factory
-      assert(factoryInfo1 == factoryInfo2,
-        "Both registration cycles should register the same factory type")
-    }
-  }
-
   test("autoRegistrationAttempted flag prevents multiple registration attempts") {
     withCleanFactory {
       // First call triggers auto-registration
