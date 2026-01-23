@@ -163,7 +163,9 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
       value: Any,
       supportBoolean: Boolean = false): Any = {
     value match {
-      case v: java.sql.Date =>
+    // Date/Timestamp conversion (semantic change) because
+    // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
+    case v: java.sql.Date =>
       // Iceberg expects days since epoch (1970-01-01) as Int
       DateTimeUtils.fromJavaDate(v): Integer
     case v: java.sql.Timestamp =>
