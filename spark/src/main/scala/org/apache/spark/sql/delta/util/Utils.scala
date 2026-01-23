@@ -20,7 +20,6 @@ import scala.util.Random
 
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.actions.Metadata
-
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.{functions, Column, Dataset}
