@@ -105,19 +105,11 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
   )
 
   /**
-   * Actions that can be performed on the factory.
-   */
-  private sealed trait FactoryAction
-  private case object TriggerAutoRegistration extends FactoryAction
-  private case object SetManualFactory extends FactoryAction
-  private case object ClearFactory extends FactoryAction
-
-  /**
    * Test case for factory registration scenarios.
    */
   private case class FactoryRegistrationTestCase(
     description: String,
-    registrationSequence: Seq[FactoryAction],
+    registrationSequence: Seq[() => Unit],
     expectedFinalFactory: String,
     additionalVerification: Option[() => Unit] = None
   )
@@ -130,18 +122,6 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
     initialSetup: () => Unit,
     verifyCleared: () => Unit
   )
-
-  // ========== Helper Methods ==========
-
-  /**
-   * Execute a factory action.
-   */
-  private def executeFactoryAction(action: FactoryAction): Unit = action match {
-    case TriggerAutoRegistration => ServerSidePlanningClientFactory.getFactory()
-    case SetManualFactory =>
-      ServerSidePlanningClientFactory.setFactory(new TestServerSidePlanningClientFactory())
-    case ClearFactory => ServerSidePlanningClientFactory.clearFactory()
-  }
 
   // ========== Test Data ==========
 
@@ -179,12 +159,13 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
   private val registrationTestCases = Seq(
     FactoryRegistrationTestCase(
       "auto-registration succeeds",
-      registrationSequence = Seq(TriggerAutoRegistration),
+      registrationSequence = Seq(() => ServerSidePlanningClientFactory.getFactory()),
       expectedFinalFactory = "IcebergRESTCatalogPlanningClientFactory"
     ),
     FactoryRegistrationTestCase(
       "manual factory overrides auto-registration",
-      registrationSequence = Seq(SetManualFactory),
+      registrationSequence = Seq(() => ServerSidePlanningClientFactory.setFactory(
+        new TestServerSidePlanningClientFactory())),
       expectedFinalFactory = "TestServerSidePlanningClientFactory",
       additionalVerification = Some(() => {
         // Verify auto-registration was NOT triggered
@@ -195,7 +176,10 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
     ),
     FactoryRegistrationTestCase(
       "manual factory replaces auto-registered factory",
-      registrationSequence = Seq(TriggerAutoRegistration, SetManualFactory),
+      registrationSequence = Seq(
+        () => ServerSidePlanningClientFactory.getFactory(),
+        () => ServerSidePlanningClientFactory.setFactory(
+          new TestServerSidePlanningClientFactory())),
       expectedFinalFactory = "TestServerSidePlanningClientFactory"
     )
   )
@@ -269,7 +253,7 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
     registrationTestCases.foreach { testCase =>
       withCleanFactory {
         // Execute registration sequence
-        testCase.registrationSequence.foreach(executeFactoryAction)
+        testCase.registrationSequence.foreach(_())
 
         // Verify final state
         val factoryInfo = ServerSidePlanningClientFactory.getFactoryInfo()
