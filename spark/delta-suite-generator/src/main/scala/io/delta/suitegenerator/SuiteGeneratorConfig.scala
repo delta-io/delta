@@ -115,6 +115,35 @@ case class TestGroup(
 )
 
 object SuiteGeneratorConfig {
+  /**
+   * Common import patterns reused across test groups.
+   */
+  private object Imports {
+    // Base DML imports used by nearly all test groups
+    val BASE_DML: List[Importer] = List(
+      importer"org.apache.spark.sql.delta._",
+      importer"org.apache.spark.sql.delta.dml.delete._",
+      importer"org.apache.spark.sql.delta.dml.merge._",
+      importer"org.apache.spark.sql.delta.dml.update._"
+    )
+
+    // Common test imports - BASE_DML plus frequently used packages
+    val COMMON_TEST: List[Importer] = BASE_DML ++ List(
+      importer"org.apache.spark.sql.delta.cdc._",
+      importer"org.apache.spark.sql.delta.columnmapping._",
+      importer"org.apache.spark.sql.delta.deletionvectors._",
+      importer"org.apache.spark.sql.delta.rowid._",
+      importer"org.apache.spark.sql.delta.rowtracking._"
+    )
+
+    // Additional imports that can be added to the common sets
+    val MST = importer"org.apache.spark.sql.delta.mst._"
+    val STATS = importer"org.apache.spark.sql.delta.stats._"
+    val STORAGE_DV = importer"org.apache.spark.sql.delta.storage.dv._"
+    val CONCURRENCY = importer"org.apache.spark.sql.delta.concurrency._"
+    val DML = importer"org.apache.spark.sql.delta.dml._"
+  }
+
   private object Dims {
     // Just to improve readability of the test configurations a bit.
     // `Dims.NONE` is clearer than just `Nil`.
@@ -355,9 +384,7 @@ object SuiteGeneratorConfig {
     ),
     TestGroup(
       name = "InsertSuites",
-      imports = List(
-        importer"org.apache.spark.sql.delta._"
-      ),
+      imports = Imports.BASE_DML,
       testConfigs = List(
         TestConfig(
           List("DeltaInsertIntoImplicitCastTests", "DeltaInsertIntoImplicitCastStreamingWriteTests"),

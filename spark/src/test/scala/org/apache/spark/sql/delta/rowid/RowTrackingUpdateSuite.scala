@@ -18,6 +18,10 @@ package org.apache.spark.sql.delta.rowid
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.rowtracking.RowTrackingEnabled
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
