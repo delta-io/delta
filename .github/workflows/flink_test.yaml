@@ -15,8 +15,6 @@ jobs:
   test:
     name: "DF"
     runs-on: ubuntu-24.04
-    env:
-      TEST_PARALLELISM_COUNT: 4
     steps:
       - name: Show runner specs
         run: |

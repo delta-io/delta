@@ -64,9 +64,6 @@ val internalModuleNames = settingKey[Set[String]]("Internal module artifact name
 // For more information see CrossSparkVersions.scala
 val sparkVersion = settingKey[String]("Spark version")
 
-// Flink version to delta-flink and its dependent modules
-val flinkVersion = settingKey[String]("Flink version")
-
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
 val hadoopVersion = "3.4.2"
@@ -75,6 +72,7 @@ val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val flinkVersion = "2.0.1"
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -1390,12 +1388,12 @@ lazy val flink = (project in file("flink"))
   .dependsOn(kernelUnityCatalog)
   .settings(
     name := "delta-flink",
-    flinkVersion := "1.20.3",
     commonSettings,
+    skipReleaseSettings,
     javafmtCheckSettings(),
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
-    assembly / assemblyJarName := s"delta-flink-${flinkVersion.value}-${version.value}.jar",
+    assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
     assembly / assemblyMergeStrategy := {
       // Discard module-info.class files from Java 9+ modules and multi-release JARs
       case "module-info.class" => MergeStrategy.discard
@@ -1425,23 +1423,23 @@ lazy val flink = (project in file("flink"))
     ),
     crossPaths := false,
     libraryDependencies ++= Seq(
-      "org.apache.flink" % "flink-core" % flinkVersion.value % "provided",
-      "org.apache.flink" % "flink-table-common" % flinkVersion.value % "provided",
-      "org.apache.flink" % "flink-streaming-java" % flinkVersion.value % "provided",
-      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion.value % "provided",
+      "org.apache.flink" % "flink-core" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % "provided",
       "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
       "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
 
-      "org.apache.flink" % "flink-test-utils" % flinkVersion.value % "test",
+      "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
       "org.scalatest" %% "scalatest" % "3.2.19" % "test",
-      "org.apache.flink" % "flink-clients" % flinkVersion.value % "test",
-      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion.value % Test,
-      "org.apache.flink" % "flink-table-planner-loader" % flinkVersion.value % Test,
-      "org.apache.flink" % "flink-table-runtime" % flinkVersion.value % Test,
-      "org.apache.flink" % "flink-test-utils-junit" % flinkVersion.value % Test,
+      "org.apache.flink" % "flink-clients" % flinkVersion % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % flinkVersion % Test,
+      "org.apache.flink" % "flink-table-runtime" % flinkVersion % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % flinkVersion  % Test,
       "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
       "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
     )
