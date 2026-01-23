@@ -75,7 +75,7 @@ public class TableSetup {
   }
 
   public TableSetup setTableProperties(String... tableProperties) {
-    this.tableProperties = Arrays.asList(tableProperties);
+    this.tableProperties = new ArrayList<>(Arrays.asList(tableProperties));
     return this;
   }
 
