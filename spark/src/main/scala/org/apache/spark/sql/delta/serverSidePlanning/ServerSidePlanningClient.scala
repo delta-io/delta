@@ -152,16 +152,8 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
     }
   }
 
-  /**
-   * Check if a factory is currently registered (either via ServiceLoader or setFactory()).
-   * Useful for testing or conditional logic.
-   */
   def isFactoryRegistered(): Boolean = registeredFactory.isDefined
 
-  /**
-   * Get information about the currently registered factory for debugging/logging.
-   * Returns None if no factory is registered.
-   */
   def getFactoryInfo(): Option[String] = registeredFactory.map(_.getClass.getName)
 
   /**
