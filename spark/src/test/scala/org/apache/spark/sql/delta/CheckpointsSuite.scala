@@ -1053,8 +1053,10 @@ class CheckpointsSuite
       val checkpointStatsJson = spark.read.format("parquet").load(checkpointFile.toString)
         .filter(col("add").isNotNull)
         .selectExpr(
-          s"get_json_object(add.stats, '$$.minValues.$variantColumnName')",
-          s"get_json_object(add.stats, '$$.maxValues.$variantColumnName')").collect().head
+          s"get_json_object(add.stats, '$$.minValues.v')",
+          s"get_json_object(add.stats, '$$.maxValues.v')",
+          s"get_json_object(add.stats, '$$.minValues.nv.v')",
+          s"get_json_object(add.stats, '$$.maxValues.nv.v')").collect().head
 
       // Manually decode Z85 to validate encoding
       val decodedMinTopLevel = Codec.Base85Codec.decodeBytes(
@@ -1064,7 +1066,7 @@ class CheckpointsSuite
       val minValueTopLevel = decodedMinTopLevel
         .slice(minMetadataSizeTopLevel, decodedMinTopLevel.length)
       val minVariantTopLevel = new Variant(minValueTopLevel, decodedMinTopLevel)
-      val expectedMinTopLevel = minVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
+      val actualMinTopLevel = minVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
 
       val decodedMaxTopLevel = Codec.Base85Codec.decodeBytes(
         checkpointStatsJson.getString(1),
@@ -1073,11 +1075,34 @@ class CheckpointsSuite
       val maxValueTopLevel =
         decodedMaxTopLevel.slice(maxMetadataSizeTopLevel, decodedMaxTopLevel.length)
       val maxVariantTopLevel = new Variant(maxValueTopLevel, decodedMaxTopLevel)
-      val expectedMaxTopLevel = maxVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
+      val actualMaxTopLevel = maxVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
 
       // Verify decoded values contain expected data
-      assert(expectedMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
-      assert(expectedMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
+      assert(actualMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
+      assert(actualMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
+
+      // Manually decode Z85 to validate encoding
+      val decodedMinNested = Codec.Base85Codec.decodeBytes(
+        checkpointStatsJson.getString(2),
+        checkpointStatsJson.getString(2).length)
+      val minMetadataSizeNested = DeltaVariantUtil.metadataSize(decodedMinNested)
+      val minValueNested = decodedMinNested
+        .slice(minMetadataSizeTopLevel, decodedMinNested.length)
+      val minVariantNested = new Variant(minValueNested, decodedMinNested)
+      val actualMinNested = minVariantNested.toJson(java.time.ZoneId.of("UTC"))
+
+      val decodedMaxNested = Codec.Base85Codec.decodeBytes(
+        checkpointStatsJson.getString(3),
+        checkpointStatsJson.getString(3).length)
+      val maxMetadataSizeNested = DeltaVariantUtil.metadataSize(decodedMaxNested)
+      val maxValueNested =
+        decodedMaxNested.slice(maxMetadataSizeNested, decodedMaxNested.length)
+      val maxVariantNested = new Variant(maxValueNested, decodedMaxNested)
+      val actualMaxNested = maxVariantNested.toJson(java.time.ZoneId.of("UTC"))
+
+      // Verify decoded values contain expected data
+      assert(actualMinNested == """{"$['id']":10,"$['name']":"11"}""")
+      assert(actualMaxNested == """{"$['id']":19,"$['name']":"20"}""")
     }
   }
 }
