@@ -39,14 +39,14 @@ public final class UCUtils {
   private UCUtils() {}
 
   /**
-   * Extracts Unity Catalog table information from Spark catalog table metadata.
+   * Extracts Unity Catalog catalog-managed table information from Spark catalog table metadata.
    *
    * @param catalogTable Spark catalog table metadata
    * @param spark SparkSession for resolving Unity Catalog configurations
-   * @return table info if table is UC-managed, empty otherwise
+   * @return table info if table is catalog-managed, empty otherwise
    * @throws IllegalArgumentException if table is UC-managed but configuration is invalid
    */
-  public static Optional<UCTableInfo> extractTableInfo(
+  public static Optional<UCTableInfo> extractCatalogManagedTableInfo(
       CatalogTable catalogTable, SparkSession spark) {
     requireNonNull(catalogTable, "catalogTable is null");
     requireNonNull(spark, "spark is null");
