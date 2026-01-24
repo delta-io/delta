@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
+import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, DeltaVariantUtil}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -43,8 +43,10 @@ import org.apache.hadoop.util.Progressable
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
+import org.apache.spark.types.variant.{Variant, VariantUtil}
 
 class CheckpointsSuite
   extends QueryTest
@@ -1018,6 +1020,67 @@ class CheckpointsSuite
 
       }
       assert(filterUsageRecords(usageRecords2, "delta.log.cleanup").size > 0)
+    }
+  }
+
+  testDifferentCheckpoints("Ensure variant stats in checkpoint") { (policy, _) =>
+    withTempDir { tempDir =>
+      // Load golden table with variant stats (no checkpoint)
+      val source = new File("src/test/resources/delta/variant-stats-no-checkpoint-golden")
+      val target = new File(tempDir, "variant-stats-table")
+
+      // Copy the golden table to temp directory
+      FileUtils.copyDirectory(source, target)
+
+      val tablePath = target.getAbsolutePath
+
+      // Configure checkpoint policy
+      if (policy == CheckpointPolicy.V2) {
+        spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+          s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+      }
+
+      // Create a checkpoint
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val snapshot = deltaLog.update()
+      val variantColumnName = "v"
+
+      deltaLog.checkpoint(snapshot)
+      val checkpointFile = if (policy.needsV2CheckpointSupport) {
+        val provider = getV2CheckpointProvider(deltaLog)
+        provider.sidecarFileStatuses.head.getPath
+      } else {
+        FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version)
+      }
+
+      val checkpointStatsJson = spark.read.format("parquet").load(checkpointFile.toString)
+        .filter(col("add").isNotNull)
+        .selectExpr(
+          s"get_json_object(add.stats, '$$.minValues.$variantColumnName')",
+          s"get_json_object(add.stats, '$$.maxValues.$variantColumnName')").collect().head
+
+      // Manually decode Z85 to validate encoding
+      val decodedMinTopLevel = Codec.Base85Codec.decodeBytes(
+        checkpointStatsJson.getString(0),
+        checkpointStatsJson.getString(0).length)
+      val minMetadataSizeTopLevel = DeltaVariantUtil.metadataSize(decodedMinTopLevel)
+      val minValueTopLevel = decodedMinTopLevel
+        .slice(minMetadataSizeTopLevel, decodedMinTopLevel.length)
+      val minVariantTopLevel = new Variant(minValueTopLevel, decodedMinTopLevel)
+      val expectedMinTopLevel = minVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
+
+      val decodedMaxTopLevel = Codec.Base85Codec.decodeBytes(
+        checkpointStatsJson.getString(1),
+        checkpointStatsJson.getString(1).length)
+      val maxMetadataSizeTopLevel = DeltaVariantUtil.metadataSize(decodedMaxTopLevel)
+      val maxValueTopLevel =
+        decodedMaxTopLevel.slice(maxMetadataSizeTopLevel, decodedMaxTopLevel.length)
+      val maxVariantTopLevel = new Variant(maxValueTopLevel, decodedMaxTopLevel)
+      val expectedMaxTopLevel = maxVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
+
+      // Verify decoded values contain expected structure
+      assert(expectedMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
+      assert(expectedMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
     }
   }
 }
