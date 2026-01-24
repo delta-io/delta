@@ -1026,21 +1026,18 @@ class CheckpointsSuite
   testDifferentCheckpoints("Ensure variant stats in checkpoint") { (policy, _) =>
     withTempDir { tempDir =>
       // Load golden table with variant stats (no checkpoint)
-      val source = new File("src/test/resources/delta/variant-stats-no-checkpoint-golden")
+      val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
       val target = new File(tempDir, "variant-stats-table")
 
-      // Copy the golden table to temp directory
       FileUtils.copyDirectory(source, target)
 
       val tablePath = target.getAbsolutePath
 
-      // Configure checkpoint policy
       if (policy == CheckpointPolicy.V2) {
         spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
           s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
       }
 
-      // Create a checkpoint
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       val snapshot = deltaLog.update()
       val variantColumnName = "v"
@@ -1078,7 +1075,7 @@ class CheckpointsSuite
       val maxVariantTopLevel = new Variant(maxValueTopLevel, decodedMaxTopLevel)
       val expectedMaxTopLevel = maxVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
 
-      // Verify decoded values contain expected structure
+      // Verify decoded values contain expected data
       assert(expectedMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
       assert(expectedMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
     }
