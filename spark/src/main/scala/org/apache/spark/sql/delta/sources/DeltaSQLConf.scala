@@ -2972,8 +2972,8 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("v2.enableMode")
       .doc(
         "Controls the Delta connector enable mode. " +
-          "Valid values: NONE (disabled, default), AUTO (use sparkV2 for Unity Catalog " +
-          "managed tables), STRICT (should ONLY be enabled for testing).")
+          "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
+          "supported operations), STRICT (should ONLY be enabled for testing).")
       .stringConf
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("NONE")
