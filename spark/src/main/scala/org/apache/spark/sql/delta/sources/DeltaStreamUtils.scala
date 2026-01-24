@@ -65,8 +65,8 @@ object DeltaStreamUtils {
    * This class encapsulates various flags and settings that control how Delta streaming handles
    * schema changes and compatibility checks.
    *
-   * TODO(#5319): Clean up the configs were intended as escape-hatches for behavior changes if
-   * they aren't needed anymore.
+   * TODO(#5319): Clean up the configs that were intended as escape-hatches for behavior changes
+   * if they aren't needed anymore.
    *
    * @param allowUnsafeStreamingReadOnColumnMappingSchemaChanges
    *        Flag that allows user to force enable unsafe streaming read on Delta table with
@@ -109,7 +109,7 @@ object DeltaStreamUtils {
      * @param isStreamingFromColumnMappingTable Whether the source table has column mapping enabled.
      * @param isTypeWideningSupportedInProtocol Whether the table's protocol version supports
      *        type widening.
-     * @return A SchemaReadOptions instance containing all schema validation flags derived from
+     * @return A [[SchemaReadOptions]] instance containing all schema validation flags derived from
      *         the session configuration and provided table state.
      */
     def fromSparkSession(
@@ -170,8 +170,15 @@ object DeltaStreamUtils {
    * Validate schema compatibility between data schema and read schema. Checks for read
    * compatibility considering nullability, type widening, missing columns, and partition changes.
    *
-   * Returns whether the data schema is compatible, and if not, whether restarting the stream will
-   * allow processing data across the schema change.
+   * @param dataSchema The actual schema of the data
+   * @param readSchema The schema used by the reader to read data
+   * @param newPartitionColumns The partition columns for new metadata
+   * @param oldPartitionColumns The partition columns for old metadata
+   * @param backfilling Whether the check is triggered during backfilling (processing old data)
+   * @param readOptions Configuration options that control schema compatibility rules
+   *
+   * @return A [[SchemaCompatibilityResult]] on whether the data schema is compatible, and if not,
+   *         whether restarting the stream will allow processing data across the schema change.
    */
   def checkSchemaChangesWhenNoSchemaTracking(
       dataSchema: StructType,
@@ -201,7 +208,8 @@ object DeltaStreamUtils {
         readOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges && backfilling
     // When backfilling after a type change, allow processing the data using the new, wider
     // type.
-    val typeWideningModeForForwardIngestion = if (allowWideningTypeChanges && backfilling) {
+    // typeWideningMode when using `readSchema` to read `dataSchema`
+    val forwardTypeWideningMode = if (allowWideningTypeChanges && backfilling) {
       TypeWideningMode.AllTypeWidening
     } else {
       TypeWideningMode.NoTypeWidening
@@ -212,12 +220,13 @@ object DeltaStreamUtils {
       readSchema = readSchema,
       forbidTightenNullability = shouldForbidTightenNullability,
       allowMissingColumns = shouldAllowMissingColumns,
-      typeWideningMode = typeWideningModeForForwardIngestion,
+      typeWideningMode = forwardTypeWideningMode,
       newPartitionColumns = newPartitionColumns,
       oldPartitionColumns = oldPartitionColumns
     )) {
       // Check for widening type changes that would succeed on retry when we backfill batches.
-      val typeWideningModeForBackfill = if (allowWideningTypeChanges) {
+      // typeWideningMode when using `dataSchema` to read `readSchema`
+      val backwardTypeWideningMode = if (allowWideningTypeChanges) {
         TypeWideningMode.AllTypeWidening
       } else {
         TypeWideningMode.NoTypeWidening
@@ -234,7 +243,7 @@ object DeltaStreamUtils {
         existingSchema = readSchema,
         readSchema = dataSchema,
         forbidTightenNullability = shouldForbidTightenNullability,
-        typeWideningMode = typeWideningModeForBackfill
+        typeWideningMode = backwardTypeWideningMode
       )
       if (retryable) {
         SchemaCompatibilityResult.RetryableIncompatible

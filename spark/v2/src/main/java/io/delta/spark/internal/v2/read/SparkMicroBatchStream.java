@@ -198,15 +198,12 @@ public class SparkMicroBatchStream
             (Boolean)
                 spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
             "shouldValidateOffsets is null");
-    this.schemaReadOptions =
-        Objects.requireNonNull(constructSchemaReadOptions(), "schemaReadOptions is null");
     this.maxInitialSnapshotFiles =
         (Integer)
             spark
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
-  }
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
