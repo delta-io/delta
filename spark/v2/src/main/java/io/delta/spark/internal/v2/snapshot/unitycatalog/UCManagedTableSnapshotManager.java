@@ -60,7 +60,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   }
 
   /**
-   * Loads and returns the latest snapshot of the UC-managed Delta table.
+   * Loads and returns the latest snapshot of the catalog-managed Delta table.
    *
    * @return the latest snapshot of the table
    */
@@ -83,7 +83,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   /**
    * Finds the active commit at a specific timestamp.
    *
-   * <p>For UC-managed tables, this loads the latest snapshot and uses {@link
+   * <p>For catalog-managed tables, this loads the latest snapshot and uses {@link
    * DeltaHistoryManager#getActiveCommitAtTimestamp} to resolve the timestamp to a commit.
    *
    * @param timestampMillis the timestamp to find the version for in milliseconds since the unix
@@ -117,7 +117,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   /**
    * Checks if a specific version exists and is accessible.
    *
-   * <p>For UC-managed tables with catalogManaged, log files may be cleaned up, so we need to use
+   * <p>For catalog-managed tables with catalogManaged, log files may be cleaned up, so we need to use
    * DeltaHistoryManager to find the earliest available version based on filesystem state.
    *
    * @param version the version to check
@@ -132,7 +132,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
       throws VersionNotFoundException {
     // Load latest to get the current version bounds
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
-    // Latest version visible in this UC-managed snapshot.
+    // Latest version visible in this catalog-managed snapshot.
     long latestSnapshotVersion = snapshot.getVersion();
 
     // Fast path: check upper bound before expensive filesystem operations
