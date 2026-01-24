@@ -30,7 +30,6 @@ import java.math.BigDecimal;
 import java.sql.Date;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -255,7 +254,11 @@ public class DefaultJsonRow implements Row {
     if (dataType instanceof TimestampType) {
       throwIfTypeMismatch("timestamp", jsonValue.isTextual(), jsonValue);
       Instant time = OffsetDateTime.parse(jsonValue.textValue()).toInstant();
-      return ChronoUnit.MICROS.between(Instant.EPOCH, time);
+      // Don't use ChronoUnit.MICROS.between() - it computes (seconds * 1_000_000_000) / 1000,
+      // where the intermediate nanoseconds value overflows. We compute seconds * 1_000_000
+      // directly, which gives the same result without the overflow.
+      return Math.addExact(
+          Math.multiplyExact(time.getEpochSecond(), 1_000_000L), time.getNano() / 1000);
     }
 
     if (dataType instanceof TimestampNTZType) {
