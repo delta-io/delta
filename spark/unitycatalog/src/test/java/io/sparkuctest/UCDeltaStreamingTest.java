@@ -137,8 +137,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testStreamingReadFromTable(TableType tableType) throws Exception {
+    String uniqueTableName = "streaming_read_test_" + UUID.randomUUID().toString().replace("-", "");
     withNewTable(
-        "streaming_read_test",
+        uniqueTableName,
         "id BIGINT, value STRING",
         tableType,
         (tableName) -> {
@@ -185,11 +186,12 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               check(queryName, expected);
             }
           } finally {
-            // TODO: remove additional processAllAvailable once interrupt is handled gracefully
-            query.processAllAvailable();
-            query.stop();
-            query.awaitTermination();
-            assertFalse(query.isActive(), "Streaming query should have stopped");
+            if (query != null) {
+              query.processAllAvailable();
+              query.awaitTermination();
+              query.stop();
+              assertFalse(query.isActive(), "Streaming query should have stopped");
+            }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
             restoreV2Mode(spark, originalMode);
           }
