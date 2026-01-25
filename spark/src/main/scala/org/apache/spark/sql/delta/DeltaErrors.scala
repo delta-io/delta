@@ -3988,6 +3988,19 @@ class MetadataChangedException(message: String)
 
 /**
  * This class is kept for backward compatibility.
+ * Use [[io.delta.exceptions.ConcurrentDomainMetadataException]] instead.
+ */
+class ConcurrentDomainMetadataException(message: String)
+  extends io.delta.exceptions.DeltaConcurrentModificationException(message) {
+  def this(conflictingCommit: Option[CommitInfo], domain: String) = this(
+    DeltaErrors.concurrentModificationExceptionMsg(
+      SparkEnv.get.conf,
+      s"A conflicting metadata domain ${domain} is added.",
+      conflictingCommit))
+}
+
+/**
+ * This class is kept for backward compatibility.
  * Use [[io.delta.exceptions.ProtocolChangedException]] instead.
  */
 class ProtocolChangedException(message: String)
