@@ -1232,6 +1232,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(30)
 
+  val STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED =
+    buildConf("statsAsStructInCheckpoint.forcedDisabled")
+      .internal()
+      .doc("""
+          |Force disables storing statistics as struct in the checkpoint.
+          |Note that should only be used as a kill switch.
+          |This functionality should normally be controlled using the delta config
+          |'checkpoint.writeStatsAsStruct'.
+          |""".stripMargin)
+      .booleanConf
+      .createOptional
+
   val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
     buildConf("lastCheckpoint.sidecars.threshold")
       .internal()

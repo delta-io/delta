@@ -205,6 +205,8 @@ case class SparkVersionSpec(
   fullVersion: String,
   targetJvm: String,
   additionalSourceDir: Option[String] = None,
+  supportIceberg: Boolean,
+  supportHudi: Boolean = true,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
@@ -254,6 +256,7 @@ object SparkVersionSpec {
     fullVersion = "4.0.1",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.0"),
+    supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
@@ -263,6 +266,8 @@ object SparkVersionSpec {
     fullVersion = "4.1.0",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
+    supportIceberg = false,
+    supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2"
@@ -272,6 +277,8 @@ object SparkVersionSpec {
     fullVersion = "4.2.0-SNAPSHOT",
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
+    supportIceberg = false,
+    supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
     jacksonVersion = "2.18.2",
@@ -280,9 +287,8 @@ object SparkVersionSpec {
     additionalResolvers = Seq("jitpack" at "https://jitpack.io")
   )
 
-  // TODO: Once Spark 4.1 is officially out update DEFAULT = spark41
   /** Default Spark version */
-  val DEFAULT = spark40
+  val DEFAULT = spark41
 
   /** Spark master branch version (optional). Release branches should not build against master */
   val MASTER: Option[SparkVersionSpec] = None
@@ -521,6 +527,7 @@ object CrossSparkVersions extends AutoPlugin {
       outputFile.getParentFile.mkdirs()
       
       val writer = new PrintWriter(outputFile)
+      // scalastyle:off
       try {
         writer.println("[")
         SparkVersionSpec.ALL_SPECS.zipWithIndex.foreach { case (spec, idx) =>
@@ -535,7 +542,9 @@ object CrossSparkVersions extends AutoPlugin {
           writer.println(s"""    "isMaster": $isMaster,""")
           writer.println(s"""    "isDefault": $isDefault,""")
           writer.println(s"""    "targetJvm": "${spec.targetJvm}",""")
-          writer.println(s"""    "packageSuffix": "$packageSuffix"""")
+          writer.println(s"""    "packageSuffix": "$packageSuffix",""")
+          writer.println(s"""    "supportIceberg": "${spec.supportIceberg}",""")
+          writer.println(s"""    "supportHudi": "${spec.supportHudi}"""")
           writer.println(s"""  }$comma""")
         }
         writer.println("]")
@@ -544,6 +553,7 @@ object CrossSparkVersions extends AutoPlugin {
       } finally {
         writer.close()
       }
+      // scalastyle:on
       
       state
     }
