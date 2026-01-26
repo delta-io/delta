@@ -17,6 +17,7 @@ package io.delta.kernel.defaults.internal;
 
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.util.DateTimeConstants;
+import io.delta.kernel.internal.util.TimestampUtils;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.DataType;
 import io.delta.kernel.types.StructType;
@@ -27,7 +28,6 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeFormatterBuilder;
 import java.time.temporal.ChronoField;
-import java.time.temporal.ChronoUnit;
 import java.util.concurrent.TimeUnit;
 
 public class DefaultKernelUtils {
@@ -91,7 +91,7 @@ public class DefaultKernelUtils {
   public static long parseTimestampNTZ(String timestampString) {
     LocalDateTime time = LocalDateTime.parse(timestampString, DEFAULT_JSON_TIMESTAMPNTZ_FORMATTER);
     Instant instant = time.toInstant(ZoneOffset.UTC);
-    return ChronoUnit.MICROS.between(Instant.EPOCH, instant);
+    return TimestampUtils.toEpochMicros(instant);
   }
 
   /**
