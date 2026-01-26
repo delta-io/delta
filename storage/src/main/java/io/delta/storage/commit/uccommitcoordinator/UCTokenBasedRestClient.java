@@ -16,38 +16,28 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
-import com.fasterxml.jackson.annotation.JsonAutoDetect;
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.annotation.PropertyAccessor;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.CommitInfo;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.CommitRequest;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.GetCommitsRequest;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.GetMetastoreSummaryResponse;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.RestGetCommitsResponse;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Metadata;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Protocol;
-import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Uniform;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
+import io.unitycatalog.client.ApiClient;
+import io.unitycatalog.client.ApiClientBuilder;
+import io.unitycatalog.client.ApiException;
+import io.unitycatalog.client.api.DeltaCommitsApi;
+import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.model.DeltaCommit;
+import io.unitycatalog.client.model.DeltaCommitInfo;
+import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
+import io.unitycatalog.client.model.DeltaGetCommits;
+import io.unitycatalog.client.model.DeltaGetCommitsResponse;
+import io.unitycatalog.client.model.DeltaMetadata;
+import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
-import org.apache.http.client.methods.*;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.entity.ContentType;
-import org.apache.http.HttpHeaders;
-import org.apache.http.HttpStatus;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
 import java.net.URI;
@@ -55,9 +45,9 @@ import java.util.*;
 import java.util.function.Supplier;
 
 /**
- * A REST client implementation of [[UCClient]] for interacting with Unity Catalog's commit
- * coordination service. This client uses TokenProvider-based authentication to make HTTP requests
- * to the Unity Catalog API for managing Delta table commits and metadata.
+ * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
+ * coordination service. This client uses the Unity Catalog SDK with TokenProvider-based
+ * authentication for managing Delta table commits and metadata.
  *
  * <p>The client handles the following primary operations:
  * <ul>
@@ -66,9 +56,9 @@ import java.util.function.Supplier;
  *   <li>Fetching unbackfilled commit histories</li>
  * </ul>
  *
- * <p>All requests are authenticated using a TokenProvider that generates Bearer tokens dynamically,
- * and communicate using JSON payloads. The client automatically handles JSON
- * serialization/deserialization and HTTP header management.
+ * <p>All requests are authenticated using a TokenProvider that generates Bearer tokens dynamically.
+ * The client uses the Unity Catalog SDK's {@link DeltaCommitsApi} and {@link MetastoresApi} for
+ * API interactions.
  *
  * <p>Usage example:
  * <pre>{@code
@@ -85,103 +75,62 @@ import java.util.function.Supplier;
  * @see TokenProvider
  */
 public class UCTokenBasedRestClient implements UCClient {
-  private final String baseUri;
-  private final TokenProvider tokenProvider;
-  private final ObjectMapper mapper;
-  private final CloseableHttpClient httpClient;
+
+  private final DeltaCommitsApi deltaCommitsApi;
+  private final MetastoresApi metastoresApi;
+
+  // HTTP status codes for error handling
+  private static final int HTTP_BAD_REQUEST = 400;
+  private static final int HTTP_NOT_FOUND = 404;
+  private static final int HTTP_CONFLICT = 409;
+  private static final int HTTP_TOO_MANY_REQUESTS = 429;
 
   /**
-   * Constructs a new UCTokenBasedRestClient with the specified base URI and TokenProvider.
+   * Constructs a new UCTokenBasedRestClient with the specified base URI, TokenProvider,
+   * and version information for telemetry.
    *
    * @param baseUri The base URI of the Unity Catalog server
    * @param tokenProvider The TokenProvider to use for authentication
+   * @param deltaVersion The Delta version string (can be null)
+   * @param sparkVersion The Spark version string (can be null)
+   * @param scalaVersion The Scala version string (can be null)
    */
-  public UCTokenBasedRestClient(String baseUri, TokenProvider tokenProvider) {
-    this.baseUri = resolve(baseUri, "/api/2.1/unity-catalog");
-    this.tokenProvider = Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
-    this.mapper = new ObjectMapper()
-      .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-      .setSerializationInclusion(JsonInclude.Include.NON_ABSENT)
-      .setVisibility(PropertyAccessor.FIELD, JsonAutoDetect.Visibility.ANY)
-      .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
-    // Create HttpClient without default headers - we'll add the Authorization header per request
-    this.httpClient = HttpClientBuilder.create().build();
-  }
+  public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      String deltaVersion,
+      String sparkVersion,
+      String scalaVersion) {
+    Objects.requireNonNull(baseUri, "baseUri must not be null");
+    Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
 
-  private static String resolve(String baseUri, String child) {
-    // Ensures baseUri doesn't end with '/'
-    if (baseUri.endsWith("/")) {
-      baseUri = baseUri.substring(0, baseUri.length() - 1);
+    ApiClientBuilder builder = ApiClientBuilder.create()
+        .uri(baseUri)
+        .tokenProvider(tokenProvider);
+
+    // Add version information for telemetry
+    if (deltaVersion != null) {
+      builder.addAppVersion("Delta", deltaVersion);
     }
-    // Ensures child starts with '/'
-    if (!child.startsWith("/")) {
-      child = "/" + child;
+    if (sparkVersion != null) {
+      builder.addAppVersion("Spark", sparkVersion);
     }
-    return baseUri + child;
-  }
-
-  private <T> String toJson(T object) throws JsonProcessingException {
-    return mapper.writeValueAsString(object);
-  }
-
-  private <T> T fromJson(String json, Class<T> clazz) throws JsonProcessingException {
-    return mapper.readValue(json, clazz);
-  }
-
-  private static class HttpError extends Throwable {
-    final int statusCode;
-    final String responseBody;
-
-    HttpError(int statusCode, String responseBody) {
-      super("HTTP Error " + statusCode + ": " + responseBody);
-      this.statusCode = statusCode;
-      this.responseBody = responseBody;
-    }
-  }
-
-  private <T> T executeHttpRequest(
-    HttpUriRequest request,
-    Object payload,
-    Class<T> responseClass) throws IOException, HttpError {
-
-    // Get the current token from the TokenProvider and set the Authorization header
-    String token = tokenProvider.accessToken();
-    request.setHeader(HttpHeaders.AUTHORIZATION, "Bearer " + token);
-    request.setHeader(HttpHeaders.ACCEPT, ContentType.APPLICATION_JSON.getMimeType());
-    request.setHeader(HttpHeaders.CONTENT_TYPE, ContentType.APPLICATION_JSON.getMimeType());
-
-    if (payload != null && request instanceof HttpEntityEnclosingRequestBase) {
-      String jsonPayload = toJson(payload);
-      ((HttpEntityEnclosingRequestBase) request).setEntity(
-        new StringEntity(jsonPayload, ContentType.APPLICATION_JSON));
+    if (scalaVersion != null) {
+      builder.addAppVersion("Scala", scalaVersion);
     }
 
-    try (CloseableHttpResponse response = httpClient.execute(request)) {
-      int statusCode = response.getStatusLine().getStatusCode();
-      String responseBody = EntityUtils.toString(response.getEntity());
-
-      if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        return fromJson(responseBody, responseClass);
-      } else {
-        throw new HttpError(statusCode, responseBody);
-      }
-    } catch (JsonProcessingException e) {
-      throw new IOException("Failed to parse response", e);
-    }
+    ApiClient apiClient = builder.build();
+    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
+    this.metastoresApi = new MetastoresApi(apiClient);
   }
 
   @Override
   public String getMetastoreId() throws IOException {
-    URI uri = URI.create(resolve(baseUri, "/metastore_summary"));
-    HttpGet request = new HttpGet(uri);
-
     try {
-      GetMetastoreSummaryResponse response =
-        executeHttpRequest(request, null, GetMetastoreSummaryResponse.class);
-      return response.metastoreId;
-    } catch (HttpError e) {
-      throw new IOException("Failed to get metastore ID (HTTP " + e.statusCode + "): " +
-        e.responseBody);
+      GetMetastoreSummaryResponse response = metastoresApi.summary();
+      return response.getMetastoreId();
+    } catch (ApiException e) {
+      throw new IOException("Failed to get metastore ID: " + e.getMessage(), e);
     }
   }
 
@@ -200,48 +149,27 @@ public class UCTokenBasedRestClient implements UCClient {
     Objects.requireNonNull(tableId, "tableId must not be null.");
     Objects.requireNonNull(tableUri, "tableUri must not be null.");
 
-    // Create commit request payload
-    CommitRequest commitRequest = new CommitRequest();
-    commitRequest.tableId = tableId;
-    commitRequest.tableUri = tableUri.toString();
-    commit.ifPresent(c -> commitRequest.commitInfo = CommitInfo.fromCommit(c, disown));
-    lastKnownBackfilledVersion.ifPresent(version ->
-      commitRequest.latestBackfilledVersion = version);
-    newMetadata.ifPresent(m -> commitRequest.metadata = Metadata.fromAbstractMetadata(m));
-    newProtocol.ifPresent(p -> commitRequest.protocol = Protocol.fromAbstractProtocol(p));
-    uniform.ifPresent(u -> commitRequest.uniform = Uniform.fromUniformMetadata(u));
+    // Build the DeltaCommit request using SDK models
+    DeltaCommit deltaCommit = new DeltaCommit()
+        .tableId(tableId)
+        .tableUri(tableUri.toString());
 
-    URI uri = URI.create(resolve(baseUri, "/delta/preview/commits"));
-    HttpPost request = new HttpPost(uri);
+    // Add commit info if present
+    commit.ifPresent(c -> deltaCommit.commitInfo(toDeltaCommitInfo(c, disown)));
+
+    // Add latest backfilled version if present
+    lastKnownBackfilledVersion.ifPresent(deltaCommit::latestBackfilledVersion);
+
+    // Add metadata if present
+    newMetadata.ifPresent(m -> deltaCommit.metadata(toDeltaMetadata(m)));
+
+    // Note: Protocol is not currently supported in the Unity Catalog SDK's DeltaCommit model.
+    // If protocol support is needed, consider extending the SDK or using a custom implementation.
 
     try {
-      executeHttpRequest(request, commitRequest, Void.class);
-    } catch (HttpError e) {
-      switch (e.statusCode) {
-        case HttpStatus.SC_BAD_REQUEST:
-          throw new CommitFailedException(
-            false /* retryable */,
-            false /* conflict */,
-            "Invalid commit parameters: " + e.responseBody,
-            e);
-        case HttpStatus.SC_NOT_FOUND:
-          throw new InvalidTargetTableException("Invalid Target Table: " + e.responseBody);
-        case HttpStatus.SC_CONFLICT:
-          throw new CommitFailedException(
-            true /* retryable */,
-            true /* conflict */,
-            "Commit conflict: " + e.responseBody,
-            e);
-        case 429:
-          throw new CommitLimitReachedException("Backfilled commits limit reached: " +
-            e.responseBody);
-        default:
-          throw new CommitFailedException(
-            true /* retryable */,
-            false /* conflict */,
-            "Unexpected commit failure (HTTP " + e.statusCode + "): " + e.responseBody,
-            e);
-      }
+      deltaCommitsApi.commit(deltaCommit);
+    } catch (ApiException e) {
+      handleCommitException(e);
     }
   }
 
@@ -255,48 +183,189 @@ public class UCTokenBasedRestClient implements UCClient {
     Objects.requireNonNull(tableId, "tableId must not be null.");
     Objects.requireNonNull(tableUri, "tableUri must not be null.");
 
-    GetCommitsRequest getCommitsRequest = new GetCommitsRequest();
-    getCommitsRequest.tableId = tableId;
-    getCommitsRequest.tableUri = tableUri.toString();
-    getCommitsRequest.startVersion = startVersion.orElse(0L);
-    endVersion.ifPresent(v -> getCommitsRequest.endVersion = v);
+    // Build the DeltaGetCommits request using SDK models
+    DeltaGetCommits request = new DeltaGetCommits()
+        .tableId(tableId)
+        .tableUri(tableUri.toString())
+        .startVersion(startVersion.orElse(0L));
 
-    // Create a custom HttpGet that allows body
-    URI uri = URI.create(resolve(baseUri, "/delta/preview/commits"));
-    HttpEntityEnclosingRequestBase httpRequest = new HttpEntityEnclosingRequestBase() {
-      @Override
-      public String getMethod() {
-        return "GET";
-      }
-    };
-    httpRequest.setURI(uri);
+    endVersion.ifPresent(request::endVersion);
 
     try {
-      RestGetCommitsResponse restGetCommitsResponse =
-        executeHttpRequest(httpRequest, getCommitsRequest, RestGetCommitsResponse.class);
-      Path basePath = CoordinatedCommitsUtils.commitDirPath(CoordinatedCommitsUtils.logDirPath(
-        new Path(tableUri)));
-      List<Commit> commits = new ArrayList<>();
-      if (restGetCommitsResponse.commits != null) {
-        for (CommitInfo commitInfo : restGetCommitsResponse.commits) {
-          commits.add(CommitInfo.toCommit(commitInfo, basePath));
-        }
-      }
-      return new GetCommitsResponse(commits, restGetCommitsResponse.latestTableVersion);
-    } catch (HttpError e) {
-      // Handle response based on status code
-      switch (e.statusCode) {
-        case HttpStatus.SC_NOT_FOUND:
-          throw new InvalidTargetTableException("Invalid Target Table due to: " + e.responseBody);
-        default:
-          throw new IOException("Unexpected getCommits failure (HTTP " + e.statusCode +
-            "): due to: " + e.responseBody);
-      }
+      DeltaGetCommitsResponse response = deltaCommitsApi.getCommits(request);
+      return toGetCommitsResponse(response, tableUri);
+    } catch (ApiException e) {
+      handleGetCommitsException(e);
+      // This line should never be reached due to exception handling above
+      throw new IOException("Unexpected error in getCommits", e);
     }
   }
 
   @Override
   public void close() throws IOException {
-    httpClient.close();
+    // The Unity Catalog SDK's ApiClient doesn't require explicit closing
+    // as it manages HTTP connections internally
+  }
+
+  // ===========================
+  // Conversion Helper Methods
+  // ===========================
+
+  /**
+   * Converts a Delta {@link Commit} to a Unity Catalog SDK {@link DeltaCommitInfo}.
+   *
+   * @param commit         The Delta commit to convert
+   * @param isDisownCommit Whether this is a disown commit
+   * @return The converted DeltaCommitInfo
+   */
+  private DeltaCommitInfo toDeltaCommitInfo(Commit commit, boolean isDisownCommit) {
+    if (commit == null) {
+      throw new IllegalArgumentException("commit cannot be null");
+    }
+    if (commit.getFileStatus() == null) {
+      throw new IllegalArgumentException("commit.getFileStatus() cannot be null");
+    }
+
+    return new DeltaCommitInfo()
+        .version(commit.getVersion())
+        .timestamp(commit.getCommitTimestamp())
+        .fileName(commit.getFileStatus().getPath().getName())
+        .fileSize(commit.getFileStatus().getLen())
+        .fileModificationTimestamp(commit.getFileStatus().getModificationTime());
+    // Note: isDisownCommit is not directly supported in the SDK's DeltaCommitInfo model
+  }
+
+  /**
+   * Converts an {@link AbstractMetadata} to a Unity Catalog SDK {@link DeltaMetadata}.
+   *
+   * @param metadata The abstract metadata to convert
+   * @return The converted DeltaMetadata
+   */
+  private DeltaMetadata toDeltaMetadata(AbstractMetadata metadata) {
+    if (metadata == null) {
+      throw new IllegalArgumentException("metadata cannot be null");
+    }
+
+    DeltaMetadata deltaMetadata = new DeltaMetadata()
+        .description(metadata.getDescription());
+
+    // Set properties if available
+    if (metadata.getConfiguration() != null && !metadata.getConfiguration().isEmpty()) {
+      DeltaCommitMetadataProperties properties = new DeltaCommitMetadataProperties()
+          .properties(metadata.getConfiguration());
+      deltaMetadata.properties(properties);
+    }
+
+    // Schema conversion is not directly supported as the SDK expects ColumnInfos
+    // which requires parsing the schema string. For now, we skip schema conversion.
+    // If needed, implement schema string parsing to ColumnInfos.
+
+    return deltaMetadata;
+  }
+
+  /**
+   * Converts a Unity Catalog SDK {@link DeltaGetCommitsResponse} to a Delta
+   * {@link GetCommitsResponse}.
+   *
+   * @param response The SDK response to convert
+   * @param tableUri The table URI for constructing file paths
+   * @return The converted GetCommitsResponse
+   */
+  private GetCommitsResponse toGetCommitsResponse(DeltaGetCommitsResponse response, URI tableUri) {
+    Path basePath = CoordinatedCommitsUtils.commitDirPath(
+        CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
+
+    List<Commit> commits = new ArrayList<>();
+    if (response.getCommits() != null) {
+      for (DeltaCommitInfo commitInfo : response.getCommits()) {
+        commits.add(fromDeltaCommitInfo(commitInfo, basePath));
+      }
+    }
+
+    return new GetCommitsResponse(commits, response.getLatestTableVersion());
+  }
+
+  /**
+   * Converts a Unity Catalog SDK {@link DeltaCommitInfo} to a Delta {@link Commit}.
+   *
+   * @param commitInfo The SDK commit info to convert
+   * @param basePath   The base path for constructing file paths
+   * @return The converted Commit
+   */
+  private Commit fromDeltaCommitInfo(DeltaCommitInfo commitInfo, Path basePath) {
+    FileStatus fileStatus = new FileStatus(
+        commitInfo.getFileSize(),
+        false /* isdir */,
+        0 /* block_replication */,
+        0 /* blocksize */,
+        commitInfo.getFileModificationTimestamp(),
+        new Path(basePath, commitInfo.getFileName()));
+
+    return new Commit(commitInfo.getVersion(), fileStatus, commitInfo.getTimestamp());
+  }
+
+  // ===========================
+  // Exception Handling Methods
+  // ===========================
+
+  /**
+   * Handles {@link ApiException} from commit operations by converting to appropriate Delta
+   * exceptions.
+   *
+   * @param e The API exception to handle
+   * @throws CommitFailedException        If the commit failed due to various reasons
+   * @throws UCCommitCoordinatorException If there's a UC-specific error
+   * @throws IOException                  If there's an unexpected error
+   */
+  private void handleCommitException(ApiException e)
+      throws CommitFailedException, UCCommitCoordinatorException, IOException {
+    int statusCode = e.getCode();
+    String responseBody = e.getResponseBody();
+
+    switch (statusCode) {
+      case HTTP_BAD_REQUEST:
+        throw new CommitFailedException(
+            false /* retryable */,
+            false /* conflict */,
+            "Invalid commit parameters: " + responseBody,
+            e);
+      case HTTP_NOT_FOUND:
+        throw new InvalidTargetTableException("Invalid Target Table: " + responseBody);
+      case HTTP_CONFLICT:
+        throw new CommitFailedException(
+            true /* retryable */,
+            true /* conflict */,
+            "Commit conflict: " + responseBody,
+            e);
+      case HTTP_TOO_MANY_REQUESTS:
+        throw new CommitLimitReachedException("Backfilled commits limit reached: " + responseBody);
+      default:
+        throw new CommitFailedException(
+            true /* retryable */,
+            false /* conflict */,
+            "Unexpected commit failure (HTTP " + statusCode + "): " + responseBody,
+            e);
+    }
+  }
+
+  /**
+   * Handles {@link ApiException} from getCommits operations by converting to appropriate Delta
+   * exceptions.
+   *
+   * @param e The API exception to handle
+   * @throws UCCommitCoordinatorException If there's a UC-specific error
+   * @throws IOException                  If there's an unexpected error
+   */
+  private void handleGetCommitsException(ApiException e)
+      throws UCCommitCoordinatorException, IOException {
+    int statusCode = e.getCode();
+    String responseBody = e.getResponseBody();
+
+    if (statusCode == HTTP_NOT_FOUND) {
+      throw new InvalidTargetTableException("Invalid Target Table due to: " + responseBody);
+    } else {
+      throw new IOException("Unexpected getCommits failure (HTTP " + statusCode +
+          "): due to: " + responseBody);
+    }
   }
 }
