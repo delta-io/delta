@@ -288,8 +288,16 @@ class OptimizeExecutor(
 
   private val partitionSchema = snapshot.metadata.partitionSchema
 
+  // Table identifier for logging - either catalog table name or path
+  private val tableIdentifier: String = catalogTable
+    .map(_.identifier.unquotedString)
+    .getOrElse(snapshot.deltaLog.dataPath.toString)
+
   def optimize(): Seq[Row] = {
     recordDeltaOperation(snapshot.deltaLog, "delta.optimize") {
+      logInfo(log"OptimizeExecutor starting for table: " +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)}")
+
       val minFileSize = optimizeContext.minFileSize.getOrElse(
         sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE))
       val maxFileSize = optimizeContext.maxFileSize.getOrElse(
@@ -312,6 +320,13 @@ class OptimizeExecutor(
 
       val jobs = groupFilesIntoBins(partitionsToCompact)
 
+      // Check if there are no files to optimize
+      if (jobs.isEmpty) {
+        logInfo(log"Optimize command did not need to update any files for table " +
+          log"${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)}")
+        return Seq(Row(snapshot.deltaLog.dataPath.toString, OptimizeStats().toOptimizeMetrics))
+      }
+
       val batchResults = batchSize match {
         case Some(size) =>
           val batches = BinPackingUtils.binPackBySize[Bin, Bin](
@@ -319,9 +334,46 @@ class OptimizeExecutor(
             bin => bin.files.map(_.size).sum,
             bin => bin,
             size)
-          batches.map(batch => runOptimizeBatch(Batch(batch), maxFileSize))
+          val totalFiles = filesToProcess.size
+          batches.zipWithIndex.map { case (batch, index) =>
+            val batchNum = index + 1
+            val filesInBatch = batch.flatMap(_.files).size
+            val filesProcessedSoFar = batches.take(index).map(_.flatMap(_.files).size).sum
+            val startFile = filesProcessedSoFar + 1
+            val endFile = filesProcessedSoFar + filesInBatch
+            logInfo(log"Batch ${MDC(DeltaLogKeys.BATCH_ID, batchNum.toLong)} " +
+              log"[Processing Files ((${MDC(DeltaLogKeys.START_INDEX, startFile.toLong)} - " +
+              log"${MDC(DeltaLogKeys.END_INDEX, endFile.toLong)}) / " +
+              log"${MDC(DeltaLogKeys.NUM_FILES, totalFiles.toLong)})] " +
+              log"for table ${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)} starting")
+            val batchResult = runOptimizeBatch(Batch(batch), maxFileSize)
+            val numAdded = batchResult._1.size
+            val numRemoved = batchResult._2.size
+            logInfo(log"(Batch ${MDC(DeltaLogKeys.BATCH_ID, batchNum.toLong)} " +
+              log"[Processing Files ((${MDC(DeltaLogKeys.START_INDEX, startFile.toLong)} - " +
+              log"${MDC(DeltaLogKeys.END_INDEX, endFile.toLong)}) / " +
+              log"${MDC(DeltaLogKeys.NUM_FILES, totalFiles.toLong)})])  " +
+              log"Compacted ${MDC(DeltaLogKeys.NUM_FILES, numRemoved.toLong)} data files into " +
+              log"${MDC(DeltaLogKeys.NUM_FILES2, numAdded.toLong)} files " +
+              log"for table ${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)}")
+            batchResult
+          }
         case None =>
-          Seq(runOptimizeBatch(Batch(jobs), maxFileSize))
+          val totalFiles = filesToProcess.size
+          logInfo(log"Batch 1 [Processing Files ((1 - " +
+            log"${MDC(DeltaLogKeys.NUM_FILES, totalFiles.toLong)}) / " +
+            log"${MDC(DeltaLogKeys.NUM_FILES, totalFiles.toLong)})] " +
+            log"for table ${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)} starting")
+          val batchResult = runOptimizeBatch(Batch(jobs), maxFileSize)
+          val numAdded = batchResult._1.size
+          val numRemoved = batchResult._2.size
+          logInfo(log"(Batch 1 [Processing Files ((1 - " +
+            log"${MDC(DeltaLogKeys.NUM_FILES, totalFiles.toLong)}) / " +
+            log"${MDC(DeltaLogKeys.NUM_FILES, totalFiles.toLong)})])  " +
+            log"Compacted ${MDC(DeltaLogKeys.NUM_FILES, numRemoved.toLong)} data files into " +
+            log"${MDC(DeltaLogKeys.NUM_FILES2, numAdded.toLong)} files " +
+            log"for table ${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)}")
+          Seq(batchResult)
       }
 
       val addedFiles = batchResults.map(_._1).flatten
@@ -349,6 +401,10 @@ class OptimizeExecutor(
       }
 
       optimizeStrategy.updateOptimizeStats(optimizeStats, removedFiles, jobs)
+
+      logInfo(log"Completed all ${MDC(DeltaLogKeys.NUM_ACTIONS, batchResults.size.toLong)} " +
+        log"batches of Optimize command for table " +
+        log"${MDC(DeltaLogKeys.TABLE_NAME, tableIdentifier)}")
 
       return Seq(Row(snapshot.deltaLog.dataPath.toString, optimizeStats.toOptimizeMetrics))
     }
