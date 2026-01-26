@@ -560,16 +560,21 @@ class Snapshot(
         val addSchema = schema("add").dataType.asInstanceOf[StructType]
         val (checkpointSchemaToUse, checkpointStatsColToUse) =
           if (addSchema.exists(_.name == "stats_parsed") && !addSchema.exists(_.name == "stats")) {
+            val statsParsedSchema = addSchema("stats_parsed").dataType.asInstanceOf[StructType]
             val checkpointSchemaToUse =
               Action.logSchemaWithAddStatsParsed(addSchema("stats_parsed"))
+            val statsCol = col("add.stats_parsed")
+            // Only use EncodeNestedVariantAsZ85String if the schema contains VariantType.
+            // This avoids performance overhead for tables without variant columns.
+            val encodedStatsCol =
+              if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsParsedSchema)) {
+                Column(EncodeNestedVariantAsZ85String(statsCol.expr))
+              } else {
+                statsCol
+              }
             (
               checkpointSchemaToUse,
-              // Use EncodeNestedVariantAsZ85String to properly encode any variant stats
-              // as Z85 strings before converting to JSON. This ensures variant statistics
-              // are preserved during state reconstruction.
-              to_json(
-                Column(EncodeNestedVariantAsZ85String(col("add.stats_parsed").expr))
-              )
+              to_json(encodedStatsCol)
             )
           } else {
             // Normal (JSON-like) schema suffices
