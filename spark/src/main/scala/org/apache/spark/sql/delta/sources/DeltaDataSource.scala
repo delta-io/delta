@@ -38,7 +38,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Expression, Literal}
-import org.apache.spark.sql.catalyst.plans.logical.SubqueryAlias
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
 import org.apache.spark.sql.connector.catalog.{SupportsV1OverwriteWithSaveAsTable, Table, TableProvider}
 import org.apache.spark.sql.connector.expressions.Transform
@@ -112,6 +111,14 @@ class DeltaDataSource
       schema: Option[StructType],
       providerName: String,
       parameters: Map[String, String]): (String, StructType) = {
+    // Check if we should bypass DeltaLog schema loading for UC-managed tables.
+    // DeltaV2Mode checks the parameters map for UC markers and returns true for
+    // AUTO/STRICT modes with UC tables.
+    val connectorMode = DeltaV2Mode(sqlContext.sparkSession.sessionState.conf)
+    if (schema.isDefined &&
+        connectorMode.shouldBypassSchemaValidationForStreaming(parameters)) {
+      return (shortName(), schema.get)
+    }
     val path = parameters.getOrElse("path", {
       throw DeltaErrors.pathNotSpecifiedException
     })

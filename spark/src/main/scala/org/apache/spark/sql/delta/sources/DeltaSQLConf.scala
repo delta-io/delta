@@ -2965,24 +2965,28 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
    * Controls which connector implementation to use for Delta table operations.
    *
    * Valid values:
-   * - NONE: V2 connector is disabled, always use V1 connector (DeltaTableV2) - default
-   * - STRICT: V2 connector is strictly enforced, always use V2 connector (Kernel SparkTable).
-   *           Intended for testing V2 connector capabilities
+   * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
+   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   *           Intended for testing sparkV2 connector capabilities
    *
-   * V1 vs V2 Connectors:
-   * - V1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   * sparkV1 vs sparkV2 Connectors:
+   * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
    *   uses DeltaLog for metadata management
-   * - V2 Connector (SparkTable): New Kernel-based connector with read-only support,
+   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
    *   uses Kernel's Table API for metadata management
+   *
+   * See [[DeltaV2Mode]] for the centralized logic that interprets this configuration.
    */
   val V2_ENABLE_MODE =
     buildConf("v2.enableMode")
-      .internal()
       .doc(
-        "Controls the Delta V2 connector enable mode. " +
-        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
+        "Controls the Delta connector enable mode. " +
+          "Valid values: NONE (disabled, default), AUTO (use sparkV2 for Unity Catalog " +
+          "managed tables), STRICT (should ONLY be enabled for testing).")
       .stringConf
-      .checkValues(Set("NONE", "STRICT"))
+      .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("NONE")
 
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
