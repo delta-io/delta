@@ -293,7 +293,12 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    new UCTokenBasedRestClient(uri, tokenProvider)
+    io.delta.VERSION
+    new UCTokenBasedRestClient(uri,
+      tokenProvider,
+      io.delta.VERSION,
+      org.apache.spark.SPARK_VERSION,
+      scala.util.Properties.versionNumberString)
   }
 }
 
