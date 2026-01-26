@@ -123,11 +123,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   private Table loadTableInternal(
       Supplier<Table> v2ConnectorSupplier,
       Supplier<Table> v1ConnectorSupplier) {
-    String mode =
-        spark()
-            .conf()
-            .get(DeltaSQLConf.V2_ENABLE_MODE().key(),
-                DeltaSQLConf.V2_ENABLE_MODE().defaultValueString());
+    String mode = "STRICT";
     switch (mode.toUpperCase()) {
       case "STRICT":
         return v2ConnectorSupplier.get();
