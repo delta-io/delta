@@ -15,8 +15,11 @@
  */
 package io.delta.kernel.types;
 
+import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+
 import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 /**
  * Data type representing a {@code map} type.
@@ -33,11 +36,13 @@ public class MapType extends DataType {
   public static final String MAP_VALUE_NAME = "value";
 
   public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
+    validateKeyType(keyType);
     this.keyField = new StructField(MAP_KEY_NAME, keyType, false);
     this.valueField = new StructField(MAP_VALUE_NAME, valueType, valueContainsNull);
   }
 
   public MapType(StructField keyField, StructField valueField) {
+    validateKeyType(keyField.getDataType());
     this.keyField = keyField;
     this.valueField = valueField;
   }
@@ -116,6 +121,13 @@ public class MapType extends DataType {
   }
 
   @Override
+  public boolean existsRecursively(Predicate<DataType> predicate) {
+    return super.existsRecursively(predicate)
+        || getKeyType().existsRecursively(predicate)
+        || getValueType().existsRecursively(predicate);
+  }
+
+  @Override
   public int hashCode() {
     return Objects.hash(keyField, valueField);
   }
@@ -123,5 +135,23 @@ public class MapType extends DataType {
   @Override
   public String toString() {
     return String.format("map[%s, %s]", getKeyType(), getValueType());
+  }
+
+  /**
+   * Asserts whether the given {@code keyType} is valid for a map's key type. Disallows {@code
+   * StringType} with non-SPARK.UTF8_BINARY collation anywhere within the key type, including when
+   * nested inside complex types.
+   */
+  private void validateKeyType(DataType keyType) {
+    checkArgument(
+        !keyType.existsRecursively(
+            dataType -> {
+              if (dataType instanceof StringType) {
+                StringType stringType = (StringType) dataType;
+                return !stringType.getCollationIdentifier().isSparkUTF8BinaryCollation();
+              }
+              return false;
+            }),
+        "Map key type cannot contain StringType with non-SPARK.UTF8_BINARY collation");
   }
 }
