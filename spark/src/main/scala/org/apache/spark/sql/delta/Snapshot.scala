@@ -24,7 +24,9 @@ import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -562,8 +564,11 @@ class Snapshot(
               Action.logSchemaWithAddStatsParsed(addSchema("stats_parsed"))
             (
               checkpointSchemaToUse,
+              // Use EncodeNestedVariantAsZ85String to properly encode any variant stats
+              // as Z85 strings before converting to JSON. This ensures variant statistics
+              // are preserved during state reconstruction.
               to_json(
-                col("add.stats_parsed")
+                Column(EncodeNestedVariantAsZ85String(col("add.stats_parsed").expr))
               )
             )
           } else {

@@ -1106,6 +1106,65 @@ class CheckpointsSuite
       assert(actualMaxNested == """{"$['id']":19,"$['name']":"20"}""")
     }
   }
+
+  test("Ensure variant stats are preserved during state reconstruction") {
+    // Test different combinations of (writeStatsAsJson, writeStatsAsStruct)
+    // These golden tables were created in DBR with variant stats and checkpoints
+    val combinations = Seq(
+      ("true", "false"),
+      ("false", "true"),
+      ("true", "true")
+      // Note: ("false", "false") would have no stats at all, so not testing it
+    )
+
+    // Expected Z85-encoded value for variant `0` (the golden tables contain `id::variant`
+    // where id=0)
+    // This is the Z85 encoding of the variant binary representation of integer 0
+    val expectedZ85 = "0rAf3bMW#D00%Fx0000000000"
+
+    combinations.foreach { case (jsonStats, structStats) =>
+      withClue(s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats") {
+        withTempDir { tempDir =>
+          // Copy golden table to temp directory
+          val source = new File(
+            s"src/test/resources/delta/variant-stats-state-reconstruction/" +
+            s"json_${jsonStats}_struct_${structStats}")
+          val target = new File(tempDir, "variant-stats-table")
+          FileUtils.copyDirectory(source, target)
+
+          val tablePath = target.getAbsolutePath
+
+          // Clear cache to ensure fresh state reconstruction
+          DeltaLog.clearCache()
+
+          // Get the delta log and trigger state reconstruction
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val snapshot = deltaLog.update()
+
+          // Get the reconstructed state and verify variant stats are present
+          val addFilesWithStats = snapshot.stateDS
+            .filter("add IS NOT NULL")
+            .filter("add.stats IS NOT NULL AND add.stats != ''")
+            .collect()
+
+          assert(addFilesWithStats.nonEmpty,
+            s"Expected at least one AddFile with stats for " +
+            s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats")
+
+          // Verify that the stats contain the expected Z85-encoded variant
+          val statsContainZ85 = addFilesWithStats.exists { action =>
+            val stats = action.add.stats
+            stats != null && stats.contains(expectedZ85)
+          }
+
+          assert(statsContainZ85,
+            s"Expected stats to contain Z85-encoded variant '$expectedZ85' for " +
+            s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats. " +
+            s"Actual stats: ${addFilesWithStats.map(_.add.stats).mkString(", ")}")
+        }
+      }
+    }
+  }
 }
 
 class OverwriteTrackingLogStore(sparkConf: SparkConf, hadoopConf: Configuration)
