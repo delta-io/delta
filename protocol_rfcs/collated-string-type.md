@@ -21,7 +21,7 @@ To support this feature:
 When Collations are supported (when the `writerFeatures` field of a table's protocol action contains `collations`), then:
 - Readers could do comparisons and sorting of strings based on the collation specified in the schema. 
 - If the collation is not specified for a string type, then the reader must use the default comparison operators for the binary representation of strings under UTF-8 encoding.
-- Readers must only do file skipping based on column statistics for a collation if the filter operator used for the data skipping is specified to treat the column as having that same collation. For example, when filtering a string column using the string equality comparison operator that is configured with the collation `ICU.en_US.72`, the reader must not use file skipping statistics from the collation `spark.UTF8_LCASE.75.1`. It should also not use `ICU.en_US.69` because the collation version number does not match.
+- Readers must only do file skipping based on column statistics for a collation if the filter operator used for the data skipping is specified to treat the column as having that same collation. For example, when filtering a string column using the string equality comparison operator that is configured with the collation `ICU.en_US.72`, the reader must not use file skipping statistics from the collation `spark.UTF8_LCASE.75.1`. It should also not use the statistics from `ICU.en_US.69` because the collation version number does not match.
 
 ## Writer Requirements for Collations:
 
