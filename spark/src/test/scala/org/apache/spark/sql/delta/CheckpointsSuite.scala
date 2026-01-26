@@ -48,6 +48,7 @@ import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.types.variant.{Variant, VariantUtil}
+import org.apache.spark.unsafe.types.VariantVal
 
 class CheckpointsSuite
   extends QueryTest
@@ -1025,85 +1026,115 @@ class CheckpointsSuite
   }
 
   testDifferentCheckpoints("Ensure variant stats in checkpoint") { (policy, _) =>
-    withTempDir { tempDir =>
-      // Load golden table with variant stats (no checkpoint)
-      val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
-      val target = new File(tempDir, "variant-stats-table")
+    // Test all combinations of (writeStatsAsJson, writeStatsAsStruct)
+    // Skip (false, false) as that would have no stats at all
+    val combinations = Seq(
+      (true, false),
+      (false, true),
+      (true, true)
+    )
 
-      FileUtils.copyDirectory(source, target)
+    combinations.foreach { case (writeStatsAsJson, writeStatsAsStruct) =>
+      withClue(s"writeStatsAsJson=$writeStatsAsJson, writeStatsAsStruct=$writeStatsAsStruct") {
+        withTempDir { tempDir =>
+          // Load golden table with variant stats (no checkpoint)
+          val source = new File("src/test/resources/delta/variant-stats-no-checkpoint")
+          val target = new File(tempDir, "variant-stats-table")
 
-      val tablePath = target.getAbsolutePath
+          FileUtils.copyDirectory(source, target)
 
-      if (policy == CheckpointPolicy.V2) {
-        spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
-          s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+          val tablePath = target.getAbsolutePath
+
+          // Set the stats configuration via ALTER TABLE
+          spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+            s"('${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.key}' = '$writeStatsAsJson', " +
+            s"'${DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.key}' = '$writeStatsAsStruct')")
+
+          if (policy == CheckpointPolicy.V2) {
+            spark.sql(s"ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES " +
+              s"('${DeltaConfigs.CHECKPOINT_POLICY.key}' = 'v2')")
+          }
+
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          val snapshot = deltaLog.update()
+
+          deltaLog.checkpoint(snapshot)
+          val checkpointFile = if (policy.needsV2CheckpointSupport) {
+            val provider = getV2CheckpointProvider(deltaLog)
+            provider.sidecarFileStatuses.head.getPath
+          } else {
+            FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version)
+          }
+
+          val checkpointDf = spark.read.format("parquet").load(checkpointFile.toString)
+            .filter(col("add").isNotNull)
+
+          // Helper function to decode Z85 and get variant JSON
+          def decodeZ85ToVariantJson(z85String: String): String = {
+            val decoded = Codec.Base85Codec.decodeBytes(z85String, z85String.length)
+            val metadataSize = VariantStatsShims.metadataSize(decoded)
+            val value = decoded.slice(metadataSize, decoded.length)
+            val variant = new Variant(value, decoded)
+            variant.toJson(java.time.ZoneId.of("UTC"))
+          }
+
+          // Verify stats in add.stats (JSON format) when writeStatsAsJson=true
+          if (writeStatsAsJson) {
+            val checkpointStatsJson = checkpointDf
+              .selectExpr(
+                s"get_json_object(add.stats, '$$.minValues.v')",
+                s"get_json_object(add.stats, '$$.maxValues.v')",
+                s"get_json_object(add.stats, '$$.minValues.nv.v')",
+                s"get_json_object(add.stats, '$$.maxValues.nv.v')").collect().head
+
+            // Verify top-level variant column stats
+            val actualMinTopLevel = decodeZ85ToVariantJson(checkpointStatsJson.getString(0))
+            val actualMaxTopLevel = decodeZ85ToVariantJson(checkpointStatsJson.getString(1))
+            assert(actualMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
+            assert(actualMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
+
+            // Verify nested variant column stats
+            val actualMinNested = decodeZ85ToVariantJson(checkpointStatsJson.getString(2))
+            val actualMaxNested = decodeZ85ToVariantJson(checkpointStatsJson.getString(3))
+            assert(actualMinNested == """{"$['id']":10,"$['name']":"11"}""")
+            assert(actualMaxNested == """{"$['id']":19,"$['name']":"20"}""")
+          }
+
+          // Verify stats in add.stats_parsed (struct format) when writeStatsAsStruct=true
+          if (writeStatsAsStruct) {
+            val checkpointStatsParsed = checkpointDf
+              .selectExpr(
+                "add.stats_parsed.minValues.v",
+                "add.stats_parsed.maxValues.v",
+                "add.stats_parsed.minValues.nv.v",
+                "add.stats_parsed.maxValues.nv.v").collect().head
+
+            // Verify top-level variant column stats
+            val minVariantTopLevel = checkpointStatsParsed.getAs[VariantVal](0)
+            val maxVariantTopLevel = checkpointStatsParsed.getAs[VariantVal](1)
+            val minTopLevelVariant =
+              new Variant(minVariantTopLevel.getValue, minVariantTopLevel.getMetadata)
+            val maxTopLevelVariant =
+              new Variant(maxVariantTopLevel.getValue, maxVariantTopLevel.getMetadata)
+            assert(minTopLevelVariant.toJson(java.time.ZoneId.of("UTC")) ==
+              """{"$['id']":0,"$['name']":"1"}""")
+            assert(maxTopLevelVariant.toJson(java.time.ZoneId.of("UTC")) ==
+              """{"$['id']":9,"$['name']":"9"}""")
+
+            // Verify nested variant column stats
+            val minVariantNested = checkpointStatsParsed.getAs[VariantVal](2)
+            val maxVariantNested = checkpointStatsParsed.getAs[VariantVal](3)
+            val minNestedVariant =
+              new Variant(minVariantNested.getValue, minVariantNested.getMetadata)
+            val maxNestedVariant =
+              new Variant(maxVariantNested.getValue, maxVariantNested.getMetadata)
+            assert(minNestedVariant.toJson(java.time.ZoneId.of("UTC")) ==
+              """{"$['id']":10,"$['name']":"11"}""")
+            assert(maxNestedVariant.toJson(java.time.ZoneId.of("UTC")) ==
+              """{"$['id']":19,"$['name']":"20"}""")
+          }
+        }
       }
-
-      val deltaLog = DeltaLog.forTable(spark, tablePath)
-      val snapshot = deltaLog.update()
-      val variantColumnName = "v"
-
-      deltaLog.checkpoint(snapshot)
-      val checkpointFile = if (policy.needsV2CheckpointSupport) {
-        val provider = getV2CheckpointProvider(deltaLog)
-        provider.sidecarFileStatuses.head.getPath
-      } else {
-        FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version)
-      }
-
-      val checkpointStatsJson = spark.read.format("parquet").load(checkpointFile.toString)
-        .filter(col("add").isNotNull)
-        .selectExpr(
-          s"get_json_object(add.stats, '$$.minValues.v')",
-          s"get_json_object(add.stats, '$$.maxValues.v')",
-          s"get_json_object(add.stats, '$$.minValues.nv.v')",
-          s"get_json_object(add.stats, '$$.maxValues.nv.v')").collect().head
-
-      // Manually decode Z85 to validate encoding
-      val decodedMinTopLevel = Codec.Base85Codec.decodeBytes(
-        checkpointStatsJson.getString(0),
-        checkpointStatsJson.getString(0).length)
-      val minMetadataSizeTopLevel = VariantStatsShims.metadataSize(decodedMinTopLevel)
-      val minValueTopLevel = decodedMinTopLevel
-        .slice(minMetadataSizeTopLevel, decodedMinTopLevel.length)
-      val minVariantTopLevel = new Variant(minValueTopLevel, decodedMinTopLevel)
-      val actualMinTopLevel = minVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
-
-      val decodedMaxTopLevel = Codec.Base85Codec.decodeBytes(
-        checkpointStatsJson.getString(1),
-        checkpointStatsJson.getString(1).length)
-      val maxMetadataSizeTopLevel = VariantStatsShims.metadataSize(decodedMaxTopLevel)
-      val maxValueTopLevel =
-        decodedMaxTopLevel.slice(maxMetadataSizeTopLevel, decodedMaxTopLevel.length)
-      val maxVariantTopLevel = new Variant(maxValueTopLevel, decodedMaxTopLevel)
-      val actualMaxTopLevel = maxVariantTopLevel.toJson(java.time.ZoneId.of("UTC"))
-
-      // Verify decoded values contain expected data
-      assert(actualMinTopLevel == """{"$['id']":0,"$['name']":"1"}""")
-      assert(actualMaxTopLevel == """{"$['id']":9,"$['name']":"9"}""")
-
-      // Manually decode Z85 to validate encoding
-      val decodedMinNested = Codec.Base85Codec.decodeBytes(
-        checkpointStatsJson.getString(2),
-        checkpointStatsJson.getString(2).length)
-      val minMetadataSizeNested = VariantStatsShims.metadataSize(decodedMinNested)
-      val minValueNested = decodedMinNested
-        .slice(minMetadataSizeTopLevel, decodedMinNested.length)
-      val minVariantNested = new Variant(minValueNested, decodedMinNested)
-      val actualMinNested = minVariantNested.toJson(java.time.ZoneId.of("UTC"))
-
-      val decodedMaxNested = Codec.Base85Codec.decodeBytes(
-        checkpointStatsJson.getString(3),
-        checkpointStatsJson.getString(3).length)
-      val maxMetadataSizeNested = VariantStatsShims.metadataSize(decodedMaxNested)
-      val maxValueNested =
-        decodedMaxNested.slice(maxMetadataSizeNested, decodedMaxNested.length)
-      val maxVariantNested = new Variant(maxValueNested, decodedMaxNested)
-      val actualMaxNested = maxVariantNested.toJson(java.time.ZoneId.of("UTC"))
-
-      // Verify decoded values contain expected data
-      assert(actualMinNested == """{"$['id']":10,"$['name']":"11"}""")
-      assert(actualMaxNested == """{"$['id']":19,"$['name']":"20"}""")
     }
   }
 
