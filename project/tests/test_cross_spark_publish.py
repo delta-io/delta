@@ -223,8 +223,10 @@ class CrossSparkPublishTest:
 
     def test_backward_compat_publish(self) -> bool:
         """skipSparkSuffix=true should publish ALL modules WITHOUT Spark suffix."""
-        # Create a spec without suffix for backward compatibility (includes iceberg)
-        spark_spec_no_suffix = SparkVersionSpec(suffix="", support_iceberg=True)
+        # Create a spec without suffix for backward compatibility
+        # Uses the same iceberg support as the default Spark version
+        default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
+        spark_spec_no_suffix = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg)
 
         print("\n" + "="*70)
         print(f"TEST: skipSparkSuffix=true (backward compatibility - no suffix)")
@@ -272,11 +274,12 @@ class CrossSparkPublishTest:
         # Build expected JARs:
         # 1. All modules WITHOUT suffix (from Step 1 - backward compat)
         # 2. Spark-dependent modules WITH suffix for each non-master version (from Step 2)
-        # 3. Iceberg JARs for supported versions
+        # 3. Iceberg JARs for supported versions (with suffix only)
         expected = set()
 
-        # Step 1: All modules without suffix
-        no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=True)
+        # Step 1: All modules without suffix (uses default Spark version's iceberg support)
+        default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
+        no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg)
         expected.update(substitute_xversion(no_suffix_spec.spark_related_jars, self.delta_version))
         expected.update(substitute_xversion(no_suffix_spec.non_spark_related_jars, self.delta_version))
         expected.update(substitute_xversion(no_suffix_spec.iceberg_jars, self.delta_version))
