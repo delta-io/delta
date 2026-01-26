@@ -3237,6 +3237,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_VALIDATE_WHERE_WITH_OVERWRITE" : {
+    "message" : [
+      "Option '<validateWhere>' <message>"
+    ],
+    "sqlState" : "0A000"
+  },
   "DELTA_VERSIONS_NOT_CONTIGUOUS" : {
     "message" : [
       "Versions (<versionList>) are not contiguous. ",

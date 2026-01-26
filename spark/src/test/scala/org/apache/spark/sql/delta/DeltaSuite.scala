@@ -2236,6 +2236,82 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("append + validateWhere succeeds when all rows match predicate") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      Seq((0, 0), (1, 1)).toDF("id", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(path)
+
+      Seq((2, 1)).toDF("id", "part")
+        .write
+        .format("delta")
+        .mode("append")
+        .option("validateWhere", "part = 1")
+        .save(path)
+
+      checkAnswer(
+        spark.read.format("delta").load(path).select("id", "part"),
+        Seq(Row(0, 0), Row(1, 1), Row(2, 1))
+      )
+    }
+  }
+
+  test("append + validateWhere fails atomically when any row violates predicate") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      Seq((0, 0), (1, 1)).toDF("id", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(path)
+
+      val e = intercept[org.apache.spark.sql.delta.schema.InvariantViolationException] {
+        Seq((2, 0)).toDF("id", "part")
+          .write
+          .format("delta")
+          .mode("append")
+          .option("validateWhere", "part = 1")
+          .save(path)
+      }
+      assert(e.getMessage.contains("part = 1"))
+
+      // Ensure no partial commit happened.
+      checkAnswer(
+        spark.read.format("delta").load(path).select("id", "part"),
+        Seq(Row(0, 0), Row(1, 1))
+      )
+    }
+  }
+
+  test("overwrite + validateWhere is not allowed (use replaceWhere instead)") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      Seq((0, 0), (1, 1)).toDF("id", "part")
+        .write
+        .format("delta")
+        .partitionBy("part")
+        .mode("append")
+        .save(path)
+
+      val e = intercept[DeltaUnsupportedOperationException] {
+        Seq((2, 1)).toDF("id", "part")
+          .write
+          .format("delta")
+          .mode("overwrite")
+          .option("validateWhere", "part = 1")
+          .save(path)
+      }
+      assert(e.getMessage.contains("validateWhere"))
+      assert(e.getMessage.contains("overwrite"))
+      assert(e.getMessage.contains("replaceWhere"))
+    }
+  }
+
   test("need to update DeltaLog on DataFrameReader.load() code path") {
     // Due to possible race conditions (like in mounting/unmounting paths) there might be an initial
     // snapshot that gets cached for a table that should have a valid (non-initial) snapshot. In
