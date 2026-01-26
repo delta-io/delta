@@ -16,16 +16,19 @@
 
 package org.apache.spark.sql.delta
 
+import io.delta.storage.commit.actions.AbstractMetadata
+
 import java.util.{Locale, UUID}
 
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.RowId.RowIdMetadataStructField
-import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Format, Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.AbstractMetadataUtils._
 import org.json4s.DefaultFormats
 import org.json4s.jackson.JsonMethods._
 
@@ -35,7 +38,7 @@ import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.util.{CaseInsensitiveMap, QuotingUtils}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.internal.SQLConf
-import org.apache.spark.sql.types.{ArrayType, DataType, MapType, Metadata => SparkMetadata, MetadataBuilder, StructField, StructType}
+import org.apache.spark.sql.types.{ArrayType, DataType, MapType, MetadataBuilder, StructField, StructType, Metadata => SparkMetadata}
 
 /**
  * Information regarding a single dropped column.
@@ -657,7 +660,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * We detect DROP COLUMNS by checking if any physical name in `currentSchema` is missing in
    * `newSchema`.
    */
-  def isDropColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+  def isDropColumnOperation(
+      newMetadata: AbstractMetadata, currentMetadata: AbstractMetadata): Boolean = {
 
     // We will need to compare the new schema's physical columns to the current schema's physical
     // columns. So, they both must have column mapping enabled.
@@ -704,7 +708,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * We detect RENAME COLUMNS by checking if any two columns with the same physical name have
    * different logical names
    */
-  def isRenameColumnOperation(newMetadata: Metadata, currentMetadata: Metadata): Boolean = {
+  def isRenameColumnOperation(
+      newMetadata: AbstractMetadata, currentMetadata: AbstractMetadata): Boolean = {
 
     // We will need to compare the new schema's physical columns to the current schema's physical
     // columns. So, they both must have column mapping enabled.
@@ -746,6 +751,28 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       }.toSet.toSeq
   }
 
+  def hasNoColumnMappingSchemaChanges(
+      newMetadata: Metadata,
+      oldMetadata: Metadata,
+      allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
+    hasNoColumnMappingSchemaChanges(
+      newMetadata,
+      oldMetadata,
+      allowUnsafeReadOnPartitionChanges,
+      (oldMeta, targetMode) => {
+        val old = oldMeta.asInstanceOf[Metadata]
+        val upgraded = assignColumnIdAndPhysicalName(
+          old, old, isChangingModeOnExistingTable = true, isOverwritingSchema = false
+        )
+        // need to change to a column mapping mode too so the utils below can recognize
+        upgraded.copy(
+          configuration = upgraded.configuration ++
+            Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> targetMode.name)
+        )
+      }
+    )
+  }
+
   /**
    * Compare the old metadata's schema with new metadata's schema for column mapping schema changes.
    * Also check for repartition because we need to fail fast when repartition detected.
@@ -756,11 +783,15 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    * As of now, `newMetadata` is column mapping read compatible with `oldMetadata` if
    * no rename column or drop column has happened in-between.
    */
-  def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
-      allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
+  def hasNoColumnMappingSchemaChanges(
+      newMetadata: AbstractMetadata,
+      oldMetadata: AbstractMetadata,
+      allowUnsafeReadOnPartitionChanges: Boolean,
+      assignColumnIdAndPhysicalNameFunc: (AbstractMetadata, DeltaColumnMappingMode) =>
+        AbstractMetadata): Boolean = {
     // Helper function to check no column mapping schema change and no repartition
     def hasNoColMappingAndRepartitionSchemaChange(
-       newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+       newMetadata: AbstractMetadata, oldMetadata: AbstractMetadata): Boolean = {
       isRenameColumnOperation(newMetadata, oldMetadata) ||
         isDropColumnOperation(newMetadata, oldMetadata) ||
         !SchemaUtils.isPartitionCompatible(
@@ -781,14 +812,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
       // the new metadata, as the upgrade would use the logical name as the physical name, we could
       // easily capture any difference in the schema using the same is{Drop,Rename}ColumnOperation
       // utils.
-      var upgradedMetadata = assignColumnIdAndPhysicalName(
-        oldMetadata, oldMetadata, isChangingModeOnExistingTable = true, isOverwritingSchema = false
-      )
-      // need to change to a column mapping mode too so the utils below can recognize
-      upgradedMetadata = upgradedMetadata.copy(
-        configuration = upgradedMetadata.configuration ++
-          Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
-      )
+      // The callback should assign column IDs and physical names, and set the column mapping mode
+      val upgradedMetadata = assignColumnIdAndPhysicalNameFunc(oldMetadata, newMode)
       // use the same check
       !hasNoColMappingAndRepartitionSchemaChange(newMetadata, upgradedMetadata)
     } else {
