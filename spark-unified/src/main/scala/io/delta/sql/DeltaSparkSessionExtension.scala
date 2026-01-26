@@ -16,8 +16,11 @@
 
 package io.delta.sql
 
+import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.delta.ConvertSparkTableToDeltaTableV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -68,6 +71,33 @@ import org.apache.spark.sql.catalyst.rules.Rule
  * @since 0.4.0
  */
 class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
+
+  /**
+   * Injects the SparkTable to DeltaTableV2 conversion rule if V2 connector is enabled
+   * (STRICT mode). This rule must run after PreprocessTimeTravel but before DeltaAnalysis
+   * to ensure SparkTable instances are converted to DeltaTableV2 after TimeTravel nodes
+   * are resolved but before Delta-specific analysis rules process them.
+   *
+   * The conversion is only active when spark.databricks.delta.v2.enableMode is set to
+   * "STRICT".
+   */
+  override protected def injectPreDeltaAnalysisRules(
+      extensions: SparkSessionExtensions): Boolean = {
+    extensions.injectResolutionRule { session =>
+      val mode = session.conf.get(
+        DeltaSQLConf.V2_ENABLE_MODE.key,
+        DeltaSQLConf.V2_ENABLE_MODE.defaultValueString)
+
+      if ("STRICT".equals(mode)) {
+        // V2 mode: inject conversion rule to convert SparkTable to DeltaTableV2
+        new ConvertSparkTableToDeltaTableV2(session)
+      } else {
+        // NONE mode (default): no conversion needed, catalog returns DeltaTableV2 directly
+        new NoOpRule()
+      }
+    }
+    true
+  }
 
   /**
    * NoOpRule for binary compatibility with Delta 3.3.0

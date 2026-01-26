@@ -262,9 +262,10 @@ trait RestoreTableSuiteBase
       spark.range(5).write.format("delta").save(path)
       val deltaLog = DeltaLog.forTable(spark, path)
       val oldProtocolVersion = deltaLog.snapshot.protocol
-      // Update table to latest version.
+      // Update table to latest version using DeletionVectors (native reader-writer feature).
+      // DeletionVectors is supported by both Kernel (SparkTable) and Delta-Spark (DeltaTableV2).
       deltaLog.upgradeProtocol(
-        oldProtocolVersion.merge(Protocol().withFeature(TestReaderWriterFeature)))
+        oldProtocolVersion.merge(Protocol().withFeature(DeletionVectorsTableFeature)))
       val newProtocolVersion = deltaLog.snapshot.protocol
       assert(newProtocolVersion.minReaderVersion > oldProtocolVersion.minReaderVersion &&
         newProtocolVersion.minWriterVersion > oldProtocolVersion.minWriterVersion,
@@ -297,10 +298,11 @@ trait RestoreTableSuiteBase
         spark.range(5).write.format("delta").save(path)
         val deltaLog = DeltaLog.forTable(spark, path)
         val oldProtocolVersion = deltaLog.snapshot.protocol
-        // Update table to latest version.
+        // Update table to latest version using ColumnMapping (legacy reader-writer feature).
+        // ColumnMapping is supported by both Kernel (SparkTable) and Delta-Spark (DeltaTableV2).
         deltaLog.upgradeProtocol(
           Protocol(TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION)
-            .withFeatures(Seq(TestLegacyReaderWriterFeature))
+            .withFeatures(Seq(ColumnMappingTableFeature))
             .withFeatures(oldProtocolVersion.implicitlyAndExplicitlySupportedFeatures))
         val newProtocolVersion = deltaLog.snapshot.protocol
         assert(
