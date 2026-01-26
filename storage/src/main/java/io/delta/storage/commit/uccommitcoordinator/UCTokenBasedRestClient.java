@@ -63,7 +63,7 @@ import java.util.function.Supplier;
  * <p>Usage example:
  * <pre>{@code
  * TokenProvider tokenProvider = ... // Create or configure TokenProvider
- * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, tokenProvider)) {
+ * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, tokenProvider,...)) {
  *     String metastoreId = client.getMetastoreId();
  *     // Perform operations with the client...
  * }
@@ -118,6 +118,11 @@ public class UCTokenBasedRestClient implements UCClient {
     if (scalaVersion != null) {
       builder.addAppVersion("Scala", scalaVersion);
     }
+    // Add the Java version
+    String javaVersion = System.getProperty("java.version");
+    if(javaVersion != null && !javaVersion.isEmpty()) {
+      builder.addAppVersion("Java", javaVersion);
+    }
 
     ApiClient apiClient = builder.build();
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
@@ -130,7 +135,8 @@ public class UCTokenBasedRestClient implements UCClient {
       GetMetastoreSummaryResponse response = metastoresApi.summary();
       return response.getMetastoreId();
     } catch (ApiException e) {
-      throw new IOException("Failed to get metastore ID: " + e.getMessage(), e);
+      throw new IOException(
+          String.format("Failed to get metastore ID (HTTP %s): ", e.getCode()), e);
     }
   }
 
@@ -195,9 +201,17 @@ public class UCTokenBasedRestClient implements UCClient {
       DeltaGetCommitsResponse response = deltaCommitsApi.getCommits(request);
       return toGetCommitsResponse(response, tableUri);
     } catch (ApiException e) {
-      handleGetCommitsException(e);
-      // This line should never be reached due to exception handling above
-      throw new IOException("Unexpected error in getCommits", e);
+      int statusCode = e.getCode();
+      String responseBody = e.getResponseBody();
+
+      if (statusCode == HTTP_NOT_FOUND) {
+        throw new InvalidTargetTableException(
+            String.format("Invalid Target Table (HTTP %s) due to: %s", statusCode, responseBody));
+      } else {
+        throw new IOException(
+            String.format("Unexpected getCommits failure (HTTP %s): due to: %s", statusCode,
+                responseBody), e);
+      }
     }
   }
 
@@ -206,10 +220,6 @@ public class UCTokenBasedRestClient implements UCClient {
     // The Unity Catalog SDK's ApiClient doesn't require explicit closing
     // as it manages HTTP connections internally
   }
-
-  // ===========================
-  // Conversion Helper Methods
-  // ===========================
 
   /**
    * Converts a Delta {@link Commit} to a Unity Catalog SDK {@link DeltaCommitInfo}.
@@ -276,10 +286,8 @@ public class UCTokenBasedRestClient implements UCClient {
         CoordinatedCommitsUtils.logDirPath(new Path(tableUri)));
 
     List<Commit> commits = new ArrayList<>();
-    if (response.getCommits() != null) {
-      for (DeltaCommitInfo commitInfo : response.getCommits()) {
-        commits.add(fromDeltaCommitInfo(commitInfo, basePath));
-      }
+    for (DeltaCommitInfo commitInfo : response.getCommits()) {
+      commits.add(fromDeltaCommitInfo(commitInfo, basePath));
     }
 
     return new GetCommitsResponse(commits, response.getLatestTableVersion());
@@ -318,7 +326,7 @@ public class UCTokenBasedRestClient implements UCClient {
    * @throws IOException                  If there's an unexpected error
    */
   private void handleCommitException(ApiException e)
-      throws CommitFailedException, UCCommitCoordinatorException, IOException {
+      throws CommitFailedException, UCCommitCoordinatorException {
     int statusCode = e.getCode();
     String responseBody = e.getResponseBody();
 
@@ -345,27 +353,6 @@ public class UCTokenBasedRestClient implements UCClient {
             false /* conflict */,
             "Unexpected commit failure (HTTP " + statusCode + "): " + responseBody,
             e);
-    }
-  }
-
-  /**
-   * Handles {@link ApiException} from getCommits operations by converting to appropriate Delta
-   * exceptions.
-   *
-   * @param e The API exception to handle
-   * @throws UCCommitCoordinatorException If there's a UC-specific error
-   * @throws IOException                  If there's an unexpected error
-   */
-  private void handleGetCommitsException(ApiException e)
-      throws UCCommitCoordinatorException, IOException {
-    int statusCode = e.getCode();
-    String responseBody = e.getResponseBody();
-
-    if (statusCode == HTTP_NOT_FOUND) {
-      throw new InvalidTargetTableException("Invalid Target Table due to: " + responseBody);
-    } else {
-      throw new IOException("Unexpected getCommits failure (HTTP " + statusCode +
-          "): due to: " + responseBody);
     }
   }
 }

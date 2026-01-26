@@ -299,6 +299,11 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
       org.apache.spark.SPARK_VERSION,
       scala.util.Properties.versionNumberString)
   }
+
+  /** Java-friendly overload that accepts a java.util.Map */
+  def createUCClient(uri: String, authConfig: java.util.Map[String, String]): UCClient = {
+    createUCClient(uri, authConfig.asScala.toMap)
+  }
 }
 
 /**
