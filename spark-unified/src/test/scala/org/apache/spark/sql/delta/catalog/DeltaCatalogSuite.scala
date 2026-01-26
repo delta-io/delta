@@ -27,7 +27,7 @@ import java.util.Locale
  * Unit tests for DeltaCatalog's V2 connector routing logic.
  *
  * Verifies that DeltaCatalog correctly routes table loading based on
- * DeltaSQLConfV2.V2_ENABLE_MODE:
+ * DeltaSQLConf.V2_ENABLE_MODE:
  * - STRICT mode: Kernel's SparkTable (V2 connector)
  * - NONE mode (default): DeltaTableV2 (V1 connector)
  */
