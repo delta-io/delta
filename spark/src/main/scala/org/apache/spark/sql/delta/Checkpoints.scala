@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIte
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
@@ -1196,6 +1197,7 @@ object Checkpoints
       val partitionValues = Checkpoints.extractPartitionValues(
         snapshot.metadata.partitionSchema, "add.partitionValues")
       additionalCols ++= partitionValues
+      additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
     state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
@@ -1215,7 +1217,8 @@ object Checkpoints
   }
 
   def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
-    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata)
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata) &&
+      !conf.getConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED).getOrElse(false)
   }
 
   def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
@@ -1246,6 +1249,17 @@ object Checkpoints
     if (partitionValues.isEmpty) {
       None
     } else Some(struct(partitionValues: _*).as(STRUCT_PARTITIONS_COL_NAME))
+  }
+  // This method can be overridden in tests to create a checkpoint with parsed stats.
+  def includeStatsParsedInCheckpoint(): Boolean = true
+
+  /** Parse the stats from JSON and keep as a struct field when available. */
+  def extractStats(statsSchema: StructType, statsColName: String): Option[Column] = {
+    import org.apache.spark.sql.functions.from_json
+    Option.when(includeStatsParsedInCheckpoint() && statsSchema.nonEmpty) {
+      from_json(col(statsColName), statsSchema, DeltaFileProviderUtils.jsonStatsParseOption)
+        .as(Checkpoints.STRUCT_STATS_COL_NAME)
+    }
   }
 }
 
