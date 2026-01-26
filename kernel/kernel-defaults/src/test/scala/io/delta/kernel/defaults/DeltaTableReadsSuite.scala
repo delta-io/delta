@@ -272,6 +272,21 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     }
   }
 
+  test("read table with far-future timestamp in stats") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`$path` (ts TIMESTAMP) USING DELTA")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (TIMESTAMP'2020-01-01 00:00:00')")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (TIMESTAMP'9999-12-31 23:59:59')")
+      val filter = new Predicate("<", new Column("ts"), Literal.ofTimestamp(253402300799000000L))
+      checkTable(
+        path,
+        Seq(TestRow(1577836800000000L)),
+        filter = filter,
+        expectedRemainingFilter = filter)
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp_NTZ tests
   //////////////////////////////////////////////////////////////////////////////////
