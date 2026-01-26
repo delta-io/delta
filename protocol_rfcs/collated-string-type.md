@@ -21,14 +21,13 @@ To support this feature:
 When Collations are supported (when the `writerFeatures` field of a table's protocol action contains `collations`), then:
 - Readers could do comparisons and sorting of strings based on the collation specified in the schema. 
 - If the collation is not specified for a string type, then the reader must use the default utf8 binary collation.
-- Readers must only use statistics for a collation if the version matches.
-- Readers must only do file skipping based on statistics from a collation if the collation is applied for the read. For example, when reading a string column using the collation ICU.en_US.72, the reader must not use file skipping statistics from the collation spark.UTF8_LCASE.75.
+- Readers must only do file skipping based on column statistics for a collation if the filter operator used for the data skipping is specified to treat the column as having that same collation. For example, when filtering a string column using the string equality comparison operator that is configured with the collation ICU.en_US.72, the reader must not use file skipping statistics from the collation spark.UTF8_LCASE.75. It should also not use ICU.en_US.69 because the collation version number does not match.```
 
 ## Writer Requirements for Collations:
 
 When Collations are supported (when the `writerFeatures` field of a table's protocol action contains `collations`), then:
 - Writers must write the collation identifier in the schema metadata for a column with non-default collation, i.e., any collation that is not utf8 binary.
-- Writer must not write the collation identifier in the schema metadata for a column with default collation (utf8 binary).
+- Writers must not write the collation identifier in the schema metadata for a column with default collation (utf8 binary).
 - Writers could write per-file statistics for string columns with collations other than utf8 binary collation in `statsWithCollation`. See [Per-file Statistics](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#per-file-statistics) for more details.
 - If a writer adds per-file statistics for a new version of a collation, the writer should also update the `domainMetadata` for the `collations` table feature to include the new collation versions that are used to collect statistics.
 - Writers could remove a collation version from the `domainMetadata` for the `collations` table feature if stats collection for the collation version is no longer desired. For example, the engine upgrades their ICU library and now desires a newer version for a collation.
@@ -44,7 +43,7 @@ By default, all strings are collated using binary collation. That means that str
 
 The `collations` table feature is a writer only feature and allows clients that do not support collations to read the table using UTF8 binary collation. To support the table feature clients must preserve collations when they change the schema. Collecting collated statistics is optional and it is valid to store UTF8 binary collated statistics for fields with a collation other than UTF8 binary.
 
-The column level collation defined may not always be applied. Engines are responsible for choosing what collation to apply on a query. An engine may apply a different collation than the schema collation based on the engine's collation precedence rules. However, an engine must never use file statistics for file skipping from a different collation than the collation applied for the read.
+The column level collation indicates the default collation that readers should use to operate on a column. However, readers are responsible for choosing what collation to actually apply on operations. An engine may apply a different collation than the schema collation based on the engine's collation precedence rules. However, an engine must take care to only use column statistics for file skipping from a collation that is identical to the one specified in the filtering operation in all aspects, including the collation version.
 
 #### Collation identifiers
 
