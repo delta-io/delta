@@ -189,8 +189,8 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             if (query != null) {
               // TODO: remove additional processAllAvailable once interrupt is handled gracefully
               query.processAllAvailable();
-              query.awaitTermination();
               query.stop();
+              query.awaitTermination();
               assertFalse(query.isActive(), "Streaming query should have stopped");
             }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
