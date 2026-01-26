@@ -16,13 +16,11 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-import java.nio.file.Files
 import java.util.Optional
 
 import scala.collection.JavaConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
-import io.delta.kernel.Table
 import io.delta.kernel.defaults.engine.DefaultEngine
 import io.delta.kernel.defaults.utils.{AbstractTestUtils, TestRow, TestUtils, TestUtilsWithLegacyKernelAPIs, TestUtilsWithTableManagerAPIs}
 import io.delta.kernel.internal.{InternalScanFileUtils, SnapshotImpl}
@@ -31,9 +29,13 @@ import io.delta.kernel.internal.fs.Path
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.types.{LongType, StructType}
 
+import org.apache.spark.sql.delta.{DeltaLog, SerializableFileStatus}
+import org.apache.spark.sql.delta.actions.{AddFile, CheckpointMetadata, SidecarFile}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.FileNames.newV2CheckpointJsonFile
 
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{Path => HadoopPath}
 import org.scalatest.funsuite.AnyFunSuite
 
 class LogReplaySuite extends AbstractLogReplaySuite with TestUtilsWithTableManagerAPIs {
@@ -336,6 +338,65 @@ trait AbstractLogReplaySuite extends AnyFunSuite {
       deleteChecksumFileForTable(tablePath, versions = Seq(0, 1))
       val snapshot = getTableManagerAdapter.getSnapshotAtLatest(defaultEngine, tablePath)
       assert(!snapshot.getCurrentCrcInfo.isPresent)
+    }
+  }
+
+  // Regression test for issue #4807
+  test("read v2 checkpoint with sidecars lacking version prefix") {
+    withTempDir { tempDir =>
+      val tablePath = tempDir.getAbsolutePath
+
+      spark.sql(
+        s"""CREATE TABLE delta.`$tablePath` (id INT) USING delta
+           |TBLPROPERTIES('delta.checkpointPolicy' = 'v2')
+           |""".stripMargin)
+      spark.sql(s"INSERT INTO delta.`$tablePath` VALUES (1), (2)")
+
+      val log = DeltaLog.forTable(spark, new HadoopPath(tablePath))
+      val hadoopConf = log.newDeltaHadoopConf()
+      val fs = log.logPath.getFileSystem(hadoopConf)
+
+      // Create sidecar file with Spark-style naming (no version prefix)
+      var sidecarFileName: String = ""
+      withTempDir { dir =>
+        // scalastyle:off sparkimplicits
+        import spark.implicits._
+        // scalastyle:on sparkimplicits
+        val addFile = AddFile(
+          path = "fake-data-file.parquet",
+          partitionValues = Map.empty,
+          size = 100L,
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true)
+        Seq(addFile.wrap).toDF.repartition(1).write.mode("overwrite").parquet(dir.getAbsolutePath)
+        val srcPath = new HadoopPath(
+          dir.listFiles().filter(_.getName.endsWith("parquet")).head.getAbsolutePath)
+        val dstPath = new HadoopPath(log.sidecarDirPath, srcPath.getName)
+        fs.mkdirs(log.sidecarDirPath)
+        fs.rename(srcPath, dstPath)
+        sidecarFileName = fs.getFileStatus(dstPath).getPath.getName
+      }
+
+      val version = log.update().version
+      val snapshot = log.getSnapshotAt(version)
+      val sidecarPath = new HadoopPath(log.sidecarDirPath.toString, sidecarFileName)
+      val sidecarFileStatus = SerializableFileStatus.fromStatus(fs.getFileStatus(sidecarPath))
+      val sidecarFile = SidecarFile(sidecarFileStatus)
+      val actionsForCheckpoint = Seq(
+        snapshot.protocol,
+        snapshot.metadata,
+        sidecarFile,
+        CheckpointMetadata(version))
+      log.store.write(
+        newV2CheckpointJsonFile(log.logPath, version),
+        actionsForCheckpoint.map(_.json).toIterator,
+        overwrite = true,
+        hadoopConf = hadoopConf)
+
+      val kernelSnapshot = latestSnapshot(tablePath)
+      val scan = kernelSnapshot.getScanBuilder().build()
+      val rows = collectScanFileRows(scan)
+      assert(rows != null)
     }
   }
 }
