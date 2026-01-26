@@ -16,79 +16,16 @@
 
 package org.apache.spark.sql.delta.util
 
-import com.fasterxml.jackson.annotation.JsonInclude.Include
-import com.fasterxml.jackson.core.{JsonGenerator, JsonParser}
-import com.fasterxml.jackson.databind._
-import com.fasterxml.jackson.databind.deser.std.StdDeserializer
-import com.fasterxml.jackson.databind.module.SimpleModule
-import com.fasterxml.jackson.databind.ser.std.StdSerializer
-import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
 import org.apache.spark.sql.delta.shims.VariantStatsShims
 import org.apache.spark.sql.delta.util.Codec.Base85Codec
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
 
-// Serializer to help serialize VariantVal's as Z85 strings in JSON.
-class VariantValJsonSerializer extends StdSerializer[VariantVal](classOf[VariantVal]) {
-  override def serialize(
-      v: VariantVal,
-      gen: JsonGenerator,
-      provider: SerializerProvider): Unit = {
-    gen.writeString(DeltaStatsJsonUtils.encodeVariantAsZ85(
-      new Variant(v.getValue, v.getMetadata)))
-  }
-}
-
-// Deserializer to help deserialize VariantVal's from Z85 strings.
-class VariantValJsonDeserializer extends StdDeserializer[VariantVal](classOf[VariantVal]) {
-  override def deserialize(
-      p: JsonParser,
-      ctxt: DeserializationContext): VariantVal = {
-    val z85String = p.getText
-    DeltaStatsJsonUtils.decodeVariantFromZ85(z85String)
-  }
-}
-
 /**
- * Utility functions for serializing Delta stats to JSON with custom Variant encoding.
- * This object provides JSON serialization that encodes VariantVal objects as Z85 strings,
- * which is used for storing variant statistics in Delta checkpoints and stats.
+ * Utility functions for encoding/decoding Variant values as Z85 strings.
+ * This is used for storing variant statistics in Delta checkpoints and stats.
  */
 object DeltaStatsJsonUtils {
-
-  /**
-   * Jackson mapper configured to serialize/deserialize VariantVal as Z85-encoded strings.
-   * The module is registered once to avoid memory leaks.
-   */
-  private val mapper = {
-    val m = new ObjectMapper with ScalaObjectMapper
-    m.setSerializationInclusion(Include.NON_ABSENT)
-    m.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-    m.registerModule(DefaultScalaModule)
-
-    val variantModule = new SimpleModule()
-    variantModule.addSerializer(classOf[VariantVal], new VariantValJsonSerializer())
-    variantModule.addDeserializer(classOf[VariantVal], new VariantValJsonDeserializer())
-    m.registerModule(variantModule)
-
-    m
-  }
-
-  /**
-   * Serialize an object to JSON, encoding any VariantVal fields as Z85 strings.
-   * Same interface as JsonUtils.toJson but with custom Variant serialization.
-   */
-  def toJson[T: Manifest](obj: T): String = {
-    mapper.writeValueAsString(obj)
-  }
-
-  /**
-   * Deserialize JSON to an object, decoding any Z85 strings to VariantVal.
-   * Same interface as JsonUtils.fromJson but with custom Variant deserialization.
-   */
-  def fromJson[T: Manifest](json: String): T = {
-    mapper.readValue[T](json)
-  }
 
   /**
    * Encode a Variant as a Z85 string.

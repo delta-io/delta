@@ -269,10 +269,16 @@ trait DataSkippingReaderBase
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
     val parsedStats = from_json(col("stats"), statsSchema)
+    // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
+    // This avoids performance overhead for tables without variant columns.
     // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
     // expression has no way to decode a VariantVal from an encoded Z85 string.
     // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
-    val decodedStats = Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+    } else {
+      parsedStats
+    }
     allFiles.withColumn("stats", decodedStats)
   }
 
