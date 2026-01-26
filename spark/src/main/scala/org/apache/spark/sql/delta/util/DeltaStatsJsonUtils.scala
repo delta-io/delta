@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.deser.std.StdDeserializer
 import com.fasterxml.jackson.databind.module.SimpleModule
 import com.fasterxml.jackson.databind.ser.std.StdSerializer
 import com.fasterxml.jackson.module.scala.{DefaultScalaModule, ScalaObjectMapper}
+import org.apache.spark.sql.delta.shims.VariantStatsShims
 import org.apache.spark.sql.delta.util.Codec.Base85Codec
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
@@ -110,7 +111,7 @@ object DeltaStatsJsonUtils {
    */
   def decodeVariantFromZ85(z85: String): VariantVal = {
     val decoded = Base85Codec.decodeBytes(z85, z85.length)
-    val metadataSize = DeltaVariantUtil.metadataSize(decoded)
+    val metadataSize = VariantStatsShims.metadataSize(decoded)
     val valueWithPadding = decoded.slice(metadataSize, decoded.length)
     val valueSize = VariantUtil.valueSize(valueWithPadding, 0)
     val value = valueWithPadding.slice(0, valueSize)

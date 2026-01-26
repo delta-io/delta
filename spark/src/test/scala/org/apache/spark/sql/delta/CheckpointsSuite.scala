@@ -32,7 +32,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
-import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, DeltaVariantUtil}
+import org.apache.spark.sql.delta.shims.VariantStatsShims
+import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
@@ -1062,7 +1063,7 @@ class CheckpointsSuite
       val decodedMinTopLevel = Codec.Base85Codec.decodeBytes(
         checkpointStatsJson.getString(0),
         checkpointStatsJson.getString(0).length)
-      val minMetadataSizeTopLevel = DeltaVariantUtil.metadataSize(decodedMinTopLevel)
+      val minMetadataSizeTopLevel = VariantStatsShims.metadataSize(decodedMinTopLevel)
       val minValueTopLevel = decodedMinTopLevel
         .slice(minMetadataSizeTopLevel, decodedMinTopLevel.length)
       val minVariantTopLevel = new Variant(minValueTopLevel, decodedMinTopLevel)
@@ -1071,7 +1072,7 @@ class CheckpointsSuite
       val decodedMaxTopLevel = Codec.Base85Codec.decodeBytes(
         checkpointStatsJson.getString(1),
         checkpointStatsJson.getString(1).length)
-      val maxMetadataSizeTopLevel = DeltaVariantUtil.metadataSize(decodedMaxTopLevel)
+      val maxMetadataSizeTopLevel = VariantStatsShims.metadataSize(decodedMaxTopLevel)
       val maxValueTopLevel =
         decodedMaxTopLevel.slice(maxMetadataSizeTopLevel, decodedMaxTopLevel.length)
       val maxVariantTopLevel = new Variant(maxValueTopLevel, decodedMaxTopLevel)
@@ -1085,7 +1086,7 @@ class CheckpointsSuite
       val decodedMinNested = Codec.Base85Codec.decodeBytes(
         checkpointStatsJson.getString(2),
         checkpointStatsJson.getString(2).length)
-      val minMetadataSizeNested = DeltaVariantUtil.metadataSize(decodedMinNested)
+      val minMetadataSizeNested = VariantStatsShims.metadataSize(decodedMinNested)
       val minValueNested = decodedMinNested
         .slice(minMetadataSizeTopLevel, decodedMinNested.length)
       val minVariantNested = new Variant(minValueNested, decodedMinNested)
@@ -1094,7 +1095,7 @@ class CheckpointsSuite
       val decodedMaxNested = Codec.Base85Codec.decodeBytes(
         checkpointStatsJson.getString(3),
         checkpointStatsJson.getString(3).length)
-      val maxMetadataSizeNested = DeltaVariantUtil.metadataSize(decodedMaxNested)
+      val maxMetadataSizeNested = VariantStatsShims.metadataSize(decodedMaxNested)
       val maxValueNested =
         decodedMaxNested.slice(maxMetadataSizeNested, decodedMaxNested.length)
       val maxVariantNested = new Variant(maxValueNested, decodedMaxNested)

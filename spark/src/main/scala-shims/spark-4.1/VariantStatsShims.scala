@@ -14,21 +14,20 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.util;
+package org.apache.spark.sql.delta.shims
 
-import org.apache.spark.types.variant.VariantUtil;
+import org.apache.spark.types.variant.VariantUtil
 
 /**
- * Utility functions for working with Variant data types in Delta.
- * This class provides additional functionality beyond what's available in
- * org.apache.spark.types.variant.VariantUtil.
+ * Shim for variant stats functionality in Spark 4.1+.
+ * In Spark 4.1, VariantUtil.readUnsigned is public, so we can use it directly.
  */
-public class DeltaVariantUtil {
+object VariantStatsShims {
 
-  private static void checkIndex(int pos, int length) {
+  private def checkIndex(pos: Int, length: Int): Unit = {
     if (pos < 0 || pos >= length) {
       throw new IllegalArgumentException(
-        "Malformed variant: invalid index " + pos + " for length " + length);
+        s"Malformed variant: invalid index $pos for length $length")
     }
   }
 
@@ -38,17 +37,16 @@ public class DeltaVariantUtil {
    * @param metadata The variant metadata bytes (or combined metadata+value bytes)
    * @return The size of the metadata section in bytes
    */
-  public static int metadataSize(byte[] metadata) {
-    checkIndex(0, metadata.length);
-    int offsetSize = ((metadata[0] >> 6) & 0x3) + 1;
-    int dictSize = VariantUtil.readUnsigned(metadata, 1, offsetSize);
-    int lastOffset =
-      VariantUtil.readUnsigned(metadata, 1 + (dictSize + 1) * offsetSize, offsetSize);
-    int size = 1 + (dictSize + 2) * offsetSize + lastOffset;
+  def metadataSize(metadata: Array[Byte]): Int = {
+    checkIndex(0, metadata.length)
+    val offsetSize = ((metadata(0) >> 6) & 0x3) + 1
+    val dictSize = VariantUtil.readUnsigned(metadata, 1, offsetSize)
+    val lastOffset = VariantUtil.readUnsigned(metadata, 1 + (dictSize + 1) * offsetSize, offsetSize)
+    val size = 1 + (dictSize + 2) * offsetSize + lastOffset
     if (size > metadata.length) {
       throw new IllegalArgumentException(
-        "Malformed variant: metadata size " + size + " exceeds buffer length " + metadata.length);
+        s"Malformed variant: metadata size $size exceeds buffer length ${metadata.length}")
     }
-    return size;
+    size
   }
 }
