@@ -107,8 +107,19 @@ public class Checkpointer {
     logger.info(
         "{}: Finished writing last checkpoint metadata file for version: {}", tablePath, version);
 
+    // Only clean up expired log files when:
+    // 1. Snapshot was built as "latest" by intent (not time-traveled)
+    // 2. checkpointProtection feature is not enabled
+    // 3. delta.enableExpiredLogCleanup table property is set to true
     final Metadata metadata = snapshot.getMetadata();
-    if (snapshot.wasBuiltAsLatest() && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
+    final boolean hasCheckpointProtection =
+        snapshot
+            .getProtocol()
+            .getWriterFeatures()
+            .contains(CHECKPOINT_PROTECTION_W_FEATURE.featureName());
+    if (snapshot.wasBuiltAsLatest()
+        && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)
+        && !hasCheckpointProtection) {
       cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {
       logger.info(
