@@ -1,2 +1,0 @@
-{"time":"2026-01-27T02:07:30.234692065Z","level":"INFO","msg":"No project file found","path":"/home/harsh.motwani/delta/.bazelbsp/project.json"}
-{"time":"2026-01-27T02:07:30.28507954Z","level":"ERROR","msg":"failed to load project","error":"exit status 1"}
