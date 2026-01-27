@@ -16,37 +16,44 @@
 package io.delta.kernel.defaults
 
 import java.io.File
-import java.util.{Locale, Optional, UUID}
+import java.nio.file.Files
+import java.util.{Locale, Optional}
 
+import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
 
 import io.delta.golden.GoldenTableUtils.goldenTablePath
 import io.delta.kernel._
-import io.delta.kernel.Operation.{CREATE_TABLE, WRITE}
+import io.delta.kernel.Operation.{CREATE_TABLE, MANUAL_UPDATE, WRITE}
 import io.delta.kernel.data.{ColumnarBatch, FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.parquet.ParquetSuiteBase
 import io.delta.kernel.defaults.utils.{AbstractWriteUtils, TestRow, WriteUtils}
+import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions._
-import io.delta.kernel.expressions.Literal
+import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
-import io.delta.kernel.internal.data.GenericRow
-import io.delta.kernel.internal.util.JsonUtils
+import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.table.SnapshotBuilderImpl
+import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
+import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
-import io.delta.kernel.types.BooleanType.BOOLEAN
 import io.delta.kernel.types.ByteType.BYTE
 import io.delta.kernel.types.DateType.DATE
+import io.delta.kernel.types.DecimalType
 import io.delta.kernel.types.DoubleType.DOUBLE
 import io.delta.kernel.types.FloatType.FLOAT
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.ShortType.SHORT
 import io.delta.kernel.types.StringType.STRING
+import io.delta.kernel.types.StructType
 import io.delta.kernel.types.TimestampType.TIMESTAMP
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.tables.DeltaTable
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -419,7 +426,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         testSchema)
 
       // Use your new commitUnsafe API to write an unsupported writer feature
-      import org.apache.spark.sql.delta.DeltaLog
+      import org.apache.spark.sql.delta.{DeltaLog, OptimisticTransaction}
       import org.apache.spark.sql.delta.actions.Protocol
 
       val deltaLog = DeltaLog.forTable(spark, tablePath)
@@ -1213,95 +1220,88 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
   // Change Data Feed (CDF) tests
   ///////////////////////////////////////////////////////////////////////////
 
-  val cdfTestCases: Seq[(String, Seq[Row], Boolean)] = Seq(
-    ("add with dataChange=true", Seq(createAddFileRow(dataChange = true)), true),
-    ("add with dataChange=false", Seq(createAddFileRow(dataChange = false)), true),
-    (
-      "multiple adds with dataChange=true",
-      Seq(createAddFileRow(dataChange = true), createAddFileRow(dataChange = true)),
-      true),
-    (
-      "add dataChange=true, remove dataChange=false", {
-        val path = "file1.parquet"
-        Seq(
-          createAddFileRow(path, dataChange = true),
-          createRemoveFileRow(path, dataChange = false))
-      },
-      true),
-    (
-      "add dataChange=true, remove dataChange=true", {
-        val path = "file1.parquet"
-        Seq(createAddFileRow(path, dataChange = true), createRemoveFileRow(path, dataChange = true))
-      },
-      false))
+  test("create table with CDF enabled - add-only transaction succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with CDF enabled
+      val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+      val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
 
-  // Test cases for CDF-enabled tables (combination of add/remove with dataChange true/false)
-  cdfTestCases.foreach { case (desc, actions, shouldSucceed) =>
-    test(s"CDF-enabled table: $desc - ${if (shouldSucceed) "succeeds" else "fails"}") {
-      withTempDirAndEngine { (tablePath, engine) =>
-        val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
-        val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+      // Verify transaction properties
+      assert(txn.getSchema(engine) === testSchema)
+      assert(txn.getPartitionColumns(engine) === Seq.empty.asJava)
+      assert(txn.getReadTableVersion === -1)
 
-        val actionsIterable = inMemoryIterable(
-          io.delta.kernel.internal.util.Utils.toCloseableIterator(actions.iterator.asJava))
+      // Commit with some initial data (add-only operation)
+      val txnState = txn.getTransactionState(engine)
+      val actions = inMemoryIterable(stageData(txnState, Map.empty, dataBatches1))
+      val expectedData = dataBatches1.flatMap(_.toTestRows)
 
-        if (shouldSucceed) {
-          val result = commitTransaction(txn, engine, actionsIterable)
-          assert(result.getVersion === 0)
-        } else {
-          intercept[KernelException] {
-            commitTransaction(txn, engine, actionsIterable)
-          }
-        }
-      }
+      val txnResult = commitTransaction(txn, engine, actions)
+
+      // Verify commit succeeded
+      assert(txnResult.getVersion === 0)
+      verifyCommitInfo(tablePath = tablePath, version = 0)
+      verifyWrittenContent(tablePath, testSchema, expectedData)
+
+      // Verify CDF is enabled in the snapshot
+      val snapshot = Table.forPath(engine, tablePath).getLatestSnapshot(engine)
+        .asInstanceOf[SnapshotImpl]
+      assert(TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(snapshot.getMetadata))
     }
   }
 
-  ///////////////////////////////////////////////////////////////////////////
-  // Helper functions
-  ///////////////////////////////////////////////////////////////////////////
+  test("write to CDF-enabled table - add-only (append) succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with CDF enabled
+      val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+      val createTxn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+      commitTransaction(createTxn, engine, emptyIterable())
 
-  private def createAddFileRow(
-      path: String = s"part-${UUID.randomUUID()}.parquet",
-      dataChange: Boolean = true): Row = {
-    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
-    import io.delta.kernel.internal.util.PartitionUtils
+      // Append data (add-only operation) - should succeed
+      val table = Table.forPath(engine, tablePath)
+      val appendTxn = table.createTransactionBuilder(engine, testEngineInfo, WRITE).build(engine)
 
-    val partitionValues = PartitionUtils.serializePartitionMap(
-      java.util.Collections.emptyMap[String, Literal]())
+      val txnState = appendTxn.getTransactionState(engine)
+      val actions = inMemoryIterable(stageData(txnState, Map.empty, dataBatches1))
+      val expectedData = dataBatches1.flatMap(_.toTestRows)
 
-    val addFileRow = AddFile.createAddFileRow(
-      testSchema,
-      path,
-      partitionValues,
-      100L, // size
-      System.currentTimeMillis(), // modificationTime
-      dataChange,
-      Optional.empty(), // deletionVector
-      Optional.empty(), // tags
-      Optional.empty(), // baseRowId
-      Optional.empty(), // defaultRowCommitVersion
-      Optional.empty()
-    ) // stats
+      val txnResult = commitTransaction(appendTxn, engine, actions)
 
-    SingleAction.createAddFileSingleAction(addFileRow)
+      // Verify append succeeded
+      assert(txnResult.getVersion === 1)
+      verifyCommitInfo(tablePath = tablePath, version = 1, partitionCols = null)
+      verifyWrittenContent(tablePath, testSchema, expectedData)
+    }
   }
 
-  private def createRemoveFileRow(
-      path: String,
-      dataChange: Boolean = true): Row = {
-    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
+  test("write to CDF-enabled table - multiple appends succeed") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with CDF enabled and initial data
+      val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+      val createTxn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+      val txnState1 = createTxn.getTransactionState(engine)
+      val actions1 = inMemoryIterable(stageData(txnState1, Map.empty, dataBatches1))
+      commitTransaction(createTxn, engine, actions1)
 
-    val removeFileRow = new GenericRow(
-      RemoveFile.FULL_SCHEMA,
-      Map[Integer, Object](
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
-          System.currentTimeMillis()),
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
-        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
+      // First append - should succeed
+      val table = Table.forPath(engine, tablePath)
+      val appendTxn1 = table.createTransactionBuilder(engine, testEngineInfo, WRITE).build(engine)
+      val txnState2 = appendTxn1.getTransactionState(engine)
+      val actions2 = inMemoryIterable(stageData(txnState2, Map.empty, dataBatches2))
+      val txnResult1 = commitTransaction(appendTxn1, engine, actions2)
+      assert(txnResult1.getVersion === 1)
 
-    SingleAction.createRemoveFileSingleAction(removeFileRow)
+      // Second append - should succeed
+      val appendTxn2 = table.createTransactionBuilder(engine, testEngineInfo, WRITE).build(engine)
+      val txnState3 = appendTxn2.getTransactionState(engine)
+      val actions3 = inMemoryIterable(stageData(txnState3, Map.empty, dataBatches1))
+      val txnResult2 = commitTransaction(appendTxn2, engine, actions3)
+      assert(txnResult2.getVersion === 2)
+
+      // Verify all data is present
+      val expectedData = (dataBatches1 ++ dataBatches2 ++ dataBatches1).flatMap(_.toTestRows)
+      verifyWrittenContent(tablePath, testSchema, expectedData)
+    }
   }
 
   def removeTimestampNtzTypeColumns(structType: StructType): StructType = {
