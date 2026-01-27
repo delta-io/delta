@@ -441,7 +441,9 @@ object DeltaOperations {
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
-  ) ++ // Add only non-None option parameters to commit info/history
+  ) ++
+    // To avoid bloating the DESCRIBE HISTORY output, we only log relevant fields. Option fields
+    // that are None are deemed irrelevant to the operation and thus omitted.
     predicate.map("predicate" -> _) ++
     isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
     canOverwriteSchema.map("canOverwriteSchema" -> _) ++
