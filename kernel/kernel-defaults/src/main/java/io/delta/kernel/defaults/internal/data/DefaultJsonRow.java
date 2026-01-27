@@ -25,6 +25,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.TimestampUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -254,11 +255,7 @@ public class DefaultJsonRow implements Row {
     if (dataType instanceof TimestampType) {
       throwIfTypeMismatch("timestamp", jsonValue.isTextual(), jsonValue);
       Instant time = OffsetDateTime.parse(jsonValue.textValue()).toInstant();
-      // Don't use ChronoUnit.MICROS.between() - it computes (seconds * 1_000_000_000) / 1000,
-      // where the intermediate nanoseconds value overflows. We compute seconds * 1_000_000
-      // directly, which gives the same result without the overflow.
-      return Math.addExact(
-          Math.multiplyExact(time.getEpochSecond(), 1_000_000L), time.getNano() / 1000);
+      return TimestampUtils.toEpochMicros(time);
     }
 
     if (dataType instanceof TimestampNTZType) {
