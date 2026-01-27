@@ -1140,7 +1140,8 @@ class CheckpointsSuite
 
   test("Ensure variant stats are preserved during state reconstruction") {
     // Test different combinations of (writeStatsAsJson, writeStatsAsStruct)
-    // These golden tables were created in DBR with variant stats and checkpoints
+    // The golden table contains variant stats but NO checkpoint.
+    // We set the checkpoint properties and create the checkpoint in this test.
     val combinations = Seq(
       ("true", "false"),
       ("false", "true"),
@@ -1148,7 +1149,7 @@ class CheckpointsSuite
       // Note: ("false", "false") would have no stats at all, so not testing it
     )
 
-    // Expected Z85-encoded value for variant `0` (the golden tables contain `id::variant`
+    // Expected Z85-encoded value for variant `0` (the golden table contains `id::variant`
     // where id=0)
     // This is the Z85 encoding of the variant binary representation of integer 0
     val expectedZ85 = "0rAf3bMW#D00%Fx0000000000"
@@ -1157,19 +1158,26 @@ class CheckpointsSuite
       withClue(s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats") {
         withTempDir { tempDir =>
           // Copy golden table to temp directory
-          val source = new File(
-            s"src/test/resources/delta/variant-stats-state-reconstruction/" +
-            s"json_${jsonStats}_struct_${structStats}")
+          val source = new File("src/test/resources/delta/variant-stats-state-reconstruction")
           val target = new File(tempDir, "variant-stats-table")
           FileUtils.copyDirectory(source, target)
 
           val tablePath = target.getAbsolutePath
 
-          // Clear cache to ensure fresh state reconstruction
+          // Set checkpoint properties
+          spark.sql(
+            s"""ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
+               |  'delta.checkpoint.writeStatsAsJson' = '$jsonStats',
+               |  'delta.checkpoint.writeStatsAsStruct' = '$structStats'
+               |)""".stripMargin)
+
+          // Create checkpoint with the new properties
+          val deltaLog = DeltaLog.forTable(spark, tablePath)
+          deltaLog.checkpoint(deltaLog.update())
+
+          // Clear cache to ensure fresh state reconstruction from checkpoint
           DeltaLog.clearCache()
 
-          // Get the delta log and trigger state reconstruction
-          val deltaLog = DeltaLog.forTable(spark, tablePath)
           val snapshot = deltaLog.update()
 
           // Get the reconstructed state and verify variant stats are present
