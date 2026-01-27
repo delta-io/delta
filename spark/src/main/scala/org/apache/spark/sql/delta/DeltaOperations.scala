@@ -441,11 +441,11 @@ object DeltaOperations {
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
-  )
-      .++(predicate.map("predicate" -> _))
-      .++(isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _))
-      .++(canOverwriteSchema.map("canOverwriteSchema" -> _))
-      .++(canMergeSchema.map("canMergeSchema" -> _))
+  ) ++
+    predicate.map("predicate" -> _) ++
+    isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
+    canOverwriteSchema.map("canOverwriteSchema" -> _) ++
+    canMergeSchema.map("canMergeSchema" -> _)
 
     private val insertOverwriteRemoveMetricsEnabled = SparkSession.active.conf.get(
       DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)
