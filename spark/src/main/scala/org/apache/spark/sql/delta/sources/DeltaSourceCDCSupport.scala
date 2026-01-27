@@ -16,10 +16,13 @@
 
 package org.apache.spark.sql.delta.sources
 
+import java.io.FileNotFoundException
+
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.DeltaErrors
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.DataFrame
@@ -206,16 +209,24 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
       }
 
     val (result, duration) = Utils.timeTakenMs {
-      CDCReader
-        .changesToDF(
-          readSnapshotDescriptor,
-          startVersion,
-          endOffset.reservoirVersion,
-          groupedFileAndCommitInfoActions,
-          spark,
-          catalogTableOpt,
-          isStreaming = true)
-        .fileChangeDf
+      // CDCReader calls getSnapshotAt directly instead of using DeltaSource's wrapper, which can
+      // result in FileNotFoundExceptions from the Delta log. We wrap these to present a clearer
+      // error message.
+      try {
+        CDCReader
+          .changesToDF(
+            readSnapshotDescriptor,
+            startVersion,
+            endOffset.reservoirVersion,
+            groupedFileAndCommitInfoActions,
+            spark,
+            catalogTableOpt,
+            isStreaming = true)
+          .fileChangeDf
+      } catch {
+        case e: FileNotFoundException =>
+          throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(e)
+      }
     }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +
