@@ -18,7 +18,6 @@ package io.delta.kernel.internal.util;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
 
 /**
  * Utilities for timestamp conversions that avoid overflow issues.
@@ -40,15 +39,11 @@ public final class TimestampUtils {
 
   /** Converts an OffsetDateTime to microseconds since epoch. */
   public static long toEpochMicros(OffsetDateTime dateTime) {
-    long microsFromSeconds = Math.multiplyExact(dateTime.toEpochSecond(), 1_000_000L);
-    long microsFromNanos = dateTime.getNano() / 1000;
-    return Math.addExact(microsFromSeconds, microsFromNanos);
+    return toEpochMicros(dateTime.toInstant());
   }
 
   /** Converts a LocalDateTime (interpreted as UTC) to microseconds since epoch. */
   public static long toEpochMicros(LocalDateTime dateTime) {
-    long microsFromSeconds = Math.multiplyExact(dateTime.toEpochSecond(ZoneOffset.UTC), 1_000_000L);
-    long microsFromNanos = dateTime.getNano() / 1000;
-    return Math.addExact(microsFromSeconds, microsFromNanos);
+    return toEpochMicros(dateTime.toInstant(java.time.ZoneOffset.UTC));
   }
 }
