@@ -149,7 +149,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         }.getMessage.contains("Unsupported Delta writer feature"))
     }
   }
-  */
+   */
 
   test("Must provide a schema for replace table transaction") {
     withTempDirAndEngine { (tablePath, engine) =>
