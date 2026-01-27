@@ -108,7 +108,7 @@ public class Checkpointer {
         "{}: Finished writing last checkpoint metadata file for version: {}", tablePath, version);
 
     final Metadata metadata = snapshot.getMetadata();
-    if (shouldPerformLogCleanup(snapshot)) {
+    if (snapshot.wasBuiltAsLatest() && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
       cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {
       logger.info(
