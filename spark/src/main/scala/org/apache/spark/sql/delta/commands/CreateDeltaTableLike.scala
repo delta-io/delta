@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -47,6 +47,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // The save mode when writing data. Relevant when the query is empty or set to Ignore with `CREATE
   // TABLE IF NOT EXISTS`.
   val mode: SaveMode
+
+  // Whether the table is UC managed table with catalogManaged feature.
+  val allowCatalogManaged: Boolean
 
   /**
    * Generates a `CatalogTable` with its `locationUri` set appropriately, depending on whether the
@@ -133,8 +136,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
     if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
-      // In the case we're creating a Delta table on an existing path and adopting the schema
-      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
       val truncationThreshold = spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
       val (truncatedSchema, additionalProperties) = UpdateCatalog.truncateSchemaIfNecessary(
@@ -152,9 +153,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         storage = storageProps,
         tracksPartitionsInCatalog = true)
     } else {
+      // Setting table properties is required for creating catalogManaged tables.
+      val properties: Map[String, String] =
+        if (allowCatalogManaged) UpdateCatalog.updatedProperties(snapshot) else Map.empty
       table.copy(
         schema = new StructType(),
-        properties = Map.empty,
+        properties = properties,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,
@@ -163,15 +167,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
-   * Horrible hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
+   * Differentiate between DataFrameWriterV1 and V2 so that we can decide
    * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
    * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
    * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    */
-  protected def isV1Writer: Boolean = {
-    Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
+  protected def isV1WriterSaveAsTableOverwrite: Boolean = {
+    val options = new DeltaOptions(table.storage.properties, conf)
+    CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(options, mode)
   }
 }

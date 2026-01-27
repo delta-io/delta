@@ -866,15 +866,10 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read data for simple cdf query") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf"
-      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
-      // older versions can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         sql(s"""
                |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
-               |TBLPROPERTIES (delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
-               |'delta.logRetentionDuration' = '$largeRetentionHours hours')
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
                |""".stripMargin)
         // 2 inserts in version 1, 1 with c1=2
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
@@ -1151,17 +1146,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read cdf with special chars") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_special"
-      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
-      // older versions can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
                |USING DELTA PARTITIONED BY (c2)
                |TBLPROPERTIES(
-               |delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
-               |'delta.logRetentionDuration' = '$largeRetentionHours hours'
+               |delta.enableChangeDataFeed = true
                |)""".stripMargin)
         // The table operations take about 20~30 seconds.
         for (i <- 0 to 9) {
@@ -1604,6 +1594,109 @@ trait DeltaSharingDataSourceDeltaSuiteBase
           assert(expectedSchema == df.schema)
           val expected = spark.read.format("delta").table(deltaTableName)
           checkAnswer(df, expected)
+        }
+      }
+    }
+  }
+
+  test("deleted file retention duration check is not applied for time-travel on delta-sharing tables") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_time_travel_retention"
+      withTable(deltaTableName) {
+        // file and log retention is set to 0 but still able to time-travel because of skipping enforcement.
+        sql(s"""
+               |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES ('delta.deletedFileRetentionDuration' = '0 hours',
+               |'delta.logRetentionDuration' = '0 hours')
+               |""".stripMargin)
+
+        // Insert multiple versions
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (2, "two")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (3, "three")""")
+
+        val sharedTableName = "shared_table_time_travel_retention"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName,
+          sharedTable = sharedTableName,
+          versionAsOf = Some(1L)
+        )
+
+        // Enable enforcement config - delta-sharing tables should still skip enforcement
+        withSQLConf(
+          DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "true"
+        ) {
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            val tablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+            // This should succeed even with enforcement enabled because delta-sharing
+            // tables use "delta-sharing-log" filesystem scheme and skip enforcement
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("versionAsOf", 1)
+              .load(tablePath)
+
+            val expected = Seq(Row(1, "one"))
+              checkAnswer(df, expected)
+          }
+        }
+      }
+    }
+  }
+
+  test("deleted file retention duration check is not applied for cdf on delta-sharing tables") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_cdc_retention"
+      withTable(deltaTableName) {
+        // file and log retention is set to 0 but still able to time-travel because of skipping enforcement.
+        sql(s"""
+               |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true,
+               |'delta.deletedFileRetentionDuration' = '0 hours',
+               |'delta.logRetentionDuration' = '0 hours')
+               |""".stripMargin)
+
+        // Insert multiple versions
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (2, "two")""")
+        sql(s"""INSERT INTO $deltaTableName VALUES (3, "three")""")
+
+        val sharedTableName = "shared_table_cdc_retention"
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResultForCdf(
+          deltaTable = deltaTableName,
+          sharedTable = sharedTableName,
+          startingVersion = 0L
+        )
+
+        // Enable enforcement config - delta-sharing tables should still skip enforcement
+        withSQLConf(
+          DeltaSQLConf.ENFORCE_TIME_TRAVEL_WITHIN_DELETED_FILE_RETENTION_DURATION.key -> "true"
+        ) {
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val profileFile = prepareProfileFile(tempDir)
+            val tablePath = s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+            val df = spark.read
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", 0)
+              .load(tablePath)
+              .select("c1", "c2", "_change_type", "_commit_version")
+
+            // CDF should return inserts for all 3 versions (1, 2, 3)
+            // Version 0 is table creation, inserts start from version 1
+            val expected = Seq(
+              Row(1, "one", "insert", 1L),
+              Row(2, "two", "insert", 2L),
+              Row(3, "three", "insert", 3L)
+            )
+            checkAnswer(df, expected)
+          }
         }
       }
     }

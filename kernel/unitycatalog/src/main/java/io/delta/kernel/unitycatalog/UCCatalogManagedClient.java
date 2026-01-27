@@ -309,7 +309,8 @@ public class UCCatalogManagedClient {
           }
 
           CommitRangeBuilder commitRangeBuilder =
-              TableManager.loadCommitRange(tablePath, startBoundary);
+              TableManager.loadCommitRange(tablePath, startBoundary)
+                  .withMaxCatalogVersion(ucTableVersion);
 
           if (endVersionOpt.isPresent()) {
             commitRangeBuilder =

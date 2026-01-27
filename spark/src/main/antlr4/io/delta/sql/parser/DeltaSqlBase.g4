@@ -72,11 +72,11 @@ singleStatement
 
 // If you add keywords here that should not be reserved, add them to 'nonReserved' list.
 statement
-    : VACUUM (path=STRING | table=qualifiedName)
+    : VACUUM (path=stringLit | table=qualifiedName)
         vacuumModifiers                                                 #vacuumTable
-    | (DESC | DESCRIBE) DETAIL (path=STRING | table=qualifiedName)      #describeDeltaDetail
+    | (DESC | DESCRIBE) DETAIL (path=stringLit | table=qualifiedName)   #describeDeltaDetail
     | GENERATE modeName=identifier FOR TABLE table=qualifiedName        #generate
-    | (DESC | DESCRIBE) HISTORY (path=STRING | table=qualifiedName)
+    | (DESC | DESCRIBE) HISTORY (path=stringLit | table=qualifiedName)
         (LIMIT limit=INTEGER_VALUE)?                                    #describeDeltaHistory
     | CONVERT TO DELTA table=qualifiedName
         (NO STATISTICS)? (PARTITIONED BY '(' colTypeList ')')?          #convert
@@ -92,7 +92,7 @@ statement
         (clusterBySpec | CLUSTER BY NONE)                               #alterTableClusterBy
     | ALTER TABLE table=qualifiedName
         (ALTER | CHANGE) COLUMN? column=qualifiedName SYNC IDENTITY     #alterTableSyncIdentity
-    | OPTIMIZE (path=STRING | table=qualifiedName) FULL?
+    | OPTIMIZE (path=stringLit | table=qualifiedName) FULL?
         (WHERE partitionPredicate=predicateToken)?
         (zorderSpec)?                                                   #optimizeTable
     | REORG TABLE table=qualifiedName
@@ -164,9 +164,13 @@ featureNameValue
     | stringLit
     ;
 
-stringLit
+singleStringLit
     : STRING
     | DOUBLEQUOTED_STRING
+    ;
+
+stringLit
+    : singleStringLit+
     ;
 
 booleanValue
@@ -188,7 +192,7 @@ colTypeList
     ;
 
 colType
-    : colName=identifier dataType (NOT NULL)? (COMMENT STRING)?
+    : colName=identifier dataType (NOT NULL)? (COMMENT comment=stringLit)?
     ;
 
 dataType

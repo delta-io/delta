@@ -1813,33 +1813,36 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   test("data skipping by stats - variant type") {
-    withTable("tbl") {
-      sql("""CREATE TABLE tbl(v VARIANT,
-              v_struct STRUCT<v: VARIANT>,
-              null_v VARIANT,
-              null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
-      sql("""INSERT INTO tbl (SELECT
-          parse_json(cast(id as string)),
-          named_struct('v', parse_json(cast(id as string))),
-          cast(null as variant),
-          named_struct('v', cast(null as variant))
-          FROM range(100))""")
+    Seq(false, true).foreach { pushVariantIntoScan =>
+      withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> pushVariantIntoScan.toString) {
+        val tableName = s"tbl_$pushVariantIntoScan"
+        withTable(tableName) {
+          sql(s"""CREATE TABLE $tableName(v VARIANT,
+                  v_struct STRUCT<v: VARIANT>,
+                  null_v VARIANT,
+                  null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
+          sql(s"""INSERT INTO $tableName (SELECT
+              parse_json(cast(id as string)),
+              named_struct('v', parse_json(cast(id as string))),
+              cast(null as variant),
+              named_struct('v', cast(null as variant))
+              FROM range(100))""")
 
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl", None, None))
-      val hits = Seq(
-        "v IS NOT NULL",
-        "v_struct.v IS NOT NULL",
-        "null_v IS NULL",
-        "null_v_struct.v IS NULL"
-      )
-      val misses = Seq(
-        "v IS NULL",
-        "v_struct.v IS NULL",
-        "null_v IS NOT NULL",
-        "null_v_struct.v IS NOT NULL"
-      )
-      val data = spark.sql("select * from tbl").collect().toSeq.toString
-      checkSkipping(deltaLog, hits, misses, data, false)
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, None, None))
+          val hits = Seq(
+            "v IS NOT NULL",
+            "v_struct.v IS NOT NULL",
+            "null_v IS NULL",
+            "null_v_struct.v IS NULL")
+          val misses = Seq(
+            "v IS NULL",
+            "v_struct.v IS NULL",
+            "null_v IS NOT NULL",
+            "null_v_struct.v IS NOT NULL")
+          val data = spark.sql(s"select * from $tableName").collect().toSeq.toString
+          checkSkipping(deltaLog, hits, misses, data, false)
+        }
+      }
     }
   }
 
@@ -2295,9 +2298,17 @@ trait DataSkippingDeltaTestsUtils extends PredicateHelper {
     if (predicate == "True") return Seq(Literal.TrueLiteral)
 
     val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
+
+    val optimizedPlan = filtered.queryExecution.optimizedPlan
+
+    // When pushVariantIntoScan = true, the plan is transformed such that a projection is inserted
+    // at the top of the plan. Therefore, the filter node is lower in the plan.
+    val filterNode = optimizedPlan.collectFirst {
+      case f: Filter => f
+    }.getOrElse {
+      optimizedPlan
+    }
+    filterNode
       .expressions
       .flatMap(splitConjunctivePredicates)
   }

@@ -20,10 +20,13 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.scalactic.source.Position
 import org.scalatest.Tag
@@ -31,7 +34,9 @@ import org.scalatest.Tag
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.execution.streaming.MemoryStream
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -257,6 +262,48 @@ trait DescribeDeltaHistorySuiteBase
       checkAnswer(
         sql(s"DESCRIBE HISTORY delta_test LIMIT 1").select("operation"),
         Seq(Row("CREATE OR REPLACE TABLE AS SELECT")))
+    }
+  }
+
+  testWithFlag("describe history command passes catalogTable to getHistory") {
+    withTable("delta_catalog_test") {
+      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("delta_catalog_test")
+
+      val table = DeltaTableV2(spark, TableIdentifier("delta_catalog_test"))
+      assert(table.catalogTable.isDefined, "Managed table should have catalogTable defined")
+
+      val deltaLog = table.deltaLog
+      val originalHistory = deltaLog.history
+      var catalogTableWasPassed = false
+
+      // Create a wrapper that tracks if catalogTable is passed to getHistory.
+      // Note: getHistory(limitOpt) delegates to getHistory(limitOpt, None), so we only
+      // need to override the two-parameter version to detect whether catalogTable is passed.
+      val trackingHistory = new DeltaHistoryManager(
+        deltaLog,
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_HISTORY_PAR_SEARCH_THRESHOLD)) {
+        override def getHistory(
+            limitOpt: Option[Int],
+            catalogTableOpt: Option[CatalogTable]): Seq[DeltaHistory] = {
+          catalogTableWasPassed = catalogTableOpt.isDefined
+          originalHistory.getHistory(limitOpt, catalogTableOpt)
+        }
+      }
+
+      // Replace history field using reflection
+      val historyField = deltaLog.getClass.getDeclaredField("history")
+      historyField.setAccessible(true)
+      historyField.set(deltaLog, trackingHistory)
+
+      // Run the command
+      DescribeDeltaHistoryCommand(
+        table = table,
+        limit = Some(10),
+        output = toAttributes(ExpressionEncoder[DeltaHistory]().schema)
+      ).run(spark)
+
+      assert(catalogTableWasPassed,
+        "DescribeDeltaHistoryCommand should pass table.catalogTable to getHistory")
     }
   }
 

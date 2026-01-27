@@ -667,6 +667,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |structs are expanded.""".stripMargin)
       .fallbackConf(DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS)
 
+  val DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS =
+    buildConf("insert.preserveNullSourceStructs")
+      .internal()
+      .doc(
+        """Fixes the null expansion issue by preserving NULL structs in INSERT operations. When set
+          |to true, a NULL struct in the source will be preserved as NULL in the target after
+          |INSERT, rather than being incorrectly expanded to a struct with NULL fields. When set to
+          |false, NULL structs are expanded. This fix addresses null expansion caused by struct
+          |type cast during INSERT operations.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(DeltaUtils.isTesting)
+
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
       .doc(
@@ -1042,13 +1055,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(4)
 
-  val MERGE_MATERIALIZE_SOURCE_EAGER =
-    buildConf("merge.materializeSource.eager")
-      .internal()
-      .doc("Materialize the source eagerly before Job 1")
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_LAST_COMMIT_VERSION_IN_SESSION =
     buildConf("lastCommitVersionInSession")
       .doc("The version of the last commit made in the SparkSession for any table.")
@@ -1226,6 +1232,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(30)
 
+  val STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED =
+    buildConf("statsAsStructInCheckpoint.forcedDisabled")
+      .internal()
+      .doc("""
+          |Force disables storing statistics as struct in the checkpoint.
+          |Note that should only be used as a kill switch.
+          |This functionality should normally be controlled using the delta config
+          |'checkpoint.writeStatsAsStruct'.
+          |""".stripMargin)
+      .booleanConf
+      .createOptional
+
   val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
     buildConf("lastCheckpoint.sidecars.threshold")
       .internal()
@@ -1235,6 +1253,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |""".stripMargin)
       .intConf
       .createWithDefault(30)
+
+  val USE_CHECKPOINT_SCHEMA_FROM_CHECKPOINT_METADATA =
+    buildConf("checkpointSchema.useFromCheckpointMetadata")
+      .internal()
+      .doc("If enabled, use checkpoint schema from checkpoint metadata file instead of reading it" +
+        " from the checkpoint file")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -1468,7 +1494,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "instead.")
       .internal()
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK =
     buildConf("typeWidening.bypassStreamingTypeChangeCheck")
@@ -2002,6 +2028,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |This is a safety switch - we should only turn this off when there is an issue with
           |expression checking logic that prevents a valid column change from going through.
           |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_LIQUID_ALTER_COLUMN_AFTER_STATS_SCHEMA_CHECK =
+    buildConf("liquid.alterColumnAfter.statsSchemaCheck")
+      .internal()
+      .doc(
+         """
+           |When enabled, validates that clustering columns remain in the stats schema after
+           | a user executes `ALTER TABLE ALTER COLUMN col1 AFTER col2`. The validation checks
+           | that all clustering columns that were in the stats schema before the column reordering
+           | remain in the stats schema after the operation. This ensures that clustering columns
+           | continue to have statistics collected even if their position in the table schema
+           | changes. When disabled, no validation is performed and stats collection may follow
+           | position-based indexing rules (e.g., `dataSkippingNumIndexedCols`), potentially
+           | causing clustering columns to lose stats collection if they move outside the indexed
+           | range.
+        """.stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -2827,6 +2871,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(false)
 
+  val FORCE_USE_PREVIEW_SHREDDING_FEATURE =
+    buildConf("variantShredding.forceUsePreviewTableFeature")
+    .internal()
+    .doc(
+      """
+        | If true, attach the 'variantShredding-preview' table feature when enabling shredding
+        | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
   ///////////
   // TESTING
   ///////////
@@ -2905,6 +2959,51 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |When enabled, it's decided by a per-command flag.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  val ENABLE_SERVER_SIDE_PLANNING =
+    buildConf("catalog.enableServerSidePlanning")
+      .internal()
+      .doc(
+        """When enabled, DeltaCatalog will use server-side scan planning path
+          |instead of normal table loading.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
+  /**
+   * Controls which connector implementation to use for Delta table operations.
+   *
+   * Valid values:
+   * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
+   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   *           Intended for testing sparkV2 connector capabilities
+   *
+   * sparkV1 vs sparkV2 Connectors:
+   * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   *   uses DeltaLog for metadata management
+   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
+   *   uses Kernel's Table API for metadata management
+   *
+   * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets
+   * this configuration.
+   */
+  val V2_ENABLE_MODE =
+    buildConf("v2.enableMode")
+      .doc(
+        "Controls the Delta connector enable mode. " +
+          "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
+          "supported operations), STRICT (should ONLY be enabled for testing).")
+      .stringConf
+      .checkValues(Set("AUTO", "NONE", "STRICT"))
+      .createWithDefault("NONE")
+
+  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
+    buildConf("streaming.initialSnapshotMaxFiles")
+      .internal()
+      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
+      .intConf
+      .createWithDefault(50000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

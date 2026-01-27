@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.scalatest.Tag
 import org.scalactic.source.Position
 
@@ -28,7 +28,7 @@ import scala.collection.mutable
  * use the Kernel-based SparkTable implementation (V2 connector) instead of
  * DeltaTableV2 (V1 connector).
  *
- * See [[DeltaSQLConfV2.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
+ * See [[DeltaSQLConf.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
  *
  * Usage:
  * {{{
@@ -44,15 +44,16 @@ trait V2ForceTest extends DeltaSQLCommandTest {
   private val testsRun: mutable.Set[String] = mutable.Set.empty
 
   /**
-   * Override `test` to apply the `shouldSkipTest` logic.
-   * Tests that should be skipped are converted to ignored tests.
+   * Override `test` to apply the `shouldFail` logic.
+   * Tests that are expected to fail are converted to ignored tests.
    */
   abstract override protected def test(
       testName: String,
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
-    if (shouldSkipTest(testName)) {
+    if (shouldFail(testName)) {
+      // TODO(#5754): Assert on test failure instead of ignoring
       super.ignore(
-        s"$testName - skipped for Kernel-based V2 connector (not yet supported)")(testFun)
+        s"$testName - expected to fail with Kernel-based V2 connector (not yet supported)")(testFun)
     } else {
       super.test(testName, testTags: _*) {
         testsRun.add(testName)
@@ -62,14 +63,14 @@ trait V2ForceTest extends DeltaSQLCommandTest {
   }
 
   /**
-   * Determine if a test should be skipped based on the test name.
-   * Subclasses should override this method to define their skip logic.
-   * By default, no tests are skipped.
+   * Determine if a test is expected to fail based on the test name.
+   * Subclasses should override this method to define which tests are expected to fail.
+   * By default, no tests are expected to fail.
    *
    * @param testName The name of the test
-   * @return true if the test should be skipped, false otherwise
+   * @return true if the test is expected to fail, false otherwise
    */
-  protected def shouldSkipTest(testName: String): Boolean = false
+  protected def shouldFail(testName: String): Boolean = false
 
   /**
    * Override `sparkConf` to set V2_ENABLE_MODE to "STRICT".
@@ -77,7 +78,7 @@ trait V2ForceTest extends DeltaSQLCommandTest {
    */
   abstract override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set(DeltaSQLConfV2.V2_ENABLE_MODE.key, "STRICT")
+      .set(DeltaSQLConf.V2_ENABLE_MODE.key, "STRICT")
   }
 
   override def afterAll(): Unit = {

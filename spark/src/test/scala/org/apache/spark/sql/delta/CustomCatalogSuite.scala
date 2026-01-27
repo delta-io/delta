@@ -28,7 +28,7 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.analysis.ResolvedTable
 import org.apache.spark.sql.catalyst.plans.logical.{AppendData, SetTableProperties, UnaryNode, UnsetTableProperties}
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2RelationShim
 import org.apache.spark.sql.test.SharedSparkSession
 
 class CustomCatalogSuite extends QueryTest with SharedSparkSession
@@ -43,7 +43,7 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       val catalogTable = plan match {
         case cmd: UnaryNode with DeltaCommand =>
           cmd.getDeltaTable(cmd.child, "dummy").catalogTable
-        case AppendData(DataSourceV2Relation(table: DeltaTableV2, _, _, _, _), _, _, _, _, _) =>
+        case AppendData(DataSourceV2RelationShim(table: DeltaTableV2, _, _, _, _), _, _, _, _, _) =>
           table.catalogTable
         case cmd: DeleteCommand =>
           cmd.catalogTable

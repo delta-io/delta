@@ -31,7 +31,7 @@ import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
 import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
-import org.apache.spark.sql.delta.{DeltaLog, DeltaOptions, IdentityColumn}
+import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -39,6 +39,7 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.serverSidePlanning.ServerSidePlannedTable
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
@@ -47,12 +48,12 @@ import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
-import org.apache.spark.internal.{Logging, MDC}
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
-import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, SyncIdentity}
+import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.TableChange._
@@ -217,6 +218,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       writer,
       operation,
       tableByPath = isByPath,
+      allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
       // respect third party catalogs. Note: only handle CREATE TABLE for now, we
       // should support CTAS later.
@@ -236,7 +238,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
     try {
-      super.loadTable(ident) match {
+      val table = super.loadTable(ident)
+
+      ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
+        return sspt
+      }
+
+      table match {
         case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
           loadCatalogTable(ident, v1.catalogTable)
         case o => o
@@ -766,7 +774,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
               col.isNullable,
               Option(col.comment()),
               Option(col.position()).map(UnresolvedFieldPosition),
-              Option(col.defaultValue()).map(_.getSql())
+              QualifiedColTypeShims.getDefaultValueArgFromAddColumn(col)
             )
           }).run(spark)
 

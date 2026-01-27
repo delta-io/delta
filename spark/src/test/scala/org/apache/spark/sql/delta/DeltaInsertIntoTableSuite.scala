@@ -27,6 +27,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
+import org.apache.spark.sql.delta.test.shims.InvalidDefaultValueErrorShims
 import org.scalatest.BeforeAndAfter
 
 import org.apache.spark.{SparkConf, SparkContext, SparkException, SparkThrowable}
@@ -329,13 +330,7 @@ class DeltaInsertIntoSQLSuite
           .format("delta")
           .insertInto(tableName)
       }
-      checkErrorMatchPVals(
-        exception = err,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(err, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       // insert data with schema evolution
       withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
@@ -406,13 +401,7 @@ class DeltaInsertIntoSQLSuite
       val e = intercept[AnalysisException] {
         sql("INSERT INTO target SELECT * FROM source")
       }
-      checkErrorMatchPVals(
-        exception = e,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(e, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
@@ -447,13 +436,7 @@ class DeltaInsertIntoSQLSuite
       val e = intercept[AnalysisException] {
         sql("INSERT INTO target SELECT * FROM source")
       }
-      checkErrorMatchPVals(
-        exception = e,
-        "_LEGACY_ERROR_TEMP_DELTA_0007",
-        parameters = Map(
-          "message" -> "A schema mismatch detected when writing to the Delta table(.|\\n)*"
-        )
-      )
+      checkError(e, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         sql("INSERT INTO target SELECT * FROM source")
@@ -695,7 +678,10 @@ abstract class DeltaInsertIntoTestsWithTempViews(
               e.getMessage.contains("Table default.v not found") ||
               e.getMessage.contains("Table or view 'v' not found in database 'default'") ||
               e.getMessage.contains("The table or view `default`.`v` cannot be found") ||
-              e.getMessage.contains("[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target."))
+              e.getMessage.contains(
+                "[UNSUPPORTED_INSERT.RDD_BASED] Can't insert into the target.") ||
+              e.getMessage.contains(
+                "The table or view `spark_catalog`.`default`.`v` cannot be found"))
         }
       }
     }
@@ -870,7 +856,7 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
           sql(s"create table t4 (s int default badvalue) using $v2Format " +
             s"$tblPropertiesAllowDefaults")
         },
-        "INVALID_DEFAULT_VALUE.NOT_CONSTANT",
+        InvalidDefaultValueErrorShims.INVALID_DEFAULT_VALUE_ERROR_CODE,
         parameters = Map(
           "statement" -> "CREATE TABLE",
           "colName" -> "`s`",

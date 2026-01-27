@@ -1544,6 +1544,17 @@ trait SnapshotManagement { self: DeltaLog =>
       return
     }
 
+    // Skip enforcement for delta-sharing tables since they create a faked delta-log
+    // where the version timestamp may be set to 0.
+    val deltasharingLogFileSystemSchema =
+      // Cannot import io.delta.sharing.spark.DeltaSharingLogFileSystemConstants.SCHEME
+      // in the current (spark) module since sharing depends on spark; falling back to
+      // string comparison.
+      "delta-sharing-log"
+    if (logPath.toUri.getScheme == deltasharingLogFileSystemSchema) {
+      return
+    }
+
     // Time travel to the latest version is always allowed
     if (targetSnapshot.version == latestSnapshot.version) return
 
