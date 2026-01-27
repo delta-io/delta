@@ -24,7 +24,6 @@ import io.delta.kernel.defaults.utils.{TestRow, TestUtils, WriteUtils}
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.SnapshotImpl
 
 import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
