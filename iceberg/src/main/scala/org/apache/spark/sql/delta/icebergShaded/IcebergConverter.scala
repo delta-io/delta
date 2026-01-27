@@ -299,7 +299,8 @@ class IcebergConverter(spark: SparkSession)
    */
   protected class ConversionContext(
     val conversionMode: IcebergConversionMode,
-    val additionalDeltaActionsToCommit: Option[Seq[Action]]
+    val additionalDeltaActionsToCommit: Option[Seq[Action]],
+    val opType: String
   ) {
     validate()
     // Validation on parameters
@@ -335,6 +336,8 @@ class IcebergConverter(spark: SparkSession)
       txnOpt: Option[CommittedTransaction],
       catalogTable: CatalogTable): Option[(Long, Long)] =
       recordFrameProfile("Delta", "IcebergConverter.convertSnapshot") {
+        logInfo(s"convertSnapshot for table ${Option(catalogTable).map(_.identifier)} with " +
+          s"target delta version ${snapshotToConvert.version}")
         val cleanedCatalogTable =
           cleanCatalogTableIfEnablingUniform(catalogTable, snapshotToConvert, txnOpt)
         val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, cleanedCatalogTable)
@@ -363,13 +366,23 @@ class IcebergConverter(spark: SparkSession)
           ),
           conversionContext = new ConversionContext(
             conversionMode = UNIFORM_POST_COMMIT_MODE,
-            additionalDeltaActionsToCommit = None
+            additionalDeltaActionsToCommit = None,
+            opType = "delta.iceberg.conversion.convertSnapshot"
           ),
           cleanedCatalogTable
         )
         Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
 
+  /**
+   * The core implementation of convertSnapshot
+   * 'delta.iceberg.conversion.convertSnapshot' ->
+   *    Convert Iceberg Metadata for a complete snapshot. Used for conversion
+   *    after delta commits and in create table
+   * 'delta.iceberg.conversion.convertUncommitedTxn' ->
+   *    Convert Iceberg Metadata for a proposed txn. Used for conversion pre
+   *    delta commit
+   */
   private def convertSnapshotInternal(
       snapshotToConvert: Snapshot,
       readSnapshotOpt: Option[Snapshot],
@@ -509,11 +522,13 @@ class IcebergConverter(spark: SparkSession)
       }
 
       icebergTxn.commit()
+      logInfo(s"icebergTxn committed for table ${Option(catalogTable).map(_.identifier)} " +
+        s"with converted delta version ${snapshotToConvert.version}")
       validateIcebergCommit(snapshotToConvert, catalogTable)
 
       recordDeltaEvent(
         snapshotToConvert.deltaLog,
-        "delta.iceberg.conversion",
+        conversionContext.opType,
         data = Map(
           "deltaVersion" -> snapshotToConvert.version,
           "compatVersion" -> IcebergCompat.getEnabledVersion(snapshotToConvert.metadata)
