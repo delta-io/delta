@@ -503,7 +503,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
     testMetadata())
 
-  checkWriteUnsupported(
+  // Supported if append-only or remove-only
+  checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with changeDataFeed, " +
       "metadata contains changeDataFeed",
     new Protocol(1, 7, Set().asJava, singleton("changeDataFeed")),
