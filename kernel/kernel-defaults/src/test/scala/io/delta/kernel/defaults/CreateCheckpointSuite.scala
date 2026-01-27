@@ -521,9 +521,9 @@ class CreateCheckpointSuite extends CheckpointBase {
       // Verify that old log files ARE deleted (cleanup happened)
       // With 0 retention and checkpoint at v3, all json files 0-3 should be deleted
       val jsonFilesAfter = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-      assert(
-        jsonFilesAfter.length === 0,
-        s"All json files should be deleted after cleanup. Remaining: ${jsonFilesAfter.map(_.getName).mkString(", ")}")
+      assert(jsonFilesAfter.length === 0,
+        "All json files should be deleted after cleanup. " +
+          s"Remaining: ${jsonFilesAfter.map(_.getName).mkString(", ")}")
     }
   }
 
@@ -571,9 +571,9 @@ class CreateCheckpointSuite extends CheckpointBase {
 
       // Verify old log files are NOT deleted
       val jsonFilesAfter = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
-      assert(
-        jsonFilesAfter.length === jsonFilesBefore.length,
-        s"Log cleanup should NOT happen with time-travel snapshot. Files: ${jsonFilesAfter.map(_.getName).mkString(", ")}")
+      assert(jsonFilesAfter.length === jsonFilesBefore.length,
+        "Log cleanup should NOT happen with time-travel snapshot. " +
+          s"Files: ${jsonFilesAfter.map(_.getName).mkString(", ")}")
     }
   }
 }
