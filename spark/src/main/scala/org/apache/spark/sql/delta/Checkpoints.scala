@@ -50,6 +50,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
 import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.OutputWriter
@@ -762,7 +763,10 @@ object Checkpoints
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
-      (format.prepareWrite(spark, job, Map.empty, schema),
+      // We should make sure that the checkpoints do not have shredded variant stats. If variant
+      // stats are shredded, variant binary reconstruction causes lossy behavior on integer width.
+      val writeOptions = VariantShreddingShims.getVariantInferShreddingSchemaOptions(false)
+      (format.prepareWrite(spark, job, Map.empty ++ writeOptions, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
 

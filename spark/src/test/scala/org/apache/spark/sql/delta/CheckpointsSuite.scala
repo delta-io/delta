@@ -45,6 +45,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.types.variant.{Variant, VariantUtil}
@@ -1138,7 +1139,8 @@ class CheckpointsSuite
     }
   }
 
-  test("Ensure variant stats are preserved during state reconstruction") {
+  testDifferentCheckpoints("Ensure variant stats are preserved during state reconstruction") {
+    case (_, _) =>
     // Test different combinations of (writeStatsAsJson, writeStatsAsStruct)
     // The golden table contains variant stats but NO checkpoint.
     // We set the checkpoint properties and create the checkpoint in this test.
@@ -1167,9 +1169,9 @@ class CheckpointsSuite
           // Set checkpoint properties
           spark.sql(
             s"""ALTER TABLE delta.`$tablePath` SET TBLPROPERTIES (
-               |  'delta.checkpoint.writeStatsAsJson' = '$jsonStats',
-               |  'delta.checkpoint.writeStatsAsStruct' = '$structStats'
-               |)""".stripMargin)
+            |  'delta.checkpoint.writeStatsAsJson' = '$jsonStats',
+            |  'delta.checkpoint.writeStatsAsStruct' = '$structStats'
+            |)""".stripMargin)
 
           // Create checkpoint with the new properties
           val deltaLog = DeltaLog.forTable(spark, tablePath)
@@ -1186,9 +1188,10 @@ class CheckpointsSuite
             .filter("add.stats IS NOT NULL AND add.stats != ''")
             .collect()
 
-          assert(addFilesWithStats.nonEmpty,
+          assert(
+            addFilesWithStats.nonEmpty,
             s"Expected at least one AddFile with stats for " +
-            s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats")
+              s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats")
 
           // Verify that the stats contain the expected Z85-encoded variant
           val statsContainZ85 = addFilesWithStats.exists { action =>
@@ -1196,10 +1199,11 @@ class CheckpointsSuite
             stats != null && stats.contains(expectedZ85)
           }
 
-          assert(statsContainZ85,
+          assert(
+            statsContainZ85,
             s"Expected stats to contain Z85-encoded variant '$expectedZ85' for " +
-            s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats. " +
-            s"Actual stats: ${addFilesWithStats.map(_.add.stats).mkString(", ")}")
+              s"writeStatsAsJson=$jsonStats, writeStatsAsStruct=$structStats. " +
+              s"Actual stats: ${addFilesWithStats.map(_.add.stats).mkString(", ")}")
         }
       }
     }
