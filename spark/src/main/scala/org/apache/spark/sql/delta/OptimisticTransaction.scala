@@ -17,9 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.net.URI
 import java.nio.file.FileAlreadyExistsException
-import java.time.Instant
 import java.util.{ConcurrentModificationException, Optional, UUID}
 import java.util.concurrent.TimeUnit.NANOSECONDS
 
