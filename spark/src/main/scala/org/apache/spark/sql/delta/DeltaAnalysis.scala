@@ -314,6 +314,16 @@ class DeltaAnalysis(session: SparkSession)
       }
       DeltaDynamicPartitionOverwriteCommand(r, d, adjustedQuery, o.writeOptions, o.isByName)
 
+    // Handle ReplaceTableAsSelect with dynamic partition overwrite on Delta tables.
+    // When saveAsTable with Overwrite mode and partitionOverwriteMode=dynamic is used,
+    // Spark creates a ReplaceTableAsSelect plan. We intercept this and convert it to
+    // DeltaDynamicPartitionOverwriteCommand to properly handle dynamic partition overwrite
+    // instead of replacing the entire table.
+    case r @ ReplaceTableAsSelectDynamicPartitionOverwrite(table, deltaTable, query, writeOptions)
+        if r.query.resolved =>
+      DeltaDynamicPartitionOverwriteCommand(
+        table, deltaTable, query, writeOptions, isByName = false)
+
     case ResolveDeltaTableWithPartitionFilters(plan) => plan
 
     // SQL CDC table value functions "table_changes" and "table_changes_by_path"
@@ -1488,6 +1498,54 @@ object DynamicPartitionOverwriteDelta {
       }
     } else {
       None
+    }
+  }
+}
+
+/**
+ * Pattern matcher for ReplaceTableAsSelect on Delta tables with dynamic partition overwrite.
+ * This is used to intercept saveAsTable with Overwrite mode and partitionOverwriteMode=dynamic,
+ * which would otherwise go through the table replacement path instead of partition overwrite.
+ */
+object ReplaceTableAsSelectDynamicPartitionOverwrite {
+  def unapply(r: ReplaceTableAsSelect): Option[(
+      DataSourceV2Relation,
+      DeltaTableV2,
+      LogicalPlan,
+      Map[String, String])] = {
+    if (!r.query.resolved) return None
+
+    // Check if dynamic partition overwrite is requested
+    val writeOptions = r.writeOptions
+    val isDynamicPartitionOverwrite = writeOptions
+      .get(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION)
+      .exists(_.equalsIgnoreCase(DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC))
+
+    if (!isDynamicPartitionOverwrite) return None
+
+    // For ReplaceTableAsSelect, the name field is resolved to ResolvedIdentifier
+    // (not ResolvedTable), so we need to load the table from the catalog
+    r.name match {
+      case ResolvedIdentifier(catalog: TableCatalog, ident) =>
+        try {
+          // Try to load the existing table from the catalog
+          val table = catalog.loadTable(ident)
+          table match {
+            case deltaTable: DeltaTableV2 if deltaTable.tableExists =>
+              // Create a DataSourceV2Relation for the existing table
+              val relation = DataSourceV2Relation.create(deltaTable, None, None)
+              Some((relation, deltaTable, r.query, writeOptions))
+            case _ => None
+          }
+        } catch {
+          case _: NoSuchTableException => None // Table doesn't exist
+          case _: Exception => None // Other errors
+        }
+      case ResolvedTable(_, _, table: DeltaTableV2, _) if table.tableExists =>
+        // Create a DataSourceV2Relation for the existing table
+        val relation = DataSourceV2Relation.create(table, None, None)
+        Some((relation, table, r.query, writeOptions))
+      case _ => None
     }
   }
 }
