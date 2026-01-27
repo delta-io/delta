@@ -763,8 +763,7 @@ object Checkpoints
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
-      // We should make sure that the checkpoints do not have shredded variant stats. If variant
-      // stats are shredded, variant binary reconstruction causes lossy behavior on integer width.
+      // Right now, we don't shred variant stats in checkpoints.
       val writeOptions = VariantShreddingShims.getVariantInferShreddingSchemaOptions(false)
       (format.prepareWrite(spark, job, Map.empty ++ writeOptions, schema),
         new SerializableConfiguration(job.getConfiguration))
