@@ -133,6 +133,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
+  /* TODO: re-enable when other table-features are unsupported
   test("Cannot replace a table with a protocol Kernel does not support") {
     withTempDirAndEngine { (tablePath, engine) =>
       spark.sql(
@@ -147,7 +148,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
             tablePath)
         }.getMessage.contains("Unsupported Delta writer feature"))
     }
-  }
+  }*/
 
   test("Must provide a schema for replace table transaction") {
     withTempDirAndEngine { (tablePath, engine) =>
