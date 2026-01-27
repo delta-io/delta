@@ -442,8 +442,9 @@ object DeltaOperations {
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
   ) ++
-    // To avoid bloating the DESCRIBE HISTORY output, we only log relevant fields. Option fields
-    // that are None are deemed irrelevant to the operation and thus omitted.
+    // Only log these fields when explicitly set to avoid noise in DESCRIBE HISTORY when users don't
+    // set them. This means we don't distinguish between explicitly disabled (false) and unset
+    // (defaults to disabled), but that's fine as the distinction is not particularly interesting.
     predicate.map("predicate" -> _) ++
     isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
     canOverwriteSchema.map("canOverwriteSchema" -> _) ++
