@@ -15,7 +15,6 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
-import static io.delta.kernel.internal.DeltaErrors.checkpointOnProtection;
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.TableConfig.EXPIRED_LOG_CLEANUP_ENABLED;
 import static io.delta.kernel.internal.TableConfig.LOG_RETENTION;
@@ -68,12 +67,6 @@ public class Checkpointer {
     // Check if writing to the given table protocol version/features is supported in Kernel
     TableFeatures.validateKernelCanWriteToTable(
         snapshot.getProtocol(), snapshot.getMetadata(), snapshot.getDataPath().toString());
-
-    // Check if checkpoint protection is enabled - Kernel does not support checkpointing
-    // tables with checkpoint protection feature
-    if (snapshot.getProtocol().supportsFeature(TableFeatures.CHECKPOINT_PROTECTION_W_FEATURE)) {
-      throw checkpointOnProtection(tablePath.toString());
-    }
 
     final Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
 
