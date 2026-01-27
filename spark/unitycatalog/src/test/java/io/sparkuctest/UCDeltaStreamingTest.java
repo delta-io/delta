@@ -189,7 +189,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             if (query != null) {
               // TODO: remove additional processAllAvailable once interrupt is handled gracefully
               query.processAllAvailable();
-              query.awaitTermination();
+              query.awaitTermination(10000);
               query.stop();
               assertFalse(query.isActive(), "Streaming query should have stopped");
             }
