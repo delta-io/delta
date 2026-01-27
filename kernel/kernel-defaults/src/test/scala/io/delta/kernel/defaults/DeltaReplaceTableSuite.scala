@@ -120,6 +120,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
+  /* TODO: re-enable when other table-features are unsupported
   test("Cannot enable a feature that Kernel does not support") {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
@@ -132,6 +133,7 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
         }.getMessage.contains("Unsupported Delta writer feature"))
     }
   }
+   */
 
   /* TODO: re-enable when other table-features are unsupported
   test("Cannot replace a table with a protocol Kernel does not support") {
