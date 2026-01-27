@@ -49,7 +49,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.SparkException
 import org.apache.spark.internal.MDC
-import org.apache.spark.sql.{AnalysisException, DataFrame, SaveMode, SparkSession}
+import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
 import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
@@ -650,48 +650,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
-
-      // Check if dynamic partition overwrite is requested
-      val isDynamicPartitionOverwrite = writeOptions
-        .get(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION)
-        .exists(_.equalsIgnoreCase(DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC))
-
-      // For Replace/CreateOrReplace operations with dynamic partition overwrite,
-      // if the table already exists, we should write to the existing table
-      // instead of going through the table creation/replacement path.
-      // This fixes the bug where saveAsTable with partitionOverwriteMode=dynamic
-      // incorrectly tries to recreate the table instead of just overwriting partitions.
-      val shouldWriteToExistingTable = isDynamicPartitionOverwrite &&
-        (operation == TableCreationModes.Replace ||
-          operation == TableCreationModes.CreateOrReplace) &&
-        asSelectQuery.isDefined
-
-      if (shouldWriteToExistingTable) {
-        try {
-          val existingTable = loadTable(ident)
-          existingTable match {
-            case deltaTable: DeltaTableV2 =>
-              // Table exists and is a Delta table - write to it with dynamic partition overwrite
-              val deltaOptions = new DeltaOptions(writeOptions, conf)
-              WriteIntoDelta(
-                deltaTable.deltaLog,
-                SaveMode.Overwrite,
-                deltaOptions,
-                partitionColumns = Nil, // Use existing partition columns from table
-                deltaTable.deltaLog.unsafeVolatileSnapshot.metadata.configuration,
-                asSelectQuery.get,
-                deltaTable.catalogTable
-              ).run(spark)
-              return
-            case _ =>
-              // Not a Delta table, fall through to normal table creation
-          }
-        } catch {
-          case _: NoSuchTableException | _: NoSuchNamespaceException =>
-            // Table doesn't exist, fall through to normal table creation
-        }
-      }
-
       createDeltaTable(
         ident,
         schema,
