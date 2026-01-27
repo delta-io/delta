@@ -498,12 +498,14 @@ class CreateCheckpointSuite extends CheckpointBase {
     }
   }
 
-  test("log cleanup: getSnapshotAsOfVersion does NOT trigger log cleanup") {
+  test("log cleanup: checkpointProtection enabled prevents log cleanup") {
     withTempDirAndEngine { (tablePath, engine) =>
-      // Create table with short log retention
+      // Create table with checkpointProtection enabled and short log retention
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
-        "delta.enableExpiredLogCleanup" -> "true")
+        "delta.enableExpiredLogCleanup" -> "true",
+        "delta.minWriterVersion" -> "7",
+        "delta.feature.checkpointProtection" -> "supported")
 
       val data = Seq(Map.empty[String, Literal] ->
         generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
@@ -530,21 +532,24 @@ class CreateCheckpointSuite extends CheckpointBase {
       val jsonFilesBefore = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
       assert(jsonFilesBefore.length === 4, s"Should have 4 json files (0-3)")
 
-      // Get snapshot using getSnapshotAsOfVersion - this sets wasBuiltAsLatest=false
-      val timeTravelSnapshot = table.getSnapshotAsOfVersion(engine, 3).asInstanceOf[SnapshotImpl]
+      // Get latest snapshot - this sets wasBuiltAsLatest=true
+      val latestSnapshot = table.getLatestSnapshot(engine).asInstanceOf[SnapshotImpl]
       assert(
-        !timeTravelSnapshot.wasBuiltAsLatest(),
-        "Snapshot from getSnapshotAsOfVersion() should have wasBuiltAsLatest=false")
+        latestSnapshot.wasBuiltAsLatest(),
+        "Snapshot from getLatestSnapshot() should have wasBuiltAsLatest=true")
+      assert(
+        latestSnapshot.getProtocol.getWriterFeatures.contains("checkpointProtection"),
+        "Table should have checkpointProtection feature enabled")
 
-      // Try to checkpoint with this snapshot - cleanup should NOT happen
+      // Try to checkpoint with latest snapshot - cleanup should NOT happen due to protection
       val clock = new KernelClock { def getTimeMillis: Long = System.currentTimeMillis() }
-      Checkpointer.checkpoint(engine, clock, timeTravelSnapshot)
+      Checkpointer.checkpoint(engine, clock, latestSnapshot)
 
-      // Verify old log files are NOT deleted
+      // Verify old log files are NOT deleted (checkpointProtection prevents cleanup)
       val jsonFilesAfter = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
       assert(
         jsonFilesAfter.length === jsonFilesBefore.length,
-        "Log cleanup should NOT happen with time-travel snapshot. " +
+        "Log cleanup should NOT happen with checkpointProtection enabled. " +
           s"Files: ${jsonFilesAfter.map(_.getName).mkString(", ")}")
     }
   }
