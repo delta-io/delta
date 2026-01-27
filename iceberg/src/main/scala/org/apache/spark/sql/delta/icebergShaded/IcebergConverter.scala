@@ -379,9 +379,6 @@ class IcebergConverter(spark: SparkSession)
    * 'delta.iceberg.conversion.convertSnapshot' ->
    *    Convert Iceberg Metadata for a complete snapshot. Used for conversion
    *    after delta commits and in create table
-   * 'delta.iceberg.conversion.convertUncommitedTxn' ->
-   *    Convert Iceberg Metadata for a proposed txn. Used for conversion pre
-   *    delta commit
    */
   private def convertSnapshotInternal(
       snapshotToConvert: Snapshot,
