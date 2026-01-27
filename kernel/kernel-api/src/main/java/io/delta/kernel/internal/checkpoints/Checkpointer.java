@@ -108,7 +108,7 @@ public class Checkpointer {
 
     // Clean up delta log files if enabled.
     final Metadata metadata = snapshot.getMetadata();
-    if (EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
+    if (snapshot.wasBuiltAsLatest() && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)) {
       cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {
       logger.info(
