@@ -226,16 +226,6 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
-  public static KernelException checkpointOnProtection(String tablePath) {
-    String message =
-        String.format(
-            "Cannot create checkpoint for table `%s` because the table has "
-                + "checkpointProtection feature enabled. Kernel does not support checkpointing "
-                + "tables with checkpoint protection.",
-            tablePath);
-    return new KernelException(message);
-  }
-
   public static KernelException unsupportedDataType(DataType dataType) {
     return new KernelException("Kernel doesn't support writing data of type: " + dataType);
   }
