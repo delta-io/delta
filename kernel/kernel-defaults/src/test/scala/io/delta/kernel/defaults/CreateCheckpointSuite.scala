@@ -422,36 +422,48 @@ class CreateCheckpointSuite extends CheckpointBase {
     }
   }
 
-  //////////////////////////////////////////////////////////////////////////////////
-  // Log cleanup tests - verify cleanup happens only when snapshot.wasBuiltAsLatest()
-  //////////////////////////////////////////////////////////////////////////////////
-
   test("log cleanup: Table.checkpoint(version) does NOT trigger log cleanup") {
-    withTempDirAndEngine { (tablePath, tc) =>
-      // Create table with short log retention
-      spark.sql(
-        s"""CREATE TABLE delta.`$tablePath` (id LONG) USING delta
-           |TBLPROPERTIES (
-           |  'delta.logRetentionDuration' = 'interval 0 seconds',
-           |  'delta.enableExpiredLogCleanup' = 'true'
-           |)""".stripMargin)
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with short log retention using Kernel
+      val tableProperties = Map(
+        "delta.logRetentionDuration" -> "interval 0 seconds",
+        "delta.enableExpiredLogCleanup" -> "true"
+      )
 
-      // Add enough commits to have some expired logs
-      for (_ <- 0 to 15) {
-        appendCommit(tablePath)
+      val data = Seq(Map.empty[String, Literal] ->
+        generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
+
+      // Create table with properties
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        data = data,
+        tableProperties = tableProperties
+      )
+
+      // Add a few more commits (version 1, 2, 3)
+      for (_ <- 1 to 3) {
+        appendData(engine, tablePath, data = data)
       }
 
-      // Create a checkpoint at version 10 using the Spark checkpoint first
-      sparkCheckpoint(tablePath)
+      // Create a checkpoint using Kernel at version 3
+      val table = Table.forPath(engine, tablePath)
+      table.checkpoint(engine, 3)
 
-      // Get file count before checkpoint
+      // Add more commits after checkpoint (version 4, 5, 6)
+      for (_ <- 1 to 3) {
+        appendData(engine, tablePath, data = data)
+      }
+
+      // Get file count before second checkpoint
       val deltaLogDir = new File(tablePath, "_delta_log")
       val filesBefore = deltaLogDir.listFiles().filter(_.getName.endsWith(".json")).length
 
       // Use Table.checkpoint() API - this should NOT trigger cleanup
       // because it uses getSnapshotAsOfVersion() which sets wasBuiltAsLatest=false
-      val latestVersion = DeltaLog.forTable(spark, tablePath).snapshot.version
-      Table.forPath(tc, tablePath).checkpoint(tc, latestVersion)
+      table.checkpoint(engine, 6)
 
       // Verify that old log files are NOT deleted
       val filesAfter = deltaLogDir.listFiles().filter(_.getName.endsWith(".json")).length
@@ -460,65 +472,58 @@ class CreateCheckpointSuite extends CheckpointBase {
     }
   }
 
-  test("log cleanup: snapshot.writeCheckpoint() with latest snapshot DOES trigger log cleanup") {
-    withTempDirAndEngine { (tablePath, tc) =>
-      // Create table with short log retention
-      spark.sql(
-        s"""CREATE TABLE delta.`$tablePath` (id LONG) USING delta
-           |TBLPROPERTIES (
-           |  'delta.logRetentionDuration' = 'interval 0 seconds',
-           |  'delta.enableExpiredLogCleanup' = 'true'
-           |)""".stripMargin)
+  test("log cleanup: getLatestSnapshot sets wasBuiltAsLatest=true") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val data = Seq(Map.empty[String, Literal] ->
+        generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
 
-      // Add enough commits to have some expired logs
-      for (_ <- 0 to 15) {
-        appendCommit(tablePath)
+      // Create table using Kernel
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        data = data
+      )
+
+      // Add a few commits
+      for (_ <- 1 to 3) {
+        appendData(engine, tablePath, data = data)
       }
-
-      // Create a checkpoint using Spark first to have a base checkpoint
-      sparkCheckpoint(tablePath)
-
-      // Add a few more commits so cleanup has something to delete
-      for (_ <- 0 to 5) {
-        appendCommit(tablePath)
-      }
-
-      // Force file modification times to be old enough for cleanup
-      // (In real tests, we'd need to manipulate file timestamps or use a mock clock)
-      Thread.sleep(100) // Small delay to ensure file timestamps differ
 
       // Get the latest snapshot using getLatestSnapshot() - this sets wasBuiltAsLatest=true
-      val table = Table.forPath(tc, tablePath)
-      val latestSnapshot = table.getLatestSnapshot(tc)
+      val table = Table.forPath(engine, tablePath)
+      val latestSnapshot = table.getLatestSnapshot(engine)
         .asInstanceOf[io.delta.kernel.internal.SnapshotImpl]
 
       // Verify wasBuiltAsLatest is true
       assert(latestSnapshot.wasBuiltAsLatest(),
         "Snapshot from getLatestSnapshot() should have wasBuiltAsLatest=true")
-
-      // Note: Full cleanup verification requires manipulating file timestamps
-      // or using a mock clock. This test verifies the wasBuiltAsLatest flag is set correctly.
     }
   }
 
-  test("log cleanup: snapshot.writeCheckpoint() with time-travel snapshot does NOT trigger cleanup") {
-    withTempDirAndEngine { (tablePath, tc) =>
-      // Create table with short log retention
-      spark.sql(
-        s"""CREATE TABLE delta.`$tablePath` (id LONG) USING delta
-           |TBLPROPERTIES (
-           |  'delta.logRetentionDuration' = 'interval 0 seconds',
-           |  'delta.enableExpiredLogCleanup' = 'true'
-           |)""".stripMargin)
+  test("log cleanup: getSnapshotAsOfVersion sets wasBuiltAsLatest=false") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val data = Seq(Map.empty[String, Literal] ->
+        generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
 
-      // Add commits
-      for (_ <- 0 to 10) {
-        appendCommit(tablePath)
+      // Create table using Kernel
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        schema = testSchema,
+        data = data
+      )
+
+      // Add commits (version 1, 2, 3, 4, 5)
+      for (_ <- 1 to 5) {
+        appendData(engine, tablePath, data = data)
       }
 
       // Get a time-travel snapshot (specific version) - this sets wasBuiltAsLatest=false
-      val table = Table.forPath(tc, tablePath)
-      val timeTravelSnapshot = table.getSnapshotAsOfVersion(tc, 5)
+      val table = Table.forPath(engine, tablePath)
+      val timeTravelSnapshot = table.getSnapshotAsOfVersion(engine, 3)
         .asInstanceOf[io.delta.kernel.internal.SnapshotImpl]
 
       // Verify wasBuiltAsLatest is false
