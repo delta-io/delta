@@ -128,6 +128,9 @@ object DeltaOperations {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()
     ) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
+      // Only log these fields when explicitly set to avoid noise in DESCRIBE HISTORY when users do
+      // not set them. This means we don't distinguish between explicitly disabled (false) and unset
+      // (defaults to disabled), but that's fine as the distinction is not particularly interesting.
       predicate.map("predicate" -> _) ++
       isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
       canOverwriteSchema.map("canOverwriteSchema" -> _) ++
@@ -442,8 +445,8 @@ object DeltaOperations {
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
   ) ++
-    // Only log these fields when explicitly set to avoid noise in DESCRIBE HISTORY when users don't
-    // set them. This means we don't distinguish between explicitly disabled (false) and unset
+    // Only log these fields when explicitly set to avoid noise in DESCRIBE HISTORY when users do
+    // not set them. This means we don't distinguish between explicitly disabled (false) and unset
     // (defaults to disabled), but that's fine as the distinction is not particularly interesting.
     predicate.map("predicate" -> _) ++
     isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
