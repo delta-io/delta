@@ -110,9 +110,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private long estimatedSizeInBytes = 0L;
   private volatile boolean planned = false;
 
-  // Runtime filters applied after planning (using Set for order-independent comparison)
+  // Runtime predicates applied after planning (using Set for order-independent comparison)
   private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
-      appliedRuntimeFilters = new HashSet<>();
+      appliedRuntimePredicates = new HashSet<>();
 
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
@@ -309,25 +309,25 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    * Ensure the scan is planned exactly once in a thread-safe manner, optionally applying runtime
    * filters.
    */
-  private synchronized void ensurePlanned(List<RuntimeFilter> runtimeFilters) {
+  private synchronized void ensurePlanned(List<RuntimePredicate> runtimePredicates) {
     // First, ensure planning is done
     if (!planned) {
       planScanFiles();
       planned = true;
     }
 
-    // Then apply runtime filters if provided
-    if (runtimeFilters != null && !runtimeFilters.isEmpty()) {
+    // Then apply runtime predicates if provided
+    if (runtimePredicates != null && !runtimePredicates.isEmpty()) {
       // Record the applied predicates for equals/hashCode comparison
-      for (RuntimeFilter filter : runtimeFilters) {
-        appliedRuntimeFilters.add(filter.predicate);
+      for (RuntimePredicate filter : runtimePredicates) {
+        appliedRuntimePredicates.add(filter.predicate);
       }
 
       List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
       for (PartitionedFile pf : this.partitionedFiles) {
         InternalRow partitionValues = pf.partitionValues();
         boolean allMatch =
-            runtimeFilters.stream().allMatch(filter -> filter.evaluator.eval(partitionValues));
+            runtimePredicates.stream().allMatch(predicate -> predicate.evaluator.eval(partitionValues));
         if (allMatch) {
           runtimeFilteredPartitionedFiles.add(pf);
         }
@@ -346,7 +346,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   /** Ensure the scan is planned exactly once in a thread-safe manner. */
   private void ensurePlanned() {
-    // Pass null to indicate no runtime filter should be applied - just perform the scan planning
+    // Pass null to indicate no runtime predicate should be applied - just perform the scan planning
     ensurePlanned(null);
   }
 
@@ -382,7 +382,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
     // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
     // Only track predicates that successfully convert to evaluators
-    List<RuntimeFilter> runtimeFilters = new ArrayList<>();
+    List<RuntimePredicate> runtimePredicates = new ArrayList<>();
     for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
       // only the predicates on partition columns will be converted
       Optional<Expression> catalystExpr =
@@ -391,13 +391,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         InterpretedPredicate predicateEvaluator =
             org.apache.spark.sql.catalyst.expressions.Predicate.createInterpreted(
                 catalystExpr.get());
-        runtimeFilters.add(new RuntimeFilter(predicate, predicateEvaluator));
+        runtimePredicates.add(new RuntimePredicate(predicate, predicateEvaluator));
       }
     }
 
-    if (!runtimeFilters.isEmpty()) {
-      // Apply runtime filters within the synchronized ensurePlanned method
-      ensurePlanned(runtimeFilters);
+    if (!runtimePredicates.isEmpty()) {
+      // Apply runtime predicates within the synchronized ensurePlanned method
+      ensurePlanned(runtimePredicates);
     }
   }
 
@@ -453,7 +453,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
-        && Objects.equals(appliedRuntimeFilters, that.appliedRuntimeFilters);
+        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates);
   }
 
   @Override
@@ -466,17 +466,24 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             partitionSchema,
             readDataSchema,
             options,
-            appliedRuntimeFilters);
+            appliedRuntimePredicates);
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
     result = 31 * result + Arrays.hashCode(dataFilters);
     return result;
   }
 
-  private static class RuntimeFilter {
+  /**
+   * Holds a runtime predicate from {@link #filter(Predicate[])} along with its compiled evaluator.
+   *
+   * <p>Only created for predicates that can be successfully converted to Catalyst expressions
+   * (typically predicates on partition columns) and compiled into InterpretedPredicate evaluators.
+   * Predicates that cannot be converted are not instantiated as RuntimePredicate objects.
+   */
+  private static class RuntimePredicate {
     final org.apache.spark.sql.connector.expressions.filter.Predicate predicate;
     final InterpretedPredicate evaluator;
 
-    RuntimeFilter(
+    RuntimePredicate(
         org.apache.spark.sql.connector.expressions.filter.Predicate predicate,
         InterpretedPredicate evaluator) {
       this.predicate = predicate;
