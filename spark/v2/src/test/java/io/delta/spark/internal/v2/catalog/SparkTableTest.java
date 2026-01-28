@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -50,7 +50,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
-public class SparkTableTest extends SparkDsv2TestBase {
+public class SparkTableTest extends DeltaV2TestBase {
 
   @ParameterizedTest(name = "{0} - {1}")
   @MethodSource("tableTestCases")
