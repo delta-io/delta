@@ -327,7 +327,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       for (PartitionedFile pf : this.partitionedFiles) {
         InternalRow partitionValues = pf.partitionValues();
         boolean allMatch =
-            runtimePredicates.stream().allMatch(predicate -> predicate.evaluator.eval(partitionValues));
+            runtimePredicates.stream()
+                .allMatch(predicate -> predicate.evaluator.eval(partitionValues));
         if (allMatch) {
           runtimeFilteredPartitionedFiles.add(pf);
         }
