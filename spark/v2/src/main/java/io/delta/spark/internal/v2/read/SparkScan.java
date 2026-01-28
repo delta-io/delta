@@ -243,6 +243,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     // Row overhead constant, matching EstimationUtils.getSizePerRow (from Spark)
     final int ROW_OVERHEAD = 8;
 
+    // TODO: update below with column stats from catalog when it becomes available
     final long fullSchemaRowSize =
         ROW_OVERHEAD + dataSchema.defaultSize() + partitionSchema.defaultSize();
     final long outputRowSize = ROW_OVERHEAD + readSchema().defaultSize();
