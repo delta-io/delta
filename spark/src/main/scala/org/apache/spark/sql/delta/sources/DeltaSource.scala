@@ -44,7 +44,6 @@ import org.apache.spark.sql.catalyst.expressions.{Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.connector.read.streaming
 import org.apache.spark.sql.connector.read.streaming.{ReadAllAvailable, ReadLimit, ReadMaxFiles, SupportsAdmissionControl, SupportsTriggerAvailableNow}
-import org.apache.spark.sql.delta.sources.DeltaSource.validateProtocolAt
 import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils

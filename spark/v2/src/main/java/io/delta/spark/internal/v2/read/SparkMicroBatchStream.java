@@ -514,8 +514,6 @@ public class SparkMicroBatchStream
       return cachedStartingVersion;
     }
 
-    // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
-    // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
       if (startingVersion instanceof StartingVersionLatest$) {
