@@ -2,7 +2,7 @@ package io.delta.spark.internal.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
@@ -28,7 +28,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class SparkScanTest extends SparkDsv2TestBase {
+public class SparkScanTest extends DeltaV2TestBase {
 
   private static String tablePath;
   private static final String tableName = "deltatbl_partitioned";
