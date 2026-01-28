@@ -176,6 +176,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .createWithDefault("MEMORY_AND_DISK_SER")
 
+  val DELTA_SNAPSHOT_LOGGING_MAX_FILES_THRESHOLD =
+    buildConf("snapshot.logging.maxFilesThreshold")
+      .internal()
+      .doc("Threshold for number of files in a snapshot. When exceeded, emits a warning with " +
+        "remediation hints. Set to 0 to disable snapshot logging completely.")
+      .longConf
+      .checkValue(_ >= 0, "must be non-negative")
+      .createWithDefault(500000L)
+
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
       .internal()
