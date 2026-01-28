@@ -185,8 +185,16 @@ case class WriteIntoDelta(
     val useDynamicPartitionOverwriteMode = {
       if (txn.metadata.partitionColumns.isEmpty) {
         // We ignore dynamic partition overwrite mode for non-partitioned tables
+        // scalastyle:off
+        println(s"==> useDynamicPartitionOverwriteMode check: ==> partitionColumns.isEmpty: true")
+        // scalastyle:on
+
         false
       } else if (isTableReplace) {
+        // scalastyle:off
+        println(s"==> useDynamicPartitionOverwriteMode check: ==> isTableReplace: true")
+        // scalastyle:on
+
         // A replace table command should always replace the table, not just some partitions.
         false
       } else if (options.replaceWhere.nonEmpty) {
@@ -206,6 +214,10 @@ case class WriteIntoDelta(
         options.isDynamicPartitionOverwriteMode
       }
     }
+
+    // scalastyle:off
+    println(s"===> useDynamicPartitionOverwriteMode: $useDynamicPartitionOverwriteMode")
+    // scalastyle:on
 
     if (useDynamicPartitionOverwriteMode && canOverwriteSchema) {
       throw DeltaErrors.overwriteSchemaUsedWithDynamicPartitionOverwrite()

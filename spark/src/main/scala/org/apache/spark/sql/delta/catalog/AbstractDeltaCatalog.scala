@@ -419,6 +419,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageReplace") {
+      // scalastyle:off
+      println(s"=====> stageReplace ==> $ident")
+      // scalastyle:on
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         new StagedDeltaTableV2(
           ident,
@@ -441,7 +444,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageCreateOrReplace") {
+      // scalastyle:off
+      println(s"=====> stageCreateOrReplace ==> $ident")
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        println(s"=====> StagedDeltaTableV2 ==> $ident")
         new StagedDeltaTableV2(
           ident,
           schema,
@@ -459,6 +465,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         )
         BestEffortStagedTable(ident, table, this)
       }
+      // scalastyle:on
     }
 
   override def stageCreate(
@@ -467,6 +474,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageCreate") {
+      // scalastyle:off
+      println(s"=====> stageCreate ==> $ident")
+      // scalastyle:on
+
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         new StagedDeltaTableV2(
           ident,
@@ -650,6 +661,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+
+      // scalastyle:off
+      println(s"===> asSelectQuery ===> isDefined: ${asSelectQuery.isDefined} ==> $asSelectQuery")
+      // scalastyle:on
+
       createDeltaTable(
         ident,
         schema,
@@ -683,6 +699,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         override def toInsertableRelation(): InsertableRelation = {
           new InsertableRelation {
             override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+              // scalastyle:off
+              println(s"====> call the DeltaV1WriteBuilder#insert ==> overwrite $overwrite")
+              // scalastyle:on
               asSelectQuery = Option(data)
             }
           }
