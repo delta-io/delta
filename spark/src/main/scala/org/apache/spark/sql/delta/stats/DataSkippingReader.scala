@@ -1356,12 +1356,18 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
+    // Check if UDF filters should be skipped for data skipping
+    val skipUdfFilters = spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_SKIP_UDF_FILTERS)
+
     // For data skipping, avoid using the filters that either:
     // 1. involve subqueries.
     // 2. are non-deterministic.
-    // 3. involve file metadata struct fields
+    // 3. involve file metadata struct fields.
+    // 4. contain UDFs (when spark.databricks.delta.skipping.udfFilters.skip is true).
     var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic || f.exists {
+      case f => containsSubquery(f) || !f.deterministic ||
+        (skipUdfFilters && DeltaTableUtils.exprContainsUdf(f)) ||
+        f.exists {
         case MetadataAttribute(_) => true
         case _ => false
       }

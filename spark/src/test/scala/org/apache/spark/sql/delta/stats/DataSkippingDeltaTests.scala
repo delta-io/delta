@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.stats
 
 import java.io.File
 
+import com.databricks.sql.acl.CheckPermissions
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
@@ -36,7 +37,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.QueryPlanningTracker
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.expressions.{Expression, Literal, PredicateHelper}
+import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression, LessThan, Literal, PredicateHelper, ScalaUDF, UserDefinedExpression}
 import org.apache.spark.sql.catalyst.plans.logical.Filter
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.internal.SQLConf
@@ -2131,6 +2132,83 @@ trait DataSkippingDeltaTestsBase extends QueryTest
         .filesForScan(predicates)
       assert(scanResult.unusedFilters.nonEmpty,
         "Expected predicate to be ineligible for data skipping")
+    }
+  }
+
+  // Test UDF filter handling in data skipping. Creates a table with 10 files and applies
+  // a UDF predicate (udf(col) < 5). Expected behavior:
+  //   - skipUdfFilters=true: UDF excluded from skipping, all 10 files scanned
+  //   - skipUdfFilters=false, partition col: UDF used for partition pruning, 4 files scanned
+  //   - skipUdfFilters=false, data col: UDF can't convert to stats predicate, 10 files scanned
+  Seq(true, false).foreach { skipUdfFilters =>
+    Seq(true, false).foreach { usePartitionColumn =>
+      test(s"UDF filters in data skipping - " +
+          s"skipUdfFilters=$skipUdfFilters, usePartitionColumn=$usePartitionColumn") {
+        val tableName = s"tbl_udf"
+        withTable(tableName) {
+          val df = spark.range(1000).withColumn("part_col", ($"id" / 100).cast("long"))
+          df.write.partitionBy("part_col").format("delta").saveAsTable(tableName)
+
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+          val snapshot = deltaLog.update()
+          val totalFiles = snapshot.allFiles.count().toInt
+          assert(totalFiles == 10, s"Expected 10 files, got $totalFiles")
+
+          val targetColName = if (usePartitionColumn) "part_col" else "id"
+          val targetCol = snapshot.metadata.schema.fields.find(_.name == targetColName).get
+          val targetAttr = AttributeReference(targetCol.name, targetCol.dataType)()
+
+          val udfExpr = ScalaUDF(
+            function = (x: Long) => x + 1,
+            dataType = LongType,
+            children = Seq(targetAttr),
+            inputEncoders = Nil,
+            outputEncoder = None,
+            udfName = Some("testAddOneUdf"),
+            nullable = true,
+            udfDeterministic = true)
+
+          val udfPredicate = LessThan(udfExpr, Literal(5L))
+          assert(udfPredicate.exists(_.isInstanceOf[UserDefinedExpression]),
+            "Test setup error: expected UDF in predicate")
+          assert(udfExpr.deterministic, "Test setup error: UDF should be deterministic")
+
+          withSQLConf(
+              DeltaSQLConf.DELTA_DATASKIPPING_SKIP_UDF_FILTERS.key -> skipUdfFilters.toString) {
+            val scanResult = {
+              deltaLog.update().filesForScan(Seq(udfPredicate))
+            }
+
+            val unusedContainsUdf = scanResult.unusedFilters.exists(
+              _.exists(_.isInstanceOf[UserDefinedExpression]))
+            val partitionFiltersContainUdf = scanResult.partitionFilters.exists(
+              _.exists(_.isInstanceOf[UserDefinedExpression]))
+
+            if (skipUdfFilters) {
+              assert(unusedContainsUdf,
+                "UDF predicate should be in unusedFilters when skipUdfFilters=true")
+              assert(!partitionFiltersContainUdf,
+                "UDF predicate should NOT be in partitionFilters when skipUdfFilters=true")
+              assert(scanResult.files.size == totalFiles,
+                s"Expected all $totalFiles files, got: ${scanResult.files.size}")
+            } else if (usePartitionColumn) {
+              assert(partitionFiltersContainUdf,
+                "UDF predicate on partition column should be in partitionFilters")
+              assert(!unusedContainsUdf,
+                "UDF predicate on partition column should NOT be in unusedFilters")
+              assert(scanResult.files.size == 4,
+                s"Expected 4 files after partition pruning, got: ${scanResult.files.size}")
+            } else {
+              assert(unusedContainsUdf,
+                "UDF predicate on data column should be in unusedFilters")
+              assert(!partitionFiltersContainUdf,
+                "UDF predicate on data column should NOT be in partitionFilters")
+              assert(scanResult.files.size == totalFiles,
+                s"Expected all $totalFiles files, got: ${scanResult.files.size}")
+            }
+          }
+        }
+      }
     }
   }
 
