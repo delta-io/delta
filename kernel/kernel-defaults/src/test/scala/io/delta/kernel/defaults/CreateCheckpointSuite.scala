@@ -25,8 +25,6 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{CheckpointAlreadyExistsException, TableNotFoundException}
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.internal.SnapshotImpl
-import io.delta.kernel.internal.checkpoints.Checkpointer
-import io.delta.kernel.internal.util.{Clock => KernelClock}
 
 import org.apache.spark.sql.delta.{DeltaLog, VersionNotFoundException}
 import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
@@ -395,7 +393,7 @@ class CreateCheckpointSuite extends CheckpointBase {
     }
   }
 
-  test("log cleanup: non-latest snapshot does NOT trigger log cleanup") {
+  test("log cleanup: non-latest snapshot can NOT trigger log cleanup") {
     withTempDirAndEngine { (tablePath, engine) =>
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
@@ -419,10 +417,9 @@ class CreateCheckpointSuite extends CheckpointBase {
       assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4)
 
       // Checkpoint at version 2 using SnapshotBuilder.atVersion() - wasBuiltAsLatest=false
-      val clock = new KernelClock { def getTimeMillis: Long = System.currentTimeMillis() }
       val snapshot = TableManager.loadSnapshot(tablePath)
         .atVersion(2).build(engine).asInstanceOf[SnapshotImpl]
-      Checkpointer.checkpoint(engine, clock, snapshot)
+      snapshot.writeCheckpoint(engine)
 
       // Verify no log cleanup happened
       assert(
@@ -431,7 +428,7 @@ class CreateCheckpointSuite extends CheckpointBase {
     }
   }
 
-  test("log cleanup: latest snapshot triggers log cleanup") {
+  test("log cleanup: latest snapshot can trigger log cleanup") {
     withTempDirAndEngine { (tablePath, engine) =>
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
@@ -455,12 +452,11 @@ class CreateCheckpointSuite extends CheckpointBase {
       assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4)
 
       // Get latest snapshot (version 3) using builder without atVersion() - wasBuiltAsLatest=true
-      val clock = new KernelClock { def getTimeMillis: Long = System.currentTimeMillis() }
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
         .asInstanceOf[SnapshotImpl]
       assert(latestSnapshot.wasBuiltAsLatest())
 
-      Checkpointer.checkpoint(engine, clock, latestSnapshot)
+      latestSnapshot.writeCheckpoint(engine)
 
       // Verify log cleanup happened
       assert(
@@ -469,7 +465,8 @@ class CreateCheckpointSuite extends CheckpointBase {
     }
   }
 
-  test("log cleanup: checkpointProtection enabled prevents log cleanup") {
+  test(
+    "log cleanup: checkpointProtection enabled prevents log cleanup, even snapshot is built as latest") {
     withTempDirAndEngine { (tablePath, engine) =>
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
@@ -494,13 +491,12 @@ class CreateCheckpointSuite extends CheckpointBase {
       assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4)
 
       // Get latest snapshot using builder without atVersion() - wasBuiltAsLatest=true
-      val clock = new KernelClock { def getTimeMillis: Long = System.currentTimeMillis() }
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
         .asInstanceOf[SnapshotImpl]
       assert(latestSnapshot.wasBuiltAsLatest())
       assert(latestSnapshot.getProtocol.getWriterFeatures.contains("checkpointProtection"))
 
-      Checkpointer.checkpoint(engine, clock, latestSnapshot)
+      latestSnapshot.writeCheckpoint(engine)
 
       // Verify no log cleanup (checkpointProtection prevents it)
       assert(
