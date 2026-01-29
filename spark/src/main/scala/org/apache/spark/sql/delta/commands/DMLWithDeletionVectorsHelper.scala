@@ -425,13 +425,13 @@ object DeletionVectorBitmapGenerator {
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
-      val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
+      val joinExpr = filePathToDVDf("__delta_internal_file_path") === matchedRowsDf(FILE_NAME_COL)
       // Perform leftOuter join to make sure we do not eliminate any rows because of path
       // encoding issues. If there is such an issue we will detect it during the aggregation
       // of the bitmaps.
       val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
         .drop(FILE_NAME_COL)
-        .withColumnRenamed("path", FILE_NAME_COL)
+        .withColumnRenamed("__delta_internal_file_path", FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
@@ -470,7 +470,7 @@ object DeletionVectorBitmapGenerator {
  * Holds a mapping from a file path (url-encoded) to an (optional) serialized Deletion Vector
  * descriptor.
  */
-case class FileToDvDescriptor(path: String, deletionVectorId: Option[String])
+case class FileToDvDescriptor(__delta_internal_file_path: String, deletionVectorId: Option[String])
 
 object FileToDvDescriptor {
   private lazy val _encoder = new DeltaEncoder[FileToDvDescriptor]
