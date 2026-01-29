@@ -48,6 +48,9 @@ import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
+import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.OutputWriter
@@ -760,7 +763,9 @@ object Checkpoints
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
-      (format.prepareWrite(spark, job, Map.empty, schema),
+      // Right now, we don't shred variant stats in checkpoints.
+      val writeOptions = VariantShreddingShims.getVariantInferShreddingSchemaOptions(false)
+      (format.prepareWrite(spark, job, Map.empty ++ writeOptions, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
 
@@ -1257,8 +1262,18 @@ object Checkpoints
   def extractStats(statsSchema: StructType, statsColName: String): Option[Column] = {
     import org.apache.spark.sql.functions.from_json
     Option.when(includeStatsParsedInCheckpoint() && statsSchema.nonEmpty) {
-      from_json(col(statsColName), statsSchema, DeltaFileProviderUtils.jsonStatsParseOption)
-        .as(Checkpoints.STRUCT_STATS_COL_NAME)
+      val parsedStats = from_json(col(statsColName), statsSchema,
+        DeltaFileProviderUtils.jsonStatsParseOption)
+      // If schema contains variant types, decode Z85-encoded strings to actual Variant values.
+      // In JSON stats, variant values are stored as Z85-encoded strings. from_json creates
+      // Variant objects containing those strings. DecodeNestedZ85EncodedVariant decodes them
+      // to proper binary Variant representation.
+      val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+        Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+      } else {
+        parsedStats
+      }
+      decodedStats.as(Checkpoints.STRUCT_STATS_COL_NAME)
     }
   }
 }
