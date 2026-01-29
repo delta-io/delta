@@ -81,6 +81,15 @@ trait CheckpointProvider extends UninitializedCheckpointProvider {
    * This is only intended to be used for logging and metrics.
    */
   def checkpointPolicy: Option[CheckpointPolicy.Policy]
+
+  /**
+   * List of different file indexes and corresponding schemas which could help derive full
+   * state-reconstruction for the checkpoint.
+   * Different FileIndexes could have different schemas depending on `stats_parsed` / `stats`
+   * columns in the underlying file(s).
+   */
+  def allActionsFileIndexesAndSchemas(
+    spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)]
 }
 
 object CheckpointProvider extends DeltaLogging {
@@ -112,7 +121,11 @@ object CheckpointProvider extends DeltaLogging {
               s"has no CheckpointMetadata action")
           }
           require(isV2CheckpointEnabled(snapshotDescriptor.protocol))
-          V2CheckpointProvider(uninitializedV2CheckpointProvider, checkpointMetadata, sidecarFiles)
+          V2CheckpointProvider(
+            uninitializedV2CheckpointProvider,
+            checkpointMetadata,
+            sidecarFiles,
+            snapshotDescriptor.deltaLog)
         }
       }
     case provider: UninitializedV1OrV2ParquetCheckpointProvider
@@ -136,7 +149,7 @@ object CheckpointProvider extends DeltaLogging {
           checkpointMetadataOpt match {
             case Some(cm) =>
               require(isV2CheckpointEnabled(snapshotDescriptor))
-              V2CheckpointProvider(provider, cm, sidecarFiles)
+              V2CheckpointProvider(provider, cm, sidecarFiles, snapshotDescriptor.deltaLog)
             case None =>
               PreloadedCheckpointProvider(provider.topLevelFiles, provider.lastCheckpointInfoOpt)
           }
@@ -164,6 +177,24 @@ object CheckpointProvider extends DeltaLogging {
    */
   def isV2CheckpointEnabled(checksumOpt: Option[VersionChecksum]): Option[Boolean] = {
     checksumOpt.flatMap(checksum => Option(checksum.protocol)).map(isV2CheckpointEnabled)
+  }
+
+  private[delta] def getParquetSchema(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      parquetFile: FileStatus,
+      schemaFromLastCheckpoint: Option[StructType]): StructType = {
+    // Try to get the checkpoint schema from the last_checkpoint.
+    // If it is not there then get it from filesystem by doing I/O.
+    val fetchChkSchemaFromLastCheckpoint = spark.sessionState.conf.getConf(
+      DeltaSQLConf.USE_CHECKPOINT_SCHEMA_FROM_CHECKPOINT_METADATA)
+    schemaFromLastCheckpoint match {
+      case Some(schema) if fetchChkSchemaFromLastCheckpoint => schema
+      case _ =>
+        recordDeltaOperation(deltaLog, "snapshot.checkpointSchema.fromFileSystem") {
+          Snapshot.getParquetFileSchemaAndRowCount(spark, deltaLog, parquetFile)._1
+        }
+    }
   }
 
   private def sendEventForV2CheckpointRead(
@@ -294,6 +325,20 @@ case class PreloadedCheckpointProvider(
   override lazy val topLevelFileIndex: Option[DeltaLogFileIndex] = Some(fileIndex)
 
   override def checkpointPolicy: Option[CheckpointPolicy.Policy] = Some(CheckpointPolicy.Classic)
+
+  override def allActionsFileIndexesAndSchemas(
+      spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = {
+    Seq((fileIndex, checkpointSchema(spark, deltaLog)))
+  }
+
+  private val checkpointSchemaWithCaching = new LazyCheckpointSchemaGetter {
+    override def fileStatus: FileStatus = topLevelFiles.head
+    override def schemaFromLastCheckpoint: Option[StructType] =
+      lastCheckpointInfoOpt.flatMap(_.checkpointSchema)
+  }
+  private def checkpointSchema(spark: SparkSession, deltaLog: DeltaLog): StructType =
+    checkpointSchemaWithCaching.get(spark, deltaLog)
+
 }
 
 /**
@@ -312,6 +357,8 @@ object EmptyCheckpointProvider extends CheckpointProvider {
   override def allActionsFileIndexes(): Seq[DeltaLogFileIndex] = Nil
   override def topLevelFileIndex: Option[DeltaLogFileIndex] = None
   override def checkpointPolicy: Option[CheckpointPolicy.Policy] = None
+  override def allActionsFileIndexesAndSchemas(
+    spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = Nil
 }
 
 /** A trait representing a v2 [[UninitializedCheckpointProvider]] */
@@ -426,6 +473,11 @@ abstract class LazyCompleteCheckpointProvider(
 
   override def checkpointPolicy: Option[CheckpointPolicy.Policy] =
     underlyingCheckpointProvider.checkpointPolicy
+
+  override def allActionsFileIndexesAndSchemas(
+      spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = {
+    underlyingCheckpointProvider.allActionsFileIndexesAndSchemas(spark, deltaLog)
+  }
 }
 
 /**
@@ -438,6 +490,8 @@ abstract class LazyCompleteCheckpointProvider(
  * @param sidecarFiles          seq of [[SidecarFile]] for the v2 checkpoint
  * @param lastCheckpointInfoOpt optional last checkpoint info for the v2 checkpoint
  * @param logPath               delta log path for the underlying delta table
+ * @param sidecarSchemaFetcher     function to fetch sidecar schema.
+ *                              Returns None if there are no sidecar files.
  */
 case class V2CheckpointProvider(
     override val version: Long,
@@ -446,7 +500,8 @@ case class V2CheckpointProvider(
     checkpointMetadata: CheckpointMetadata,
     sidecarFiles: Seq[SidecarFile],
     lastCheckpointInfoOpt: Option[LastCheckpointInfo],
-    logPath: Path
+    logPath: Path,
+    sidecarSchemaFetcher: () => Option[StructType]
   ) extends CheckpointProvider with DeltaLogging {
 
   private[delta] def sidecarFileStatuses: Seq[FileStatus] =
@@ -473,15 +528,54 @@ case class V2CheckpointProvider(
 
   override def checkpointPolicy: Option[CheckpointPolicy.Policy] = Some(CheckpointPolicy.V2)
 
+  private val v2SchemaWithCaching = new LazyCheckpointSchemaGetter {
+    override def fileStatus: FileStatus = v2CheckpointFile
+    override def schemaFromLastCheckpoint: Option[StructType] =
+      lastCheckpointInfoOpt.flatMap(_.checkpointSchema)
+  }
+
+  protected def schemaForV2Checkpoint(
+      spark: SparkSession, deltaLog: DeltaLog): StructType = {
+    if (v2CheckpointFormat != V2Checkpoint.Format.PARQUET) {
+      return Action.logSchema
+    }
+    v2SchemaWithCaching.get(spark, deltaLog)
+  }
+
+  protected def schemaForSidecarFile(spark: SparkSession, deltaLog: DeltaLog): StructType = {
+    sidecarSchemaFetcher()
+      .getOrElse {
+        throw DeltaErrors.assertionFailedError("Sidecar schema asked without any sidecar files")
+      }
+  }
+
+  override def allActionsFileIndexesAndSchemas(
+      spark: SparkSession, deltaLog: DeltaLog): Seq[(DeltaLogFileIndex, StructType)] = {
+    (fileIndexForV2Checkpoint, schemaForV2Checkpoint(spark, deltaLog)) +:
+      fileIndexesForSidecarFiles.map((_, schemaForSidecarFile(spark, deltaLog)))
+  }
 }
 
 object V2CheckpointProvider {
-
   /** Alternate constructor which uses [[UninitializedV2LikeCheckpointProvider]] */
   def apply(
       uninitializedV2LikeCheckpointProvider: UninitializedV2LikeCheckpointProvider,
       checkpointMetadata: CheckpointMetadata,
-      sidecarFiles: Seq[SidecarFile]): V2CheckpointProvider = {
+      sidecarFiles: Seq[SidecarFile],
+      deltaLog: DeltaLog): V2CheckpointProvider = {
+    def getSidecarSchemaFetcher: () => Option[StructType] = {
+      val nonFateSharingSidecarSchemaFuture: NonFateSharingFuture[Option[StructType]] = {
+        checkpointV2ThreadPool.submitNonFateSharing { spark: SparkSession =>
+          sidecarFiles.headOption.map { sidecarFile =>
+            val sidecarFileStatus =
+              sidecarFile.toFileStatus(uninitializedV2LikeCheckpointProvider.logPath)
+            CheckpointProvider.getParquetSchema(
+              spark, deltaLog, sidecarFileStatus, schemaFromLastCheckpoint = None)
+          }
+        }
+      }
+      () => nonFateSharingSidecarSchemaFuture.get(Duration.Inf)
+    }
     V2CheckpointProvider(
       uninitializedV2LikeCheckpointProvider.version,
       uninitializedV2LikeCheckpointProvider.fileStatus,
@@ -489,6 +583,30 @@ object V2CheckpointProvider {
       checkpointMetadata,
       sidecarFiles,
       uninitializedV2LikeCheckpointProvider.lastCheckpointInfoOpt,
-      uninitializedV2LikeCheckpointProvider.logPath)
+      uninitializedV2LikeCheckpointProvider.logPath,
+      getSidecarSchemaFetcher
+    )
   }
+}
+
+abstract class LazyCheckpointSchemaGetter {
+  protected def fileStatus: FileStatus
+  protected def schemaFromLastCheckpoint: Option[StructType]
+
+  private var lazySchema = Option.empty[StructType]
+
+  def get(spark: SparkSession, deltaLog: DeltaLog): StructType = {
+    lazySchema.getOrElse {
+      this.synchronized {
+        // re-check with lock held, in case of races with other initializers
+        if (lazySchema.isEmpty) {
+          lazySchema = Some(CheckpointProvider.getParquetSchema(
+            spark, deltaLog, fileStatus, schemaFromLastCheckpoint))
+        }
+        lazySchema.get
+      }
+    }
+  }
+
+  def getIfKnown: Option[StructType] = lazySchema
 }

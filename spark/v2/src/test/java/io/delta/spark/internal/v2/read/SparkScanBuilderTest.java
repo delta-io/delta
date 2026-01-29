@@ -23,7 +23,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.lang.reflect.Field;
@@ -40,7 +40,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class SparkScanBuilderTest extends SparkDsv2TestBase {
+public class SparkScanBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testBuild_returnsScanWithExpectedSchema(@TempDir File tempDir) {

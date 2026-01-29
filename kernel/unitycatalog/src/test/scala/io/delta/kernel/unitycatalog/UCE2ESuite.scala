@@ -25,7 +25,9 @@ import io.delta.kernel.{CommitRange, Operation}
 import io.delta.kernel.Snapshot
 import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
 
@@ -110,6 +112,83 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
         expCommitVersion = 3,
         expNumCatalogCommits = 1 // just v3.uuid.json, since v1 and v2 are cleaned up
       )
+
+      // Step 6: LOAD -- should read v0.json, v1.json, v2.json, and v3.uuid.json
+      val snapshotV3 = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
+      val logSegmentV3 = snapshotV3.getLogSegment
+      assert(snapshotV3.getVersion === 3)
+      assert(logSegmentV3.getAllCatalogCommits.asScala.map(x => x.getVersion) === Seq(3))
+      assert(logSegmentV3.getMaxPublishedDeltaVersion.get() === 2)
+    }
+  }
+
+  test("post-publish snapshot is similar to the actual snapshot") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+
+      // Step 1: CREATE -- v0.json
+      val result0 = ucCatalogManagedClient
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable() /* dataActions */ )
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      result0.getPostCommitSnapshot.get().publish(engine) // Should be no-op!
+
+      // Step 2: WRITE -- v1.uuid.json
+      val postCommitSnapshot1 = writeDataAndVerify(
+        engine,
+        result0.getPostCommitSnapshot.get(),
+        ucClient,
+        expCommitVersion = 1,
+        expNumCatalogCommits = 1)
+
+      // Step 3: WRITE -- v2.uuid.json
+      val postCommitSnapshot2 = writeDataAndVerify(
+        engine,
+        postCommitSnapshot1,
+        ucClient,
+        expCommitVersion = 2,
+        expNumCatalogCommits = 2)
+
+      // Step 4a: PUBLISH v1.json and v2.json -- Note that this does NOT update UC
+      val postPublishSnapshot = postCommitSnapshot2.publish(engine).asInstanceOf[SnapshotImpl]
+      assert(postCommitSnapshot2.getVersion == 2)
+      assert(postCommitSnapshot2.asInstanceOf[SnapshotImpl]
+        .getLogSegment.getMaxPublishedDeltaVersion == Optional.of(0L))
+
+      // All versions will be published in the post publish snapshot
+      assert(postPublishSnapshot.getVersion == 2)
+      assert(postPublishSnapshot.getLogSegment.getMaxPublishedDeltaVersion == Optional.of(2L))
+
+      // Step 5: Read the latest snapshot from disk. Post-publish snapshot should be similar to it
+      val snapshotV2 = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
+
+      assert(postPublishSnapshot.getVersion == snapshotV2.getVersion)
+      assert(postPublishSnapshot.getPath == snapshotV2.getPath)
+      assert(postPublishSnapshot.getLogPath == snapshotV2.getLogPath)
+      assert(postPublishSnapshot.getTimestamp(engine) == snapshotV2.getTimestamp(engine))
+      assert(postPublishSnapshot.getCommitter.isInstanceOf[UCCatalogManagedCommitter])
+      assert(postPublishSnapshot.getActiveDomainMetadataMap ==
+        snapshotV2.getActiveDomainMetadataMap)
+      assert(postPublishSnapshot.getSchema.equivalent(snapshotV2.getSchema))
+      assert(postPublishSnapshot.getMetadata == snapshotV2.getMetadata)
+      assert(postPublishSnapshot.getProtocol == snapshotV2.getProtocol)
+      assert(postPublishSnapshot.getPartitionColumnNames == snapshotV2.getPartitionColumnNames)
+
+      val postPublishLogSegment = postPublishSnapshot.getLogSegment
+      val logSegmentV2 = snapshotV2.getLogSegment
+      assert(logSegmentV2.getAllCatalogCommits.asScala.map(x => x.getVersion) === Seq(1, 2))
+      assert(logSegmentV2.getMaxPublishedDeltaVersion.get() === 2)
+
+      // Step 5: Use postPublish snapshot to write -- v3.uuid.json
+      writeDataAndVerify(
+        engine,
+        postPublishSnapshot,
+        ucClient,
+        expCommitVersion = 3,
+        expNumCatalogCommits = 1)
 
       // Step 6: LOAD -- should read v0.json, v1.json, v2.json, and v3.uuid.json
       val snapshotV3 = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
