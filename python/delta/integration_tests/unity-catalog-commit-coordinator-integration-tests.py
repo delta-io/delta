@@ -98,7 +98,7 @@ class UnityCatalogManagedTableTestBase(unittest.TestCase):
                                      schema=StructType([StructField("id", IntegerType(), True)]))
 
     def get_table_history(self, table_name: str) -> DataFrame:
-        return spark.sql(f"DESCRIBE HISTORY {table_name};")
+        return spark.sql(f"DESCRIBE HISTORY {table_name}")
 
     def append(self, table_name: str) -> None:
         single_col_df = spark.createDataFrame(
@@ -191,7 +191,7 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
     def test_sql_merge(self) -> None:
         spark.sql(f"MERGE INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} AS target "
                   f"USING (VALUES 2, 3, 4, 5 AS src(id)) AS src "
-                  f"ON src.id = target.id WHEN NOT MATCHED THEN INSERT *;")
+                  f"ON src.id = target.id WHEN NOT MATCHED THEN INSERT *")
         updated_tbl = self.read(MANAGED_CATALOG_OWNED_TABLE_FULL_NAME).toDF("id")
         assertDataFrameEqual(updated_tbl,
                              self.create_df_with_rows([(1, ), (2, ), (3, ), (4, ), (5, )]))
@@ -201,7 +201,7 @@ class UnityCatalogManagedTableDMLSuite(UnityCatalogManagedTableTestBase):
         try:
             spark.sql(f"MERGE INTO {MANAGED_CATALOG_OWNED_TABLE_FULL_NAME} AS target "
                       f"USING (VALUES (2, 2), (3, 3), (4, 4), (5, 5) AS src(id, extra)) AS src "
-                      f"ON src.id = target.id WHEN NOT MATCHED THEN INSERT *;")
+                      f"ON src.id = target.id WHEN NOT MATCHED THEN INSERT *")
         except py4j.protocol.Py4JJavaError as error:
             assert(
                 "A table's Delta metadata can only be changed from a cluster or warehouse"
