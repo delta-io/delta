@@ -31,8 +31,16 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Types that support equality and ordering operations
   // (EqualTo, NotEqualTo, LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
-  // Note: Spark Filter API sends Date/Timestamp as java.sql.Date/Timestamp, but our converter
+  //
+  // Note on Date/Timestamp: Spark Filter API sends java.sql.Date/Timestamp, but our converter
   // transforms them to Int (days since epoch) and Long (microseconds since epoch) for Iceberg.
+  //
+  // Note on escaped column names: Per Spark's Filter documentation, column names with special
+  // characters (dots, spaces, etc.) arrive already escaped with backticks when they represent
+  // literal column names. We verify the converter passes these through unchanged. Examples:
+  //   - "address.intCol" = nested field access (struct address, field intCol)
+  //   - "`address.city`" = literal column named "address.city" (backtick-quoted by Spark)
+  //   - "parent.`child.name`" = nested access where child field name is literally "child.name"
   private val orderableTypeTestCases = Seq(
     ("intCol", 42, "Int"), // (column name, test value, label to identify test case)
     ("longCol", 100L, "Long"),
@@ -46,7 +54,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("localDateTimeCol", java.time.LocalDateTime.of(2024, 1, 1, 12, 0, 0), "LocalDateTime"),
     ("instantCol", java.time.Instant.parse("2024-01-01T12:00:00Z"), "Instant"),
     ("address.intCol", 42, "Nested Int"),
-    ("metadata.stringCol", "test", "Nested String")
+    ("metadata.stringCol", "test", "Nested String"),
+    ("`address.city`", "Seattle", "Escaped Literal String"),
+    ("`a.b.c`", "value", "Escaped Multi-Dot String"),
+    ("parent.`child.name`", "childValue", "Nested with Escaped Field")
   )
 
   // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)
@@ -735,151 +746,4 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // COLUMN NAMES WITH DOTS
   // ========================================================================
 
-  test("column names with dots (literal column names, not nested fields)") {
-    // Per Spark's Filter documentation, the attribute string is already properly
-    // formatted:
-    //   - Dots are used as separators for nested columns (e.g., "address.intCol" means
-    //     field intCol inside struct address)
-    //   - "If any part of the names contains dots, it is quoted to avoid confusion"
-    //     (e.g., "`address.city`" means a literal column named "address.city")
-    //
-    // See: org.apache.spark.sql.sources.Filter scaladoc
-    //
-    // By the time we receive Spark Filters, disambiguation has already happened. A plain string
-    // like "address.city" in EqualTo("address.city", value) unambiguously means nested access.
-    // A literal column named "address.city" would arrive as "`address.city`".
-    //
-    // This test verifies we pass filter attribute strings through unchanged - no additional
-    // escaping needed at this layer.
-    val testCases = Seq(
-      // Simple column without dot
-      ExprConvTestCase(
-        "Column name without dot", // Test case label
-        EqualTo("intCol", 5), // Spark filter builder
-        Some(Expressions.equal("intCol", 5)) // Iceberg expression builder
-      ),
-
-      // Column name with single dot (literal column name, not nested field access)
-      ExprConvTestCase(
-        "Column name with single dot (literal column name)",
-        EqualTo("address.city", "Seattle"),
-        Some(Expressions.equal("address.city", "Seattle"))
-      ),
-
-      // Column name with multiple dots
-      ExprConvTestCase(
-        "Column name with multiple dots",
-        EqualTo("a.b.c", "value"),
-        Some(Expressions.equal("a.b.c", "value"))
-      ),
-
-      // Test escaping with IsNull/IsNotNull
-      ExprConvTestCase(
-        "IsNull with dotted column name",
-        IsNull("address.city"),
-        Some(Expressions.isNull("address.city"))
-      ),
-      ExprConvTestCase(
-        "IsNotNull with dotted column name",
-        IsNotNull("a.b.c"),
-        Some(Expressions.notNull("a.b.c"))
-      ),
-
-      // Test escaping with IN operator
-      ExprConvTestCase(
-        "In with dotted column name",
-        In("address.city", Array("Seattle", "Portland", "Denver")),
-        Some(Expressions.in("address.city", "Seattle", "Portland", "Denver"))
-      ),
-
-      // Test escaping with string operations
-      ExprConvTestCase(
-        "StringStartsWith with dotted column name",
-        StringStartsWith("address.city", "Sea"),
-        Some(Expressions.startsWith("address.city", "Sea"))
-      ),
-
-      // Test with backtick-quoted column names (as Spark would send them for literal names)
-      ExprConvTestCase(
-        "EqualTo with backtick-quoted literal column name",
-        EqualTo("`address.city`", "Seattle"),
-        Some(Expressions.equal("`address.city`", "Seattle"))
-      ),
-      ExprConvTestCase(
-        "LessThan with backtick-quoted column name",
-        LessThan("`a.b.c`", "value"),
-        Some(Expressions.lessThan("`a.b.c`", "value"))
-      ),
-      ExprConvTestCase(
-        "IsNull with backtick-quoted column name",
-        IsNull("`address.city`"),
-        Some(Expressions.isNull("`address.city`"))
-      ),
-      ExprConvTestCase(
-        "In with backtick-quoted column name",
-        In("`address.city`", Array("Seattle", "Portland")),
-        Some(Expressions.in("`address.city`", "Seattle", "Portland"))
-      ),
-      ExprConvTestCase(
-        "Nested field with backtick-quoted sub-field (dotted field name inside struct)",
-        EqualTo("parent.`child.name`", "value"),
-        Some(Expressions.equal("parent.`child.name`", "value"))
-      ),
-
-      // Test escaping with Not(EqualTo) - special case
-      ExprConvTestCase(
-        "Not(EqualTo) with dotted column name",
-        Not(EqualTo("address.city", "Seattle")),
-        Some(Expressions.notEqual("address.city", "Seattle"))
-      ),
-      ExprConvTestCase(
-        "Not(EqualTo(col, null)) with dotted column name (IS NOT NULL)",
-        Not(EqualTo("a.b.c", null)),
-        Some(Expressions.notNull("a.b.c"))
-      ),
-
-      // Test escaping with logical operators combining dotted and non-dotted columns
-      ExprConvTestCase(
-        "AND with dotted and non-dotted columns",
-        And(
-          EqualTo("intCol", 5),
-          EqualTo("address.city", "Seattle")
-        ),
-        Some(
-          Expressions.and(
-            Expressions.equal("intCol", 5),
-            Expressions.equal("address.city", "Seattle")
-          )
-        )
-      ),
-      ExprConvTestCase(
-        "OR with multiple dotted columns",
-        Or(
-          EqualTo("address.city", "Seattle"),
-          EqualTo("a.b.c", "value")
-        ),
-        Some(
-          Expressions.or(
-            Expressions.equal("address.city", "Seattle"),
-            Expressions.equal("a.b.c", "value")
-          )
-        )
-      ),
-      ExprConvTestCase(
-        "AND with backtick-quoted column names in both conditions",
-        And(
-          EqualTo("`address.city`", "Seattle"),
-          GreaterThan("`a.b.c`", "value")
-        ),
-        Some(
-          Expressions.and(
-            Expressions.equal("`address.city`", "Seattle"),
-            Expressions.greaterThan("`a.b.c`", "value")
-          )
-        )
-      )
-    )
-
-    assertConvert(testCases)
-  }
 }
