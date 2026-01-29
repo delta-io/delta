@@ -17,13 +17,14 @@
 package org.apache.spark.sql.delta.sources
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.FileNotFoundException
-import java.sql.Timestamp
+import io.delta.storage.commit.actions.AbstractMetadata
 
+import java.io.FileNotFoundException
+import scala.collection.JavaConverters._
+import java.sql.Timestamp
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import scala.util.matching.Regex
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -32,10 +33,9 @@ import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.storage.{ClosableIterator, SupportsRewinding}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
-import org.apache.spark.sql.delta.util.{DateTimeUtils, TimestampFormatter}
+import org.apache.spark.sql.delta.util.{AbstractMetadataUtils, DateTimeUtils, TimestampFormatter}
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.FileStatus
-
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.InternalRow
@@ -581,6 +581,31 @@ trait DeltaSourceBase extends Source
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true
   }
 
+  protected def checkReadIncompatibleSchemaChanges(
+      metadata: Metadata,
+      version: Long,
+      batchStartVersion: Long,
+      batchEndVersionOpt: Option[Long] = None,
+      validatedDuringStreamStart: Boolean = false): Unit = {
+    checkReadIncompatibleSchemaChanges(
+      metadata,
+      version,
+      batchStartVersion,
+      batchEndVersionOpt,
+      validatedDuringStreamStart,
+      (oldMeta, targetMode) => {
+        val old = oldMeta.asInstanceOf[Metadata]
+        val upgraded = DeltaColumnMapping.assignColumnIdAndPhysicalName(
+          old, old, isChangingModeOnExistingTable = true, isOverwritingSchema = false
+        )
+        upgraded.copy(
+          configuration = upgraded.configuration ++
+            Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> targetMode.name)
+        )
+      }
+    )
+  }
+
   /**
    * Narrow waist to verify a metadata action for read-incompatible schema changes, specifically:
    * 1. Any column mapping related schema changes (rename / drop) columns
@@ -593,14 +618,23 @@ trait DeltaSourceBase extends Source
    * metadata tracking log upon any non-additive schema change failures.
    * @param metadata Metadata that contains a potential schema change
    * @param version Version for the metadata action
+   * @param batchStartVersion Start version of the batch
+   * @param batchEndVersionOpt Optional end version of the batch
    * @param validatedDuringStreamStart Whether this check is being done during stream start.
+   * @param assignColumnIdAndPhysicalNameFunc Callback function to assign column IDs and physical
+   *        names when upgrading metadata from no column mapping to column mapping mode.
+   *        Takes (oldMetadata, targetColumnMappingMode) and returns upgraded AbstractMetadata.
    */
   protected def checkReadIncompatibleSchemaChanges(
-      metadata: Metadata,
+      metadata: AbstractMetadata,
       version: Long,
       batchStartVersion: Long,
-      batchEndVersionOpt: Option[Long] = None,
-      validatedDuringStreamStart: Boolean = false): Unit = {
+      batchEndVersionOpt: Option[Long],
+      validatedDuringStreamStart: Boolean,
+      assignColumnIdAndPhysicalNameFunc: (AbstractMetadata, DeltaColumnMappingMode) =>
+        AbstractMetadata): Unit = {
+    import AbstractMetadataUtils._
+
     log.info(s"checking read incompatibility with schema at version $version, " +
       s"inside batch[$batchStartVersion, ${batchEndVersionOpt.getOrElse("latest")}]")
 
@@ -721,7 +755,7 @@ trait DeltaSourceBase extends Source
         // Column mapping schema changes
         assert(!trackingMetadataChange, "should not check schema change while tracking it")
         !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-          allowUnsafeStreamingReadOnPartitionColumnChanges)
+          allowUnsafeStreamingReadOnPartitionColumnChanges, assignColumnIdAndPhysicalNameFunc)
       }
 
     if (shouldTrackSchema) {
