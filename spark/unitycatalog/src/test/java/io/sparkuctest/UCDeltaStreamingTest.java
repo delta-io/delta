@@ -45,7 +45,6 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -144,7 +143,6 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
         tableType,
         (tableName) -> {
           SparkSession spark = spark();
-          Option<String> originalMode = spark.conf().getOption(V2_ENABLE_MODE_KEY);
           String queryName =
               "uc_streaming_read_"
                   + tableType.name().toLowerCase()
@@ -154,9 +152,6 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
           try {
             List<List<String>> expected = new ArrayList<>();
-            // AUTO mode: batch writes use V1 (via catalog), streaming reads use V2 for MANAGED
-            // tables (via ApplyV2Streaming rule) and V1 for EXTERNAL tables.
-            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_AUTO);
             // Seed an initial commit (required for managed tables, harmless for external).
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
             expected.add(List.of("0", "seed"));
@@ -194,7 +189,6 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               assertFalse(query.isActive(), "Streaming query should have stopped");
             }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
-            restoreV2Mode(spark, originalMode);
           }
         });
   }
@@ -221,13 +215,5 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     return JavaConverters.asScalaIteratorConverter(Arrays.asList(rows).iterator())
         .asScala()
         .toSeq();
-  }
-
-  private static void restoreV2Mode(SparkSession spark, Option<String> originalMode) {
-    if (originalMode.isDefined()) {
-      spark.conf().set(V2_ENABLE_MODE_KEY, originalMode.get());
-    } else {
-      spark.conf().unset(V2_ENABLE_MODE_KEY);
-    }
   }
 }
