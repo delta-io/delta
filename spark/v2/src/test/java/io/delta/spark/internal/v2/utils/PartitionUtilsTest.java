@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -260,5 +260,55 @@ public class PartitionUtilsTest extends SparkDsv2TestBase {
   private String getTempTablePath(String tableName) {
     return java.nio.file.Paths.get(System.getProperty("java.io.tmpdir"), "delta-test-" + tableName)
         .toString();
+  }
+
+  @Test
+  public void testCreateDeltaParquetReaderFactory_WithDeletionVectors() {
+    String tablePath = createDvTestTable("test_dv_reader_factory_" + System.nanoTime());
+
+    Table table = Table.forPath(defaultEngine, tablePath);
+    Snapshot snapshot = table.getLatestSnapshot(defaultEngine);
+
+    StructType dataSchema =
+        new StructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.LongType, true),
+              DataTypes.createStructField("value", DataTypes.StringType, true)
+            });
+    StructType partitionSchema = new StructType();
+    StructType readDataSchema = dataSchema;
+    Filter[] filters = new Filter[0];
+    scala.collection.immutable.Map<String, String> options = Map$.MODULE$.empty();
+    Configuration hadoopConf = new Configuration();
+    SQLConf sqlConf = SQLConf.get();
+
+    PartitionReaderFactory factory =
+        PartitionUtils.createDeltaParquetReaderFactory(
+            snapshot,
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            filters,
+            options,
+            hadoopConf,
+            sqlConf);
+
+    assertNotNull(factory, "PartitionReaderFactory should not be null for DV table");
+  }
+
+  /** Helper to create a test Delta table with deletion vectors enabled. */
+  private String createDvTestTable(String tableName) {
+    String tablePath = getTempTablePath(tableName);
+    // Create table with deletion vectors enabled.
+    spark
+        .range(10)
+        .selectExpr("id", "'value_' || id as value")
+        .write()
+        .format("delta")
+        .option("delta.enableDeletionVectors", "true")
+        .save(tablePath);
+    // Delete some rows to create deletion vectors.
+    spark.sql(String.format("DELETE FROM delta.`%s` WHERE id %% 2 = 0", tablePath));
+    return tablePath;
   }
 }
