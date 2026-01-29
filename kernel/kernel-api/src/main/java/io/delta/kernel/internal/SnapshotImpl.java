@@ -150,15 +150,6 @@ public class SnapshotImpl implements Snapshot {
     return version;
   }
 
-  /**
-   * Returns true if this snapshot was built as a "latest" snapshot query (i.e., no time-travel
-   * parameters were provided). This is intent-based - it indicates what the user requested, not
-   * whether the snapshot is actually the latest version.
-   */
-  public boolean wasBuiltAsLatest() {
-    return wasBuiltAsLatest;
-  }
-
   @Override
   public List<String> getPartitionColumnNames() {
     return VectorUtils.toJavaList(getMetadata().getPartitionColumns());
@@ -344,6 +335,15 @@ public class SnapshotImpl implements Snapshot {
 
   public Path getDataPath() {
     return dataPath;
+  }
+
+  /**
+   * Returns true if this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  public boolean wasBuiltAsLatest() {
+    return wasBuiltAsLatest;
   }
 
   public Protocol getProtocol() {
