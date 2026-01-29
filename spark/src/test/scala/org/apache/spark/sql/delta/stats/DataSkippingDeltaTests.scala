@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.stats
 
 import java.io.File
 
-import com.databricks.sql.acl.CheckPermissions
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
