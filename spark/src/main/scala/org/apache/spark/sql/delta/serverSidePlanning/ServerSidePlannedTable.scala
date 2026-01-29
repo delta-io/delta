@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -319,6 +320,9 @@ private[serverSidePlanning] object ServerSidePlannedScan {
   /**
    * Recursively flatten a StructType into dot-notation field paths with proper escaping.
    *
+   * Uses Spark's standard quoteIfNeeded utility to escape field names with special characters
+   * (dots, dashes, spaces, keywords, etc.) following SQL identifier rules.
+   *
    * @param schema The schema to flatten
    * @param tableSchema The full table schema (unused, kept for future use)
    * @param prefix The current path prefix (e.g., "address")
@@ -331,14 +335,9 @@ private[serverSidePlanning] object ServerSidePlannedScan {
     schema.fields.flatMap { field =>
       val fieldName = field.name
 
-      // If field name contains dots, it's a literal field name at this level
-      // (schema.fields iteration only returns actual field names)
-      // Escape it to disambiguate from nested access
-      val escapedFieldName = if (fieldName.contains(".")) {
-        s"`$fieldName`"
-      } else {
-        fieldName
-      }
+      // Use Spark's standard quoting utility to escape field names with special characters
+      // (dots, dashes, spaces, SQL keywords, etc.)
+      val escapedFieldName = quoteIfNeeded(fieldName)
 
       // Build the full path
       val fullPath = if (prefix.isEmpty) escapedFieldName else s"$prefix.$escapedFieldName"
