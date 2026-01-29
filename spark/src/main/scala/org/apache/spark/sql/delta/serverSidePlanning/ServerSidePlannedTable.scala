@@ -34,7 +34,7 @@ import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
 
 /**
  * Companion object for ServerSidePlannedTable with factory methods.
@@ -332,11 +332,12 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
+  // Use Spark's SchemaUtils.explodeNestedFieldNames to flatten and escape field names
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(requiredSchema.fieldNames.toSeq)
+      Some(SchemaUtils.explodeNestedFieldNames(requiredSchema))
     }
   }
 
