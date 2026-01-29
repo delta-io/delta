@@ -41,26 +41,17 @@ import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
  */
 object ServerSidePlannedTable extends DeltaLogging {
   /**
-   * Credentials can be provided via table properties in three distinct methods:
+   * Property keys that indicate credentials are available.
+   * Used to determine if we need server-side planning (when credentials are absent).
    *
-   * Method 1: Direct credential values (fixed mode)
-   *   - Static credential values set directly in table properties
-   *   - Includes legacy keys and Unity Catalog's "option.fs.*" format
+   * Credentials can be provided in different forms:
+   * - Legacy credential keys (storage.credential, aws.temporary.credentials, etc.)
+   * - Unity Catalog fixed mode (option.fs.s3a.access.key, option.fs.gs.auth.access.token, etc.)
+   * - Unity Catalog renewable mode (option.fs.s3a.aws.credentials.provider, etc.)
    *
-   * Method 2: Credential providers (renewable mode)
-   *   - Configuration keys indicating credential providers are set up
-   *   - Unity Catalog uses these for dynamically refreshed credentials
-   *
-   * Method 3: Dynamic credential keys (prefix matching)
-   *   - Credentials in keys with dynamic names (e.g., Azure SAS with container/account)
-   *   - Requires prefix matching rather than exact key matching
+   * Note: We only check for key existence, not credential values.
    */
-
-  /**
-   * Method 1: Property keys for direct credential values (fixed mode).
-   * These are static credential values set by catalogs.
-   */
-  private val FIXED_CREDENTIAL_KEYS = Seq(
+  private val CREDENTIAL_KEYS = Set(
     // Legacy/generic credential keys
     "storage.credential",
     "credential",
@@ -68,31 +59,23 @@ object ServerSidePlannedTable extends DeltaLogging {
     "aws.temporary.credentials",
     "azure.temporary.credentials",
     "gcs.temporary.credentials",
-    // Unity Catalog fixed mode credentials (prefixed with option.)
+    // Unity Catalog fixed mode credentials (option.fs.* format)
     "option.fs.s3a.access.key",
     "option.fs.s3a.secret.key",
     "option.fs.s3a.session.token",
-    "option.fs.gs.auth.access.token"
-    // Note: Azure SAS handled via prefix matching (see Method 3: DYNAMIC_CREDENTIAL_PREFIXES)
-  )
-
-  /**
-   * Method 2: Property keys indicating credential providers are configured (renewable mode).
-   * Unity Catalog uses these when credentials are refreshed dynamically rather than being
-   * static values.
-   */
-  private val RENEWABLE_CREDENTIAL_KEYS = Seq(
+    "option.fs.gs.auth.access.token",
+    // Unity Catalog renewable mode (credential providers)
     "option.fs.s3a.aws.credentials.provider",
     "option.fs.azure.sas.token.provider.type",
     "option.fs.gs.auth.access.token.provider"
   )
 
   /**
-   * Method 3: Key prefixes for dynamic credential keys (prefix matching).
-   * Azure SAS tokens use dynamic keys with container and account names embedded:
+   * Key prefixes for credentials with dynamic key names.
+   * Azure SAS tokens embed container and account names in the key:
    * option.fs.azure.sas.<container>.<account>.dfs.core.windows.net
    */
-  private val DYNAMIC_CREDENTIAL_PREFIXES = Seq(
+  private val CREDENTIAL_KEY_PREFIXES = Seq(
     "option.fs.azure.sas."
   )
 
@@ -212,34 +195,23 @@ object ServerSidePlannedTable extends DeltaLogging {
    *   io/unitycatalog/spark/UCSingleCatalog.scala#L357
    *   and connectors/spark/src/main/scala/io/unitycatalog/spark/auth/CredPropsUtil.java
    *
-   * Checks for credentials using three distinct methods (see constants above):
-   * Method 1: Direct credential values (exact key match)
-   * Method 2: Credential providers (renewable mode configuration)
-   * Method 3: Dynamic credential keys (prefix matching for Azure SAS)
+   * We check for any credential-related keys to determine if credentials are present.
+   * Note: We only check key existence, not the actual credential values.
    */
   private def hasCredentials(table: Table): Boolean = {
     val properties = table.properties()
 
-    // Method 1: Direct credential values (exact key match)
-    if (FIXED_CREDENTIAL_KEYS.exists(key => properties.containsKey(key))) {
+    // Check for exact key matches
+    if (CREDENTIAL_KEYS.exists(key => properties.containsKey(key))) {
       return true
     }
 
-    // Method 2: Credential providers (renewable mode)
-    if (RENEWABLE_CREDENTIAL_KEYS.exists(key => properties.containsKey(key))) {
-      return true
-    }
-
-    // Method 3: Dynamic credential keys (prefix match)
-    // Example: option.fs.azure.sas.<container>.<account>.dfs.core.windows.net
+    // Check for prefix matches (Azure SAS with dynamic key names)
     val hasMatchingPrefix = properties.keySet().asScala.exists { key =>
-      DYNAMIC_CREDENTIAL_PREFIXES.exists(prefix => key.startsWith(prefix))
+      CREDENTIAL_KEY_PREFIXES.exists(prefix => key.startsWith(prefix))
     }
-    if (hasMatchingPrefix) {
-      return true
-    }
-
-    false
+    
+    hasMatchingPrefix
   }
 }
 
