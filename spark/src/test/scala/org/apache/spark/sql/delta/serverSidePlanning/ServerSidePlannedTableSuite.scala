@@ -34,14 +34,15 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       CREATE TABLE test_db.shared_test (
         id INT,
         name STRING,
-        value INT
+        value INT,
+        a STRUCT<`b.c`: STRING>
       ) USING parquet
     """)
     sql("""
-      INSERT INTO test_db.shared_test (id, name, value) VALUES
-      (1, 'alpha', 10),
-      (2, 'beta', 20),
-      (3, 'gamma', 30)
+      INSERT INTO test_db.shared_test (id, name, value, a) VALUES
+      (1, 'alpha', 10, struct('abc_1')),
+      (2, 'beta', 20, struct('abc_2')),
+      (3, 'gamma', 30, struct('abc_3'))
     """)
   }
 
@@ -360,6 +361,17 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isEmpty,
         "No projection should be pushed when selecting all columns")
+    }
+  }
+
+  test("projection escaping with dotted column names") {
+    withPushdownCapturingEnabled {
+      sql("SELECT a.`b.c` FROM test_db.shared_test").collect()
+
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      assert(capturedProjection.get == Seq("a.`b.c`"),
+        s"Expected escaped [a.`b.c`], got ${capturedProjection.get}")
     }
   }
 

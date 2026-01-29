@@ -278,9 +278,13 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           Seq("address.intCol"),
           Set("address.intCol")),
         ProjectionTestCase(
-          "multiple nested fields",
-          Seq("address.intCol", "metadata.stringCol"),
-          Set("address.intCol", "metadata.stringCol"))
+          "dotted field name inside struct with escaping",
+          Seq("parent.`child.name`"),
+          Set("parent.`child.name`")),
+        ProjectionTestCase(
+          "dotted column name with escaping",
+          Seq("`address.city`"),
+          Set("`address.city`"))
       )
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
@@ -678,10 +682,12 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         java.sql.Date.valueOf("2024-01-01"), // localDateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // localDateTimeCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // instantCol
-        Row(i * 100), // address.intCol
-        Row(s"meta_$i") // metadata.stringCol
+        Row(i * 100), // address.intCol (nested struct)
+        Row(s"meta_$i"), // metadata.stringCol (nested struct)
+        Row(s"child_$i"), // parent.`child.name` (nested struct with dotted field name)
+        s"city_$i", // address.city (literal top-level dotted column)
+        s"abc_$i" // a.b.c (literal top-level dotted column)
       ))
-
 
     spark.createDataFrame(data, TestSchemas.sparkSchema)
       .write
