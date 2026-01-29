@@ -122,8 +122,9 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = inCommitTimestampOpt;
-    // TODO: Post-commit snapshots build a version-based SnapshotQueryContext (see TransactionImpl.buildPostCommitSnapshotOpt), so isLatestQuery() may be false even when this
-    // snapshot is intended to be the latest version.
+    // TODO: Post-commit snapshots build a version-based SnapshotQueryContext
+    // (see TransactionImpl.buildPostCommitSnapshotOpt), so isLatestQuery() may be false even
+    // when this snapshot is intended to be the latest version.
     this.wasBuiltAsLatest = snapshotContext.isLatestQuery();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
