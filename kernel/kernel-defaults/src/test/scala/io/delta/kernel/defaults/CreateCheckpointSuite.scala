@@ -433,7 +433,9 @@ class CreateCheckpointSuite extends CheckpointBase {
 
       // Checkpoint at version 2 using SnapshotBuilder.atVersion() - wasBuiltAsLatest=false
       val snapshot = TableManager.loadSnapshot(tablePath)
-        .atVersion(2).build(engine).asInstanceOf[SnapshotImpl]
+        .atVersion(2)
+        .build(engine)
+        .asInstanceOf[SnapshotImpl]
       snapshot.writeCheckpoint(engine)
 
       // Verify no log cleanup happened
@@ -451,8 +453,10 @@ class CreateCheckpointSuite extends CheckpointBase {
         "delta.enableExpiredLogCleanup" -> "true")
       val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, commits)
 
-      // Get latest snapshot (version == commits) using builder without atVersion() - wasBuiltAsLatest=true
-      val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
+      // Get latest snapshot (version == commits) using builder without atVersion() -
+      // wasBuiltAsLatest=true
+      val latestSnapshot = TableManager.loadSnapshot(tablePath)
+        .build(engine)
         .asInstanceOf[SnapshotImpl]
       assert(latestSnapshot.wasBuiltAsLatest())
 
@@ -466,7 +470,8 @@ class CreateCheckpointSuite extends CheckpointBase {
   }
 
   test(
-    "log cleanup: checkpointProtection enabled prevents log cleanup, even snapshot is built as latest") {
+    "log cleanup: checkpointProtection enabled prevents log cleanup, " +
+      "even snapshot is built as latest") {
     withTempDirAndEngine { (tablePath, engine) =>
       val commits = 3
       val tableProperties = Map(
@@ -476,7 +481,8 @@ class CreateCheckpointSuite extends CheckpointBase {
       val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, commits)
 
       // Get latest snapshot using builder without atVersion() - wasBuiltAsLatest=true
-      val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
+      val latestSnapshot = TableManager.loadSnapshot(tablePath)
+        .build(engine)
         .asInstanceOf[SnapshotImpl]
       assert(latestSnapshot.wasBuiltAsLatest())
       assert(latestSnapshot.getProtocol.getWriterFeatures.contains("checkpointProtection"))

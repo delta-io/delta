@@ -124,14 +124,13 @@ public class Checkpointer {
    * 3. delta.enableExpiredLogCleanup table property is set to true
    */
   private static boolean shouldPerformLogCleanup(SnapshotImpl snapshot) {
-    final Metadata metadata = snapshot.getMetadata();
     final boolean hasCheckpointProtection =
         snapshot
             .getProtocol()
             .getWriterFeatures()
             .contains(CHECKPOINT_PROTECTION_W_FEATURE.featureName());
     return snapshot.wasBuiltAsLatest()
-        && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(metadata)
+        && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(snapshot.getMetadata())
         && !hasCheckpointProtection;
   }
 
