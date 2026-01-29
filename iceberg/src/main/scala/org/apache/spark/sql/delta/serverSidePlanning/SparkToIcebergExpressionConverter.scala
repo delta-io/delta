@@ -26,27 +26,30 @@ import shadedForDelta.org.apache.iceberg.expressions.{Expression, Expressions}
  *
  * Filter Mapping Table:
  * {{{
- * +-----------------------+--------------------------------+
- * | Spark Filter          | Iceberg Expression             |
- * +-----------------------+--------------------------------+
- * | EqualTo               | Expressions.equal()            |
- * |   EqualTo(col, null)  | Expressions.isNull()           |
- * |   EqualTo(col, NaN)   | Expressions.isNaN()            |
- * | NotEqualTo            | Expressions.notEqual()         |
- * |   NotEqualTo(col, NaN)| Expressions.notNaN()           |
- * | LessThan              | Expressions.lessThan()         |
- * | GreaterThan           | Expressions.greaterThan()      |
- * | LessThanOrEqual       | Expressions.lessThanOrEqual()  |
- * | GreaterThanOrEqual    | Expressions.greaterThanOrEqual()|
- * | In                    | Expressions.in()               |
- * | IsNull                | Expressions.isNull()           |
- * | IsNotNull             | Expressions.notNull()          |
- * | And                   | Expressions.and()              |
- * | Or                    | Expressions.or()               |
- * | StringStartsWith      | Expressions.startsWith()       |
- * | AlwaysTrue            | Expressions.alwaysTrue()       |
- * | AlwaysFalse           | Expressions.alwaysFalse()      |
- * +-----------------------+--------------------------------+
+ * +--------------------------+--------------------------------+
+ * | Spark Filter             | Iceberg Expression             |
+ * +--------------------------+--------------------------------+
+ * | EqualTo                  | Expressions.equal()            |
+ * |   EqualTo(col, null)     | Expressions.isNull()           |
+ * |   EqualTo(col, NaN)      | Expressions.isNaN()            |
+ * | NotEqualTo               | Expressions.notEqual()         |
+ * |   NotEqualTo(col, NaN)   | Expressions.notNaN()           |
+ * | LessThan                 | Expressions.lessThan()         |
+ * | GreaterThan              | Expressions.greaterThan()      |
+ * | LessThanOrEqual          | Expressions.lessThanOrEqual()  |
+ * | GreaterThanOrEqual       | Expressions.greaterThanOrEqual()|
+ * | In                       | Expressions.in()               |
+ * | Not(In)                  | Expressions.notIn()            |
+ * | IsNull                   | Expressions.isNull()           |
+ * | IsNotNull                | Expressions.notNull()          |
+ * | Not(IsNull)              | Expressions.notNull()          |
+ * | And                      | Expressions.and()              |
+ * | Or                       | Expressions.or()               |
+ * | StringStartsWith         | Expressions.startsWith()       |
+ * | Not(StringStartsWith)    | Expressions.notStartsWith()    |
+ * | AlwaysTrue               | Expressions.alwaysTrue()       |
+ * | AlwaysFalse              | Expressions.alwaysFalse()      |
+ * +--------------------------+--------------------------------+
  * }}}
  *
  *
@@ -156,10 +159,13 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
    * @param supportBoolean if true, also handles Boolean type.
    *        Note: Comparison operators (LessThan, GreaterThan, etc.) don't support Boolean.
    *        Only equality operators (EqualTo, NotEqualTo) should set this to true.
+   * @throws IllegalArgumentException if the value is an unsupported type (complex types,
+   *         unknown types, or Boolean when supportBoolean=false)
    */
   private[serverSidePlanning] def toIcebergValue(
       value: Any,
-      supportBoolean: Boolean = false): Any = value match {
+      supportBoolean: Boolean = false): Any = {
+    value match {
     // Date/Timestamp conversion (semantic change) because
     // Iceberg Literals.from() doesn't accept java.sql.Date/Timestamp, expects Int/Long
     case v: java.sql.Date =>
@@ -168,6 +174,15 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     case v: java.sql.Timestamp =>
       // Iceberg expects microseconds since epoch as Long
       DateTimeUtils.fromJavaTimestamp(v): java.lang.Long
+    case v: java.time.Instant =>
+      // Iceberg expects microseconds since epoch as Long (for TIMESTAMP WITH TIMEZONE)
+      DateTimeUtils.instantToMicros(v): java.lang.Long
+    case v: java.time.LocalDateTime =>
+      // Iceberg expects microseconds since epoch as Long (for TIMESTAMP_NTZ)
+      DateTimeUtils.localDateTimeToMicros(v): java.lang.Long
+    case v: java.time.LocalDate =>
+      // Iceberg expects days since epoch (1970-01-01) as Int (for DATE)
+      v.toEpochDay.toInt: Integer
     // Type coercion (Scala to Java boxed types)
     case v: Int => v: Integer
     case v: Long => v: java.lang.Long
@@ -176,7 +191,10 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     case v: java.math.BigDecimal => v
     case v: String => v
     case v: Boolean if supportBoolean => v: java.lang.Boolean
-    case _ => value
+    case _ =>
+      throw new IllegalArgumentException(
+        s"Unsupported type for Iceberg filter pushdown: ${value.getClass.getName}")
+    }
   }
 
   /*
@@ -206,12 +224,16 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     }
   }
 
-  /*
-   * Iceberg's Expression API does not provide a general NOT operator (no Expressions.not() method).
-   * The only NOT pattern we support is Not(EqualTo), which converts to NotEqualTo
-   * (Expressions.notEqual). This includes special handling for:
-   * - Not(EqualTo(col, null)) -> Expressions.notNull (IS NOT NULL)
+  /**
+   * Convert a Spark NOT filter to an Iceberg Expression.
+   *
+   * Supported conversions:
+   * - Not(EqualTo(col, value)) -> Expressions.notEqual
+   * - Not(EqualTo(col, null)) -> Expressions.notNull
    * - Not(EqualTo(col, NaN)) -> Expressions.notNaN
+   * - Not(In(col, values)) -> Expressions.notIn
+   * - Not(IsNull(col)) -> Expressions.notNull
+   * - Not(StringStartsWith(col, value)) -> Expressions.notStartsWith
    *
    * All other NOT expressions (Not(LessThan), Not(And), etc.) are unsupported because Iceberg
    * doesn't provide equivalent predicates. This is consistent with OSS Iceberg's SparkV2Filters.
@@ -220,6 +242,16 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
     sparkInnerFilter match {
       case EqualTo(attribute, sparkValue) =>
         Some(convertNotEqualTo(attribute, sparkValue))
+
+      case In(attribute, values) =>
+        Some(convertNotIn(attribute, values))
+
+      case IsNull(attribute) =>
+        Some(Expressions.notNull(attribute))
+
+      case StringStartsWith(attribute, value) =>
+        Some(Expressions.notStartsWith(attribute, value))
+
       case _ =>
         None  // All other NOT expressions are unsupported
     }
@@ -231,6 +263,18 @@ private[serverSidePlanning] object SparkToIcebergExpressionConverter extends Log
       toIcebergValue(v, supportBoolean = true)
     )
     Expressions.in(attribute, nonNullValues: _*)
+  }
+
+  /**
+   * Convert NOT IN filter to Iceberg notIn expression.
+   * Example: NOT IN ("id", [1, 2, 3]) -> Expressions.notIn("id", 1, 2, 3)
+   */
+  private def convertNotIn(attribute: String, values: Array[Any]): Expression = {
+    // Iceberg expects NOT IN to filter out null values and convert Date/Timestamp to Int/Long
+    val nonNullValues = values.filter(_ != null).map(v =>
+      toIcebergValue(v, supportBoolean = true)
+    )
+    Expressions.notIn(attribute, nonNullValues: _*)
   }
 
   private def convertLessThan(attribute: String, sparkValue: Any): Expression =

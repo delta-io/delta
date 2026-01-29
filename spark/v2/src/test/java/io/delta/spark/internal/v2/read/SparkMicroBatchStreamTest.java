@@ -15,11 +15,12 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
@@ -62,7 +63,7 @@ import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.immutable.Seq;
 
-public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
+public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
   /**
    * Helper method to create a minimal SparkMicroBatchStream instance for tests that only check for
@@ -1930,6 +1931,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   // Tests for checkReadIncompatibleSchemaChanges parity between v1 connector vs v2 connector
   // ================================================================================================
 
+  // TODO(#5319): Tests on RESTORE on delta table after applying an additive schema change
+
   /**
    * Parameterized test that verifies both DSv1 and DSv2 throw DeltaIllegalStateException when
    * encountering forward-fill additive schema change actions.
@@ -2323,6 +2326,84 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     }
   }
 
+  /**
+   * Test that verifies DSv1 and DSv2 throw errors when the starting snapshot has an incompatible
+   * schema change that gets reverted before the latest version.
+   *
+   * <p>Edge case: checkReadIncompatibleSchemaChange only checks metadata actions, so it misses the
+   * incompatible intermediate state (id → userId → id). The
+   * checkReadIncompatibleSchemaChangeOnStreamStartOnce method catches this by validating each
+   * snapshot in the range.
+   */
+  @Test
+  public void testSchemaEvolution_onStreamStartOnce(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testDescription = "testSchemaEvolution_onStreamStartOnce";
+    String testTableName =
+        "test_schema_changes_on_stream_start_once"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Execute schema change before source initialization to ensure backfill change
+    spark.sql(String.format("ALTER table %s RENAME COLUMN id TO userId", testTableName));
+    spark.sql(String.format("INSERT INTO %s VALUES (3, 'Cathy', 5)", testTableName));
+    // Record the version prior to reverting schema change
+    long incompatibleSchemaVersion =
+        DeltaLog.forTable(spark, new Path(testTablePath))
+            .update(false, Option.empty(), Option.empty())
+            .version();
+    // Revert the schema change
+    spark.sql(String.format("ALTER table %s RENAME COLUMN userId TO id", testTableName));
+    spark.sql(String.format("INSERT INTO %s VALUES (4, 'David', 8)", testTableName));
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+    // Try to read from version 0 without readLimit to check all commits
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(
+            tableId,
+            incompatibleSchemaVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = ReadLimitConfig.noLimit().toReadLimit();
+
+    // Test DSv1 DeltaSource
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    DeltaUnsupportedOperationException dsv1Exception =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> deltaSource.latestOffset(startOffset, readLimit),
+            String.format(
+                "DSv1 should throw error on stream start for scenario: %s", testDescription));
+    assertThat(dsv1Exception.getStackTrace())
+        .as("Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'")
+        .anyMatch(
+            element ->
+                element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+
+    // Test DSv2 SparkMicroBatchStream
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    // TODO(#5318): Change error type to
+    // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges
+    DeltaIllegalStateException dsv2Exception =
+        assertThrows(
+            DeltaIllegalStateException.class,
+            () -> stream.latestOffset(startOffset, readLimit),
+            String.format(
+                "DSv2 should throw error on stream start for scenario: %s", testDescription));
+    assertThat(dsv2Exception.getStackTrace())
+        .as("Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'")
+        .anyMatch(
+            element ->
+                element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+  }
+
   /** Provides test scenarios that generate additive schema changes actions. */
   private static Stream<Arguments> additiveSchemaEvolutionScenarios() {
     return Stream.of(
@@ -2539,7 +2620,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   /** Helper method to execute SQL with String.format. */
   private static void sql(String query, Object... args) {
-    SparkDsv2TestBase.spark.sql(String.format(query, args));
+    DeltaV2TestBase.spark.sql(String.format(query, args));
   }
 
   /**
@@ -2735,5 +2816,54 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         expectedVersion,
         dsv2Result,
         String.format("DSv2 getStartingVersion should match for %s", testDescription));
+  }
+
+  @Test
+  public void testMemoryProtection_initialSnapshotTooLarge(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_memory_protection_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // At version 5, there will be at least 25 files.
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String configKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    spark.conf().set(configKey, "5");
+
+    try {
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = 5L;
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      RuntimeException exception =
+          assertThrows(
+              RuntimeException.class,
+              () -> {
+                try (CloseableIterator<IndexedFile> iter =
+                    stream.getFileChanges(
+                        version, fromIndex, isInitialSnapshot, Optional.empty())) {
+                  while (iter.hasNext()) {
+                    iter.next();
+                  }
+                }
+              });
+
+      String errorMessage = exception.getMessage();
+      assertTrue(errorMessage.contains("DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE"));
+      assertTrue(
+          errorMessage.contains("initial snapshot") || errorMessage.contains("Initial snapshot"));
+    } finally {
+      spark.conf().unset(configKey);
+    }
   }
 }

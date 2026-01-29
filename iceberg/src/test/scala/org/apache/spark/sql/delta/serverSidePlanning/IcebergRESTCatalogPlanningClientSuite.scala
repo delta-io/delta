@@ -247,10 +247,11 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     projection: Seq[String],
     expected: Set[String])
 
-  private case class FilterProjectionTestCase(
+  private case class PushdownTestCase(
     description: String,
     filter: Filter,
-    projection: Seq[String])
+    projection: Seq[String],
+    limit: Option[Int])
 
   test("projection sent to IRC server over HTTP") {
     withTempTable("projectionTest") { table =>
@@ -314,29 +315,67 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  test("filter and projection sent together to IRC server over HTTP") {
-    withTempTable("filterProjectionTest") { table =>
+  test("limit sent to IRC server over HTTP") {
+    withTempTable("limitTest") { table =>
       // Populate test data using the shared helper method
-      val tableName = s"rest_catalog.${defaultNamespace}.filterProjectionTest"
+      val tableName = s"rest_catalog.${defaultNamespace}.limitTest"
+      populateTestData(tableName)
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        // Test different limit values
+        val testCases = Seq(
+          (Some(10), Some(10L), "limit = 10"),
+          (Some(100), Some(100L), "limit = 100"),
+          (Some(1), Some(1L), "limit = 1"),
+          (None, None, "no limit"))
+
+        testCases.foreach { case (limitOption, expectedCaptured, description) =>
+          // Clear previous captured state
+          server.clearCaptured()
+
+          client.planScan(
+            defaultNamespace.toString,
+            "limitTest",
+            sparkLimitOption = limitOption)
+
+          // Verify server captured the limit
+          val capturedLimit = Option(server.getCapturedLimit)
+          assert(capturedLimit == expectedCaptured,
+            s"[$description] Expected $expectedCaptured, got: $capturedLimit")
+        }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("filter, projection, and limit sent together to IRC server over HTTP") {
+    withTempTable("filterProjectionLimitTest") { table =>
+      // Populate test data using the shared helper method
+      val tableName = s"rest_catalog.${defaultNamespace}.filterProjectionLimitTest"
       populateTestData(tableName)
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
       try {
         // Note: Filter types are already tested in "filter sent to IRC server" test.
-        // Here we only need to verify filter AND projection are sent together correctly.
+        // Here we verify filter, projection, AND limit are sent together correctly.
         val testCases = Seq(
-          FilterProjectionTestCase(
-            "simple filter + projection",
+          PushdownTestCase(
+            "filter + projection + limit",
             EqualTo("longCol", 2L),
-            Seq("intCol", "stringCol")),
-          FilterProjectionTestCase(
-            "nested field in both filter and projection",
+            Seq("intCol", "stringCol"),
+            Some(10)),
+          PushdownTestCase(
+            "nested field in both filter and projection + limit",
             EqualTo("address.intCol", 200),
-            Seq("intCol", "address.intCol")),
-          FilterProjectionTestCase(
+            Seq("intCol", "address.intCol"),
+            Some(5)),
+          PushdownTestCase(
             "literal dotted column name in projection",
-            EqualTo("a.b.c", "value"),
-            Seq("intCol", "a.b.c"))
+            EqualTo("a.b.c", "abc_1"),
+            Seq("intCol", "a.b.c"),
+            None)
         )
 
         testCases.foreach { testCase =>
@@ -349,21 +388,25 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
             expectedExpr.isDefined,
             s"[${testCase.description}] Filter conversion should succeed for: ${testCase.filter}")
 
-          // Call client with both filter and projection
+          // Call client with filter, projection, and limit
           client.planScan(
             defaultNamespace.toString,
-            "filterProjectionTest",
+            "filterProjectionLimitTest",
             sparkFilterOption = Some(testCase.filter),
-            sparkProjectionOption = Some(testCase.projection))
+            sparkProjectionOption = Some(testCase.projection),
+            sparkLimitOption = testCase.limit)
 
-          // Verify server captured both filter and projection
+          // Verify server captured filter, projection, and limit
           val capturedFilter = server.getCapturedFilter
           val capturedProjection = server.getCapturedProjection
+          val capturedLimit = server.getCapturedLimit
 
           assert(capturedFilter != null,
             s"[${testCase.description}] Server should have captured filter")
           assert(capturedProjection != null,
             s"[${testCase.description}] Server should have captured projection")
+          assert(capturedLimit != null,
+            s"[${testCase.description}] Server should have captured limit")
 
           // Verify filter is correct
           val boundExpected = Binder.bind(defaultSchema.asStruct(), expectedExpr.get, true)
@@ -379,7 +422,38 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           assert(projectionFields == expectedFields,
             s"[${testCase.description}] Projection mismatch. Expected: $expectedFields, " +
             s"got: $projectionFields")
+
+          // Verify limit is correct
+          val expectedLimit = testCase.limit.map(_.toLong)
+          assert(Option(capturedLimit) == expectedLimit,
+            s"[${testCase.description}] Limit mismatch. Expected: $expectedLimit, " +
+            s"got: ${Option(capturedLimit)}")
         }
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("caseSensitive=false sent to IRC server") {
+    withTempTable("caseSensitiveTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.caseSensitiveTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      try {
+        server.clearCaptured()
+
+        // Call planScan - the client sets caseSensitive=false in the request
+        val scanPlan = client.planScan(defaultNamespace.toString, "caseSensitiveTest")
+
+        // Verify the scan succeeds and returns files
+        assert(scanPlan.files.nonEmpty,
+          "Expected planScan to return files for the test table")
+
+        // Verify server captured caseSensitive=false
+        val capturedCaseSensitive = server.getCapturedCaseSensitive()
+        assert(capturedCaseSensitive == false,
+          s"Expected server to capture caseSensitive=false, got $capturedCaseSensitive")
       } finally {
         client.close()
       }
@@ -611,11 +685,14 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         BigDecimal(i).bigDecimal, // decimalCol
         java.sql.Date.valueOf("2024-01-01"), // dateCol
         java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
+        java.sql.Date.valueOf("2024-01-01"), // localDateCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // localDateTimeCol
+        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // instantCol
         Row(i * 100), // address.intCol (nested struct)
         Row(s"meta_$i"), // metadata.stringCol (nested struct)
         Row(s"child_$i"), // parent.`child.name` (nested struct with dotted field name)
         s"city_$i", // address.city (literal top-level dotted column)
-        s"value_$i" // a.b.c (literal top-level dotted column)
+        s"abc_$i" // a.b.c (literal top-level dotted column)
       ))
 
     spark.createDataFrame(data, TestSchemas.sparkSchema)

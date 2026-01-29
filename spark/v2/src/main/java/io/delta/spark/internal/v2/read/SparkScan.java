@@ -105,6 +105,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
+  // Estimated size in bytes accounting for column projection, used for query optimizer cost
+  // estimation
+  private long estimatedSizeInBytes = 0L;
   private volatile boolean planned = false;
 
   public SparkScan(
@@ -199,7 +202,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
-        return OptionalLong.of(totalBytes);
+        return OptionalLong.of(estimatedSizeInBytes);
       }
 
       @Override
@@ -208,6 +211,46 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         return OptionalLong.empty();
       }
     };
+  }
+
+  /**
+   * Computes the estimated size in bytes accounting for column projection.
+   *
+   * <p>This mirrors what {@code SizeInBytesOnlyStatsPlanVisitor.visitUnaryNode} (from Spark code)
+   * would compute for a {@code Project} over a {@code LogicalRelation}: {@code sizeInBytes =
+   * childSizeInBytes * outputRowSize / childRowSize}
+   *
+   * <p>Where:
+   *
+   * <ul>
+   *   <li><b>childRowSize</b> = {@code ROW_OVERHEAD + dataSchema + partitionSchema} (equivalent to
+   *       LogicalRelation output)
+   *   <li><b>outputRowSize</b> = {@code ROW_OVERHEAD + readDataSchema + partitionSchema}
+   *       (equivalent to Project output)
+   * </ul>
+   *
+   * <p>This provides consistent statistics with the v1 code path (LogicalRelation + visitUnaryNode
+   * from Spark code directory).
+   *
+   * @param totalBytes the total size in bytes of the planned files (raw physical size)
+   * @return the estimated size in bytes after accounting for column projection
+   */
+  private long computeEstimatedSizeWithColumnProjection(long totalBytes) {
+    if (totalBytes <= 0) {
+      return totalBytes;
+    }
+
+    // Row overhead constant, matching EstimationUtils.getSizePerRow (from Spark)
+    final int ROW_OVERHEAD = 8;
+
+    // TODO(#5952): update below with column stats from catalog when it becomes available
+    final long fullSchemaRowSize =
+        ROW_OVERHEAD + dataSchema.defaultSize() + partitionSchema.defaultSize();
+    final long outputRowSize = ROW_OVERHEAD + readSchema().defaultSize();
+
+    long estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize;
+
+    return Math.max(1L, estimatedBytes);
   }
 
   /**
@@ -253,6 +296,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         throw new RuntimeException(e);
       }
     }
+
+    // Pre-compute estimated size accounting for column projection
+    estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
   }
 
   /** Ensure the scan is planned exactly once in a thread\-safe manner. */
@@ -321,10 +367,12 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       }
     }
 
-    // Update partitionedFiles and totalBytes, if any partition is filtered out
+    // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is filtered
+    // out
     if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
       this.partitionedFiles = runtimeFilteredPartitionedFiles;
       this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+      this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
     }
   }
 
