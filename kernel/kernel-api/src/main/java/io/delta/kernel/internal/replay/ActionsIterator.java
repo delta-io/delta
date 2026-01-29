@@ -482,7 +482,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     deltaReadSchema,
                     checkpointPredicate);
 
-            long version = checkpointVersion(nextFilePath);
+            long version = nextLogFile.getVersion();
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         default:
