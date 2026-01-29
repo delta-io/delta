@@ -743,8 +743,6 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
       "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
       "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
-      // Lombok for generating boilerplate code
-      "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
       // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
       "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
