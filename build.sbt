@@ -402,7 +402,7 @@ lazy val sparkV1 = (project in file("spark"))
       val versionFile = baseDirectory.value.getParentFile / "python" / "delta" / "version.py"
       val content =
         s"""#
-           |# Copyright (2021) The Delta Lake Project Authors.
+           |# Copyright (2026) The Delta Lake Project Authors.
            |#
            |# Licensed under the Apache License, Version 2.0 (the "License");
            |# you may not use this file except in compliance with the License.
