@@ -20,8 +20,7 @@ import Unidoc._
  * 
  * The Spark versions used for Delta is defined in the SparkVersionSpec object, and controlled by the sparkVersion property.
  * There are 2 keys labels assigned to the Spark versions: DEFAULT and MASTER.
- * - DEFAULT VERSION: This is the default when no sparkVersion property is specified
- *   Spark-dependent artifacts for this version have NO Spark version suffix (e.g., delta-spark_2.13).
+ * - DEFAULT VERSION: This is the default when no sparkVersion property is specified.
  *
  * - MASTER VERSION: The Spark master/development branch version
  *   This is optional and typically 
@@ -51,13 +50,12 @@ import Unidoc._
  * If not specified, it defaults to the DEFAULT version.
  *
  * Examples:
- *   build/sbt                                    # Uses default version (3.5.7)
- *   build/sbt -DsparkVersion=3.5                 # Uses 3.5.7
- *   build/sbt -DsparkVersion=3.5.7               # Uses 3.5.7
- *   build/sbt -DsparkVersion=4.0                 # Uses 4.0.2-SNAPSHOT
- *   build/sbt -DsparkVersion=4.0.2-SNAPSHOT      # Uses 4.0.2-SNAPSHOT
- *   build/sbt -DsparkVersion=default             # Uses 3.5.7
- *   build/sbt -DsparkVersion=master              # Uses 4.0.2-SNAPSHOT
+ *   build/sbt                                    # Uses default version
+ *   build/sbt -DsparkVersion=4.0                 # Uses Spark 4.0.x
+ *   build/sbt -DsparkVersion=4.0.1               # Uses Spark 4.0.1 only if this version is defined in ALL_SPECS
+ *   build/sbt -DsparkVersion=4.1                 # Uses Spark 4.1.x whatever it is defined in ALL_SPECS
+ *   build/sbt -DsparkVersion=default             # Uses default version
+ *   build/sbt -DsparkVersion=master              # Uses master version (if defined)
  *
  * ========================================================
  * Cross-Building for Development and Testing
@@ -101,21 +99,21 @@ import Unidoc._
  *    - These modules are built once and work with all Spark versions
  *
  * ========================================================
- * Artifact Naming Convention
+ * Artifact Naming Convention of Spark-dependent modules
  * ========================================================
  * 
  * By default, Spark-dependent modules ALWAYS include the Spark version suffix:
- *   io.delta:delta-spark_4.0_2.13:3.4.0
- *   io.delta:delta-spark_4.1_2.13:3.4.0
- *   io.delta:delta-connect-server_4.0_2.13:3.4.0
- *   io.delta:delta-storage:3.4.0  (Spark-independent, no suffix)
+ *   io.delta:delta-spark_4.0_2.13:4.1.0
+ *   io.delta:delta-spark_4.1_2.13:4.1.0
+ *   io.delta:delta-connect-server_4.0_2.13:4.1.0
+ *   io.delta:delta-storage:4.1.0  (Spark-independent, no suffix)
  *
  * During release, backward-compatible artifacts are ALSO published (without suffix):
- *   io.delta:delta-spark_2.13:3.4.0       (backward compatibility)
- *   io.delta:delta-connect-server_2.13:3.4.0
+ *   io.delta:delta-spark_2.13:4.1.0       (backward compatibility)
+ *   io.delta:delta-connect-server_2.13:4.1.0
  *
  * This means during release, Spark-dependent modules are published TWICE:
- *   - With suffix (e.g., delta-spark_4.0_2.13) - the default/normal name
+ *   - With suffix (e.g., delta-spark_4.1_2.13) - the default/normal name
  *   - Without suffix (e.g., delta-spark_2.13) - for backward compatibility
  *
  * ========================================================

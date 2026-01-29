@@ -97,8 +97,8 @@ class SparkVersionSpec:
 # skipSparkSuffix=true removes the suffix (used during release for backward compat)
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),   # Spark 4.0.1 supports iceberg
-    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=False)   # Non-default version - always has suffix
+    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),
+    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=False)
 }
 
 # The default Spark version
@@ -280,9 +280,7 @@ class CrossSparkPublishTest:
         # Step 1: All modules without suffix (uses default Spark version's iceberg support)
         default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
         no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg)
-        expected.update(substitute_xversion(no_suffix_spec.spark_related_jars, self.delta_version))
-        expected.update(substitute_xversion(no_suffix_spec.non_spark_related_jars, self.delta_version))
-        expected.update(substitute_xversion(no_suffix_spec.iceberg_jars, self.delta_version))
+        expected.update(substitute_xversion(no_suffix_spec.all_jars, self.delta_version))
 
         # Step 2: Spark-dependent modules WITH suffix for each non-master version
         for spark_version, spark_spec in SPARK_VERSIONS.items():
