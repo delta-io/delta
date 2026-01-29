@@ -242,7 +242,7 @@ public class PartitionUtils {
             optionsWithVectorizedReading,
             hadoopConf);
 
-    // Wrap reader to filter deleted rows and remove internal columns if DV is enabled
+    // Wrap reader to filter deleted rows and remove internal columns if DV is enabled.
     if (dvSchemaContext.isPresent()) {
       readFunc = DeletionVectorReadFunction.wrap(readFunc, dvSchemaContext.get());
     }

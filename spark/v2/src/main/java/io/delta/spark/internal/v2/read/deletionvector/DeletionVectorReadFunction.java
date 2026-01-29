@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -42,7 +42,7 @@ public class DeletionVectorReadFunction
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
     int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
-    // Use pre-computed ordinals from DvSchemaContext
+    // Use pre-computed ordinals from DvSchemaContext.
     ProjectingInternalRow projection =
         ProjectingInternalRow.apply(
             dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());

@@ -53,4 +53,31 @@ public class V2ReadTest extends V2TestBase {
         str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
         List.of(row(1, "Alice", 100.0), row(2, "Bob", 200.0)));
   }
+
+  @Test
+  public void testDeletionVectorRead(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Create a Delta table with deletion vectors enabled.
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, value STRING) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
+            tablePath));
+
+    // Insert test data.
+    spark.sql(
+        str(
+            "INSERT INTO delta.`%s` VALUES (1, 'one'), (2, 'two'), (3, 'three'), (4, 'four')",
+            tablePath));
+
+    // Delete some rows to create deletion vectors.
+    spark.sql(str("DELETE FROM delta.`%s` WHERE id %% 2 = 0", tablePath));
+
+    // Read through V2 and verify deleted rows are filtered out.
+    check(
+        str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        List.of(row(1L, "one"), row(3L, "three")));
+  }
 }
