@@ -136,26 +136,7 @@ public class Checkpointer {
         && !hasCheckpointProtection;
   }
 
-  /**
-   * Only clean up expired log files when:
-   *
-   * <ul>
-   *   <li>Snapshot was built as "latest" by intent (not time-traveled)
-   *   <li>checkpointProtection feature is not enabled
-   *   <li>delta.enableExpiredLogCleanup table property is set to true
-   * </ul>
-   */
-  private static boolean shouldPerformLogCleanup(SnapshotImpl snapshot) {
-    final boolean hasCheckpointProtection =
-        snapshot
-            .getProtocol()
-            .getWriterFeatures()
-            .contains(CHECKPOINT_PROTECTION_W_FEATURE.featureName());
-    return snapshot.wasBuiltAsLatest()
-        && EXPIRED_LOG_CLEANUP_ENABLED.fromMetadata(snapshot.getMetadata())
-        && !hasCheckpointProtection;
-  }
-
+  
   /**
    * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
    * later than `notLaterThan`.
