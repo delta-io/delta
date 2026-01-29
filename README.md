@@ -97,7 +97,7 @@ See the [online documentation on Storage Configuration](https://docs.delta.io/la
 
 ## Concurrency Control
 
-Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
+Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/concurrency-control/) for more details.
 
 ## Reporting issues
 
