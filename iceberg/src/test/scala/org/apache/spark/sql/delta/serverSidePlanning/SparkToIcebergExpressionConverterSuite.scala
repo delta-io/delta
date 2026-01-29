@@ -737,15 +737,15 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   test("column names with dots (literal column names, not nested fields)") {
     // Per Spark's Filter documentation, the attribute string is already properly
-    // formatted following ANSI SQL conventions:
+    // formatted:
     //   - Dots are used as separators for nested columns (e.g., "address.intCol" means
     //     field intCol inside struct address)
     //   - "If any part of the names contains dots, it is quoted to avoid confusion"
     //     (e.g., "`address.city`" means a literal column named "address.city")
     //
-    // See: org.apache.spark.sql.sources.Filter and EqualTo scaladoc
+    // See: org.apache.spark.sql.sources.Filter scaladoc
     //
-    // By the time we receive Spark Filters, disambiguation has ALREADY happened. A plain string
+    // By the time we receive Spark Filters, disambiguation has already happened. A plain string
     // like "address.city" in EqualTo("address.city", value) unambiguously means nested access.
     // A literal column named "address.city" would arrive as "`address.city`".
     //

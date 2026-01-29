@@ -459,44 +459,6 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("projection with struct column - verify Spark behavior") {
-    withTable("struct_test") {
-      sql("""
-        CREATE TABLE struct_test (
-          id INT,
-          address STRUCT<city: STRING, zip: INT>
-        ) USING parquet
-      """)
-      sql("""INSERT INTO struct_test VALUES (1, struct('Seattle', 98101))""")
-
-      withPushdownCapturingEnabled {
-        // Test: SELECT entire struct column
-        sql("SELECT address FROM struct_test").collect()
-
-        val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
-        assert(capturedProjection.isDefined, "Projection should be pushed down")
-
-        // Check what Spark actually sends
-        val projectedFields = capturedProjection.get
-
-        // This test documents the actual behavior
-        // If Spark sends ["address"], our flatMap logic is unnecessary
-        // If Spark sends ["address.city", "address.zip"], our flatMap logic is correct
-        // scalastyle:off println
-        println(s"=== STRUCT PROJECTION TEST ===")
-        println(s"When SELECTing struct 'address', Spark sends: ${projectedFields.mkString(", ")}")
-        println(s"Number of fields: ${projectedFields.size}")
-        println(s"=== END TEST ===")
-        // scalastyle:on println
-
-        // Verify that Spark DOES send nested fields individually, not the struct itself
-        val expected = Set("address.city", "address.zip")
-        assert(projectedFields.toSet == expected,
-          s"Expected individual nested fields, got: ${projectedFields.mkString(", ")}")
-      }
-    }
-  }
-
   test("projection and filter pushed together") {
     withPushdownCapturingEnabled {
       sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()

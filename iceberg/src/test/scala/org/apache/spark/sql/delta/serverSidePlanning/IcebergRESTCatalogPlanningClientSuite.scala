@@ -274,15 +274,15 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
         // Nested field projections - test dot-notation string handling
         ProjectionTestCase(
-          "nested fields",
+          "individual nested field",
           Seq("address.intCol"),
           Set("address.intCol")),
         ProjectionTestCase(
-          "nested field with dots in name requires escaping",
+          "dotted field name inside struct with escaping",
           Seq("parent.`child.name`"),
           Set("parent.`child.name`")),
         ProjectionTestCase(
-          "dotted column name requires escaping",
+          "escaped dotted column name with escaping",
           Seq("`address.city`"),
           Set("`address.city`"))
       )
