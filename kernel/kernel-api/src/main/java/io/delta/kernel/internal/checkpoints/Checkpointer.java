@@ -119,9 +119,11 @@ public class Checkpointer {
   /**
    * Only clean up expired log files when:
    *
-   * 1. Snapshot was built as "latest" by intent (not time-traveled)
-   * 2. checkpointProtection feature is not enabled
-   * 3. delta.enableExpiredLogCleanup table property is set to true
+   * <ul>
+   *   <li>Snapshot was built as "latest" by intent (not time-traveled)
+   *   <li>checkpointProtection feature is not enabled
+   *   <li>delta.enableExpiredLogCleanup table property is set to true
+   * </ul>
    */
   private static boolean shouldPerformLogCleanup(SnapshotImpl snapshot) {
     final boolean hasCheckpointProtection =
