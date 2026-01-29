@@ -29,6 +29,7 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Optional;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
@@ -723,5 +724,155 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     }
     Optional<?> opt = (Optional<?>) raw;
     return opt.map(Predicate.class::cast);
+  }
+
+  @Test
+  public void testPruneColumns_dataColumnsOnly(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // Prune to only id and name (both are data columns)
+    StructType prunedSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true)
+            });
+
+    builder.pruneColumns(prunedSchema);
+
+    // Verify that kernelScanBuilder.readSchema contains only data columns (id, name)
+    io.delta.kernel.types.StructType kernelReadSchema = getKernelScanBuilderReadSchema(builder);
+    assertNotNull(kernelReadSchema, "Kernel read schema should be set");
+    assertEquals(2, kernelReadSchema.fields().size(), "Should have 2 data columns");
+
+    // Verify field names and types
+    List<String> fieldNames =
+        kernelReadSchema.fields().stream()
+            .map(io.delta.kernel.types.StructField::getName)
+            .collect(java.util.stream.Collectors.toList());
+    assertTrue(fieldNames.contains("id"), "Should contain 'id' field");
+    assertTrue(fieldNames.contains("name"), "Should contain 'name' field");
+  }
+
+  @Test
+  public void testPruneColumns_excludesPartitionColumns(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // Prune to id, name, and dep_id (dep_id is a partition column)
+    StructType prunedSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+
+    builder.pruneColumns(prunedSchema);
+
+    // Verify that kernelScanBuilder.readSchema excludes partition column (dep_id)
+    io.delta.kernel.types.StructType kernelReadSchema = getKernelScanBuilderReadSchema(builder);
+    assertNotNull(kernelReadSchema, "Kernel read schema should be set");
+    assertEquals(2, kernelReadSchema.fields().size(), "Should have 2 data columns only");
+
+    // Verify that dep_id (partition column) is NOT in the read schema
+    List<String> fieldNames =
+        kernelReadSchema.fields().stream()
+            .map(io.delta.kernel.types.StructField::getName)
+            .collect(java.util.stream.Collectors.toList());
+    assertTrue(fieldNames.contains("id"), "Should contain 'id' field");
+    assertTrue(fieldNames.contains("name"), "Should contain 'name' field");
+    assertTrue(!fieldNames.contains("dep_id"), "Should NOT contain partition column 'dep_id'");
+  }
+
+  @Test
+  public void testPruneColumns_onlyPartitionColumns(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // Prune to only partition column (dep_id)
+    StructType prunedSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+
+    builder.pruneColumns(prunedSchema);
+
+    // When only partition columns are selected, withReadSchema is NOT called to avoid
+    // passing an empty schema to the Parquet reader. The kernel scan builder retains
+    // its default read schema (the full snapshot schema).
+    io.delta.kernel.types.StructType kernelReadSchema = getKernelScanBuilderReadSchema(builder);
+    assertNotNull(kernelReadSchema, "Kernel read schema should be set");
+    // The default snapshot schema has 3 columns: id, name, dep_id
+    assertEquals(
+        3,
+        kernelReadSchema.fields().size(),
+        "Should retain default snapshot schema when only partition columns are selected");
+  }
+
+  @Test
+  public void testPruneColumns_allColumns(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // Prune to all columns (id, name, dep_id)
+    StructType prunedSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+
+    builder.pruneColumns(prunedSchema);
+
+    // Verify that kernelScanBuilder.readSchema contains all data columns but not partition column
+    io.delta.kernel.types.StructType kernelReadSchema = getKernelScanBuilderReadSchema(builder);
+    assertNotNull(kernelReadSchema, "Kernel read schema should be set");
+    assertEquals(2, kernelReadSchema.fields().size(), "Should have 2 data columns (id, name)");
+
+    List<String> fieldNames =
+        kernelReadSchema.fields().stream()
+            .map(io.delta.kernel.types.StructField::getName)
+            .collect(java.util.stream.Collectors.toList());
+    assertTrue(fieldNames.contains("id"), "Should contain 'id' field");
+    assertTrue(fieldNames.contains("name"), "Should contain 'name' field");
+  }
+
+  @Test
+  public void testPruneColumns_caseInsensitivePartitionColumn(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    // Prune with different case for partition column (DEP_ID instead of dep_id)
+    StructType prunedSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("DEP_ID", DataTypes.IntegerType, true)
+            });
+
+    builder.pruneColumns(prunedSchema);
+
+    // Verify that DEP_ID is recognized as a partition column and excluded
+    io.delta.kernel.types.StructType kernelReadSchema = getKernelScanBuilderReadSchema(builder);
+    assertNotNull(kernelReadSchema, "Kernel read schema should be set");
+    assertEquals(1, kernelReadSchema.fields().size(), "Should have 1 data column (id)");
+
+    List<String> fieldNames =
+        kernelReadSchema.fields().stream()
+            .map(io.delta.kernel.types.StructField::getName)
+            .collect(java.util.stream.Collectors.toList());
+    assertTrue(fieldNames.contains("id"), "Should contain 'id' field");
+    assertTrue(
+        !fieldNames.contains("DEP_ID") && !fieldNames.contains("dep_id"),
+        "Should NOT contain partition column in any case");
+  }
+
+  private io.delta.kernel.types.StructType getKernelScanBuilderReadSchema(SparkScanBuilder builder)
+      throws Exception {
+    Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
+    field.setAccessible(true);
+    Object kernelScanBuilder = field.get(builder);
+
+    Field readSchemaField = kernelScanBuilder.getClass().getDeclaredField("readSchema");
+    readSchemaField.setAccessible(true);
+    return (io.delta.kernel.types.StructType) readSchemaField.get(kernelScanBuilder);
   }
 }

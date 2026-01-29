@@ -95,6 +95,16 @@ public class SparkScanBuilder
             Arrays.stream(requiredSchema.fields())
                 .filter(f -> !partitionColumnSet.contains(f.name().toLowerCase(Locale.ROOT)))
                 .toArray(StructField[]::new));
+    // Only call withReadSchema if there are data columns to read. When only partition columns
+    // are selected, we skip this to avoid passing an empty schema to the Parquet reader.
+    // Other optimizations (e.g., file pruning) should be able to avoid reading files
+    // entirely when only partition values are needed.
+    if (this.requiredDataSchema.fields().length > 0) {
+      io.delta.kernel.types.StructType kernelReadSchema =
+          io.delta.spark.internal.v2.utils.SchemaUtils.convertSparkSchemaToKernelSchema(
+              this.requiredDataSchema);
+      this.kernelScanBuilder = this.kernelScanBuilder.withReadSchema(kernelReadSchema);
+    }
   }
 
   @Override
