@@ -24,7 +24,6 @@ import scala.collection.JavaConverters._
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.catalyst.util.quoteIfNeeded
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -35,7 +34,7 @@ import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
 
 /**
  * Companion object for ServerSidePlannedTable with factory methods.
@@ -306,52 +305,27 @@ class ServerSidePlannedScanBuilder(
  */
 private[serverSidePlanning] object ServerSidePlannedScan {
   /**
-   * Escape column names with dots for projection pushdown.
-   * Traverses the requiredSchema StructType and builds dot-notation field paths.
-   * Literal dotted columns (e.g., "address.city" as a single field) need backticks.
-   * Nested field access (e.g., address.intCol) should not be escaped.
+   * Flatten and escape column names for projection pushdown.
+   *
+   * Uses Spark's built-in SchemaUtils.explodeNestedFieldNames which flattens a StructType
+   * into dot-notation field paths with proper escaping (backticks for special characters
+   * like dots, dashes, spaces, SQL keywords, etc.).
+   *
+   * For example, a schema with:
+   *   - field "a"
+   *   - nested struct "parent" with field "child.name"
+   *   - top-level field "address.city"
+   *
+   * Will be flattened to: ["a", "parent.`child.name`", "`address.city`"]
+   *
+   * @param requiredSchema The schema to flatten (from Spark's pruneColumns)
+   * @param tableSchema The full table schema (unused, kept for API compatibility)
+   * @return Flattened and escaped field paths
    */
   def escapeProjectedColumns(
       requiredSchema: StructType,
       tableSchema: StructType): Seq[String] = {
-    flattenSchema(requiredSchema, tableSchema, prefix = "")
-  }
-
-  /**
-   * Recursively flatten a StructType into dot-notation field paths with proper escaping.
-   *
-   * Uses Spark's standard quoteIfNeeded utility to escape field names with special characters
-   * (dots, dashes, spaces, keywords, etc.) following SQL identifier rules.
-   *
-   * @param schema The schema to flatten
-   * @param tableSchema The full table schema (unused, kept for future use)
-   * @param prefix The current path prefix (e.g., "address")
-   * @return Sequence of flattened field paths
-   */
-  def flattenSchema(
-      schema: StructType,
-      tableSchema: StructType,
-      prefix: String): Seq[String] = {
-    schema.fields.flatMap { field =>
-      val fieldName = field.name
-
-      // Use Spark's standard quoting utility to escape field names with special characters
-      // (dots, dashes, spaces, SQL keywords, etc.)
-      val escapedFieldName = quoteIfNeeded(fieldName)
-
-      // Build the full path
-      val fullPath = if (prefix.isEmpty) escapedFieldName else s"$prefix.$escapedFieldName"
-
-      // Recurse if this is a struct
-      field.dataType match {
-        case nested: StructType =>
-          // Struct field -> recurse to flatten nested fields
-          flattenSchema(nested, tableSchema, fullPath)
-        case _ =>
-          // Leaf field -> return the full path
-          Seq(fullPath)
-      }
-    }.toSeq
+    SchemaUtils.explodeNestedFieldNames(requiredSchema)
   }
 }
 
