@@ -241,12 +241,20 @@ public class SparkTable implements Table, SupportsRead {
     return Objects.equals(identifier, that.identifier)
         && Objects.equals(tablePath, that.tablePath)
         && Objects.equals(options, that.options)
-        && Objects.equals(catalogTable, that.catalogTable);
+        && Objects.equals(catalogTable, that.catalogTable)
+        && Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
+        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion();
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(identifier, tablePath, options, catalogTable);
+    return Objects.hash(
+        identifier,
+        tablePath,
+        options,
+        catalogTable,
+        initialSnapshot.getPath(),
+        initialSnapshot.getVersion());
   }
 
   /**

@@ -19,6 +19,8 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import scala.util.Try
+
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.constraints.Constraints
@@ -697,19 +699,45 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(
-        metadata, isManagedTable, orCreate = false, query.isDefined, clusterBy = clusterBy
+        metadata = metadata,
+        isManaged = isManagedTable,
+        orCreate = false,
+        asSelect = query.isDefined,
+        clusterBy = clusterBy,
+        predicate = options.flatMap(_.replaceWhere),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
 
     // Legacy saveAsTable with Overwrite mode
     case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata)
+      DeltaOperations.Write(
+        mode = mode,
+        partitionBy = Option(table.partitionColumnNames),
+        predicate = options.get.replaceWhere,
+        userMetadata = options.flatMap(_.userMetadata),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
-      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata), clusterBy = clusterBy
+      DeltaOperations.ReplaceTable(
+        metadata = metadata,
+        isManaged = isManagedTable,
+        orCreate = true,
+        asSelect = query.isDefined,
+        userMetadata = options.flatMap(_.userMetadata),
+        clusterBy = clusterBy,
+        predicate = options.flatMap(_.replaceWhere),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
   }
 
