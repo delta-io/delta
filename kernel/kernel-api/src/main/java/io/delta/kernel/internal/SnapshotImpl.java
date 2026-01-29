@@ -93,6 +93,13 @@ public class SnapshotImpl implements Snapshot {
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
+  /**
+   * Indicates whether this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  private final boolean wasBuiltAsLatest;
+
   // TODO: Do not take in LogReplay as a constructor argument.
   // TODO: Also take in clustering columns for post-commit snapshot
   public SnapshotImpl(
@@ -115,6 +122,7 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = inCommitTimestampOpt;
+    this.wasBuiltAsLatest = snapshotContext.isLatestQuery();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -140,6 +148,15 @@ public class SnapshotImpl implements Snapshot {
   @Override
   public long getVersion() {
     return version;
+  }
+
+  /**
+   * Returns true if this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  public boolean wasBuiltAsLatest() {
+    return wasBuiltAsLatest;
   }
 
   @Override

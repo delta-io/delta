@@ -55,6 +55,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   val writerOnlyFeatures = Seq(
     "allowColumnDefaults",
     "appendOnly",
+    "checkpointProtection",
     "invariants",
     "checkConstraints",
     "generatedColumns",
@@ -198,6 +199,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   })
 
   Seq(
+    "checkpointProtection",
     "domainMetadata",
     "vacuumProtocolCheck",
     "clustering",
@@ -259,6 +261,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // these features are enabled
     val expected = Seq(
       "catalogManaged",
+      "checkpointProtection",
       "columnMapping",
       "allowColumnDefaults",
       "v2Checkpoint",
