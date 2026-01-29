@@ -442,6 +442,7 @@ class CreateCheckpointSuite extends CheckpointBase {
         schema = testSchema,
         data = data,
         tableProperties = tableProperties)
+
       for (_ <- 1 to 3) { appendData(engine, tablePath, data = data) }
 
       val deltaLogDir = new File(tablePath, "_delta_log")
@@ -477,6 +478,7 @@ class CreateCheckpointSuite extends CheckpointBase {
         schema = testSchema,
         data = data,
         tableProperties = tableProperties)
+
       for (_ <- 1 to 3) { appendData(engine, tablePath, data = data) }
 
       val deltaLogDir = new File(tablePath, "_delta_log")
@@ -515,6 +517,7 @@ class CreateCheckpointSuite extends CheckpointBase {
         schema = testSchema,
         data = data,
         tableProperties = tableProperties)
+        
       for (_ <- 1 to 3) { appendData(engine, tablePath, data = data) }
 
       val deltaLogDir = new File(tablePath, "_delta_log")
