@@ -21,8 +21,7 @@ import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 
-// TODO(#5319): rename this file to DeltaV2TestBase
-public abstract class SparkDsv2TestBase {
+public abstract class DeltaV2TestBase {
 
   protected static SparkSession spark;
   protected static Engine defaultEngine;

@@ -21,7 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -50,7 +50,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
-public class SparkTableTest extends SparkDsv2TestBase {
+public class SparkTableTest extends DeltaV2TestBase {
 
   @ParameterizedTest(name = "{0} - {1}")
   @MethodSource("tableTestCases")
@@ -448,5 +448,32 @@ public class SparkTableTest extends SparkDsv2TestBase {
     SparkTable table4 = new SparkTable(identifier, path1, Collections.emptyMap());
     assertNotEquals(table1, table4);
     assertNotEquals(table1.hashCode(), table4.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithDifferentSnapshotVersions(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_snapshot (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_snapshot");
+
+    // Create first SparkTable instance at version 0
+    SparkTable table1 = new SparkTable(identifier, path);
+
+    // Modify the table to create a new version
+    spark.sql("INSERT INTO test_snapshot VALUES (1)");
+
+    // Create second SparkTable instance at version 1
+    SparkTable table2 = new SparkTable(identifier, path);
+
+    // Same identifier and path but different snapshot versions should not be equal
+    assertNotEquals(
+        table1,
+        table2,
+        "SparkTable instances with different snapshot versions should not be equal");
+    assertNotEquals(
+        table1.hashCode(),
+        table2.hashCode(),
+        "Hash codes should differ for different snapshot versions");
   }
 }

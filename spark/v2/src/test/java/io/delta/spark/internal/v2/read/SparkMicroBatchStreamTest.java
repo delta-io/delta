@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
@@ -63,7 +63,7 @@ import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.immutable.Seq;
 
-public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
+public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
   /**
    * Helper method to create a minimal SparkMicroBatchStream instance for tests that only check for
@@ -2620,7 +2620,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   /** Helper method to execute SQL with String.format. */
   private static void sql(String query, Object... args) {
-    SparkDsv2TestBase.spark.sql(String.format(query, args));
+    DeltaV2TestBase.spark.sql(String.format(query, args));
   }
 
   /**
