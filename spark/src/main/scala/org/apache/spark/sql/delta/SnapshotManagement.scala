@@ -269,10 +269,10 @@ trait SnapshotManagement { self: DeltaLog =>
       // the additional listing.
       val eventData = Map(
         "initialCommitVersionsFromFsListingOpt" ->
-          initialLogTuplesFromFsListingOpt.map(_.map(_._3)),
+          initialLogTuplesFromFsListingOpt.map(_.map(_._3).toSeq),
         "initialMaxDeltaVersionSeen" -> initialMaxDeltaVersionSeen,
         "additionalCommitVersionsFromFsListingOpt" ->
-          additionalLogTuplesFromFsListingOpt.map(_.map(_._3)),
+          additionalLogTuplesFromFsListingOpt.map(_.map(_._3).toSeq),
         "maxDeltaVersionSeen" -> maxDeltaVersionSeen,
         "unbackfilledCommitVersions" ->
           unbackfilledCommitsResponse.getCommits.asScala.map(commit => commit.getVersion),
