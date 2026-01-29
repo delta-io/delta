@@ -1096,7 +1096,10 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
           BooleanType.BOOLEAN).eval(valueInput)
       }
       assert(
-        e.getMessage.contains("IN expression requires all list elements to match the value type"))
+        e.getMessage.contains(
+          "Non-numeric types must be exactly equivalent") ||
+          e.getMessage.contains(
+            "No implicit cast available between numeric and non-numeric types"))
     }
 
     // Test incompatible type combinations
