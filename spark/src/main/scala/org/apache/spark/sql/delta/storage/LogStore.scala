@@ -280,15 +280,29 @@ object LogStore extends LogStoreProvider
     createLogStore(sparkConf, hadoopConf)
   }
 
+  // Mapping from deprecated Scala LogStore class names to Java LogStore class names
+  private val deprecatedLogStoreClassNames: Map[String, String] = Map(
+    "org.apache.spark.sql.delta.storage.S3SingleDriverLogStore" ->
+      classOf[io.delta.storage.S3SingleDriverLogStore].getName,
+    "org.apache.spark.sql.delta.storage.AzureLogStore" ->
+      classOf[io.delta.storage.AzureLogStore].getName,
+    "org.apache.spark.sql.delta.storage.HDFSLogStore" ->
+      classOf[io.delta.storage.HDFSLogStore].getName,
+    "org.apache.spark.sql.delta.storage.LocalLogStore" ->
+      classOf[io.delta.storage.LocalLogStore].getName
+  )
+
   // Creates a LogStore with the given LogStore class name and configurations.
   def createLogStoreWithClassName(
       className: String,
       sparkConf: SparkConf,
       hadoopConf: Configuration): LogStore = {
-    if (className == classOf[DelegatingLogStore].getName) {
+    // Redirect deprecated Scala LogStore class names to Java implementations
+    val resolvedClassName = deprecatedLogStoreClassNames.getOrElse(className, className)
+    if (resolvedClassName == classOf[DelegatingLogStore].getName) {
       new DelegatingLogStore(hadoopConf)
     } else {
-      val logStoreClass = Utils.classForName(className)
+      val logStoreClass = Utils.classForName(resolvedClassName)
       if (classOf[io.delta.storage.LogStore].isAssignableFrom(logStoreClass)) {
         new LogStoreAdaptor(logStoreClass.getConstructor(classOf[Configuration])
           .newInstance(hadoopConf))
