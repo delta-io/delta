@@ -503,17 +503,13 @@ public class SparkMicroBatchStream
                   /* creationSource= */ Some.apply("sparkMicroBatchStream"),
                   /* enforceRetention= */ true)
               .getTimestamp(spark.sessionState().conf());
-      SnapshotImpl latestSnapshot = (SnapshotImpl) snapshotManager.loadLatestSnapshot();
       DeltaHistoryManager.Commit commit =
-          DeltaHistoryManager.getActiveCommitAtTimestamp(
-              engine,
-              latestSnapshot,
-              latestSnapshot.getLogPath(),
+          snapshotManager.getActiveCommitAtTime(
               timestamp.getTime(),
-              /* mustBeRecreatable= */ false,
               /* canReturnLastCommit= */ true,
-              /* canReturnEarliestCommit= */ true,
-              /* catalogCommits= */ Collections.emptyList());
+              /* mustBeRecreatable= */ false,
+              /* canReturnEarliestCommit= */ true);
+      long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
       // Note: returning a version beyond latest snapshot version won't be a problem as callers
       // of this function won't use the version to retrieve snapshot(refer to
       // [[getStartingOffset]]).
@@ -528,10 +524,10 @@ public class SparkMicroBatchStream
               /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
               /* commitTimestamp= */ commit.getTimestamp(),
               /* commitVersion= */ commit.getVersion(),
-              /* latestVersion= */ latestSnapshot.getVersion(),
+              /* latestVersion= */ latestVersion,
               /* timestamp= */ timestamp,
               /* canExceedLatest= */ allowOutOfRange);
-      if (startingVersion <= latestSnapshot.getVersion()) {
+      if (startingVersion <= latestVersion) {
         validateProtocolAt(spark, snapshotManager, engine, startingVersion);
       }
       cachedStartingVersion = Optional.of(startingVersion);
