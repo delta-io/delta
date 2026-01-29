@@ -2525,6 +2525,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
   test("handling nullability schema changes") {
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>

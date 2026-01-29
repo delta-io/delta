@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.Relocated._
 import org.apache.spark.sql.delta.TypeWideningMode
 import org.apache.spark.sql.delta.schema.SchemaUtils
 
-import org.apache.spark.sql.{Column, DataFrame}
+import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.classic.ClassicConversions._
 import org.apache.spark.sql.execution.QueryExecution
 import org.apache.spark.sql.types.StructType
@@ -65,7 +65,9 @@ object DeltaStreamUtils {
    * This class encapsulates various flags and settings that control how Delta streaming handles
    * schema changes and compatibility checks.
    *
-   * TODO(#5318): Remove this config when schema tracking is enabled in v2
+   * TODO(#5319): Clean up the configs that were intended as escape-hatches for behavior changes
+   * if they aren't needed anymore.
+   *
    * @param allowUnsafeStreamingReadOnColumnMappingSchemaChanges
    *        Flag that allows user to force enable unsafe streaming read on Delta table with
    *        column mapping enabled AND drop/rename actions.
@@ -98,6 +100,54 @@ object DeltaStreamUtils {
       enableSchemaTrackingForTypeWidening: Boolean
   )
 
+  // TODO(#5319): migrate v1 connector to reuse this utility
+  object SchemaReadOptions {
+    /**
+     * Creates a SchemaReadOptions instance from SparkSession configuration settings.
+     *
+     * @param spark The SparkSession from which to read configuration values.
+     * @param isStreamingFromColumnMappingTable Whether the source table has column mapping enabled.
+     * @param isTypeWideningSupportedInProtocol Whether the table's protocol version supports
+     *        type widening.
+     * @return A [[SchemaReadOptions]] instance containing all schema validation flags derived from
+     *         the session configuration and provided table state.
+     */
+    def fromSparkSession(
+        spark: SparkSession,
+        isStreamingFromColumnMappingTable: Boolean,
+        isTypeWideningSupportedInProtocol: Boolean): SchemaReadOptions = {
+      val allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
+        spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES)
+      val allowUnsafeStreamingReadOnPartitionColumnChanges =
+        spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE)
+      val forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
+        spark.sessionState.conf.getConf(DeltaSQLConf.
+            DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START)
+      val forceEnableUnsafeReadOnNullabilityChange =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
+      val typeWideningEnabled =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
+            isTypeWideningSupportedInProtocol
+      val enableSchemaTrackingForTypeWidening =
+        spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING)
+
+      new DeltaStreamUtils.SchemaReadOptions(
+        allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
+          allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
+        allowUnsafeStreamingReadOnPartitionColumnChanges =
+          allowUnsafeStreamingReadOnPartitionColumnChanges,
+        forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
+          forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
+        forceEnableUnsafeReadOnNullabilityChange = forceEnableUnsafeReadOnNullabilityChange,
+        isStreamingFromColumnMappingTable = isStreamingFromColumnMappingTable,
+        typeWideningEnabled = typeWideningEnabled,
+        enableSchemaTrackingForTypeWidening = enableSchemaTrackingForTypeWidening)
+    }
+  }
+
   sealed trait SchemaCompatibilityResult
   object SchemaCompatibilityResult {
     // Indicates that the schema change is compatible and can be applied safely
@@ -109,9 +159,9 @@ object DeltaStreamUtils {
     // but the change cannot be applied by recovering the query
     case object NonRetryableIncompatible extends SchemaCompatibilityResult
 
+    // helper methods for java interop
     def isCompatible(result: SchemaCompatibilityResult): Boolean =
       result == Compatible
-
     def isRetryableIncompatible(result: SchemaCompatibilityResult): Boolean =
       result == RetryableIncompatible
   }
@@ -120,7 +170,15 @@ object DeltaStreamUtils {
    * Validate schema compatibility between data schema and read schema. Checks for read
    * compatibility considering nullability, type widening, missing columns, and partition changes.
    *
-   * Returns SchemaCompatibilityResult
+   * @param dataSchema The actual schema of the data
+   * @param readSchema The schema used by the reader to read data
+   * @param newPartitionColumns The partition columns for new metadata
+   * @param oldPartitionColumns The partition columns for old metadata
+   * @param backfilling Whether the check is triggered during backfilling (processing old data)
+   * @param readOptions Configuration options that control schema compatibility rules
+   *
+   * @return A [[SchemaCompatibilityResult]] on whether the data schema is compatible, and if not,
+   *         whether restarting the stream will allow processing data across the schema change.
    */
   def checkSchemaChangesWhenNoSchemaTracking(
       dataSchema: StructType,
@@ -150,7 +208,8 @@ object DeltaStreamUtils {
         readOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges && backfilling
     // When backfilling after a type change, allow processing the data using the new, wider
     // type.
-    var typeWideningMode = if (allowWideningTypeChanges && backfilling) {
+    // typeWideningMode when using `readSchema` to read `dataSchema`
+    val forwardTypeWideningMode = if (allowWideningTypeChanges && backfilling) {
       TypeWideningMode.AllTypeWidening
     } else {
       TypeWideningMode.NoTypeWidening
@@ -161,12 +220,13 @@ object DeltaStreamUtils {
       readSchema = readSchema,
       forbidTightenNullability = shouldForbidTightenNullability,
       allowMissingColumns = shouldAllowMissingColumns,
-      typeWideningMode = typeWideningMode,
+      typeWideningMode = forwardTypeWideningMode,
       newPartitionColumns = newPartitionColumns,
       oldPartitionColumns = oldPartitionColumns
     )) {
       // Check for widening type changes that would succeed on retry when we backfill batches.
-      typeWideningMode = if (allowWideningTypeChanges) {
+      // typeWideningMode when using `dataSchema` to read `readSchema`
+      val backwardTypeWideningMode = if (allowWideningTypeChanges) {
         TypeWideningMode.AllTypeWidening
       } else {
         TypeWideningMode.NoTypeWidening
@@ -183,7 +243,7 @@ object DeltaStreamUtils {
         existingSchema = readSchema,
         readSchema = dataSchema,
         forbidTightenNullability = shouldForbidTightenNullability,
-        typeWideningMode = typeWideningMode
+        typeWideningMode = backwardTypeWideningMode
       )
       if (retryable) {
         SchemaCompatibilityResult.RetryableIncompatible

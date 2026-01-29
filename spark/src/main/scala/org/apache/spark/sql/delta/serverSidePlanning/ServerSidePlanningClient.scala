@@ -43,13 +43,24 @@ trait ServerSidePlanningClient {
    * @param table The table name
    * @param filterOption Optional filter expression to push down to server (Spark Filter format)
    * @param projectionOption Optional projection (column names) to push down to server
+   * @param limitOption Optional limit to push down to server
    * @return ScanPlan containing files to read
    */
   def planScan(
       databaseName: String,
       table: String,
       filterOption: Option[Filter] = None,
-      projectionOption: Option[Seq[String]] = None): ScanPlan
+      projectionOption: Option[Seq[String]] = None,
+      limitOption: Option[Int] = None): ScanPlan
+
+  /**
+   * Check if all given filters can be converted to the server's native filter format.
+   * This is used during filter pushdown to determine whether to return residuals to Spark.
+   *
+   * @param filters Array of Spark filters to check
+   * @return true if ALL filters can be converted, false if ANY filter cannot be converted
+   */
+  def canConvertFilters(filters: Array[Filter]): Boolean
 }
 
 /**

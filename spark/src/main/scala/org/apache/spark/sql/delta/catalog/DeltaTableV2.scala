@@ -194,7 +194,7 @@ class DeltaTableV2 private(
       deltaLog.getSnapshotAt(
         version,
         catalogTableOpt = catalogTable,
-        enforceTimeTravelWithinDeletedFileRetention = true)
+        enforceTimeTravelWithinDeletedFileRetention = spec.enforceRetention)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,

@@ -16,20 +16,8 @@
 
 // scalastyle:off line.size.limit
 
-import java.io.BufferedInputStream
 import java.nio.file.Files
-import java.nio.file.attribute.PosixFilePermission
-import java.util
 
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
-import org.apache.commons.compress.utils.IOUtils
-
-import scala.collection.mutable
-import scala.sys.process._
-import scala.util.Using
-
-import sbt.internal.inc.Analysis
 import sbtprotoc.ProtocPlugin.autoImport._
 
 import xsbti.compile.CompileAnalysis
@@ -67,11 +55,17 @@ val sparkVersion = settingKey[String]("Spark version")
 // Dependent library versions
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
 val hadoopVersion = "3.4.2"
+val sparkVersionForKernelTest = "4.0.0"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
 val protoVersion = "3.25.1"
 val grpcVersion = "1.62.2"
+val flinkVersion = "2.0.1"
+
+// Define the ecosystem support flags.
+val supportIceberg = CrossSparkVersions.getSparkVersionSpec().supportIceberg
+val supportHudi = CrossSparkVersions.getSparkVersionSpec().supportHudi
 
 // For Java 11 use the following on command line
 // sbt 'set targetJvm := "11"' [commands]
@@ -162,29 +156,6 @@ def runTaskOnlyOnSparkMaster[T](
       val masterVersion = SparkVersionSpec.MASTER.map(_.fullVersion).getOrElse("(no master version configured)")
       println(s"Project $projectName: Skipping `$taskName` as Spark version " +
         s"${CrossSparkVersions.getSparkVersion()} does not equal $masterVersion.")
-      // scalastyle:on println
-      emptyValue
-    }
-  }
-}
-
-/**
- * Note: we cannot access sparkVersion.value here, since that can only be used within a task or
- *       setting macro.
- */
-def runTaskOnlyOnSparkDefault[T](
-  task: sbt.TaskKey[T],
-  taskName: String,
-  projectName: String,
-  emptyValue: => T): Def.Initialize[Task[T]] = {
-  if (CrossSparkVersions.getSparkVersionSpec().isDefault) {
-    Def.task(task.value)
-  } else {
-    Def.task {
-      // scalastyle:off println
-      val defaultVersion = SparkVersionSpec.DEFAULT.fullVersion
-      println(s"Project $projectName: Skipping `$taskName` as Spark version " +
-        s"${CrossSparkVersions.getSparkVersion()} does not equal $defaultVersion.")
       // scalastyle:on println
       emptyValue
     }
@@ -878,8 +849,8 @@ lazy val kernelApi = (project in file("kernel/kernel-api"))
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
@@ -986,19 +957,21 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "junit" % "junit" % "4.13.2" % "test",
       "commons-io" % "commons-io" % "2.8.0" % "test",
       "com.novocode" % "junit-interface" % "0.11" % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
       // JMH dependencies allow writing micro-benchmarks for testing performance of components.
       // JMH has framework to define benchmarks and takes care of many common functionalities
       // such as warm runs, cold runs, defining benchmark parameter variables etc.
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",
-      "io.delta" %% "delta-spark" % "4.0.0" % "test",
 
-      "org.apache.spark" %% "spark-hive" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-sql" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-core" % defaultSparkVersion % "test" classifier "tests",
-      "org.apache.spark" %% "spark-catalyst" % defaultSparkVersion % "test" classifier "tests",
+      // The delta-spark and spark dependencies are mainly used for catalog-based table creation.
+      // Instead of using the latest snapshot, those are fine to use the released 4.0.0.
+      "io.delta" %% "delta-spark" % "4.0.0" % "test",
+      "org.apache.spark" %% "spark-hive" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-sql" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-core" % sparkVersionForKernelTest % "test" classifier "tests",
+      "org.apache.spark" %% "spark-catalyst" % sparkVersionForKernelTest % "test" classifier "tests",
     ),
     MultiShardMultiJVMTestParallelization.settings,
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
@@ -1051,8 +1024,8 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
     libraryDependencies ++= Seq(
       "org.apache.hadoop" % "hadoop-common" % hadoopVersion % "provided",
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.20.0" % "test",
-      "org.apache.logging.log4j" % "log4j-core" % "2.20.0" % "test",
+      "org.apache.logging.log4j" % "log4j-slf4j-impl" % "2.25.3" % "test",
+      "org.apache.logging.log4j" % "log4j-core" % "2.25.3" % "test",
     ),
     unidocSourceFilePatterns += SourceFilePattern("src/main/java/io/delta/unity/"),
   ).configureUnidoc()
@@ -1115,7 +1088,8 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
   ).configureUnidoc()
 
 val icebergSparkRuntimeArtifactName = {
- val (expMaj, expMin, _) = getMajorMinorPatch(defaultSparkVersion)
+ val currentSparkVersion = CrossSparkVersions.getSparkVersion()
+ val (expMaj, expMin, _) = getMajorMinorPatch(currentSparkVersion)
  s"iceberg-spark-runtime-$expMaj.$expMin"
 }
 
@@ -1159,44 +1133,31 @@ lazy val iceberg = (project in file("iceberg"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentModuleName(sparkVersion),
-    // TODO: upgrade to Spark 4.1?
-    Compile / compile := runTaskOnlyOnSparkDefault(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-iceberg",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkDefault(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-iceberg",
-      emptyValue = ()
-    ).value,
-    publish := runTaskOnlyOnSparkDefault(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-iceberg",
-      emptyValue = ()
-    ).value,
-    publishM2 := runTaskOnlyOnSparkDefault(
-      task = publishM2,
-      taskName = "publishM2",
-      projectName = "delta-iceberg",
-      emptyValue = ()
-    ).value,
-    libraryDependencies ++= Seq(
-      // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
-      // due to legacy scala.
-      "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
-      "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
-      "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
-      "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
-      "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
-      "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
-      "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
-      "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
-      "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test"
-    ),
+    libraryDependencies ++= {
+      if (supportIceberg) {
+        Seq(
+          // Fix Iceberg's legacy java.lang.NoClassDefFoundError: scala/jdk/CollectionConverters$ error
+          // due to legacy scala.
+          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",
+          "com.jolbox" % "bonecp" % "0.8.0.RELEASE" % "test",
+          "org.eclipse.jetty" % "jetty-server" % "11.0.26" % "test",
+          "org.eclipse.jetty" % "jetty-servlet" % "11.0.26" % "test",
+          "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
+          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
+          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided"
+        )
+      } else {
+        Seq.empty
+      }
+    },
+    // Skip compilation and publishing when supportIceberg is false
+    Compile / skip := !supportIceberg,
+    Test / skip := !supportIceberg,
+    publish / skip := !supportIceberg,
+    publishLocal / skip := !supportIceberg,
+    publishM2 / skip := !supportIceberg,
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
@@ -1346,30 +1307,6 @@ lazy val hudi = (project in file("hudi"))
     scalaStyleSettings,
     releaseSettings,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    Compile / compile := runTaskOnlyOnSparkDefault(
-      task = Compile / compile,
-      taskName = "compile",
-      projectName = "delta-hudi",
-      emptyValue = Analysis.empty.asInstanceOf[CompileAnalysis]
-    ).value,
-    Test / test := runTaskOnlyOnSparkDefault(
-      task = Test / test,
-      taskName = "test",
-      projectName = "delta-hudi",
-      emptyValue = ()
-    ).value,
-    publish := runTaskOnlyOnSparkDefault(
-      task = publish,
-      taskName = "publish",
-      projectName = "delta-hudi",
-      emptyValue = ()
-    ).value,
-    publishM2 := runTaskOnlyOnSparkDefault(
-      task = publishM2,
-      taskName = "publishM2",
-      projectName = "delta-hudi",
-      emptyValue = ()
-    ).value,
     libraryDependencies ++= Seq(
       "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
         ExclusionRule(organization = "org.apache.hadoop"),
@@ -1414,6 +1351,79 @@ lazy val hudi = (project in file("hudi"))
     Compile / packageBin := assembly.value,
     TestParallelization.settings
   )
+
+lazy val flink = (project in file("flink"))
+//  .dependsOn(kernelApi)
+  .dependsOn(kernelDefaults)
+  .dependsOn(kernelUnityCatalog)
+  .settings(
+    name := "delta-flink",
+    commonSettings,
+    skipReleaseSettings,
+    javafmtCheckSettings(),
+    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    autoScalaLibrary := false, // exclude scala-library from dependencies
+    assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
+    assembly / assemblyMergeStrategy := {
+      // Discard module-info.class files from Java 9+ modules and multi-release JARs
+      case "module-info.class" => MergeStrategy.discard
+      case "parquet.thrift" => MergeStrategy.discard
+      case PathList("META-INF", "versions", _, "module-info.class") => MergeStrategy.discard
+      case PathList("mozilla", "public-suffix-list.txt") => MergeStrategy.discard
+      case x => MergeStrategy.first
+    },
+    assembly / assemblyExcludedJars := {
+      val cp = (assembly / fullClasspath).value
+      cp.filter { entry =>
+        entry.data.getName.startsWith("bundle-") &&
+          entry.data.getName.endsWith(".jar")
+      }
+    },
+    Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
+
+    // Make sure the shaded JAR is produced before we compile/run tests
+    Compile / compile := (Compile / compile).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / test       := (Test    / test).dependsOn(kernelApi / Compile / packageBin).value,
+    Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+
+    Test / publishArtifact := false,
+    Test / javaOptions ++= Seq(
+      "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
+    ),
+    crossPaths := false,
+    libraryDependencies ++= Seq(
+      "org.apache.flink" % "flink-core" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % "provided",
+      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+      "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
+      "dev.failsafe" % "failsafe" % "3.2.0",
+      "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
+      "org.apache.hadoop" % "hadoop-aws" % hadoopVersion,
+
+      // Test dependencies
+      "org.junit.jupiter" % "junit-jupiter-api" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-engine" % "5.11.4" % "test",
+      "org.junit.jupiter" % "junit-jupiter-params" % "5.11.4" % "test",
+      "com.github.sbt.junit" % "jupiter-interface" % "0.17.0" % "test",
+      "org.apache.flink" % "flink-test-utils" % flinkVersion % "test",
+      "org.apache.flink" % "flink-clients" % flinkVersion % "test",
+      "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % Test,
+      "org.apache.flink" % "flink-table-planner-loader" % flinkVersion % Test,
+      "org.apache.flink" % "flink-table-runtime" % flinkVersion % Test,
+      "org.apache.flink" % "flink-test-utils-junit" % flinkVersion  % Test,
+      "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
+      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
+    ),
+    // Use jupiter
+    excludeDependencies ++= Seq(
+      ExclusionRule("junit", "junit"),
+      ExclusionRule("org.junit.vintage", "junit-vintage-engine")
+    )
+  )
+
 
 lazy val goldenTables = (project in file("connectors/golden-tables"))
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -1462,23 +1472,40 @@ val generatePythonVersion = taskKey[File]("Generate Python version.py file")
  */
 
 // Don't use these groups for any other projects
-lazy val sparkGroup = project
-  .aggregate(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, hudi, sharing, connectCommon, connectClient, connectServer)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-  )
+lazy val sparkGroup = {
+  val baseProjects = Seq(spark, sparkV1, sparkV1Filtered, sparkV2, contribs, sparkUnityCatalog, storage, storageS3DynamoDB, sharing, connectCommon, connectClient, connectServer)
+  val allProjects = if (supportHudi) {
+    baseProjects :+ hudi
+  } else {
+    baseProjects
+  }
 
-lazy val icebergGroup = project
-  .aggregate(iceberg, testDeltaIcebergJar)
-  .settings(
-    // crossScalaVersions must be set to Nil on the aggregating project
-    crossScalaVersions := Nil,
-    publishArtifact := false,
-    publish / skip := false,
-  )
+  Project("sparkGroup", file("sparkGroup"))
+    .aggregate(allProjects.map(_.project): _*)
+    .settings(
+      // crossScalaVersions must be set to Nil on the aggregating project
+      crossScalaVersions := Nil,
+      publishArtifact := false,
+      publish / skip := false,
+    )
+}
+
+lazy val icebergGroup = {
+  val allProjects = if (supportIceberg) {
+    Seq(iceberg, testDeltaIcebergJar)
+  } else {
+    Seq.empty
+  }
+
+  Project("icebergGroup", file("icebergGroup"))
+    .aggregate(allProjects.map(_.project): _*)
+    .settings(
+      // crossScalaVersions must be set to Nil on the aggregating project
+      crossScalaVersions := Nil,
+      publishArtifact := false,
+      publish / skip := false,
+    )
+}
 
 lazy val kernelGroup = project
   .aggregate(kernelApi, kernelDefaults, kernelBenchmarks)
@@ -1492,6 +1519,15 @@ lazy val kernelGroup = project
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
     }
   ).configureUnidoc(docTitle = "Delta Kernel")
+
+lazy val flinkGroup = project
+  .aggregate(flink)
+  .settings(
+    // crossScalaVersions must be set to Nil on the aggregating project
+    crossScalaVersions := Nil,
+    publishArtifact := false,
+    publish / skip := false,
+  )
 
 /*
  ********************

@@ -171,11 +171,20 @@ class IcebergRESTCatalogPlanningClient(
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
     .build()
 
+  override def canConvertFilters(filters: Array[Filter]): Boolean = {
+    // Check if all filters can be converted to Iceberg expressions
+    // Returns true only if ALL filters successfully convert
+    filters.forall { filter =>
+      SparkToIcebergExpressionConverter.convert(filter).isDefined
+    }
+  }
+
   override def planScan(
       database: String,
       table: String,
       sparkFilterOption: Option[Filter] = None,
-      sparkProjectionOption: Option[Seq[String]] = None): ScanPlan = {
+      sparkProjectionOption: Option[Seq[String]] = None,
+      sparkLimitOption: Option[Int] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
     // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
     // /v1/config to get the optional prefix and builds the proper endpoint
@@ -189,6 +198,9 @@ class IcebergRESTCatalogPlanningClient(
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
     val builder = new PlanTableScanRequest.Builder()
       .withSnapshotId(CURRENT_SNAPSHOT_ID)
+      // Set caseSensitive=false (defaults to true in spec) to match Spark's case-insensitive
+      // column handling. Server should validate and block requests with caseSensitive=true.
+      .withCaseSensitive(false)
 
     // Convert Spark Filter to Iceberg Expression and add to request if filter is present.
     sparkFilterOption.foreach { sparkFilter =>
@@ -204,7 +216,16 @@ class IcebergRESTCatalogPlanningClient(
 
     val request = builder.build()
 
-    val requestJson = PlanTableScanRequestParser.toJson(request)
+    // Iceberg 1.11 adds withMinRowsRequested() support. For now, manually inject the field.
+    val requestJson = sparkLimitOption match {
+      case Some(limit) =>
+        implicit val formats: Formats = DefaultFormats
+        val jsonAst = parse(PlanTableScanRequestParser.toJson(request))
+        val modifiedJson = jsonAst merge JObject("min-rows-requested" -> JLong(limit.toLong))
+        compact(render(modifiedJson))
+      case None =>
+        PlanTableScanRequestParser.toJson(request)
+    }
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
     // TODO: Add retry logic for transient HTTP failures (e.g., connection timeouts, 5xx errors)
@@ -219,9 +240,10 @@ class IcebergRESTCatalogPlanningClient(
       val statusCode = httpResponse.getStatusLine.getStatusCode
       val responseBody = EntityUtils.toString(httpResponse.getEntity)
       if (statusCode == HttpStatus.SC_OK || statusCode == HttpStatus.SC_CREATED) {
-        // Parse response. caseSensitive = true because Iceberg is case-sensitive by default.
+        // Parse response with caseSensitive=false to match request and Spark's case-insensitive
+        // column handling
         val icebergResponse = parsePlanTableScanResponse(
-          responseBody, unpartitionedSpecMap, caseSensitive = true)
+          responseBody, unpartitionedSpecMap, caseSensitive = false)
 
         // Verify plan status is "completed". The Iceberg REST spec allows async planning
         // where the server returns "submitted" status and the client must poll for results.

@@ -57,6 +57,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === Schema Evolution ===
     "restarting a query should pick up latest table schema and recover",
     "disallow to change schema after starting a streaming query",
+    "allow to change schema before starting a streaming query",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -64,6 +65,11 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion latest defined before started",
     "startingVersion latest works on defined but empty table",
     "startingVersion specific version: new commits arrive after stream initialization",
+    "startingVersion: user defined start works with mergeSchema",
+    "startingVersion latest calls update when starting",
+    "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
+    "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
+    "startingVersion and startingTimestamp are both set",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
@@ -71,16 +77,28 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxFilesPerTrigger: change and restart",
     "maxFilesPerTrigger: invalid parameter",
     "maxFilesPerTrigger: ignored when using Trigger.Once",
+    "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
     "maxBytesPerTrigger: change and restart",
     "maxBytesPerTrigger: invalid parameter",
+    "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
     "maxBytesPerTrigger: max bytes and max files together",
-    "startingVersion should work with rate time"
+    "Trigger.AvailableNow with an empty table",
+    "Rate limited Delta source advances with non-data inserts",
+    "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
+    "startingVersion should work with rate time",
+    "maxFilesPerTrigger: metadata checkpoint",
+    "maxBytesPerTrigger: metadata checkpoint",
+
+    // ========== Error handling tests ==========
+    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "excludeRegex throws good error on bad regex pattern",
+
+    // ========== Misc tests ==========
+    "a fast writer should not starve a Delta source",
+    "should not attempt to read a non exist version"
   )
 
   private lazy val shouldFailTests = Set(
-    // === Schema Evolution ===
-    "allow to change schema before starting a streaming query",
-
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
@@ -88,13 +106,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === read options ===
     "skip change commits",
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "excludeRegex throws good error on bad regex pattern",
-    "startingVersion: user defined start works with mergeSchema",
-    "startingVersion latest calls update when starting",
-    "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
-    "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingTimestamp",
-    "startingVersion and startingTimestamp are both set",
 
     // === Data Loss Detection ===
     "fail on data loss - starting from missing files",
@@ -102,28 +114,16 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - starting from missing files with option off",
     "fail on data loss - gaps of files with option off",
 
-    // === Rate Limiting / Trigger Options ===
-    "maxFilesPerTrigger: metadata checkpoint",
-    "maxFilesPerTrigger: Trigger.AvailableNow respects read limits",
-    "maxBytesPerTrigger: metadata checkpoint",
-    "maxBytesPerTrigger: Trigger.AvailableNow respects read limits",
-    "Trigger.AvailableNow with an empty table",
-    "Rate limited Delta source advances with non-data inserts",
-    "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
-
     // === Misc ===
     "no schema should throw an exception",
-    "a fast writer should not starve a Delta source",
     "recreate the reservoir should fail the query",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
-    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
     "Delta sources should verify the protocol reader version",
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
       "non-data operations",
     "Delta source advances with non-data inserts and generates empty dataframe for addl files",
     "start from corrupt checkpoint",
-    "should not attempt to read a non exist version",
 
     // === Tests that bypass V2 by not using loadStreamWithOptions ===
     "disallow user specified schema", // Uses .schema() directly

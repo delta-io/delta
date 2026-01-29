@@ -115,6 +115,18 @@ object Action {
 
   lazy val logSchema = ExpressionEncoder[SingleAction]().schema
   lazy val addFileSchema = logSchema("add").dataType.asInstanceOf[StructType]
+
+  /**
+   * Same as [[logSchema]], but with a user-specified add.stats_parsed column. This is useful for
+   * reading parquet checkpoint files that provide add.stats_parsed instead of add.stats.
+   */
+  def logSchemaWithAddStatsParsed(statsParsed: StructField): StructType = {
+    val logAddSchema = logSchema("add").dataType.asInstanceOf[StructType]
+    val fields = logSchema.map { f =>
+      if (f.name == "add") f.copy(dataType = logAddSchema.add(statsParsed)) else f
+    }
+    StructType(fields)
+  }
 }
 
 /**

@@ -212,6 +212,17 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       TestRow(2524636800000000L, 23423523000L, -315583200000000L, null))
   }
 
+  test("parse timestamp type with large values") {
+    // Timestamps far in the future should not cause overflow.
+    // ChronoUnit.MICROS.between() internally computes nanoseconds first, which overflows
+    // for timestamps more than ~292 years from epoch.
+    testJsonParserForSingleType(
+      jsonString = """{"col1":"9999-12-31T23:59:59.000+00:00"}""",
+      dataType = TimestampType.TIMESTAMP,
+      numColumns = 1,
+      TestRow(253402300799000000L))
+  }
+
   test("parse null input") {
     val schema = new StructType()
       .add("nested_struct", new StructType().add("foo", IntegerType.INTEGER))

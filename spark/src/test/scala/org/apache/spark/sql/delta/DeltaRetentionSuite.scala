@@ -48,6 +48,14 @@ class DeltaRetentionSuite extends QueryTest
     getDeltaFiles(dir) ++ getUnbackfilledDeltaFiles(dir) ++ getCheckpointFiles(dir)++
       getCrcFiles(dir)
 
+  test("startTxnWithManualLogCleanup") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      startTxnWithManualLogCleanup(log).commit(Nil, testOp)
+      assert(!log.enableExpiredLogCleanup())
+    }
+  }
+
   test("delete expired logs") {
     withTempDir { tempDir =>
       val startTime = getStartTimeForRetentionTest
