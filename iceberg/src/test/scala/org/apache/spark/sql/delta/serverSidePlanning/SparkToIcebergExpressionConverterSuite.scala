@@ -673,6 +673,7 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     assertConvert(testCases)
   }
 
+  // ========================================================================
   // UNSUPPORTED VALUE TYPES
   // ========================================================================
 
@@ -735,6 +736,21 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
   // ========================================================================
 
   test("column names with dots (literal column names, not nested fields)") {
+    // Per Spark's Filter documentation, the attribute string is already properly
+    // formatted following ANSI SQL conventions:
+    //   - Dots are used as separators for nested columns (e.g., "address.intCol" means
+    //     field intCol inside struct address)
+    //   - "If any part of the names contains dots, it is quoted to avoid confusion"
+    //     (e.g., "`address.city`" means a literal column named "address.city")
+    //
+    // See: org.apache.spark.sql.sources.Filter and EqualTo scaladoc
+    //
+    // By the time we receive Spark Filters, disambiguation has ALREADY happened. A plain string
+    // like "address.city" in EqualTo("address.city", value) unambiguously means nested access.
+    // A literal column named "address.city" would arrive as "`address.city`".
+    //
+    // This test verifies we pass filter attribute strings through unchanged - no additional
+    // escaping needed at this layer.
     val testCases = Seq(
       // Simple column without dot
       ExprConvTestCase(
@@ -783,6 +799,33 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
         Some(Expressions.startsWith("address.city", "Sea"))
       ),
 
+      // Test with backtick-quoted column names (as Spark would send them for literal names)
+      ExprConvTestCase(
+        "EqualTo with backtick-quoted literal column name",
+        EqualTo("`address.city`", "Seattle"),
+        Some(Expressions.equal("`address.city`", "Seattle"))
+      ),
+      ExprConvTestCase(
+        "LessThan with backtick-quoted column name",
+        LessThan("`a.b.c`", "value"),
+        Some(Expressions.lessThan("`a.b.c`", "value"))
+      ),
+      ExprConvTestCase(
+        "IsNull with backtick-quoted column name",
+        IsNull("`address.city`"),
+        Some(Expressions.isNull("`address.city`"))
+      ),
+      ExprConvTestCase(
+        "In with backtick-quoted column name",
+        In("`address.city`", Array("Seattle", "Portland")),
+        Some(Expressions.in("`address.city`", "Seattle", "Portland"))
+      ),
+      ExprConvTestCase(
+        "Nested field with backtick-quoted sub-field (dotted field name inside struct)",
+        EqualTo("parent.`child.name`", "value"),
+        Some(Expressions.equal("parent.`child.name`", "value"))
+      ),
+
       // Test escaping with Not(EqualTo) - special case
       ExprConvTestCase(
         "Not(EqualTo) with dotted column name",
@@ -819,6 +862,19 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
           Expressions.or(
             Expressions.equal("address.city", "Seattle"),
             Expressions.equal("a.b.c", "value")
+          )
+        )
+      ),
+      ExprConvTestCase(
+        "AND with backtick-quoted column names in both conditions",
+        And(
+          EqualTo("`address.city`", "Seattle"),
+          GreaterThan("`a.b.c`", "value")
+        ),
+        Some(
+          Expressions.and(
+            Expressions.equal("`address.city`", "Seattle"),
+            Expressions.greaterThan("`a.b.c`", "value")
           )
         )
       )

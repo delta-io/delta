@@ -203,7 +203,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           (Or(EqualTo("longCol", 1L), EqualTo("longCol", 3L)), "Or"),
           (EqualTo("address.intCol", 200), "EqualTo on nested numeric field"),
           (EqualTo("metadata.stringCol", "meta_bob"), "EqualTo on nested string field"),
-          (EqualTo("parent.child.name", "child_1"), "EqualTo on nested field with dotted name"),
           (GreaterThan("address.intCol", 500), "GreaterThan on nested numeric field"))
 
         testCases.foreach { case (filter, description) =>
@@ -275,15 +274,15 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
         // Nested field projections - test dot-notation string handling
         ProjectionTestCase(
-          "nested field access",
+          "nested fields",
           Seq("address.intCol"),
           Set("address.intCol")),
         ProjectionTestCase(
-          "nested field with dots in name - requires escaping",
+          "nested field with dots in name requires escaping",
           Seq("parent.`child.name`"),
           Set("parent.`child.name`")),
         ProjectionTestCase(
-          "literal dotted column name - requires escaping",
+          "dotted column name requires escaping",
           Seq("`address.city`"),
           Set("`address.city`"))
       )
@@ -370,12 +369,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
             "nested field in both filter and projection + limit",
             EqualTo("address.intCol", 200),
             Seq("intCol", "address.intCol"),
-            Some(5)),
-          PushdownTestCase(
-            "literal dotted column name in projection",
-            EqualTo("a.b.c", "abc_1"),
-            Seq("intCol", "a.b.c"),
-            None)
+            Some(5))
         )
 
         testCases.foreach { testCase =>
