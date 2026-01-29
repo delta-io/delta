@@ -363,8 +363,9 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("escapeProjectedColumns - unit test with various dotted field patterns") {
+  test("SchemaUtils.explodeNestedFieldNames - verify behavior with dotted field patterns") {
     import org.apache.spark.sql.types._
+    import org.apache.spark.sql.util.SchemaUtils
 
     // Build comprehensive test schema
     val tableSchema = StructType(Seq(
@@ -451,9 +452,10 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       )
     )
 
-    // Test the companion object method directly (it's package-private for unit testing)
+    // Test Spark's SchemaUtils.explodeNestedFieldNames directly
+    // This verifies the utility behaves as expected for our projection pushdown use case
     testCases.foreach { case (description, requiredSchema, expected) =>
-      val result = ServerSidePlannedScan.escapeProjectedColumns(requiredSchema, tableSchema)
+      val result = SchemaUtils.explodeNestedFieldNames(requiredSchema)
       assert(result == expected,
         s"$description: expected [${expected.mkString(", ")}], got [${result.mkString(", ")}]")
     }

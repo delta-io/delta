@@ -301,35 +301,6 @@ class ServerSidePlannedScanBuilder(
 }
 
 /**
- * Companion object with utilities for escaping column names in projections.
- */
-private[serverSidePlanning] object ServerSidePlannedScan {
-  /**
-   * Flatten and escape column names for projection pushdown.
-   *
-   * Uses Spark's built-in SchemaUtils.explodeNestedFieldNames which flattens a StructType
-   * into dot-notation field paths with proper escaping (backticks for special characters
-   * like dots, dashes, spaces, SQL keywords, etc.).
-   *
-   * For example, a schema with:
-   *   - field "a"
-   *   - nested struct "parent" with field "child.name"
-   *   - top-level field "address.city"
-   *
-   * Will be flattened to: ["a", "parent.`child.name`", "`address.city`"]
-   *
-   * @param requiredSchema The schema to flatten (from Spark's pruneColumns)
-   * @param tableSchema The full table schema (unused, kept for API compatibility)
-   * @return Flattened and escaped field paths
-   */
-  def escapeProjectedColumns(
-      requiredSchema: StructType,
-      tableSchema: StructType): Seq[String] = {
-    SchemaUtils.explodeNestedFieldNames(requiredSchema)
-  }
-}
-
-/**
  * Scan implementation that calls the server-side planning API to get file list.
  */
 class ServerSidePlannedScan(
@@ -361,12 +332,12 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
-  // Use the companion object methods for projection escaping
+  // Use Spark's SchemaUtils.explodeNestedFieldNames to flatten and escape field names
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(ServerSidePlannedScan.escapeProjectedColumns(requiredSchema, tableSchema))
+      Some(SchemaUtils.explodeNestedFieldNames(requiredSchema))
     }
   }
 
