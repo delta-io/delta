@@ -34,14 +34,15 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       CREATE TABLE test_db.shared_test (
         id INT,
         name STRING,
-        value INT
+        value INT,
+        a STRUCT<`b.c`: STRING>
       ) USING parquet
     """)
     sql("""
-      INSERT INTO test_db.shared_test (id, name, value) VALUES
-      (1, 'alpha', 10),
-      (2, 'beta', 20),
-      (3, 'gamma', 30)
+      INSERT INTO test_db.shared_test (id, name, value, a) VALUES
+      (1, 'alpha', 10, struct('abc_1')),
+      (2, 'beta', 20, struct('abc_2')),
+      (3, 'gamma', 30, struct('abc_3'))
     """)
   }
 
@@ -363,101 +364,14 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  test("SchemaUtils.explodeNestedFieldNames - verify behavior with dotted field patterns") {
-    import org.apache.spark.sql.types._
-    import org.apache.spark.sql.util.SchemaUtils
+  test("projection escaping with dotted column names") {
+    withPushdownCapturingEnabled {
+      sql("SELECT a.`b.c` FROM test_db.shared_test").collect()
 
-    // Build comprehensive test schema
-    val tableSchema = StructType(Seq(
-      // Top-level with dots
-      StructField("a.b.c", StringType),
-
-      // Normal nested (no dots anywhere)
-      StructField("parent", StructType(Seq(
-        StructField("child", StringType)
-      ))),
-
-      // Multi-level nested (no dots)
-      StructField("level1", StructType(Seq(
-        StructField("level2", StructType(Seq(
-          StructField("level3", StringType)
-        )))
-      ))),
-
-      // Nested where leaf has dots
-      StructField("data", StructType(Seq(
-        StructField("field.name", StringType)
-      ))),
-
-      // Nested where struct itself has dots
-      StructField("root.struct", StructType(Seq(
-        StructField("value", StringType)
-      )))
-    ))
-
-    val testCases = Seq(
-      // (description, requiredSchema, expected output)
-      (
-        "top-level column with dots",
-        StructType(Seq(StructField("a.b.c", StringType))),
-        Seq("`a.b.c`")
-      ),
-
-      (
-        "normal nested - no dots",
-        StructType(Seq(StructField("parent", StructType(Seq(
-          StructField("child", StringType)
-        ))))),
-        Seq("parent.child")
-      ),
-
-      (
-        "multi-level nested - no dots",
-        StructType(Seq(StructField("level1", StructType(Seq(
-          StructField("level2", StructType(Seq(
-            StructField("level3", StringType)
-          )))
-        ))))),
-        Seq("level1.level2.level3")
-      ),
-
-      (
-        "nested where leaf field has dots",
-        StructType(Seq(StructField("data", StructType(Seq(
-          StructField("field.name", StringType)
-        ))))),
-        Seq("data.`field.name`")
-      ),
-
-      (
-        "struct name has dots, field does not",
-        StructType(Seq(StructField("root.struct", StructType(Seq(
-          StructField("value", StringType)
-        ))))),
-        Seq("`root.struct`.value")
-      ),
-
-      (
-        "mixed - multiple fields with different patterns",
-        StructType(Seq(
-          StructField("a.b.c", StringType),
-          StructField("parent", StructType(Seq(
-            StructField("child", StringType)
-          ))),
-          StructField("data", StructType(Seq(
-            StructField("field.name", StringType)
-          )))
-        )),
-        Seq("`a.b.c`", "parent.child", "data.`field.name`")
-      )
-    )
-
-    // Test Spark's SchemaUtils.explodeNestedFieldNames directly
-    // This verifies the utility behaves as expected for our projection pushdown use case
-    testCases.foreach { case (description, requiredSchema, expected) =>
-      val result = SchemaUtils.explodeNestedFieldNames(requiredSchema)
-      assert(result == expected,
-        s"$description: expected [${expected.mkString(", ")}], got [${result.mkString(", ")}]")
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      assert(capturedProjection.get == Seq("a.`b.c`"),
+        s"Expected escaped [a.`b.c`], got ${capturedProjection.get}")
     }
   }
 
