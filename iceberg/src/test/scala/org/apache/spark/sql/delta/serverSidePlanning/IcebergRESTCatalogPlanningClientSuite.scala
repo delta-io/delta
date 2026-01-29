@@ -174,11 +174,56 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       ucToken = "test-token",
       tableProps = Map.empty)
 
-    // Verify endpoint uses simple path without prefix
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
+    // Verify endpoint constructs default prefix from catalog name
+    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test_catalog"
     assert(
       metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+      s"Expected endpoint with default catalog prefix: ${metadata.planningEndpointUri}")
+  }
+
+  test("plan endpoint URL format with prefix") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+
+    // Configure server to return prefix
+    server.setCatalogPrefix("catalogs/test-catalog")
+
+    val metadata = UnityCatalogMetadata(
+      catalogName = "test_catalog",
+      ucUri = serverUri,
+      ucToken = "test-token",
+      tableProps = Map.empty)
+
+    val endpointUri = metadata.planningEndpointUri
+
+    // Verify the endpoint follows the expected format:
+    // {base}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}
+    assert(endpointUri.contains("/api/2.1/unity-catalog/iceberg-rest/v1/"),
+      s"Endpoint URI should contain the correct path structure: $endpointUri")
+  }
+
+  test("UnityCatalogMetadata.fromTable resolves catalog name correctly") {
+    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+    import org.apache.spark.sql.connector.catalog.Identifier
+
+    val testCases = Seq(
+      // (description, input, expectedOutput)
+      ("2-part identifier should use session catalog",
+        Identifier.of(Array("my_schema"), "my_table"),
+        spark.sessionState.catalogManager.currentCatalog.name()),
+      ("3-part identifier should use explicit catalog from identifier",
+        Identifier.of(Array("explicit_catalog", "my_schema"), "my_table"),
+        "explicit_catalog")
+    )
+
+    testCases.foreach { case (description, input, expectedOutput) =>
+      val metadata = UnityCatalogMetadata.fromTable(
+        table = null,
+        spark = spark,
+        ident = input)
+
+      assert(metadata.catalogName == expectedOutput,
+        s"[$description] Expected catalog name '$expectedOutput', got '${metadata.catalogName}'")
+    }
   }
 
   test("filter sent to IRC server over HTTP") {

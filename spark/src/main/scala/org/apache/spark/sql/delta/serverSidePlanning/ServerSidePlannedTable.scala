@@ -41,15 +41,43 @@ import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
  */
 object ServerSidePlannedTable extends DeltaLogging {
   /**
-   * Property keys that indicate table credentials are available.
-   * Unity Catalog tables may expose temporary credentials via these properties.
+   * Property keys for direct credential values.
+   * These are static credential values set by catalogs (fixed mode).
    */
-  private val CREDENTIAL_PROPERTY_KEYS = Seq(
+  private val CREDENTIAL_VALUE_KEYS = Seq(
+    // Legacy/generic credential keys
     "storage.credential",
+    "credential",
+    // Cloud provider specific credential keys
     "aws.temporary.credentials",
     "azure.temporary.credentials",
     "gcs.temporary.credentials",
-    "credential"
+    // Unity Catalog fixed mode credentials (prefixed with option.)
+    "option.fs.s3a.access.key",
+    "option.fs.s3a.secret.key",
+    "option.fs.s3a.session.token",
+    "option.fs.gs.auth.access.token"
+    // Note: Azure SAS handled via prefix matching (see CREDENTIAL_KEY_PREFIXES)
+  )
+
+  /**
+   * Property keys indicating credential providers are configured.
+   * These are used by Unity Catalog in renewable mode where credentials
+   * are refreshed dynamically rather than being static values.
+   */
+  private val CREDENTIAL_PROVIDER_KEYS = Seq(
+    "option.fs.s3a.aws.credentials.provider",
+    "option.fs.azure.sas.token.provider.type",
+    "option.fs.gs.auth.access.token.provider"
+  )
+
+  /**
+   * Key prefixes for dynamic credential keys.
+   * Azure SAS tokens use dynamic keys with container and account names:
+   * option.fs.azure.sas.<container>.<account>.dfs.core.windows.net
+   */
+  private val CREDENTIAL_KEY_PREFIXES = Seq(
+    "option.fs.azure.sas."
   )
 
   /**
@@ -161,15 +189,41 @@ object ServerSidePlannedTable extends DeltaLogging {
 
   /**
    * Check if a table has credentials available.
+   *
    * Unity Catalog tables may lack credentials when accessed without proper permissions.
-   * UC injects credentials as table properties, see:
-   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   * UC injects credentials as table properties with "option." prefix.
+   * See: https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
+   *   io/unitycatalog/spark/UCSingleCatalog.scala#L357
+   *   and connectors/spark/src/main/scala/io/unitycatalog/spark/auth/CredPropsUtil.java
+   *
+   * We check for credentials in three ways:
+   * 1. Direct credential values (fixed mode) - static credentials in table properties
+   * 2. Credential providers (renewable mode) - UC dynamically refreshes credentials
+   * 3. Dynamic credential keys (prefix match) - Azure SAS with container/account in key name
    */
   private def hasCredentials(table: Table): Boolean = {
-    // Check table properties for credential information
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+
+    // Check 1: Direct credential values (exact key match)
+    if (CREDENTIAL_VALUE_KEYS.exists(key => properties.containsKey(key))) {
+      return true
+    }
+
+    // Check 2: Credential providers (renewable mode)
+    if (CREDENTIAL_PROVIDER_KEYS.exists(key => properties.containsKey(key))) {
+      return true
+    }
+
+    // Check 3: Dynamic credential keys (prefix match)
+    // Example: option.fs.azure.sas.<container>.<account>.dfs.core.windows.net
+    val hasMatchingPrefix = properties.keySet().asScala.exists { key =>
+      CREDENTIAL_KEY_PREFIXES.exists(prefix => key.startsWith(prefix))
+    }
+    if (hasMatchingPrefix) {
+      return true
+    }
+
+    false
   }
 }
 

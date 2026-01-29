@@ -280,11 +280,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
 
     // This test validates the fallback case where /v1/config is unreachable.
     // The endpoint construction logic attempts to call /v1/config at the UC URI,
-    // but since there's no server at this URL, it falls back to the simple path
-    // without prefix. For tests of the prefix case with a real IRC server, see
-    // IcebergRESTCatalogPlanningClientSuite.
+    // but since there's no server at this URL, it falls back to constructing
+    // a prefix from the catalog name. For tests of the prefix case with a real
+    // IRC server, see IcebergRESTCatalogPlanningClientSuite.
     val expectedEndpoint =
-      "https://unity-catalog-server.example.com/api/2.1/unity-catalog/iceberg-rest"
+      "https://unity-catalog-server.example.com/api/2.1/unity-catalog/" +
+      "iceberg-rest/v1/catalogs/test_catalog"
     assert(metadata.planningEndpointUri == expectedEndpoint)
   }
 

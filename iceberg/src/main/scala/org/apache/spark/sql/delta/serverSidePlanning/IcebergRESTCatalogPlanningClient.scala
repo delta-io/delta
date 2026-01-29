@@ -191,8 +191,7 @@ class IcebergRESTCatalogPlanningClient(
     // (e.g., {ucUri}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}).
     // For other catalogs, the endpoint is passed directly via metadata.
     // See: https://iceberg.apache.org/rest-catalog-spec/
-    val planTableScanUri =
-      s"$icebergRestCatalogUriRoot/v1/namespaces/$database/tables/$table/plan"
+    val planTableScanUri = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan"
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
