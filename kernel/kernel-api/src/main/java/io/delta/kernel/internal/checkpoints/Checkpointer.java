@@ -136,7 +136,6 @@ public class Checkpointer {
         && !hasCheckpointProtection;
   }
 
-  
   /**
    * Given a list of checkpoint files, pick the latest complete checkpoint instance which is not
    * later than `notLaterThan`.
