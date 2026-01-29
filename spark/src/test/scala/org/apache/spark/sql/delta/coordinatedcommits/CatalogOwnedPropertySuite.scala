@@ -174,11 +174,8 @@ class CatalogOwnedPropertySuite extends QueryTest
         sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}')")
       }
-      checkError(
-        exception = error,
-        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
-        sqlState = "42939",
-        parameters = Map("prop" -> "io.unitycatalog.tableId"))
+      checkError(error, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
+        Map("prop" -> "io.unitycatalog.tableId"))
     }
   }
 
@@ -197,11 +194,8 @@ class CatalogOwnedPropertySuite extends QueryTest
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}') " +
           s"AS SELECT * FROM t1")
       }
-      checkError(
-        exception = error,
-        condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
-        sqlState = "42939",
-        parameters = Map("prop" -> "io.unitycatalog.tableId"))
+      checkError(error, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
+        Map("prop" -> "io.unitycatalog.tableId"))
 
       // Normal RTAS should not be blocked
       sql(s"REPLACE TABLE t2 USING delta AS SELECT * FROM t1")
@@ -279,11 +273,8 @@ class CatalogOwnedPropertySuite extends QueryTest
           s"('${UCCommitCoordinatorClient.UC_TABLE_ID_KEY}' = '${UUID.randomUUID().toString}')")
       }
       Seq(error1, error2).foreach { error =>
-        checkError(
-          exception = error,
-          condition = "DELTA_CANNOT_MODIFY_TABLE_PROPERTY",
-          sqlState = "42939",
-          parameters = Map("prop" -> "io.unitycatalog.tableId"))
+        checkError(error, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
+          Map("prop" -> "io.unitycatalog.tableId"))
       }
     }
   }
