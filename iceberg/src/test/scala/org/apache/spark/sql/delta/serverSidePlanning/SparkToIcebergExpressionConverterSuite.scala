@@ -741,9 +741,4 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
     assertConvert(operatorTests ++ booleanComparisonTests ++ Seq(inWithNestedArrays))
   }
-
-  // ========================================================================
-  // COLUMN NAMES WITH DOTS
-  // ========================================================================
-
 }

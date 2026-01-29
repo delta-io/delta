@@ -282,7 +282,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           Seq("parent.`child.name`"),
           Set("parent.`child.name`")),
         ProjectionTestCase(
-          "escaped dotted column name with escaping",
+          "dotted column name with escaping",
           Seq("`address.city`"),
           Set("`address.city`"))
       )
