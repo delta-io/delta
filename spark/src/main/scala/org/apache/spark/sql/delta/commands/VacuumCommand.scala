@@ -369,7 +369,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             diffFiles,
             sizeOfDataToDelete,
             retentionMillis,
-            snapshotTombstoneRetentionMillis)
+            snapshotTombstoneRetentionMillis,
+            vacuumType.toString)
 
           val deleteStartTime = System.currentTimeMillis()
           val filesDeleted = try {
@@ -539,7 +540,8 @@ trait VacuumCommandImpl extends DeltaCommand {
       diff: Dataset[String],
       sizeOfDataToDelete: Long,
       specifiedRetentionMillis: Option[Long],
-      defaultRetentionMillis: Long): Unit = {
+      defaultRetentionMillis: Long,
+      vacuumType: String): Unit = {
     val deltaLog = table.deltaLog
     logInfo(
       log"Deleting untracked files and empty directories in " +
@@ -560,11 +562,13 @@ trait VacuumCommandImpl extends DeltaCommand {
       metrics("numFilesToDelete").set(diff.count())
       metrics("sizeOfDataToDelete").set(sizeOfDataToDelete)
       txn.registerSQLMetrics(spark, metrics)
-      val version = txn.commit(actions = Seq(), DeltaOperations.VacuumStart(
-        checkEnabled,
-        specifiedRetentionMillis,
-        defaultRetentionMillis
-      ))
+      val version = txn.commit(
+        actions = Seq(),
+        DeltaOperations.VacuumStart(
+          checkEnabled,
+          specifiedRetentionMillis,
+          defaultRetentionMillis,
+          vacuumType))
       setCommitClock(deltaLog, version)
     }
   }
