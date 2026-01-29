@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,55 +24,69 @@ import org.junit.jupiter.api.Test;
 
 public class DvSchemaContextTest {
 
-  // Common test schemas
+  // Common test schemas.
   private static final StructType DATA_SCHEMA =
       new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
   private static final StructType PARTITION_SCHEMA =
       new StructType().add("date", DataTypes.StringType);
 
   @Test
-  void testSchemaWithDvColumn() {
+  void testWithFullSchemas() {
     DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
 
-    StructType schemaWithDv = context.getSchemaWithDvColumn();
-    assertEquals(3, schemaWithDv.fields().length);
-    assertEquals("id", schemaWithDv.fields()[0].name());
-    assertEquals("name", schemaWithDv.fields()[1].name());
-    assertEquals(
-        DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME(), schemaWithDv.fields()[2].name());
-  }
-
-  @Test
-  void testDvColumnIndex() {
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, new StructType());
+    StructType expectedSchemaWithDv =
+        DATA_SCHEMA.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+    assertEquals(expectedSchemaWithDv, context.getSchemaWithDvColumn());
     assertEquals(2, context.getDvColumnIndex());
-  }
-
-  @Test
-  void testInputColumnCount() {
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
-    // Input: 2 data + 1 DV + 1 partition = 4
+    // Input: 2 data + 1 DV + 1 partition = 4.
     assertEquals(4, context.getInputColumnCount());
-  }
-
-  @Test
-  void testOutputSchema() {
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
-
-    StructType outputSchema = context.getOutputSchema();
-    assertEquals(3, outputSchema.fields().length);
-    assertEquals("id", outputSchema.fields()[0].name());
-    assertEquals("name", outputSchema.fields()[1].name());
-    assertEquals("date", outputSchema.fields()[2].name());
+    StructType expectedOutputSchema =
+        DATA_SCHEMA.merge(PARTITION_SCHEMA, /* handleDuplicateColumns= */ false);
+    assertEquals(expectedOutputSchema, context.getOutputSchema());
   }
 
   @Test
   void testEmptyPartitionSchema() {
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, new StructType());
+    StructType emptyPartition = new StructType();
+    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, emptyPartition);
 
-    assertEquals(3, context.getSchemaWithDvColumn().fields().length); // id + name + DV
+    StructType expectedSchemaWithDv =
+        DATA_SCHEMA.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+    assertEquals(expectedSchemaWithDv, context.getSchemaWithDvColumn());
     assertEquals(2, context.getDvColumnIndex());
-    assertEquals(3, context.getInputColumnCount()); // id + name + DV
-    assertEquals(2, context.getOutputSchema().fields().length); // id + name
+    // Input: 2 data + 1 DV = 3.
+    assertEquals(3, context.getInputColumnCount());
+    assertEquals(DATA_SCHEMA, context.getOutputSchema());
+  }
+
+  @Test
+  void testEmptyDataSchema() {
+    StructType emptyData = new StructType();
+    DvSchemaContext context = new DvSchemaContext(emptyData, PARTITION_SCHEMA);
+
+    StructType expectedSchemaWithDv =
+        emptyData.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
+    assertEquals(expectedSchemaWithDv, context.getSchemaWithDvColumn());
+    assertEquals(0, context.getDvColumnIndex());
+    // Input: 1 DV + 1 partition = 2.
+    assertEquals(2, context.getInputColumnCount());
+    assertEquals(PARTITION_SCHEMA, context.getOutputSchema());
+  }
+
+  @Test
+  void testDuplicateDvColumnThrowsException() {
+    // Schema that already contains the DV column.
+    StructType schemaWithDv =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME(), DataTypes.ByteType);
+
+    IllegalArgumentException exception =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> new DvSchemaContext(schemaWithDv, new StructType()));
+
+    assertTrue(
+        exception.getMessage().contains(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME()));
   }
 }
