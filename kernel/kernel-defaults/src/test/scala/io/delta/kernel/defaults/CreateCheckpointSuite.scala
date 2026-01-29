@@ -46,6 +46,36 @@ class CreateCheckpointSuite extends CheckpointBase {
   // Tests //
   ///////////
 
+  /**
+   * Helper for tests.
+   *
+   * Creates a new table at version 0, then appends {@code commits} additional commits.
+   * Returns the `_delta_log` directory.
+   */
+  private def setupTestTable(
+      engine: Engine,
+      tablePath: String,
+      tableProperties: Map[String, String],
+      commits: Int): File = {
+    val data = Seq(Map.empty[String, Literal] ->
+      generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
+
+    // Create table (version 0) and add commits (version 1..commits)
+    appendData(
+      engine,
+      tablePath,
+      isNewTable = true,
+      schema = testSchema,
+      data = data,
+      tableProperties = tableProperties)
+
+    for (_ <- 1 to commits) { appendData(engine, tablePath, data = data) }
+
+    val deltaLogDir = new File(tablePath, "_delta_log")
+    assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === commits + 1)
+    deltaLogDir
+  }
+
   Seq(true, false).foreach { includeRemoves =>
     val testMsgUpdate = if (includeRemoves) " and removes" else ""
     test(s"commits containing adds$testMsgUpdate, and no previous checkpoint") {
@@ -395,26 +425,11 @@ class CreateCheckpointSuite extends CheckpointBase {
 
   test("log cleanup: non-latest snapshot can NOT trigger log cleanup") {
     withTempDirAndEngine { (tablePath, engine) =>
+      val commits = 3
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
         "delta.enableExpiredLogCleanup" -> "true")
-
-      val data = Seq(Map.empty[String, Literal] ->
-        generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
-
-      // Create table (version 0) and add commits (version 1, 2, 3)
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        schema = testSchema,
-        data = data,
-        tableProperties = tableProperties)
-
-      for (_ <- 1 to 3) { appendData(engine, tablePath, data = data) }
-
-      val deltaLogDir = new File(tablePath, "_delta_log")
-      assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4)
+      val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, commits)
 
       // Checkpoint at version 2 using SnapshotBuilder.atVersion() - wasBuiltAsLatest=false
       val snapshot = TableManager.loadSnapshot(tablePath)
@@ -423,35 +438,20 @@ class CreateCheckpointSuite extends CheckpointBase {
 
       // Verify no log cleanup happened
       assert(
-        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4,
+        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === commits + 1,
         "Checkpoint on snapshot built with specific version should NOT trigger log cleanup")
     }
   }
 
   test("log cleanup: latest snapshot can trigger log cleanup") {
     withTempDirAndEngine { (tablePath, engine) =>
+      val commits = 3
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
         "delta.enableExpiredLogCleanup" -> "true")
+      val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, commits)
 
-      val data = Seq(Map.empty[String, Literal] ->
-        generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
-
-      // Create table (version 0) and add commits (version 1, 2, 3)
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        schema = testSchema,
-        data = data,
-        tableProperties = tableProperties)
-
-      for (_ <- 1 to 3) { appendData(engine, tablePath, data = data) }
-
-      val deltaLogDir = new File(tablePath, "_delta_log")
-      assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4)
-
-      // Get latest snapshot (version 3) using builder without atVersion() - wasBuiltAsLatest=true
+      // Get latest snapshot (version == commits) using builder without atVersion() - wasBuiltAsLatest=true
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
         .asInstanceOf[SnapshotImpl]
       assert(latestSnapshot.wasBuiltAsLatest())
@@ -460,7 +460,7 @@ class CreateCheckpointSuite extends CheckpointBase {
 
       // Verify log cleanup happened
       assert(
-        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) < 4,
+        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) < commits + 1,
         "Checkpoint on snapshot built without specific version should trigger log cleanup")
     }
   }
@@ -468,27 +468,12 @@ class CreateCheckpointSuite extends CheckpointBase {
   test(
     "log cleanup: checkpointProtection enabled prevents log cleanup, even snapshot is built as latest") {
     withTempDirAndEngine { (tablePath, engine) =>
+      val commits = 3
       val tableProperties = Map(
         "delta.logRetentionDuration" -> "interval 0 seconds",
         "delta.enableExpiredLogCleanup" -> "true",
         "delta.feature.checkpointProtection" -> "supported")
-
-      val data = Seq(Map.empty[String, Literal] ->
-        generateData(testSchema, Seq.empty, Map.empty, batchSize = 1, numBatches = 1))
-
-      // Create table (version 0) and add commits (version 1, 2, 3)
-      appendData(
-        engine,
-        tablePath,
-        isNewTable = true,
-        schema = testSchema,
-        data = data,
-        tableProperties = tableProperties)
-        
-      for (_ <- 1 to 3) { appendData(engine, tablePath, data = data) }
-
-      val deltaLogDir = new File(tablePath, "_delta_log")
-      assert(deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4)
+      val deltaLogDir = setupTestTable(engine, tablePath, tableProperties, commits)
 
       // Get latest snapshot using builder without atVersion() - wasBuiltAsLatest=true
       val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
@@ -500,7 +485,7 @@ class CreateCheckpointSuite extends CheckpointBase {
 
       // Verify no log cleanup (checkpointProtection prevents it)
       assert(
-        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === 4,
+        deltaLogDir.listFiles().count(_.getName.endsWith(".json")) === commits + 1,
         "Log cleanup should NOT happen with checkpointProtection enabled")
     }
   }
