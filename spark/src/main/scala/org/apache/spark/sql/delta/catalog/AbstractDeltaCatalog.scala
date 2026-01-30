@@ -158,7 +158,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       TableIdentifier(ident.name(), ident.namespace().lastOption)
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    val existingTableOpt = getExistingTableIfExists(ident)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -565,16 +565,32 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties = validatedConfigurations)
   }
 
-  /** Checks if a table already exists for the provided identifier. */
   def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
 
-    val ident = Identifier.of(
-      if (table.database.isDefined) Array(table.database.get) else Array("default"),
-      table.table
-    )
+    val namespace = (table.catalog, table.database) match {
+      case (Some(cat), Some(db)) => Array(cat, db)
+      case (Some(cat), None) => Array(cat, "default")
+      case (None, Some(db)) => Array(db)
+      case (None, None) => Array("default")
+    }
+    val ident = Identifier.of(namespace, table.table)
+
+    getExistingTableIfExists(ident)
+  }
+
+
+  /** Checks if a table already exists for the provided identifier. */
+  def getExistingTableIfExists(ident: Identifier): Option[CatalogTable] = {
+    // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
+    // will check the file system itself
+
+    // scalastyle:off
+    println(s"===> getExistingTableIfExists ==> $ident")
+    // scalastyle:on
+
     try {
       val catalogTableOpt = this.loadTable(ident) match {
         case v1Table: V1Table =>
@@ -586,12 +602,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
 
       if (catalogTableOpt.isDefined && catalogTableOpt.get.tableType == CatalogTableType.VIEW) {
-        throw DeltaErrors.cannotWriteIntoView(table)
+        // throw DeltaErrors.cannotWriteIntoView()
       }
 
       if (catalogTableOpt.isDefined &&
         !DeltaSourceUtils.isDeltaTable(catalogTableOpt.get.provider)) {
-        throw DeltaErrors.notADeltaTable(table.table)
+        throw DeltaErrors.notADeltaTable(ident.toString)
       }
       catalogTableOpt
     } catch {
