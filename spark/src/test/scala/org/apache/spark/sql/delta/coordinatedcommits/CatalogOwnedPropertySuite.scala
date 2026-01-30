@@ -206,57 +206,164 @@ class CatalogOwnedPropertySuite extends QueryTest
     }
   }
 
-  test("[REPLACE] Specifying table feature for target table should " +
-      "be blocked during REPLACE TABLE ") {
-    withTable("t1", "t2") {
-      // Normal delta table
+  test("[REPLACE] Specifying CatalogManaged for non-CatalogManaged table should " +
+      "be blocked during REPLACE TABLE") {
+    withTable("t1") {
+      // Normal delta table.
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
 
-      // CatalogOwned enabled table
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = true)
-
-      val error1 = intercept[IllegalStateException] {
+      val error = intercept[IllegalStateException] {
         sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
-      val error2 = intercept[IllegalStateException] {
-        sql("REPLACE TABLE t2 (id LONG) USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      }
-      Seq(error1, error2).foreach { error =>
-        assert(error.getMessage.contains(
-          "Specifying Catalog-Owned in REPLACE TABLE command is not supported."))
-      }
+      assert(error.getMessage.contains(
+        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
     }
   }
 
-  test("[RTAS] Specifying table feature for target table should " +
+  test("[REPLACE] Specifying CatalogManaged for existing CatalogManaged table should " +
+      "succeed as a no-op during REPLACE TABLE") {
+    withTable("t1") {
+      // CatalogManaged enabled table.
+      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
+
+      // Specifying CatalogManaged on an already CatalogManaged table should succeed.
+      // The CatalogManaged properties are treated as a no-op.
+      sql("REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+
+      // Validate the table is still CatalogManaged with the same ucTableId.
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      val ucTableIdAfter = getUCTableIdFromTable(tableName = "t1")
+      assert(ucTableIdBefore === ucTableIdAfter)
+    }
+  }
+
+  test("[RTAS] Specifying CatalogManaged for non-CatalogManaged table should " +
       "be blocked during RTAS") {
-    withTable("t1", "t2", "t3") {
-      // Normal delta table
+    withTable("t1", "t2") {
+      // Normal delta table.
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
 
-      // CatalogOwned enabled table
-      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = true)
+      // Source RTAS table.
+      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
+      sql("INSERT INTO t2 VALUES (1), (2)")
 
-      // Source RTAS table
-      createTableAndValidateCatalogOwned(tableName = "t3", withCatalogOwned = false)
-
-      val error1 = intercept[IllegalStateException] {
+      val error = intercept[IllegalStateException] {
         sql("REPLACE TABLE t1 USING delta TBLPROPERTIES " +
           s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
-          s"AS SELECT * FROM t3")
+          s"AS SELECT * FROM t2")
       }
-      assert(error1.getMessage.contains(
-        "Specifying Catalog-Owned in REPLACE TABLE command is not supported."))
+      assert(error.getMessage.contains(
+        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+    }
+  }
 
-      val error2 = intercept[IllegalStateException] {
-        sql("REPLACE TABLE t2 USING delta TBLPROPERTIES " +
-          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
-          s"AS SELECT * FROM t3")
+  test("[RTAS] Specifying CatalogManaged for existing CatalogManaged table should " +
+      "succeed as a no-op during RTAS") {
+    withTable("t1", "t2") {
+      // CatalogManaged enabled table.
+      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
+
+      // Source RTAS table.
+      createTableAndValidateCatalogOwned(tableName = "t2", withCatalogOwned = false)
+      sql("INSERT INTO t2 VALUES (1), (2)")
+
+      // Specifying CatalogManaged on an already CatalogManaged table should succeed.
+      sql("REPLACE TABLE t1 USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported') " +
+        s"AS SELECT * FROM t2")
+
+      // Validate the table is still CatalogManaged with the same ucTableId.
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      val ucTableIdAfter = getUCTableIdFromTable(tableName = "t1")
+      assert(ucTableIdBefore === ucTableIdAfter)
+      checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1), Row(2)))
+    }
+  }
+
+  test("[CREATE OR REPLACE] with CatalogManaged on non-existing table should succeed") {
+    withTable("t1") {
+      // CREATE OR REPLACE on non-existing table with CatalogManaged should create a CC table.
+      sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      sql("INSERT INTO t1 VALUES (1), (2)")
+      checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1), Row(2)))
+    }
+  }
+
+  test("[CREATE OR REPLACE] with CatalogManaged on existing CatalogManaged table " +
+      "should succeed as a no-op") {
+    withTable("t1") {
+      // Create a CatalogManaged table first.
+      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
+      val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
+      sql("INSERT INTO t1 VALUES (1)")
+
+      // CREATE OR REPLACE with CatalogManaged on existing CatalogManaged table should succeed.
+      sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+
+      // Validate the table is still CatalogManaged with the same ucTableId.
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      val ucTableIdAfter = getUCTableIdFromTable(tableName = "t1")
+      assert(ucTableIdBefore === ucTableIdAfter)
+    }
+  }
+
+  test("[CREATE OR REPLACE] with CatalogManaged on existing non-CatalogManaged table " +
+      "should be blocked") {
+    withTable("t1") {
+      // Create a non-CatalogManaged table first.
+      createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = false)
+      sql("INSERT INTO t1 VALUES (1)")
+
+      // CREATE OR REPLACE with CatalogManaged on existing non-CatalogManaged table should fail.
+      val error = intercept[IllegalStateException] {
+        sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
+          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
       }
-      assert(error2.getMessage.contains(
-        "Specifying Catalog-Owned in REPLACE TABLE command is not supported."))
+      assert(error.getMessage.contains(
+        "Specifying CatalogManaged in REPLACE TABLE command is not supported"))
+
+      // Original table should remain unchanged.
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = false)
+      checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1)))
+    }
+  }
+
+  test("[CREATE OR REPLACE] continuous CREATE OR REPLACE with CatalogManaged " +
+      "should succeed repeatedly") {
+    withTable("t1") {
+      // First CREATE OR REPLACE creates the table.
+      sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      val ucTableIdFirst = getUCTableIdFromTable(tableName = "t1")
+      sql("INSERT INTO t1 VALUES (1)")
+      checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1)))
+
+      // Second CREATE OR REPLACE should succeed as a no-op for CC properties.
+      sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      val ucTableIdSecond = getUCTableIdFromTable(tableName = "t1")
+      assert(ucTableIdFirst === ucTableIdSecond)
+
+      // Third CREATE OR REPLACE should also succeed.
+      sql("CREATE OR REPLACE TABLE t1 (id LONG, name STRING) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
+      val ucTableIdThird = getUCTableIdFromTable(tableName = "t1")
+      assert(ucTableIdFirst === ucTableIdThird)
+
+      // Verify table is functional.
+      sql("INSERT INTO t1 VALUES (1, 'a'), (2, 'b')")
+      checkAnswer(sql("SELECT * FROM t1"), Seq(Row(1, "a"), Row(2, "b")))
     }
   }
   test("[CREATE LIKE] Specifying table UUID should be blocked") {
