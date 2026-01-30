@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.nio.file.Files
-import java.util.{Locale, Optional}
+import java.util.{Locale, Optional, UUID}
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
@@ -37,6 +37,7 @@ import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
