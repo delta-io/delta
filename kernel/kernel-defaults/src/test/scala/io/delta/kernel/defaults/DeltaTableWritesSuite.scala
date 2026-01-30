@@ -1850,15 +1850,15 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       .add("dataChange", BooleanType.BOOLEAN)
       .add("stats", STRING)
 
-    new GenericRow(
-      schema,
-      Map[Integer, Object](
-        0 -> path,
-        1 -> java.util.Collections.emptyMap[String, String](),
-        2 -> Long.box(100L),
-        3 -> Long.box(System.currentTimeMillis()),
-        4 -> Boolean.box(dataChange),
-        5 -> """{"numRecords":10}""").asJava)
+    val rowData = new java.util.HashMap[Integer, Object]()
+    rowData.put(0, path)
+    rowData.put(1, java.util.Collections.emptyMap[String, String]())
+    rowData.put(2, 100L.asInstanceOf[Object])
+    rowData.put(3, System.currentTimeMillis().asInstanceOf[Object])
+    rowData.put(4, dataChange.asInstanceOf[Object])
+    rowData.put(5, """{"numRecords":10}""")
+
+    new GenericRow(schema, rowData)
   }
 
   // Helper to create a mock RemoveFile action row
@@ -1871,13 +1871,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       .add("deletionTimestamp", LONG)
       .add("dataChange", BooleanType.BOOLEAN)
 
-    new GenericRow(
-      schema,
-      Map[Integer, Object](
-        0 -> path,
-        1 -> java.util.Collections.emptyMap[String, String](),
-        2 -> Long.box(System.currentTimeMillis()),
-        3 -> Boolean.box(dataChange)).asJava)
+    val rowData = new java.util.HashMap[Integer, Object]()
+    rowData.put(0, path)
+    rowData.put(1, java.util.Collections.emptyMap[String, String]())
+    rowData.put(2, System.currentTimeMillis().asInstanceOf[Object])
+    rowData.put(3, dataChange.asInstanceOf[Object])
+
+    new GenericRow(schema, rowData)
   }
 
   // Test cases: (description, actions, shouldSucceed)
