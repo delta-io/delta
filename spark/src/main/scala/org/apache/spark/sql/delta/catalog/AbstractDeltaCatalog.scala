@@ -154,11 +154,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
-    val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
-    }
+    val id = TableIdentifier(
+      table = ident.name(),
+      database = ident.namespace().lastOption)
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(ident)
+    val existingTableOpt = getExistingTableIfExists(id)
+
+    // scalastyle:off
+    if (existingTableOpt.isDefined) {
+      println(s"====> existingTableOpt -> tableIdentifier: ${existingTableOpt.get.identifier}")
+    }
+    // scalastyle:on
+
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -558,7 +565,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
     val db = tableDesc.identifier.database.getOrElse(catalog.getCurrentDatabase)
-    val tableIdentWithDB = tableDesc.identifier.copy(database = Some(db))
+    val tableIdentWithDB = tableDesc.identifier.copy(
+      database = Some(db),
+      catalog = tableDesc.identifier.catalog)
     tableDesc.copy(
       identifier = tableIdentWithDB,
       schema = schema,
@@ -600,6 +609,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         case _ =>
           None
       }
+
+      if (catalogTableOpt.isDefined) {
+        // scalastyle:off
+        println(s"====> getExistingTableIfExists -> catalogTableOpt -> ${catalogTableOpt.get.identifier}")
+        // scalastyle:on
+      }
+
 
       if (catalogTableOpt.isDefined && catalogTableOpt.get.tableType == CatalogTableType.VIEW) {
         // throw DeltaErrors.cannotWriteIntoView()
