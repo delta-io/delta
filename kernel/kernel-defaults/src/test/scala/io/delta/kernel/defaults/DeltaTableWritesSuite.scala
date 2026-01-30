@@ -42,6 +42,7 @@ import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
@@ -1851,12 +1852,12 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
     new GenericRow(
       schema,
-      Map(
+      Map[Integer, Object](
         0 -> path,
         1 -> java.util.Collections.emptyMap[String, String](),
-        2 -> 100L,
-        3 -> System.currentTimeMillis(),
-        4 -> dataChange,
+        2 -> Long.box(100L),
+        3 -> Long.box(System.currentTimeMillis()),
+        4 -> Boolean.box(dataChange),
         5 -> """{"numRecords":10}""").asJava)
   }
 
@@ -1872,11 +1873,11 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
     new GenericRow(
       schema,
-      Map(
+      Map[Integer, Object](
         0 -> path,
         1 -> java.util.Collections.emptyMap[String, String](),
-        2 -> System.currentTimeMillis(),
-        3 -> dataChange).asJava)
+        2 -> Long.box(System.currentTimeMillis()),
+        3 -> Boolean.box(dataChange)).asJava)
   }
 
   // Test cases: (description, actions, shouldSucceed)
@@ -1908,7 +1909,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
         val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
 
-        val actionsIterable = inMemoryIterable(actions.asJava)
+        val actionsIterable = inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
 
         if (shouldSucceed) {
           val result = commitTransaction(txn, engine, actionsIterable)
