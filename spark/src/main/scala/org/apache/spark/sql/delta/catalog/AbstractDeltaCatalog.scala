@@ -570,18 +570,33 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
-    val tableExists = catalog.tableExists(table)
-    if (tableExists) {
-      val oldTable = catalog.getTableMetadata(table)
-      if (oldTable.tableType == CatalogTableType.VIEW) {
+
+    val ident = Identifier.of(
+      if (table.database.isDefined) Array(table.database.get) else Array("default"),
+      table.table
+    )
+    try {
+      val catalogTableOpt = this.loadTable(ident) match {
+        case v1Table: V1Table =>
+          Some(v1Table.catalogTable)
+        case v2Table: DeltaTableV2 =>
+          v2Table.catalogTable
+        case _ =>
+          None
+      }
+
+      if (catalogTableOpt.isDefined && catalogTableOpt.get.tableType == CatalogTableType.VIEW) {
         throw DeltaErrors.cannotWriteIntoView(table)
       }
-      if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
+
+      if (catalogTableOpt.isDefined &&
+        !DeltaSourceUtils.isDeltaTable(catalogTableOpt.get.provider)) {
         throw DeltaErrors.notADeltaTable(table.table)
       }
-      Some(oldTable)
-    } else {
-      None
+      catalogTableOpt
+    } catch {
+      case _: NoSuchTableException =>
+        None
     }
   }
 

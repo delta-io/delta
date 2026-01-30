@@ -178,7 +178,7 @@ case class CreateDeltaTableCommand(
     }
 
     // scalastyle:off
-    println(s"====> deltaLog.update(catalogTableOpt = catalogTable) -> ${deltaLog.update(catalogTableOpt = Option(tableWithLocation)).metadata.partitionColumns}")
+    // println(s"====> deltaLog.update(catalogTableOpt = catalogTable) -> ${deltaLog.update(catalogTableOpt = Option(tableWithLocation)).metadata.partitionColumns}")
     // scalastyle:on
 
     var txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
