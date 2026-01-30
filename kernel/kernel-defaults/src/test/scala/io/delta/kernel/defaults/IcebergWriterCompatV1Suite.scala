@@ -470,7 +470,8 @@ trait IcebergWriterCompatV1SuiteBase
 
   testIncompatibleUnsupportedTableFeature(
     "changeDataFeed",
-    tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"))
+    tablePropertiesToEnable = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true"),
+    expectedErrorMessage = "Table features [changeDataFeed] are incompatible with icebergWriterCompatV1")
 
   testIncompatibleUnsupportedTableFeature(
     "invariants",
