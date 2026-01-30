@@ -94,6 +94,20 @@ class CatalogOwnedPropertySuite extends QueryTest
     validateCatalogOwnedAndUCTableId(tableName, expected = withCatalogOwned)
   }
 
+  // Helper to manually insert UC_TABLE_ID to mock UC integration behavior.
+  // This is needed in OSS tests since there's no real UC integration.
+  private def mockUCTableIdInsertion(tableName: String): Unit = {
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier(tableName))
+    val deltaLog = DeltaLog.forTable(spark, catalogTable)
+    val snapshot = deltaLog.update(catalogTableOpt = Some(catalogTable))
+    val newMetadata = snapshot.metadata.copy(
+      configuration = snapshot.metadata.configuration +
+        (UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> java.util.UUID.randomUUID().toString)
+    )
+    deltaLog.startTransaction(Some(catalogTable))
+      .commit(Seq(newMetadata), DeltaOperations.ManualUpdate)
+  }
+
   private def getUCTableIdFromTable(tableName: String): String = {
     val (_, snapshot) = DeltaLog.forTableWithSnapshot(spark, new TableIdentifier(tableName))
     val ucTableId = snapshot.metadata.configuration.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
@@ -289,6 +303,8 @@ class CatalogOwnedPropertySuite extends QueryTest
       // CREATE OR REPLACE on non-existing table with CatalogManaged should create a CC table.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      // Mock UC integration behavior by inserting UC_TABLE_ID.
+      mockUCTableIdInsertion("t1")
 
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
       sql("INSERT INTO t1 VALUES (1), (2)")
@@ -342,6 +358,8 @@ class CatalogOwnedPropertySuite extends QueryTest
       // First CREATE OR REPLACE creates the table.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      // Mock UC integration behavior by inserting UC_TABLE_ID.
+      mockUCTableIdInsertion("t1")
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
       val ucTableIdFirst = getUCTableIdFromTable(tableName = "t1")
       sql("INSERT INTO t1 VALUES (1)")
