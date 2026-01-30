@@ -16,6 +16,11 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
+
+import io.unitycatalog.client.ApiException;
+import io.unitycatalog.client.api.TablesApi;
+import io.unitycatalog.client.model.TableInfo;
 import java.util.List;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -32,6 +37,8 @@ public class UCDeltaTableDynamicPartitionOverwriteTest extends UCDeltaTableInteg
         "date_level, hour_level",
         TableType.MANAGED,
         tableName -> {
+          String tableId = accessTableId(tableName);
+
           // Step 1: Insert initial data into multiple partitions
           sql(
               "INSERT INTO %s VALUES "
@@ -39,6 +46,7 @@ public class UCDeltaTableDynamicPartitionOverwriteTest extends UCDeltaTableInteg
                   + "(2, '2025-10-15', 11), "
                   + "(3, '2025-10-15', 12)",
               tableName);
+          assertThat(tableId).isEqualTo(accessTableId(tableName));
 
           // Verify initial data
           check(
@@ -62,6 +70,10 @@ public class UCDeltaTableDynamicPartitionOverwriteTest extends UCDeltaTableInteg
               .option("partitionOverwriteMode", "dynamic")
               .saveAsTable(tableName);
 
+          // Make sure the dynamic partition overwrite is an atomic txn, without dropping
+          // and re-create the table.
+          assertThat(tableId).isEqualTo(accessTableId(tableName));
+
           // Step 4: Verify the result
           // - Partitions hour_level=10 and hour_level=11 should be unchanged
           // - Partition hour_level=12 should have the new data (value=100)
@@ -74,5 +86,12 @@ public class UCDeltaTableDynamicPartitionOverwriteTest extends UCDeltaTableInteg
 
           System.out.println("Dynamic partition overwrite succeeded!");
         });
+  }
+
+  private String accessTableId(String fullTableName) throws ApiException {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    TablesApi tablesApi = new TablesApi(uc.createApiClient());
+    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+    return tableInfo.getTableId();
   }
 }
