@@ -583,51 +583,6 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     }
   }
 
-  test("Negative case - do not support subquery test") {
-    append(Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("key", "value"))
-    Seq((2, 2), (1, 4), (1, 1), (0, 3)).toDF("c", "d").createOrReplaceTempView("source")
-
-    // basic subquery
-    val e0 = intercept[AnalysisException] {
-      executeUpdate(target = tableSQLIdentifier,
-        set = "key = 1",
-        where = "key < (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e0.contains("Subqueries are not supported"))
-
-    // subquery with EXISTS
-    val e1 = intercept[AnalysisException] {
-      executeUpdate(target = tableSQLIdentifier,
-        set = "key = 1",
-        where = "EXISTS (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e1.contains("Subqueries are not supported"))
-
-    // subquery with NOT EXISTS
-    val e2 = intercept[AnalysisException] {
-      executeUpdate(target = tableSQLIdentifier,
-        set = "key = 1",
-        where = "NOT EXISTS (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e2.contains("Subqueries are not supported"))
-
-    // subquery with IN
-    val e3 = intercept[AnalysisException] {
-      executeUpdate(target = tableSQLIdentifier,
-        set = "key = 1",
-        where = "key IN (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e3.contains("Subqueries are not supported"))
-
-    // subquery with NOT IN
-    val e4 = intercept[AnalysisException] {
-      executeUpdate(target = tableSQLIdentifier,
-        set = "key = 1",
-        where = "key NOT IN (SELECT max(c) FROM source)")
-    }.getMessage
-    assert(e4.contains("Subqueries are not supported"))
-  }
-
   test("nested data support") {
     // set a nested field
     checkUpdateJson(target = """
@@ -955,29 +910,6 @@ trait UpdateBaseMiscTests extends UpdateBaseMixin {
     set = "b = max(c)",
     where = "b > max(c)",
     expectException = true
-  )
-
-  // Explode functions are supported in set and where if there's only one row generated.
-  testUnsupportedExpression(
-    function = "explode",
-    functionType = "Generate",
-    data = Seq((1, 2, List(3))).toDF("a", "b", "c"),
-    set = "b = (select explode(c) from deltaTable)",
-    where = "b = (select explode(c) from deltaTable)",
-    expectException = false // only one row generated, no exception.
-  )
-
-  // Explode functions are supported in set and where but if there's more than one row generated,
-  // it will throw an exception.
-  testUnsupportedExpression(
-    function = "explode",
-    functionType = "Generate",
-    data = Seq((1, 2, List(3, 4))).toDF("a", "b", "c"),
-    set = "b = (select explode(c) from deltaTable)",
-    where = "b = (select explode(c) from deltaTable)",
-    expectException = true, // more than one generated, expect exception.
-    customErrorRegex =
-      Some(".*ore than one row returned by a subquery used as an expression(?s).*")
   )
 
   test("Variant type") {

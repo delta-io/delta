@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, Subquery, SupportsSubquery}
+import org.apache.spark.sql.delta.commands.{DeleteCommand, UpdateCommand}
 
 /**
  * Trait to allow processing a special transformation of [[SubqueryExpression]]
@@ -45,7 +46,9 @@ trait SubqueryTransformerHelper {
 
   /** Is the give plan a subquery root. */
   def isSubqueryRoot(plan: LogicalPlan): Boolean = {
-    plan.isInstanceOf[Subquery] || plan.isInstanceOf[SupportsSubquery]
+    plan.isInstanceOf[Subquery] ||
+      (plan.isInstanceOf[SupportsSubquery] && !plan.isInstanceOf[UpdateCommand]
+        && !plan.isInstanceOf[DeleteCommand])
   }
 
   private def transformSubqueries(
