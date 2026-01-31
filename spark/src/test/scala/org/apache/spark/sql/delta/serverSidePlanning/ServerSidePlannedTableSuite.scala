@@ -363,6 +363,104 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
+  test("SchemaUtils.explodeNestedFieldNames - verify behavior with dotted field patterns") {
+    import org.apache.spark.sql.types._
+    import org.apache.spark.sql.util.SchemaUtils
+
+    // Build comprehensive test schema
+    val tableSchema = StructType(Seq(
+      // Top-level with dots
+      StructField("a.b.c", StringType),
+
+      // Normal nested (no dots anywhere)
+      StructField("parent", StructType(Seq(
+        StructField("child", StringType)
+      ))),
+
+      // Multi-level nested (no dots)
+      StructField("level1", StructType(Seq(
+        StructField("level2", StructType(Seq(
+          StructField("level3", StringType)
+        )))
+      ))),
+
+      // Nested where leaf has dots
+      StructField("data", StructType(Seq(
+        StructField("field.name", StringType)
+      ))),
+
+      // Nested where struct itself has dots
+      StructField("root.struct", StructType(Seq(
+        StructField("value", StringType)
+      )))
+    ))
+
+    val testCases = Seq(
+      // (description, requiredSchema, expected output)
+      (
+        "top-level column with dots",
+        StructType(Seq(StructField("a.b.c", StringType))),
+        Seq("`a.b.c`")
+      ),
+
+      (
+        "normal nested - no dots",
+        StructType(Seq(StructField("parent", StructType(Seq(
+          StructField("child", StringType)
+        ))))),
+        Seq("parent.child")
+      ),
+
+      (
+        "multi-level nested - no dots",
+        StructType(Seq(StructField("level1", StructType(Seq(
+          StructField("level2", StructType(Seq(
+            StructField("level3", StringType)
+          )))
+        ))))),
+        Seq("level1.level2.level3")
+      ),
+
+      (
+        "nested where leaf field has dots",
+        StructType(Seq(StructField("data", StructType(Seq(
+          StructField("field.name", StringType)
+        ))))),
+        Seq("data.`field.name`")
+      ),
+
+      (
+        "struct name has dots, field does not",
+        StructType(Seq(StructField("root.struct", StructType(Seq(
+          StructField("value", StringType)
+        ))))),
+        Seq("`root.struct`.value")
+      ),
+
+      (
+        "mixed - multiple fields with different patterns",
+        StructType(Seq(
+          StructField("a.b.c", StringType),
+          StructField("parent", StructType(Seq(
+            StructField("child", StringType)
+          ))),
+          StructField("data", StructType(Seq(
+            StructField("field.name", StringType)
+          )))
+        )),
+        Seq("`a.b.c`", "parent.child", "data.`field.name`")
+      )
+    )
+
+    // Test Spark's SchemaUtils.explodeNestedFieldNames directly
+    // This verifies the utility behaves as expected for our projection pushdown use case
+    testCases.foreach { case (description, requiredSchema, expected) =>
+      val result = SchemaUtils.explodeNestedFieldNames(requiredSchema)
+      assert(result == expected,
+        s"$description: expected [${expected.mkString(", ")}], got [${result.mkString(", ")}]")
+    }
+  }
+
   test("projection and filter pushed together") {
     withPushdownCapturingEnabled {
       sql("SELECT id FROM test_db.shared_test WHERE value > 10").collect()
