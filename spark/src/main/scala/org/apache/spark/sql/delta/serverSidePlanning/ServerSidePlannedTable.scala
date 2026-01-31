@@ -49,7 +49,16 @@ object ServerSidePlannedTable extends DeltaLogging {
     "aws.temporary.credentials",
     "azure.temporary.credentials",
     "gcs.temporary.credentials",
-    "credential"
+    "credential",
+    // Unity Catalog credentials (prefixed with option.)
+    "option.fs.s3a.access.key",
+    "option.fs.s3a.secret.key",
+    "option.fs.s3a.session.token",
+    "option.fs.s3a.aws.credentials.provider",
+    "option.fs.azure.sas",  // Prefix - matches option.fs.azure.sas.<container>.<account>...
+    "option.fs.azure.sas.token.provider.type",
+    "option.fs.gs.auth.access.token",
+    "option.fs.gs.auth.access.token.provider"
   )
 
   /**
@@ -164,12 +173,16 @@ object ServerSidePlannedTable extends DeltaLogging {
    * Unity Catalog tables may lack credentials when accessed without proper permissions.
    * UC injects credentials as table properties, see:
    * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   *   io/unitycatalog/spark/UCSingleCatalog.scala
    */
   private def hasCredentials(table: Table): Boolean = {
-    // Check table properties for credential information
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+    // Use startsWith to handle both exact keys and prefixes; 
+    // e.g., Azure SAS uses "option.fs.azure.sas" as prefix since 
+    // full key includes container/account.
+    properties.keySet().asScala.exists { propertyKey =>
+      CREDENTIAL_PROPERTY_KEYS.exists(credKey => propertyKey.startsWith(credKey))
+    }
   }
 }
 
