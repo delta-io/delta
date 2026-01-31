@@ -177,7 +177,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     validateStreamingOptions(deltaOptions);
     return new SparkMicroBatchStream(
         snapshotManager,
-        initialSnapshot,
+        snapshotManager.loadLatestSnapshot(),
         hadoopConf,
         SparkSession.active(),
         deltaOptions,

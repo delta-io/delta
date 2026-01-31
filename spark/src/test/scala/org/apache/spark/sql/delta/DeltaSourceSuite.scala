@@ -2525,103 +2525,101 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
   test("handling nullability schema changes") {
-    withTable("srcTable") {
-      withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
-        def readStream(startingVersion: Option[Long] = None): DataFrame = {
-          var dsr = spark.readStream
-          startingVersion.foreach { v =>
-            dsr = dsr.option("startingVersion", v)
-          }
-          dsr.table("srcTable")
+    withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
+      def readStream(startingVersion: Option[Long] = None): DataFrame = {
+        val options = startingVersion match {
+          case Some(version) => Map("startingVersion" -> version.toString)
+          case None => Map.empty[String, String]
         }
+        loadStreamWithOptions(srcTblDir.getCanonicalPath, options)
+      }
 
-        sql(s"""
+      val deltaLog = DeltaLog.forTable(spark, new Path(srcTblDir.toURI))
+
+      sql(s"""
              |CREATE TABLE srcTable (
              |  a STRING NOT NULL,
              |  b STRING NOT NULL
              |) USING DELTA LOCATION '${srcTblDir.getCanonicalPath}'
              |""".stripMargin)
-        sql("""
-            |INSERT INTO srcTable
-            | VALUES ("a", "b")
-            |""".stripMargin)
+      val schema1 = StructType(Seq(
+        StructField("a", StringType, nullable = false),
+        StructField("b", StringType, nullable = false)
+      ))
+      spark.createDataFrame(spark.sparkContext.parallelize(Seq(Row("a", "b"))), schema1)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
 
-        // Initialize the stream to pass the initial snapshot
-        testStream(readStream())(
-          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-          ProcessAllAvailable(),
-          CheckAnswer(("a", "b"))
-        )
+      // Initialize the stream to pass the initial snapshot
+      testStream(readStream())(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        CheckAnswer(("a", "b"))
+      )
 
-        // It is ok to relax nullability during streaming post analysis, and restart would fix it.
-        var v1 = 0L
-        val clock = new StreamManualClock(System.currentTimeMillis())
-        testStream(readStream())(
-          StartStream(checkpointLocation = checkpointDir.getCanonicalPath,
-            trigger = ProcessingTimeTrigger(1000), triggerClock = clock),
-          ProcessAllAvailable(),
-          // Write more data and drop NOT NULL constraint
-          Execute { _ =>
-            // A batch of Delta actions
-            sql("""
-              |INSERT INTO srcTable
-              |VALUES ("c", "d")
-              |""".stripMargin)
-            sql("ALTER TABLE srcTable ALTER COLUMN a DROP NOT NULL")
-            sql("""
-              |INSERT INTO srcTable
-              |VALUES ("e", "f")
-              |""".stripMargin)
-            v1 = DeltaLog.forTable(spark, TableIdentifier("srcTable")).update().version
-          },
-          // Process next trigger
-          AdvanceManualClock(1 * 1000L),
-          // The query would fail because the read schema has nullable=false but the schema change
-          // tries to relax it, we cannot automatically move ahead with it.
-          ExpectFailure[DeltaIllegalStateException](t =>
-            assert(t.getMessage.contains("Detected schema change"))),
-          Execute { q =>
-            assert(!q.isActive)
-          },
-          // Upon restart, the backfill can work with relaxed nullability read schema
-          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
-          ProcessAllAvailable(),
-          // See how it loads data from across the nullability change without a problem
-          CheckAnswer(("c", "d"), ("e", "f"))
-        )
+      // It is ok to relax nullability during streaming post analysis, and restart would fix it.
+      var v1 = 0L
+      val clock = new StreamManualClock(System.currentTimeMillis())
+      testStream(readStream())(
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath,
+          trigger = ProcessingTimeTrigger(1000), triggerClock = clock),
+        ProcessAllAvailable(),
+        // Write more data and drop NOT NULL constraint
+        Execute { _ =>
+          // A batch of Delta actions
+          spark.createDataFrame(spark.sparkContext.parallelize(Seq(Row("c", "d"))), schema1)
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          withMetadata(deltaLog, StructType.fromDDL("a STRING, b STRING NOT NULL"))
+          val schema2 = StructType(Seq(
+            StructField("a", StringType, nullable = true),
+            StructField("b", StringType, nullable = false)
+          ))
+          spark.createDataFrame(spark.sparkContext.parallelize(Seq(Row("e", "f"))), schema2)
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          v1 = deltaLog.update().version
+        },
+        // Process next trigger
+        AdvanceManualClock(1 * 1000L),
+        // The query would fail because the read schema has nullable=false but the schema change
+        // tries to relax it, we cannot automatically move ahead with it.
+        ExpectFailure[DeltaIllegalStateException](t =>
+          assert(t.getMessage.contains("Detected schema change"))),
+        Execute { q =>
+          assert(!q.isActive)
+        },
+        // Upon restart, the backfill can work with relaxed nullability read schema
+        StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+        ProcessAllAvailable(),
+        // See how it loads data from across the nullability change without a problem
+        CheckAnswer(("c", "d"), ("e", "f"))
+      )
 
-        // However, it is NOT ok to read data with relaxed nullability during backfill, and restart
-        // would NOT fix it.
-        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("srcTable"))
-        deltaLog.withNewTransaction { txn =>
-          val schema = txn.snapshot.metadata.schema
-          val newSchema = StructType(schema("a").copy(nullable = false) :: schema("b") :: Nil)
-          txn.commit(txn.metadata.copy(schemaString = newSchema.json) :: Nil,
-            DeltaOperations.ManualUpdate)
-        }
-        sql("""
-            |INSERT INTO srcTable
-            |VALUES ("g", "h")
-            |""".stripMargin)
-        // Backfill from the ADD file action prior to the nullable=false, the latest schema has
-        // nullable = false, but the ADD file has nullable = true, which is not allowed as we don't
-        // want to show any nulls.
-        // It queries [INSERT (e, f), nullable=false schema change, INSERT (g, h)]
-        testStream(readStream(startingVersion = Some(v1)))(
-          StartStream(checkpointLocation = checkpointDir2.getCanonicalPath),
-          // See how it is:
-          // 1. a non-retryable exception as it is a backfill.
-          // 2. it comes from the new stream start check we added, before this, verifyStreamHygiene
-          //    could not detect because the most recent schema change looks exactly like the latest
-          //    schema.
-          ExpectFailure[DeltaIllegalStateException](t =>
-            assert(t.getMessage.contains("Detected schema change") &&
-              t.getStackTrace.exists(
-                _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))))
-        )
+      // However, it is NOT ok to read data with relaxed nullability during backfill, and restart
+      // would NOT fix it.
+      deltaLog.withNewTransaction { txn =>
+        val schema = txn.snapshot.metadata.schema
+        val newSchema = StructType(schema("a").copy(nullable = false) :: schema("b") :: Nil)
+        txn.commit(txn.metadata.copy(schemaString = newSchema.json) :: Nil,
+          DeltaOperations.ManualUpdate)
       }
+      spark.createDataFrame(spark.sparkContext.parallelize(Seq(Row("g", "h"))), schema1)
+        .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      // Backfill from the ADD file action prior to the nullable=false, the latest schema has
+      // nullable = false, but the ADD file has nullable = true, which is not allowed as we don't
+      // want to show any nulls.
+      // It queries [INSERT (e, f), nullable=false schema change, INSERT (g, h)]
+      testStream(readStream(startingVersion = Some(v1)))(
+        StartStream(checkpointLocation = checkpointDir2.getCanonicalPath),
+        // See how it is:
+        // 1. a non-retryable exception as it is a backfill.
+        // 2. it comes from the new stream start check we added, before this, verifyStreamHygiene
+        //    could not detect because the most recent schema change looks exactly like the latest
+        //    schema.
+        ExpectFailure[DeltaIllegalStateException](t =>
+          assert(t.getMessage.contains("Detected schema change") &&
+            t.getStackTrace.exists(
+              _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))))
+      )
     }
   }
 
