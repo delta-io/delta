@@ -359,7 +359,8 @@ object UpdateCatalog {
     }
 
     // We have to update the properties anyway with the latest version/timestamp information
-    catalog.alterTable(table.copy(properties = updatedProperties(snapshot) ++ additionalProperties))
+    // catalog.alterTable(
+    //  table.copy(properties = updatedProperties(snapshot) ++ additionalProperties))
   }
 
   /** Updates our properties map with the version and timestamp information of the snapshot. */

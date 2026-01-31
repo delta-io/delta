@@ -154,11 +154,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
-    val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
-    }
+    val id = TableIdentifier(
+      table = ident.name(),
+      database = ident.namespace().lastOption)
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
+
+    // scalastyle:off
+    if (existingTableOpt.isDefined) {
+      println(s"====> existingTableOpt -> tableIdentifier: ${existingTableOpt.get.identifier}")
+    }
+    // scalastyle:on
+
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -419,6 +426,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageReplace") {
+      // scalastyle:off
+      println(s"=====> stageReplace ==> $ident")
+      // scalastyle:on
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         new StagedDeltaTableV2(
           ident,
@@ -441,7 +451,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageCreateOrReplace") {
+      // scalastyle:off
+      println(s"=====> stageCreateOrReplace ==> $ident")
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
+        println(s"=====> StagedDeltaTableV2 ==> $ident")
         new StagedDeltaTableV2(
           ident,
           schema,
@@ -459,6 +472,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         )
         BestEffortStagedTable(ident, table, this)
       }
+      // scalastyle:on
     }
 
   override def stageCreate(
@@ -467,6 +481,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageCreate") {
+      // scalastyle:off
+      println(s"=====> stageCreate ==> $ident")
+      // scalastyle:on
+
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         new StagedDeltaTableV2(
           ident,
@@ -547,30 +565,70 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
     val db = tableDesc.identifier.database.getOrElse(catalog.getCurrentDatabase)
-    val tableIdentWithDB = tableDesc.identifier.copy(database = Some(db))
+    val tableIdentWithDB = tableDesc.identifier.copy(
+      database = Some(db),
+      catalog = tableDesc.identifier.catalog)
     tableDesc.copy(
       identifier = tableIdentWithDB,
       schema = schema,
       properties = validatedConfigurations)
   }
 
-  /** Checks if a table already exists for the provided identifier. */
   def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
-    val tableExists = catalog.tableExists(table)
-    if (tableExists) {
-      val oldTable = catalog.getTableMetadata(table)
-      if (oldTable.tableType == CatalogTableType.VIEW) {
-        throw DeltaErrors.cannotWriteIntoView(table)
+
+    val namespace = (table.catalog, table.database) match {
+      case (Some(cat), Some(db)) => Array(cat, db)
+      case (Some(cat), None) => Array(cat, "default")
+      case (None, Some(db)) => Array(db)
+      case (None, None) => Array("default")
+    }
+    val ident = Identifier.of(namespace, table.table)
+
+    getExistingTableIfExists(ident)
+  }
+
+
+  /** Checks if a table already exists for the provided identifier. */
+  def getExistingTableIfExists(ident: Identifier): Option[CatalogTable] = {
+    // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
+    // will check the file system itself
+
+    // scalastyle:off
+    println(s"===> getExistingTableIfExists ==> $ident")
+    // scalastyle:on
+
+    try {
+      val catalogTableOpt = this.loadTable(ident) match {
+        case v1Table: V1Table =>
+          Some(v1Table.catalogTable)
+        case v2Table: DeltaTableV2 =>
+          v2Table.catalogTable
+        case _ =>
+          None
       }
-      if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
-        throw DeltaErrors.notADeltaTable(table.table)
+
+      if (catalogTableOpt.isDefined) {
+        // scalastyle:off
+        println(s"====> getExistingTableIfExists -> catalogTableOpt -> ${catalogTableOpt.get.identifier}")
+        // scalastyle:on
       }
-      Some(oldTable)
-    } else {
-      None
+
+
+      if (catalogTableOpt.isDefined && catalogTableOpt.get.tableType == CatalogTableType.VIEW) {
+        // throw DeltaErrors.cannotWriteIntoView()
+      }
+
+      if (catalogTableOpt.isDefined &&
+        !DeltaSourceUtils.isDeltaTable(catalogTableOpt.get.provider)) {
+        throw DeltaErrors.notADeltaTable(ident.toString)
+      }
+      catalogTableOpt
+    } catch {
+      case _: NoSuchTableException =>
+        None
     }
   }
 
@@ -650,6 +708,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+
+      // scalastyle:off
+      println(s"===> asSelectQuery ===> isDefined: ${asSelectQuery.isDefined} ==> $asSelectQuery")
+      // scalastyle:on
+
       createDeltaTable(
         ident,
         schema,
@@ -683,6 +746,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         override def toInsertableRelation(): InsertableRelation = {
           new InsertableRelation {
             override def insert(data: DataFrame, overwrite: Boolean): Unit = {
+              // scalastyle:off
+              println(s"====> call the DeltaV1WriteBuilder#insert ==> overwrite $overwrite")
+              // scalastyle:on
               asSelectQuery = Option(data)
             }
           }

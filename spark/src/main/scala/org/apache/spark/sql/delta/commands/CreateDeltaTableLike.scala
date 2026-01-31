@@ -64,7 +64,13 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           throw DeltaErrors.tableLocationMismatch(table, existingTable)
         case _ =>
       }
+
+      // scalastyle:off
+      println(s"==> getCatalogTableWithLocation -> existingTableOpt.identifier -> ${existingTable.identifier} -> table.identifier -> ${table.identifier}")
+      // scalastyle:on
+
       table.copy(
+        identifier = existingTable.identifier,
         storage = existingTable.storage,
         tableType = existingTable.tableType)
     } else if (table.storage.locationUri.isEmpty) {
