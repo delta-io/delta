@@ -34,8 +34,10 @@ import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.GetMetast
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.RestGetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Metadata;
 import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Protocol;
+import io.delta.storage.commit.uccommitcoordinator.UCRestClientPayload.Uniform;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.unitycatalog.client.auth.TokenProvider;
 import org.apache.hadoop.fs.Path;
 import org.apache.http.client.methods.*;
@@ -49,10 +51,8 @@ import org.apache.http.util.EntityUtils;
 
 import java.io.IOException;
 import java.net.URI;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
+import java.util.function.Supplier;
 
 /**
  * A REST client implementation of [[UCClient]] for interacting with Unity Catalog's commit
@@ -193,7 +193,8 @@ public class UCTokenBasedRestClient implements UCClient {
       Optional<Long> lastKnownBackfilledVersion,
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
-      Optional<AbstractProtocol> newProtocol
+      Optional<AbstractProtocol> newProtocol,
+      Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
     // Validate required parameters
     Objects.requireNonNull(tableId, "tableId must not be null.");
@@ -208,6 +209,7 @@ public class UCTokenBasedRestClient implements UCClient {
       commitRequest.latestBackfilledVersion = version);
     newMetadata.ifPresent(m -> commitRequest.metadata = Metadata.fromAbstractMetadata(m));
     newProtocol.ifPresent(p -> commitRequest.protocol = Protocol.fromAbstractProtocol(p));
+    uniform.ifPresent(u -> commitRequest.uniform = Uniform.fromUniformMetadata(u));
 
     URI uri = URI.create(resolve(baseUri, "/delta/preview/commits"));
     HttpPost request = new HttpPost(uri);
