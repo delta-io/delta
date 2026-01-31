@@ -3027,10 +3027,10 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc(
         "Controls the Delta connector enable mode. " +
           "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
-          "supported operations), STRICT (should ONLY be enabled for testing).")
+          "supported operations, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
       .checkValues(Set("AUTO", "NONE", "STRICT"))
-      .createWithDefault("NONE")
+      .createWithDefault("AUTO")
 
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
     buildConf("streaming.initialSnapshotMaxFiles")
