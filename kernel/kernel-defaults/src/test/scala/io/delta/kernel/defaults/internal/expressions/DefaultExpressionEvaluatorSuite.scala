@@ -2004,7 +2004,6 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
       s"""Unsupported collation: "$collationIdentifier".
          | Default Engine supports just "$SPARK_UTF8_BINARY"
          | collation.""".stripMargin.replace("\n", "")))
-
   }
 
   private def testCollatedComparator(
@@ -2057,5 +2056,236 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
         outputVector.getBoolean(0) === expResult,
         s"Unexpected value: $comparator($left, $right)")
     }
+  }
+
+  // Helper to create a bounding box struct type
+  private def boundingBoxType: StructType = {
+    new StructType()
+      .add("xmin", DoubleType.DOUBLE)
+      .add("ymin", DoubleType.DOUBLE)
+      .add("xmax", DoubleType.DOUBLE)
+      .add("ymax", DoubleType.DOUBLE)
+  }
+
+  // Helper to create a bounding box column vector
+  private def createBoundingBoxVector(
+      numRows: Int,
+      xminValues: Array[Double],
+      yminValues: Array[Double],
+      xmaxValues: Array[Double],
+      ymaxValues: Array[Double],
+      nullability: Optional[Array[Boolean]] = Optional.empty()): ColumnVector = {
+    import io.delta.kernel.defaults.internal.data.vector.{DefaultDoubleVector, DefaultStructVector}
+
+    val xminVector = new DefaultDoubleVector(numRows, Optional.empty(), xminValues)
+    val yminVector = new DefaultDoubleVector(numRows, Optional.empty(), yminValues)
+    val xmaxVector = new DefaultDoubleVector(numRows, Optional.empty(), xmaxValues)
+    val ymaxVector = new DefaultDoubleVector(numRows, Optional.empty(), ymaxValues)
+
+    new DefaultStructVector(
+      numRows,
+      boundingBoxType,
+      nullability,
+      Array(xminVector, yminVector, xmaxVector, ymaxVector))
+  }
+
+  test("ST_INTERSECT_BOXES: basic intersection tests") {
+    val numRows = 8
+
+    // Test cases: each row has a different intersection scenario
+    // Row 0: boxes intersect (overlap)
+    // Row 1: boxes intersect (one inside another)
+    // Row 2: boxes don't intersect (no overlap)
+    // Row 3: boxes touch on edge (min edge of box1 == max edge of box2)
+    // Row 4: boxes touch at corner
+    // Row 5: boxes are identical
+    // Row 6: boxes overlap on X but not Y
+    // Row 7: boxes overlap on Y but not X
+
+    val leftXmin = Array(0.0, 5.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0)
+    val leftYmin = Array(0.0, 5.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0)
+    val leftXmax = Array(10.0, 15.0, 10.0, 20.0, 10.0, 10.0, 10.0, 10.0)
+    val leftYmax = Array(10.0, 15.0, 10.0, 20.0, 10.0, 10.0, 5.0, 20.0)
+
+    val rightXmin = Array(5.0, 7.0, 11.0, 20.0, 10.0, 0.0, 5.0, 11.0)
+    val rightYmin = Array(5.0, 7.0, 11.0, 20.0, 10.0, 0.0, 10.0, 5.0)
+    val rightXmax = Array(15.0, 13.0, 20.0, 30.0, 20.0, 10.0, 15.0, 20.0)
+    val rightYmax = Array(15.0, 13.0, 20.0, 30.0, 20.0, 10.0, 15.0, 15.0)
+
+    val expectedResults = Array(
+      true, // Row 0: overlap
+      true, // Row 1: one inside another
+      false, // Row 2: no overlap
+      true, // Row 3: touching on edge (should intersect)
+      true, // Row 4: touching at corner (should intersect)
+      true, // Row 5: identical boxes
+      false, // Row 6: overlap on X but not Y
+      false // Row 7: overlap on Y but not X
+    )
+
+    val leftVector = createBoundingBoxVector(numRows, leftXmin, leftYmin, leftXmax, leftYmax)
+    val rightVector = createBoundingBoxVector(numRows, rightXmin, rightYmin, rightXmax, rightYmax)
+
+    val batchSchema = new StructType()
+      .add("bbox1", boundingBoxType)
+      .add("bbox2", boundingBoxType)
+    val batch = new DefaultColumnarBatch(numRows, batchSchema, Array(leftVector, rightVector))
+
+    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
+    val outputVector = evaluator(batchSchema, expression, BooleanType.BOOLEAN).eval(batch)
+
+    assert(outputVector.getSize === numRows)
+    assert(outputVector.getDataType === BooleanType.BOOLEAN)
+
+    for (rowId <- 0 until numRows) {
+      assert(
+        !outputVector.isNullAt(rowId),
+        s"Row $rowId should not be null")
+      assert(
+        outputVector.getBoolean(rowId) === expectedResults(rowId),
+        s"Row $rowId: expected ${expectedResults(rowId)} but got ${outputVector.getBoolean(rowId)}")
+    }
+  }
+
+  test("ST_INTERSECT_BOXES: null handling") {
+    import io.delta.kernel.defaults.internal.data.vector.{DefaultDoubleVector, DefaultStructVector}
+
+    val numRows = 4
+
+    // Test cases for null handling:
+    // Row 0: both boxes are valid
+    // Row 1: left box is null
+    // Row 2: right box is null
+    // Row 3: both boxes have null coordinates (xmin is null)
+
+    val leftXmin = Array(0.0, 0.0, 0.0, Double.NaN) // NaN represents null for row 3
+    val leftYmin = Array(0.0, 0.0, 0.0, 0.0)
+    val leftXmax = Array(10.0, 10.0, 10.0, 10.0)
+    val leftYmax = Array(10.0, 10.0, 10.0, 10.0)
+
+    val rightXmin = Array(5.0, 5.0, 5.0, 5.0)
+    val rightYmin = Array(5.0, 5.0, 5.0, 5.0)
+    val rightXmax = Array(15.0, 15.0, 15.0, 15.0)
+    val rightYmax = Array(15.0, 15.0, 15.0, 15.0)
+
+    // Create vectors with nullability for boxes
+    val leftBoxNullability = Array(false, true, false, false)
+    val rightBoxNullability = Array(false, false, true, false)
+
+    // Create coordinate vectors with nullability for row 3
+    val xminNullability = Array(false, false, false, true)
+    val xminVector = new DefaultDoubleVector(numRows, Optional.of(xminNullability), leftXmin)
+    val yminVector = new DefaultDoubleVector(numRows, Optional.empty(), leftYmin)
+    val xmaxVector = new DefaultDoubleVector(numRows, Optional.empty(), leftXmax)
+    val ymaxVector = new DefaultDoubleVector(numRows, Optional.empty(), leftYmax)
+
+    val leftVector = new DefaultStructVector(
+      numRows,
+      boundingBoxType,
+      Optional.of(leftBoxNullability),
+      Array(xminVector, yminVector, xmaxVector, ymaxVector))
+
+    val rightVector = createBoundingBoxVector(
+      numRows,
+      rightXmin,
+      rightYmin,
+      rightXmax,
+      rightYmax,
+      Optional.of(rightBoxNullability))
+
+    val batchSchema = new StructType()
+      .add("bbox1", boundingBoxType)
+      .add("bbox2", boundingBoxType)
+    val batch = new DefaultColumnarBatch(numRows, batchSchema, Array(leftVector, rightVector))
+
+    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
+    val outputVector = evaluator(batchSchema, expression, BooleanType.BOOLEAN).eval(batch)
+
+    assert(outputVector.getSize === numRows)
+    assert(outputVector.getDataType === BooleanType.BOOLEAN)
+
+    // Row 0: both valid, should intersect
+    assert(!outputVector.isNullAt(0), "Row 0 should not be null")
+    assert(outputVector.getBoolean(0) === true, "Row 0 should intersect")
+
+    // Row 1: left box is null, result should be null
+    assert(outputVector.isNullAt(1), "Row 1 should be null (left box is null)")
+
+    // Row 2: right box is null, result should be null
+    assert(outputVector.isNullAt(2), "Row 2 should be null (right box is null)")
+
+    // Row 3: coordinate is null, result should be null
+    assert(outputVector.isNullAt(3), "Row 3 should be null (coordinate is null)")
+  }
+
+  test("ST_INTERSECT_BOXES: validation errors - invalid field types") {
+    val invalidBboxType = new StructType()
+      .add("xmin", IntegerType.INTEGER) // should be double
+      .add("ymin", DoubleType.DOUBLE)
+      .add("xmax", DoubleType.DOUBLE)
+      .add("ymax", DoubleType.DOUBLE)
+
+    val batchSchema = new StructType()
+      .add("bbox1", invalidBboxType)
+      .add("bbox2", boundingBoxType)
+
+    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
+
+    val exception = intercept[UnsupportedOperationException] {
+      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
+    }
+    assert(exception.getMessage.contains("ST_INTERSECT_BOXES expects double type"))
+  }
+
+  test("ST_INTERSECT_BOXES: validation errors - invalid field names") {
+    val invalidBboxType = new StructType()
+      .add("x_min", DoubleType.DOUBLE) // wrong name
+      .add("ymin", DoubleType.DOUBLE)
+      .add("xmax", DoubleType.DOUBLE)
+      .add("ymax", DoubleType.DOUBLE)
+
+    val batchSchema = new StructType()
+      .add("bbox1", invalidBboxType)
+      .add("bbox2", boundingBoxType)
+
+    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
+
+    val exception = intercept[UnsupportedOperationException] {
+      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
+    }
+    assert(exception.getMessage.contains("ST_INTERSECT_BOXES expects bounding box field 'xmin'"))
+  }
+
+  test("ST_INTERSECT_BOXES: validation errors - wrong number of fields") {
+    val invalidBboxType = new StructType()
+      .add("xmin", DoubleType.DOUBLE)
+      .add("ymin", DoubleType.DOUBLE)
+      .add("xmax", DoubleType.DOUBLE)
+    // missing ymax
+
+    val batchSchema = new StructType()
+      .add("bbox1", invalidBboxType)
+      .add("bbox2", boundingBoxType)
+
+    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
+
+    val exception = intercept[UnsupportedOperationException] {
+      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
+    }
+    assert(
+      exception.getMessage.contains("ST_INTERSECT_BOXES expects bounding box struct with 4 fields"))
+  }
+
+  test("ST_INTERSECT_BOXES: validation errors - non-struct type") {
+    val batchSchema = new StructType()
+      .add("bbox1", StringType.STRING) // should be struct
+      .add("bbox2", boundingBoxType)
+
+    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
+
+    val exception = intercept[UnsupportedOperationException] {
+      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
+    }
+    assert(exception.getMessage.contains("ST_INTERSECT_BOXES expects struct type inputs"))
   }
 }
