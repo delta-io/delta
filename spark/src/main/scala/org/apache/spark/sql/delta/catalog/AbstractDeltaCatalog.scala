@@ -30,7 +30,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
@@ -158,7 +158,29 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       TableIdentifier(ident.name(), ident.namespace().lastOption)
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+
+    // Check if this is a dynamic partition overwrite operation
+    val isDynamicPartitionOverwrite = writeOptions.get(
+      DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION)
+      .exists(_.equalsIgnoreCase(DeltaOptions.PARTITION_OVERWRITE_MODE_DYNAMIC))
+
+    // For Unity Catalog tables with dynamic partition overwrite, load the existing table from UC.
+    // This is needed because getExistingTableIfExists doesn't find UC tables.
+    val existingTableOpt = if (isUnityCatalog && isDynamicPartitionOverwrite &&
+        (operation == TableCreationModes.CreateOrReplace ||
+         operation == TableCreationModes.Replace)) {
+      try {
+        super.loadTable(ident) match {
+          case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+            Some(v1.catalogTable)
+          case _ => getExistingTableIfExists(id)
+        }
+      } catch {
+        case _: NoSuchTableException => getExistingTableIfExists(id)
+      }
+    } else {
+      getExistingTableIfExists(id)
+    }
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -198,6 +220,24 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         None,
         maybeClusterBySpec
       )
+
+    // For dynamic partition overwrite on an existing Unity Catalog table,
+    // run WriteIntoDelta directly instead of CreateDeltaTableCommand.
+    if (isUnityCatalog && existingTableOpt.isDefined && isDynamicPartitionOverwrite
+        && sourceQuery.isDefined) {
+      val deltaLog = DeltaLog.forTable(spark, existingTableOpt.get)
+      WriteIntoDelta(
+        deltaLog,
+        operation.mode,
+        new DeltaOptions(writeOptions, spark.sessionState.conf),
+        existingTableOpt.get.partitionColumnNames,
+        existingTableOpt.get.properties,
+        sourceQuery.get,
+        existingTableOpt,
+        schemaInCatalog = None
+      ).run(spark)
+      return loadTable(ident)
+    }
 
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
