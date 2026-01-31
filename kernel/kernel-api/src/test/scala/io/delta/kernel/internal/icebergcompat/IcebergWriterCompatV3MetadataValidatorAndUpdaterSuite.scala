@@ -393,16 +393,23 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
     validateAndUpdateIcebergWriterCompatV3Metadata(false, metadata, protocol)
   }
 
-  Seq("collations", "defaultColumns").foreach { unsupportedIncompatibleFeature =>
-    test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
-      // We add this test here so that it will fail when we add Kernel support for these features
-      // When this happens -> add the feature to the test above
+  test("collations and collations-preview features are incompatible with icebergWriterCompatV3") {
+    Seq("collations", "collations-preview").foreach { unsupportedIncompatibleFeature =>
       checkUnsupportedOrIncompatibleFeature(
         unsupportedIncompatibleFeature,
-        "Unsupported Delta table feature: table requires feature " +
-          s""""$unsupportedIncompatibleFeature" which is unsupported by this version of """ +
-          "Delta Kernel")
+        s"Table features [$unsupportedIncompatibleFeature] are incompatible with" +
+          s" icebergWriterCompatV3.")
     }
+  }
+
+  test(s"cannot enable with incompatible UNSUPPORTED feature defaultColumns") {
+    // We add this test here so that it will fail when we add Kernel support this feature
+    // When this happens -> add the feature to the test above
+    checkUnsupportedOrIncompatibleFeature(
+      "defaultColumns",
+      "Unsupported Delta table feature: table requires feature " +
+        s""""defaultColumns" which is unsupported by this version of """ +
+        "Delta Kernel")
   }
 
   /* --- INVARIANTS_INACTIVE_CHECK tests --- */

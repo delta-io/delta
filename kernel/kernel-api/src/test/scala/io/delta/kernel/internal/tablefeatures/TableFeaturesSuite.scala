@@ -68,7 +68,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "inCommitTimestamp",
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
-    "clustering")
+    "clustering",
+    "collations",
+    "collations-preview")
 
   val legacyFeatures = Seq(
     "appendOnly",
