@@ -239,6 +239,16 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }
     // Now we query the file list, this is where we fail if the provided versions do not exist
     if (startBoundary.expectError) {
+      // Special case: when requesting startVersion -> latest (default end boundary),
+      // Kernel allows an empty range iff startVersion == latestVersion + 1.
+      if (
+        startBoundary.version.isDefined
+        && endBoundary.isInstanceOf[DefaultBoundaryDef]
+        && startBoundary.expectedVersion == endBoundary.expectedVersion + 1
+      ) {
+        return None
+      }
+
       // These either hit DeltaErrors.noCommitFilesFoundForVersionRange or
       // DeltaErrors.startVersionNotFound
       return Some(classOf[KernelException], s"no log file")
