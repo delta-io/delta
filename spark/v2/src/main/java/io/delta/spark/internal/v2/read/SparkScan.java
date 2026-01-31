@@ -58,6 +58,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Collections.unmodifiableList(
           Arrays.asList(
               DeltaOptions.STARTING_VERSION_OPTION(),
+              DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
               DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
 
@@ -76,7 +77,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                   DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
                   DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
-                  DeltaOptions.STARTING_TIMESTAMP_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
