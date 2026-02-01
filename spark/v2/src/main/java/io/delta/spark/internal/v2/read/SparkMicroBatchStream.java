@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -1027,20 +1026,21 @@ public class SparkMicroBatchStream
     org.apache.spark.sql.Dataset<org.apache.spark.sql.Row> sortedFilesDF =
         DistributedLogReplayHelper.getInitialSnapshotForStreaming(spark, snapshot, numPartitions);
 
-    List<org.apache.spark.sql.Row> fileRows = sortedFilesDF.collectAsList();
-
-    // Validate size limit
-    if (fileRows.size() > maxInitialSnapshotFiles) {
+    // Validate size limit (use count for efficiency)
+    long fileCount = sortedFilesDF.count();
+    if (fileCount > maxInitialSnapshotFiles) {
       throw (RuntimeException)
           DeltaErrors.initialSnapshotTooLargeForStreaming(
-              version, fileRows.size(), maxInitialSnapshotFiles, tablePath);
+              version, fileCount, maxInitialSnapshotFiles, tablePath);
     }
 
-    // Convert DataFrame Rows (with add struct) to AddFiles
-    // We need to use Kernel API for this to ensure proper AddFile construction
-    Scan scan = snapshot.getScanBuilder().build();
-    List<AddFile> allAddFiles = new ArrayList<>();
+    // Convert sorted DataFrame to AddFiles using DistributedScanBuilder
+    // withSortKey() ensures ordering is preserved for streaming
+    io.delta.kernel.ScanBuilder scanBuilder =
+        new DistributedScanBuilder(spark, snapshot, numPartitions, sortedFilesDF).withSortKey();
+    io.delta.kernel.Scan scan = scanBuilder.build();
 
+    List<AddFile> addFiles = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
@@ -1049,7 +1049,7 @@ public class SparkMicroBatchStream
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
           Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
           if (addOpt.isPresent()) {
-            allAddFiles.add(addOpt.get());
+            addFiles.add(addOpt.get());
           }
         }
       }
@@ -1057,21 +1057,6 @@ public class SparkMicroBatchStream
       throw new RuntimeException(
           String.format("Failed to read snapshot files at version %d", version), e);
     }
-
-    // Sort using the distributed order: build path->index map from DataFrame
-    Map<String, Integer> pathToOrder = new HashMap<>();
-    for (int i = 0; i < fileRows.size(); i++) {
-      org.apache.spark.sql.Row row = fileRows.get(i);
-      org.apache.spark.sql.Row addStruct = row.getStruct(0);
-      String path = addStruct.getString(addStruct.fieldIndex("path"));
-      pathToOrder.put(path, i);
-    }
-
-    // Sort AddFiles according to distributed sort order
-    List<AddFile> addFiles = new ArrayList<>(allAddFiles);
-    addFiles.sort(
-        Comparator.comparing(
-            addFile -> pathToOrder.getOrDefault(addFile.getPath(), Integer.MAX_VALUE)));
 
     // Build IndexedFile list with sentinels
     List<IndexedFile> indexedFiles = new ArrayList<>();
