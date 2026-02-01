@@ -16,6 +16,11 @@
 
 package io.delta.flink.table;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+import io.delta.flink.MockHttp;
+import io.delta.flink.TestHelper;
 import io.delta.kernel.types.*;
 import java.net.URI;
 import java.util.Collections;
@@ -24,17 +29,43 @@ import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 /** JUnit 6 test suite for UnityCatalog. */
-class UnityCatalogTest {
+class UnityCatalogTest extends TestHelper {
 
   private static final URI CATALOG_ENDPOINT =
       URI.create("https://e2-dogfood.staging.cloud.databricks.com/");
   private static final String CATALOG_TOKEN = "";
 
+  @Test
+  void testGetTable() {
+    withTempDir(
+        dir ->
+            MockHttp.withMock(
+                MockHttp.forExistingUCTable(dir.getAbsolutePath()),
+                mockHttp -> {
+                  UnityCatalog uc = new UnityCatalog("main", mockHttp.uri(), "");
+                  uc.open();
+
+                  DeltaCatalog.TableDescriptor tableDescriptor = uc.getTable("dummy");
+                  assertEquals(
+                      AbstractKernelTable.normalize(URI.create(dir.getAbsolutePath())),
+                      tableDescriptor.tablePath);
+                }));
+  }
+
   @Disabled("Requires Unity Catalog access")
   @Test
-  void testCreateTable() {
+  void testGetTableFromDogfood() {
     UnityCatalog catalog = new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN);
+    catalog.open();
+    DeltaCatalog.TableDescriptor table = catalog.getTable("main.hao.testcreatewrite");
+    assertEquals("", table.tablePath);
+  }
 
+  @Disabled("Requires Unity Catalog access")
+  @Test
+  void testCreateTableFromDogfood() {
+    UnityCatalog catalog = new UnityCatalog("main", CATALOG_ENDPOINT, CATALOG_TOKEN);
+    catalog.open();
     StructType nested =
         new StructType().add("nested", IntegerType.INTEGER).add("nested_id", StringType.STRING);
 
@@ -55,6 +86,10 @@ class UnityCatalogTest {
             .add("map", new MapType(IntegerType.INTEGER, StringType.STRING, true), true)
             .add("map2", new MapType(IntegerType.INTEGER, nested, true), true);
 
-    catalog.createTable("main.hao.testcreate", schema, Collections.emptyList(), Map.of("a", "b"));
+    catalog.createTable(
+        "main.hao.testcreate", schema, Collections.emptyList(), Map.of("a", "b"), (uri) -> {});
+
+    DeltaCatalog.TableDescriptor tableInfo = catalog.getTable("main.hao.testcreate");
+    assertNotNull(tableInfo.tablePath);
   }
 }

@@ -16,10 +16,14 @@
 
 package io.delta.flink.table;
 
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.engine.FileSystemClient;
 import io.delta.kernel.types.StructType;
+import java.io.IOException;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * A {@code HadoopCatalog} is a file-system–backed catalog implementation that resolves tables using
@@ -46,6 +50,7 @@ import java.util.Map;
  */
 public class HadoopCatalog implements DeltaCatalog {
 
+  private AbstractKernelTable engineLoader;
   private final Map<String, String> configurations;
 
   /**
@@ -61,19 +66,21 @@ public class HadoopCatalog implements DeltaCatalog {
     this.configurations = conf;
   }
 
-  /**
-   * Loads a table using the given table identifier, which is interpreted as a filesystem path.
-   *
-   * <p>The {@code tableId} is normalized and resolved into a {@link URI} representing the table
-   * location. The same identifier is also used as the table UUID, as this catalog does not maintain
-   * a separate identifier namespace.
-   *
-   * @param tableId the table identifier, interpreted as a filesystem path or URI
-   * @return a {@link TableDescriptor} describing the resolved table
-   */
+  public void setEngineLoader(AbstractKernelTable engineLoader) {
+    this.engineLoader = engineLoader;
+  }
+
+  /** Does a simple check of existence of _delta_log folder */
   @Override
   public TableDescriptor getTable(String tableId) {
     URI tablePath = AbstractKernelTable.normalize(URI.create(tableId));
+    try {
+      Engine engine = this.engineLoader.getEngine();
+      FileSystemClient fs = engine.getFileSystemClient();
+      fs.getFileStatus(tablePath.resolve("_delta_log").toString());
+    } catch (IOException e) {
+      throw new ExceptionUtils.ResourceNotFoundException(e.getMessage());
+    }
     TableDescriptor info = new TableDescriptor();
     info.tableId = tableId;
     info.tablePath = tablePath;
@@ -81,34 +88,18 @@ public class HadoopCatalog implements DeltaCatalog {
     return info;
   }
 
-  /**
-   * Creates a table at the given location in a file-based catalog.
-   *
-   * <p>The {@code tableId} is interpreted as a filesystem path or URI that identifies the table
-   * location. This operation does not create any data or log files at the specified path.
-   *
-   * @param tableId The table identifier, interpreted as a filesystem path or URI that specifies the
-   *     table location.
-   * @param schema The logical schema of the table, describing column names, data types, and
-   *     nullability.
-   * @param partitions A list of column names used for partitioning the table; an empty list
-   *     indicates an unpartitioned table.
-   * @param properties A map of table properties for configuration and metadata; may be empty but
-   *     must not be {@code null}.
-   */
   @Override
   public void createTable(
-      String tableId, StructType schema, List<String> partitions, Map<String, String> properties) {}
+      String tableId,
+      StructType schema,
+      List<String> partitions,
+      Map<String, String> properties,
+      Consumer<TableDescriptor> callback) {
+    TableDescriptor desc = new TableDescriptor(tableId, tableId, URI.create(tableId));
+    callback.accept(desc);
+  }
 
-  /**
-   * Returns the static credential configuration associated with this catalog.
-   *
-   * <p>Because this catalog only supports static credentials, the returned configuration is
-   * independent of the provided UUID and is shared across all tables.
-   *
-   * @param uuid the table UUID (ignored by this implementation)
-   * @return a map of static credential and configuration properties
-   */
+  /** @return nothing as this catalog does not vend credentials */
   @Override
   public Map<String, String> getCredentials(String uuid) {
     return configurations;

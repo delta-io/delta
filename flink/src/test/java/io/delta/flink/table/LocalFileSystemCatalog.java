@@ -18,20 +18,26 @@ package io.delta.flink.table;
 
 import io.delta.kernel.types.StructType;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
-public class HadoopCatalogForTest implements DeltaCatalog {
+public class LocalFileSystemCatalog implements DeltaCatalog {
 
   private final Map<String, String> configurations;
 
-  public HadoopCatalogForTest(Map<String, String> conf) {
+  public LocalFileSystemCatalog(Map<String, String> conf) {
     this.configurations = conf;
   }
 
   @Override
   public TableDescriptor getTable(String tableId) {
     URI tablePath = AbstractKernelTable.normalize(URI.create(tableId));
+    if (!Files.exists(Path.of(tablePath.resolve("_delta_log")))) {
+      throw new ExceptionUtils.ResourceNotFoundException("");
+    }
     TableDescriptor info = new TableDescriptor();
     info.tableId = tableId;
     info.tablePath = tablePath;
@@ -41,7 +47,14 @@ public class HadoopCatalogForTest implements DeltaCatalog {
 
   @Override
   public void createTable(
-      String tableId, StructType schema, List<String> partitions, Map<String, String> properties) {}
+      String tableId,
+      StructType schema,
+      List<String> partitions,
+      Map<String, String> properties,
+      Consumer<TableDescriptor> callback) {
+    TableDescriptor desc = new TableDescriptor(tableId, tableId, URI.create(tableId));
+    callback.accept(desc);
+  }
 
   @Override
   public Map<String, String> getCredentials(String uuid) {

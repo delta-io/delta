@@ -23,7 +23,7 @@ import java.util
 import scala.jdk.CollectionConverters.{MapHasAsJava, SeqHasAsJava}
 import scala.util.Random
 
-import io.delta.flink.{DummyHttp, TestHelper}
+import io.delta.flink.{MockHttp, TestHelper}
 import io.delta.flink.table.{CCv2Table, HadoopTable, UnityCatalog}
 import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.TableManager
@@ -355,7 +355,7 @@ class DeltaSinkSuite extends AnyFunSuite with TestHelper {
     assert(sink1.getTable.asInstanceOf[HadoopTable].getTablePath.toString == "file:///table-path/")
 
     withTempDir { dir =>
-      val dummyHttp = DummyHttp.forUC(dir.getAbsolutePath)
+      val dummyHttp = MockHttp.forUC(dir.getAbsolutePath)
 
       val sink2 = DeltaSink.builder().withFlinkSchema(flinkSchema)
         .withConfigurations(

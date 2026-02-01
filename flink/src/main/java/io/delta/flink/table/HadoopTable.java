@@ -54,6 +54,7 @@ public class HadoopTable extends AbstractKernelTable {
   public HadoopTable(
       URI tablePath, Map<String, String> conf, StructType schema, List<String> partitionColumns) {
     this(new HadoopCatalog(conf), tablePath.toString(), conf, schema, partitionColumns);
+    ((HadoopCatalog) this.catalog).setEngineLoader(this);
   }
 
   /**

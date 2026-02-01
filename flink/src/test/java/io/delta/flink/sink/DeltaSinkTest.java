@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
-import io.delta.flink.DummyHttp;
+import io.delta.flink.MockHttp;
 import io.delta.flink.TestHelper;
 import io.delta.flink.sink.sql.SerializableFunction;
 import io.delta.flink.table.CCv2Table;
@@ -429,39 +429,45 @@ class DeltaSinkTest extends TestHelper {
         RowType.of(
             new LogicalType[] {new IntType(), new VarCharType(VarCharType.MAX_LENGTH)},
             new String[] {"id", "part"});
-    DeltaSink sink1 =
-        DeltaSink.builder()
-            .withFlinkSchema(flinkSchema)
-            .withConfigurations(Map.of("type", "hadoop", "hadoop.table_path", "file:///table-path"))
-            .build();
-    assertTrue(sink1.getTable() instanceof HadoopTable);
-    assertEquals("file:///table-path/", ((HadoopTable) sink1.getTable()).getTablePath().toString());
-
     withTempDir(
         dir -> {
-          DummyHttp dummyHttp = DummyHttp.forUC(dir.getAbsolutePath());
-
-          DeltaSink sink2 =
+          DeltaSink sink1 =
               DeltaSink.builder()
                   .withFlinkSchema(flinkSchema)
                   .withConfigurations(
-                      Map.of(
-                          "type",
-                          "unitycatalog",
-                          "unitycatalog.name",
-                          "ab",
-                          "unitycatalog.table_name",
-                          "ab.cd.ef",
-                          "unitycatalog.endpoint",
-                          "http://localhost:" + dummyHttp.port() + "/",
-                          "unitycatalog.token",
-                          "wow"))
+                      Map.of("type", "hadoop", "hadoop.table_path", dir.getAbsolutePath()))
                   .build();
-          assertTrue(sink2.getTable() instanceof CCv2Table);
-          CCv2Table table = (CCv2Table) sink2.getTable();
-          assertTrue(table.getCatalog() instanceof UnityCatalog);
-          assertEquals("ab.cd.ef", table.getId());
-          assertEquals("ab", ((UnityCatalog) table.getCatalog()).getName());
+          assertTrue(sink1.getTable() instanceof HadoopTable);
+          assertEquals(
+              String.format("file://%s/", dir.getAbsolutePath()),
+              ((HadoopTable) sink1.getTable()).getTablePath().toString());
         });
+    withTempDir(
+        dir ->
+            MockHttp.withMock(
+                MockHttp.forNewUCTable("123", dir.getAbsolutePath()),
+                mockHttp -> {
+                  DeltaSink sink2 =
+                      DeltaSink.builder()
+                          .withFlinkSchema(flinkSchema)
+                          .withConfigurations(
+                              Map.of(
+                                  "type",
+                                  "unitycatalog",
+                                  "unitycatalog.name",
+                                  "ab",
+                                  "unitycatalog.table_name",
+                                  "ab.cd.ef",
+                                  "unitycatalog.endpoint",
+                                  "http://localhost:" + mockHttp.port() + "/",
+                                  "unitycatalog.token",
+                                  "wow"))
+                          .build();
+                  assertTrue(sink2.getTable() instanceof CCv2Table);
+                  CCv2Table table = (CCv2Table) sink2.getTable();
+                  assertTrue(table.getCatalog() instanceof UnityCatalog);
+                  assertEquals("ab.cd.ef", table.getId());
+                  assertEquals("ab", ((UnityCatalog) table.getCatalog()).getName());
+                }));
   }
 }

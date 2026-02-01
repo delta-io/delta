@@ -32,11 +32,11 @@ import java.util.List;
  */
 public class DataColumnVectorView implements ColumnVector {
 
-  private final List<List<Object>> rows;
+  private final List<List<?>> rows;
   private final int colIdx;
   private final DataType dataType;
 
-  public DataColumnVectorView(List<List<Object>> rows, int colIdx, DataType dataType) {
+  public DataColumnVectorView(List<List<?>> rows, int colIdx, DataType dataType) {
     this.rows = rows;
     this.colIdx = colIdx;
     this.dataType = dataType;

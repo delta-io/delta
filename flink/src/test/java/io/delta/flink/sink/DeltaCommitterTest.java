@@ -86,7 +86,7 @@ class DeltaCommitterTest extends TestHelper {
           verifyTableContent(
               dir.toString(),
               (version, actions, props) -> {
-                assertEquals(0L, version);
+                assertEquals(1L, version);
                 // There should be 5 files to scan
                 List<AddFile> actionList = new ArrayList<>();
                 actions.iterator().forEachRemaining(actionList::add);
@@ -150,7 +150,7 @@ class DeltaCommitterTest extends TestHelper {
           verifyTableContent(
               dir.toString(),
               (version, actions, props) -> {
-                assertEquals(2L, version);
+                assertEquals(3L, version);
                 // There should be 15 files to scan
                 List<AddFile> actionList = new ArrayList<>();
                 actions.iterator().forEachRemaining(actionList::add);
@@ -175,13 +175,12 @@ class DeltaCommitterTest extends TestHelper {
               new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
           StructType anotherSchema =
               new StructType().add("v1", StringType.STRING).add("v2", StringType.STRING);
+          createNonEmptyTable(
+              engine, dir.getAbsolutePath(), anotherSchema, List.of("v1"), Collections.emptyMap());
 
           HadoopTable table =
               new HadoopTable(dir.toURI(), Collections.emptyMap(), schema, List.of("part"));
           table.open();
-
-          createNonEmptyTable(
-              engine, dir.getAbsolutePath(), anotherSchema, List.of("v1"), Collections.emptyMap());
 
           DeltaCommitter committer =
               new DeltaCommitter.Builder()
@@ -231,17 +230,17 @@ class DeltaCommitterTest extends TestHelper {
                   .add("part", StringType.STRING)
                   .add("another", StringType.STRING);
 
-          HadoopTable table =
-              new HadoopTable(
-                  dir.toURI(), Collections.emptyMap(), anotherSchema, Collections.emptyList());
-          table.open();
-
           createNonEmptyTable(
               engine,
               dir.getAbsolutePath(),
               anotherSchema,
               Collections.emptyList(),
               Collections.emptyMap());
+
+          HadoopTable table =
+              new HadoopTable(
+                  dir.toURI(), Collections.emptyMap(), anotherSchema, Collections.emptyList());
+          table.open();
 
           DeltaCommitter committer =
               new DeltaCommitter.Builder()
@@ -321,7 +320,7 @@ class DeltaCommitterTest extends TestHelper {
           verifyTableContent(
               dir.toString(),
               (version, actions, props) -> {
-                assertEquals(0L, version);
+                assertEquals(1L, version);
                 // There should be 5 files to scan
                 List<AddFile> actionList = new ArrayList<>();
                 actions.iterator().forEachRemaining(actionList::add);

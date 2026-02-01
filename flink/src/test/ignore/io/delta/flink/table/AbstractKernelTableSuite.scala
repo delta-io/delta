@@ -57,7 +57,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
       val tablePath = dir.getPath
       val schema = new StructType().add("id", IntegerType.INTEGER)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         dir.toURI,
         Map.empty[String, String].asJava,
         schema,
@@ -75,7 +75,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
     withTempDir { dir =>
       val schema = new StructType().add("id", IntegerType.INTEGER)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         dir.toURI,
         Map(
           "delta.enableDeletionVectors" -> "true",
@@ -107,7 +107,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         URI.create(tablePath),
         Map.empty[String, String].asJava,
         schema,
@@ -145,7 +145,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         URI.create(tablePath),
         Map.empty[String, String].asJava,
         schema,
@@ -185,7 +185,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         URI.create(tablePath),
         Map.empty[String, String].asJava,
         schema,
@@ -230,7 +230,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         URI.create(tablePath),
         Map.empty[String, String].asJava,
         schema,
@@ -277,7 +277,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         URI.create(tablePath),
         Map.empty[String, String].asJava,
         schema,
@@ -297,7 +297,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
         .add("id", IntegerType.INTEGER)
         .add("part", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         URI.create(tablePath),
         Map.empty[String, String].asJava,
         schema,
@@ -324,7 +324,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
 
       var callcounter = 0
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         dir.toURI,
         Map.empty[String, String].asJava,
         schema,
@@ -389,7 +389,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
 
       var retryCounter = 0
       var loadCounter = 0
-      val testHadoopTable = new HadoopTableForTest(
+      val testHadoopTable = new LocalFileSystemTable(
         dir.toURI,
         Map.empty[String, String].asJava,
         schema,
@@ -446,7 +446,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
       var retryCounter = 0
       var loadCounter = 0
       // Release the lock after write a new version to the table
-      val testHadoopTable = new HadoopTableForTest(
+      val testHadoopTable = new LocalFileSystemTable(
         dir.toURI,
         Map.empty[String, String].asJava,
         schema,
@@ -482,7 +482,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
       var retryCounter = 0
       var loadCounter = 0
       // Release the lock after write a new version to the table
-      val testHadoopTable = new HadoopTableForTest(
+      val testHadoopTable = new LocalFileSystemTable(
         dir.toURI,
         Map.empty[String, String].asJava,
         schema,
@@ -518,7 +518,7 @@ class AbstractKernelTableSuite extends AnyFunSuite with TestHelper {
     withTempDir(dir => {
       val schema = new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING)
 
-      val table = new HadoopTableForTest(
+      val table = new LocalFileSystemTable(
         dir.toURI,
         Map.empty[String, String].asJava,
         schema,

@@ -30,6 +30,7 @@ import io.unitycatalog.client.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.model.*;
 import java.net.URI;
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.apache.flink.util.Preconditions;
@@ -195,7 +196,7 @@ public class UnityCatalog implements DeltaCatalog {
           switch (node.get("error_code").asText()) {
             case "TABLE_ALREADY_EXISTS":
               throw new ExceptionUtils.ResourceAlreadyExistException(node.get("message").asText());
-            case "TABLE_NOT_FOUND":
+            case "TABLE_DOES_NOT_EXIST":
               throw new ExceptionUtils.ResourceNotFoundException(node.get("message").asText());
             default:
               throw new RuntimeException(apiException);
@@ -215,16 +216,16 @@ public class UnityCatalog implements DeltaCatalog {
    * storage location into a normalized {@link URI}. The returned {@link TableDescriptor} contains
    * the table UUID and resolved storage path.
    *
-   * @param tableId the logical identifier of the table
+   * @param tableName the logical identifier of the table
    * @return a {@link TableDescriptor} describing the resolved table
    */
   @Override
-  public TableDescriptor getTable(String tableId) {
-    Objects.requireNonNull(tableId);
+  public TableDescriptor getTable(String tableName) {
+    Objects.requireNonNull(tableName);
     return withRetry(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
-          TableInfo tableInfo = tablesApi.getTable(tableId, null, null);
+          TableInfo tableInfo = tablesApi.getTable(tableName, null, null);
           TableDescriptor brief = new TableDescriptor();
           brief.tablePath =
               AbstractKernelTable.normalize(
@@ -242,21 +243,16 @@ public class UnityCatalog implements DeltaCatalog {
    * metadata with the remote catalog, including schema, partition specification, and table
    * properties.
    *
-   * <p>This method does not write any table data. It is limited to metadata creation and
-   * validation, such as checking for table existence and ensuring the provided schema and partition
-   * definitions are compatible with the catalog.
-   *
-   * @param tableId The catalog-specific identifier of the table to create.
-   * @param schema The logical schema of the table, describing column names, data types, and
-   *     nullability.
-   * @param partitions A list of column names used for partitioning the table; an empty list
-   *     indicates an unpartitioned table.
-   * @param properties A map of table properties for configuration and metadata; may be empty but
-   *     must not be {@code null}.
+   * <p>This call will create a staging table, init the snapshot, then upgrade the staging table to
+   * real table.
    */
   @Override
   public void createTable(
-      String tableId, StructType schema, List<String> partitions, Map<String, String> properties) {
+      String tableId,
+      StructType schema,
+      List<String> partitions,
+      Map<String, String> properties,
+      Consumer<TableDescriptor> callback) {
     Objects.requireNonNull(tableId);
     Objects.requireNonNull(schema);
     Objects.requireNonNull(partitions);
@@ -305,20 +301,32 @@ public class UnityCatalog implements DeltaCatalog {
                       })
                   .collect(Collectors.toList());
 
-          // Make sure the table supports CCv2.
-          Map<String, String> consolidatedProperties = new HashMap<>();
-          consolidatedProperties.putAll(properties);
-          consolidatedProperties.put("delta.feature.catalogManaged", "supported");
+          // Create a staging table and init the storage
+          StagingTableInfo stagingTableInfo =
+              tablesApi.createStagingTable(
+                  new CreateStagingTable()
+                      .catalogName(getName())
+                      .schemaName(schemaName)
+                      .name(tableName));
+
+          // Init Delta snapshot
+          String storageLocation = stagingTableInfo.getStagingLocation();
+          Objects.requireNonNull(storageLocation);
+
+          TableDescriptor desc =
+              new TableDescriptor(tableId, stagingTableInfo.getId(), URI.create(storageLocation));
+          callback.accept(desc);
 
           tablesApi.createTable(
               new CreateTable()
                   .catalogName(getName())
                   .schemaName(schemaName)
                   .name(tableName)
+                  .storageLocation(stagingTableInfo.getStagingLocation())
                   .tableType(TableType.MANAGED)
                   .dataSourceFormat(DataSourceFormat.DELTA)
                   .columns(columnInfos)
-                  .properties(consolidatedProperties));
+                  .properties(properties));
           return null;
         });
   }

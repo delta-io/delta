@@ -16,10 +16,16 @@
 
 package io.delta.flink.table;
 
+import static io.delta.kernel.internal.tablefeatures.TableFeatures.*;
+import static io.delta.kernel.unitycatalog.UCCatalogManagedClient.UC_TABLE_ID_KEY;
+
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.TableManager;
 import io.delta.kernel.data.Row;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
+import io.delta.kernel.unitycatalog.UCCatalogManagedCommitter;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
@@ -28,6 +34,8 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,7 +55,18 @@ import org.slf4j.LoggerFactory;
  */
 public class CCv2Table extends AbstractKernelTable {
 
-  private static Logger LOG = LoggerFactory.getLogger(CCv2Table.class);
+  private static final Logger LOG = LoggerFactory.getLogger(CCv2Table.class);
+  public static final Map<String, String> CCV2_FEATURES_CONF =
+      Stream.of(
+              CATALOG_MANAGED_RW_FEATURE,
+              DELETION_VECTORS_RW_FEATURE,
+              DOMAIN_METADATA_W_FEATURE,
+              IN_COMMIT_TIMESTAMP_W_FEATURE,
+              ROW_TRACKING_W_FEATURE,
+              CHECKPOINT_V2_RW_FEATURE,
+              VACUUM_PROTOCOL_CHECK_RW_FEATURE)
+          .map(feature -> String.format("delta.feature.%s", feature.featureName()))
+          .collect(Collectors.toMap(key -> key, key -> "supported"));
 
   private final URI endpoint;
   private final String token;
@@ -72,15 +91,18 @@ public class CCv2Table extends AbstractKernelTable {
     this.token = token;
   }
 
+  protected transient UCClient ucClient;
   protected transient UCCatalogManagedClient ccv2Client;
 
   @Override
   public void open() {
-    if (ccv2Client == null) {
-      UCClient storageClient =
+    if (ucClient == null) {
+      ucClient =
           new UCTokenBasedRestClient(
               endpoint.toString(), TokenProvider.create(Map.of("type", "static", "token", token)));
-      ccv2Client = new UCCatalogManagedClient(storageClient);
+    }
+    if (ccv2Client == null) {
+      ccv2Client = new UCCatalogManagedClient(ucClient);
     }
     super.open();
   }
@@ -100,5 +122,25 @@ public class CCv2Table extends AbstractKernelTable {
     //      currently updating properties from outside encounters
     //      "A table's Delta metadata can only be changed from a cluster or warehouse"
     return super.commit(actions, appId, txnId, Map.of());
+  }
+
+  @Override
+  protected void createDeltaTable() {
+    conf.update(Map.of(UC_TABLE_ID_KEY, tableUUID));
+    super.createDeltaTable();
+  }
+
+  @Override
+  protected CreateTableTransactionBuilder buildCreateTableTransaction() {
+    UCCatalogManagedCommitter committer =
+        new UCCatalogManagedCommitter(ucClient, tableUUID, tablePath.toString());
+    return TableManager.buildCreateTableTransaction(tablePath.toString(), schema, ENGINE_INFO)
+        .withCommitter(committer);
+  }
+
+  @Override
+  protected Map<String, String> extraConf() {
+    // Make sure the table supports CCv2.
+    return CCV2_FEATURES_CONF;
   }
 }

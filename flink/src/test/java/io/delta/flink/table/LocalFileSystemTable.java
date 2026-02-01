@@ -23,11 +23,11 @@ import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
-public class HadoopTableForTest extends AbstractKernelTable {
+public class LocalFileSystemTable extends AbstractKernelTable {
 
-  public HadoopTableForTest(
+  public LocalFileSystemTable(
       URI tablePath, Map<String, String> conf, StructType schema, List<String> partitionColumns) {
-    super(new HadoopCatalogForTest(conf), tablePath.toString(), conf, schema, partitionColumns);
+    super(new LocalFileSystemCatalog(conf), tablePath.toString(), conf, schema, partitionColumns);
   }
 
   @Override
