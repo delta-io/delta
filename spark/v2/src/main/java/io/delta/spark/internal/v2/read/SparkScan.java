@@ -18,18 +18,13 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
-import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
-import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -42,8 +37,10 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
+import org.apache.spark.sql.execution.datasources.PartitioningUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
@@ -224,35 +221,100 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   /**
    * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
-   * Ensures all iterators are closed to avoid resource leaks.
+   * Uses DataFrame-based distributed log replay (V1 algorithm).
    */
   private void planScanFiles() {
-    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    SparkSession spark = SparkSession.active();
     final String tablePath = getTablePath();
-    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
 
-    final String[] locations = new String[0];
-    final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
+    // Get number of partitions from config
+    int numPartitions =
+        spark
+            .conf()
+            .getOption("spark.databricks.delta.v2.distributedLogReplay.numPartitions")
+            .map(Integer::parseInt)
+            .getOrElse(() -> 50);
 
-    while (scanFileBatches.hasNext()) {
-      final FilteredColumnarBatch batch = scanFileBatches.next();
+    // Step 1: Distributed log replay to get all files as DataFrame
+    org.apache.spark.sql.Dataset<org.apache.spark.sql.Row> allFiles =
+        DistributedLogReplayHelper.stateReconstructionV2(spark, initialSnapshot, numPartitions);
 
-      try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
-        while (addFileRowIter.hasNext()) {
-          final Row row = addFileRowIter.next();
-          final AddFile addFile = new AddFile(row.getStruct(0));
+    // Step 2: Collect to driver
+    java.util.List<org.apache.spark.sql.Row> fileRows = allFiles.collectAsList();
 
-          final PartitionedFile partitionedFile =
-              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+    // Step 3: Convert DataFrame Rows to PartitionedFiles
+    // Each row has schema: add (struct) containing all AddFile fields
+    for (org.apache.spark.sql.Row row : fileRows) {
+      // Extract add struct from row (V1: stateDS.select(col("add")))
+      org.apache.spark.sql.Row addStruct = row.getStruct(0);
 
-          totalBytes += addFile.getSize();
-          partitionedFiles.add(partitionedFile);
+      // Extract fields from add struct
+      String path = addStruct.getAs("path");
+      scala.collection.immutable.Map<String, String> partitionValues =
+          addStruct.getAs("partitionValues");
+      long size = addStruct.getAs("size");
+      long modificationTime = addStruct.getAs("modificationTime");
+
+      // Build partition row from partition values
+      InternalRow partitionRow = buildPartitionRowFromMap(partitionValues, partitionSchema);
+
+      // Create PartitionedFile
+      final PartitionedFile partitionedFile =
+          new PartitionedFile(
+              partitionRow,
+              org.apache.spark.paths.SparkPath.fromUrlString(
+                  new org.apache.hadoop.fs.Path(tablePath, path).toString()),
+              /* start= */ 0L,
+              /* length= */ size,
+              /* locations= */ new String[0],
+              modificationTime,
+              /* fileSize= */ size,
+              scala.collection.immutable.Map$.MODULE$.empty());
+
+      totalBytes += size;
+      partitionedFiles.add(partitionedFile);
+    }
+  }
+
+  /**
+   * Build InternalRow from Scala Map<String, String> partition values. Similar to
+   * PartitionUtils.getPartitionRow but works with Spark SQL Map.
+   */
+  private InternalRow buildPartitionRowFromMap(
+      scala.collection.immutable.Map<String, String> partitionValues, StructType partitionSchema) {
+
+    final int numPartCols = partitionSchema.fields().length;
+    final Object[] values = new Object[numPartCols];
+
+    // Build physical name -> index map
+    final Map<String, Integer> nameToIndex = new HashMap<>(numPartCols);
+    for (int i = 0; i < numPartCols; i++) {
+      StructField field = partitionSchema.fields()[i];
+      String physicalName = DeltaColumnMapping.getPhysicalName(field);
+      nameToIndex.put(physicalName, i);
+      values[i] = null;
+    }
+
+    // Convert Scala map to Java map for easier iteration
+    if (partitionValues != null) {
+      scala.collection.Iterator<scala.Tuple2<String, String>> iter = partitionValues.iterator();
+      while (iter.hasNext()) {
+        scala.Tuple2<String, String> entry = iter.next();
+        String key = entry._1();
+        String strVal = entry._2();
+        Integer pos = nameToIndex.get(key);
+        if (pos != null) {
+          StructField field = partitionSchema.fields()[pos];
+          values[pos] =
+              (strVal == null)
+                  ? null
+                  : PartitioningUtils.castPartValueToDesiredType(field.dataType(), strVal, zoneId);
         }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
       }
     }
+
+    return InternalRow.fromSeq(
+        scala.jdk.javaapi.CollectionConverters.asScala(Arrays.asList(values).iterator()).toSeq());
   }
 
   /** Ensure the scan is planned exactly once in a thread\-safe manner. */
