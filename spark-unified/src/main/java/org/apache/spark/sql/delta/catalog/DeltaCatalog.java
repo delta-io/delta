@@ -18,14 +18,13 @@ package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.KernelTableCreator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
 import java.util.HashMap;
 import java.util.function.Supplier;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -66,53 +65,22 @@ import org.apache.spark.sql.types.StructType;
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
-  /**
-   * Loads a Delta table that is registered in the catalog.
-   *
-   * <p>Routing logic based on {@link DeltaV2Mode}:
-   * <ul>
-   *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
-   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
-   * </ul>
-   *
-   * @param ident The identifier of the table in the catalog.
-   * @param catalogTable The catalog table metadata containing table properties and location.
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
-   */
   @Override
-  public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
+  protected Table newDeltaCatalogBasedTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
         () -> new SparkTable(ident, catalogTable, new HashMap<>()),
-        () -> super.loadCatalogTable(ident, catalogTable));
+        () -> super.newDeltaCatalogBasedTable(ident, catalogTable));
   }
 
-  /**
-   * Loads a Delta table directly from a path.
-   * This is used for path-based table access where the identifier name is the table path.
-   *
-   * <p>Routing logic based on {@link DeltaV2Mode}:
-   * <ul>
-   *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
-   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
-   * </ul>
-   *
-   * @param ident The identifier whose name contains the path to the Delta table.
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
-   */
   @Override
-  public Table loadPathTable(Identifier ident) {
+  protected Table newDeltaPathTable(Identifier ident) {
     return loadTableInternal(
-        // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
-        () -> super.loadPathTable(ident));
+        () -> super.newDeltaPathTable(ident));
   }
 
-  /**
-   * Creates a Delta table. In STRICT mode, routes CREATE TABLE to the V2
-   * Kernel-backed implementation. All other cases fall back to V1.
-   */
   @Override
-  public Table createTable(
+  protected Table createDeltaTableImpl(
       Identifier ident,
       StructType schema,
       Transform[] partitions,
@@ -121,7 +89,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     if (connectorMode.shouldCatalogReturnV2Tables()) {
       return KernelTableCreator.createTable(ident, schema, partitions, properties);
     }
-    return super.createTable(ident, schema, partitions, properties);
+    return super.createDeltaTableImpl(ident, schema, partitions, properties);
   }
 
   /**
