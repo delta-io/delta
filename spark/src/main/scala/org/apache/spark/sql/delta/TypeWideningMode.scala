@@ -121,9 +121,6 @@ object TypeWideningMode {
    * to find a wider schema to use.
    */
   case object AllTypeWideningToCommonWiderType extends TypeWideningMode {
-    val allowIntegralDecimalCoercion: Boolean =
-      SQLConf.get.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION)
-
     private def getDecimalType(t: IntegralType): DecimalType = {
       t match {
         case _: ByteType => DecimalType(3, 0)
@@ -133,7 +130,9 @@ object TypeWideningMode {
       }
     }
 
-    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
+    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] = {
+      val allowIntegralDecimalCoercion: Boolean =
+        SQLConf.get.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION)
       (left, right) match {
         case (l, r) if TypeWidening.isTypeChangeSupported(l, r) => Some(r)
         case (l, r) if TypeWidening.isTypeChangeSupported(r, l) => Some(l)
@@ -148,6 +147,7 @@ object TypeWideningMode {
             TypeWidening.isTypeChangeSupported(r, wider))(wider)
         case _ => None
       }
+    }
   }
 
   /**
