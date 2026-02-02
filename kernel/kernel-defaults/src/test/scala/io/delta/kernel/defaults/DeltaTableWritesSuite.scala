@@ -41,9 +41,9 @@ import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
-import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
@@ -1853,7 +1853,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
     val rowData = new java.util.HashMap[Integer, Object]()
     rowData.put(0, path)
-    rowData.put(1, stringStringMapValue(java.util.Collections.emptyMap[String, String]())
+    rowData.put(1, stringStringMapValue(java.util.Collections.emptyMap[String, String]()))
     rowData.put(2, 100L.asInstanceOf[Object])
     rowData.put(3, System.currentTimeMillis().asInstanceOf[Object])
     rowData.put(4, dataChange.asInstanceOf[Object])
@@ -1874,7 +1874,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
 
     val rowData = new java.util.HashMap[Integer, Object]()
     rowData.put(0, path)
-    rowData.put(1, stringStringMapValue(java.util.Collections.emptyMap[String, String]())
+    rowData.put(1, stringStringMapValue(java.util.Collections.emptyMap[String, String]()))
     rowData.put(2, System.currentTimeMillis().asInstanceOf[Object])
     rowData.put(3, dataChange.asInstanceOf[Object])
 
