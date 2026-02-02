@@ -108,7 +108,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   }
 
   /**
-   * Creates a Delta table. In STRICT mode, routes path-based CREATE TABLE to the V2
+   * Creates a Delta table. In STRICT mode, routes CREATE TABLE to the V2
    * Kernel-backed implementation (phase 1). All other cases fall back to V1.
    */
   @Override
@@ -119,11 +119,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       java.util.Map<String, String> properties) {
     DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
     if (connectorMode.shouldCatalogReturnV2Tables()) {
-      if (isPathIdentifier(ident)) {
-        return KernelTableCreator.createPathTable(ident, schema, partitions, properties);
-      }
-      throw new UnsupportedOperationException(
-          "V2 CREATE TABLE supports only path-based tables in phase 1");
+      return KernelTableCreator.createTable(ident, schema, partitions, properties);
     }
     return super.createTable(ident, schema, partitions, properties);
   }

@@ -49,10 +49,15 @@ public final class KernelTableCreator {
 
   private KernelTableCreator() {}
 
-  public static SparkTable createPathTable(
+  public static SparkTable createTable(
       Identifier ident, StructType schema, Transform[] partitions, Map<String, String> properties) {
     requireNonNull(ident, "ident is null");
     requireNonNull(schema, "schema is null");
+
+    if (!isPathIdentifier(ident)) {
+      throw new UnsupportedOperationException(
+          "V2 CREATE TABLE supports only path-based tables in phase 1");
+    }
 
     String tablePath = ident.name();
     Engine engine = createEngine();
@@ -104,5 +109,9 @@ public final class KernelTableCreator {
     }
 
     return Optional.of(DataLayoutSpec.partitioned(partitionColumns));
+  }
+
+  private static boolean isPathIdentifier(Identifier ident) {
+    return ident.namespace().length == 1 && "delta".equalsIgnoreCase(ident.namespace()[0]);
   }
 }
