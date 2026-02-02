@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, UniversalFormat}
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaErrors, UniversalFormat, UniversalFormatConverter}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED
 import org.apache.commons.lang3.exception.ExceptionUtils
@@ -24,7 +24,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.spark.sql.SparkSession
 
 /** Write a new Iceberg metadata file at the version committed by the txn, if required. */
-object IcebergConverterHook extends PostCommitHook with DeltaLogging {
+trait IcebergConverterHook extends PostCommitHook with DeltaLogging {
   override val name: String = "Post-commit Iceberg metadata conversion"
 
   val ASYNC_ICEBERG_CONVERTER_THREAD_NAME = "async-iceberg-converter"
@@ -39,14 +39,8 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
       return
     }
 
-
     val converter = postCommitSnapshot.deltaLog.icebergConverter
-    if (spark.sessionState.conf.getConf(DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED) ||
-         !UniversalFormat.icebergEnabled(txn.readSnapshot.metadata)) { // UniForm was not enabled
-      converter.convertSnapshot(postCommitSnapshot, txn)
-    } else {
-      converter.enqueueSnapshotForConversion(postCommitSnapshot, txn)
-    }
+    triggerIcebergConversion(converter, spark, txn)
   }
 
   // Always throw when sync Iceberg conversion fails. Async conversion exception
@@ -55,5 +49,28 @@ object IcebergConverterHook extends PostCommitHook with DeltaLogging {
     logError(error.getMessage, error)
     throw DeltaErrors.universalFormatConversionFailedException(
       version, "iceberg", ExceptionUtils.getMessage(error))
+  }
+
+  def triggerIcebergConversion(
+      converter: UniversalFormatConverter,
+      spark: SparkSession,
+      txn: CommittedTransaction): Unit = {
+    val postCommitSnapshot = txn.postCommitSnapshot
+    if (spark.sessionState.conf.getConf(DELTA_UNIFORM_ICEBERG_SYNC_CONVERT_ENABLED) ||
+      !UniversalFormat.icebergEnabled(txn.readSnapshot.metadata)) { // UniForm was not enabled
+      converter.convertSnapshot(postCommitSnapshot, txn)
+    } else {
+      converter.enqueueSnapshotForConversion(postCommitSnapshot, txn)
+    }
+  }
+}
+
+object IcebergConverterHook extends IcebergConverterHook
+object IcebergSyncConverterHook extends IcebergConverterHook {
+  override def triggerIcebergConversion(
+      converter: UniversalFormatConverter,
+      spark: SparkSession,
+      txn: CommittedTransaction): Unit = {
+    converter.convertSnapshot(txn.postCommitSnapshot, txn)
   }
 }
