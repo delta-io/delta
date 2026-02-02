@@ -41,6 +41,7 @@ import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
+import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
@@ -1853,7 +1854,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       schema,
       Map(
         0 -> path,
-        1 -> java.util.Collections.emptyMap[String, String](),
+        1 -> stringStringMapValue(java.util.Collections.emptyMap[String, String]()),
         2 -> 100L,
         3 -> System.currentTimeMillis(),
         4 -> dataChange,
@@ -1874,7 +1875,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       schema,
       Map(
         0 -> path,
-        1 -> java.util.Collections.emptyMap[String, String](),
+        1 -> stringStringMapValue(java.util.Collections.emptyMap[String, String]()),
         2 -> System.currentTimeMillis(),
         3 -> dataChange).asJava)
   }
