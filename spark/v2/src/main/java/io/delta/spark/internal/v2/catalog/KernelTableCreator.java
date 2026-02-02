@@ -179,6 +179,15 @@ public final class KernelTableCreator {
       this.isUCManaged = isUCManaged;
     }
 
+    /**
+     * Factory method for creating a CREATE request.
+     *
+     * @param ident The identifier of the table.
+     * @param schema The schema of the table.
+     * @param partitions The partitions of the table.
+     * @param properties The properties of the table.
+     * @return The resolved create request.
+     */
     private static ResolvedCreateRequest forCreate(
         Identifier ident,
         StructType schema,
