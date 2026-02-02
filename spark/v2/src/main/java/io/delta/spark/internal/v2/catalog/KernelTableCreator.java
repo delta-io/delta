@@ -41,7 +41,12 @@ import org.apache.spark.sql.types.StructType;
 /**
  * Kernel-backed CREATE TABLE helper for the Spark V2 connector.
  *
- * <p>Phase 1 supports path-based tables and partitioning by identity columns only.
+ * <p>Phase 1 constraints:
+ *
+ * <ul>
+ *   <li>Path-based identifiers only (delta.`/path`)
+ *   <li>Partitioning by identity columns only
+ * </ul>
  */
 public final class KernelTableCreator {
 
@@ -49,44 +54,60 @@ public final class KernelTableCreator {
 
   private KernelTableCreator() {}
 
+  /**
+   * Creates a new Delta table by committing metadata-only actions via Kernel.
+   *
+   * <p>This is a thin wrapper around a unified create request/executor, limited to path-based
+   * CREATE in phase 1.
+   */
   public static SparkTable createTable(
       Identifier ident, StructType schema, Transform[] partitions, Map<String, String> properties) {
-    requireNonNull(ident, "ident is null");
-    requireNonNull(schema, "schema is null");
+    ResolvedCreateRequest request =
+        ResolvedCreateRequest.forCreate(ident, schema, partitions, properties);
+    return execute(request);
+  }
 
-    if (!isPathIdentifier(ident)) {
-      throw new UnsupportedOperationException(
-          "V2 CREATE TABLE supports only path-based tables in phase 1");
+  private static SparkTable execute(ResolvedCreateRequest request) {
+    requireNonNull(request, "request is null");
+
+    if (request.operation != CreateOperation.CREATE) {
+      throw new UnsupportedOperationException("V2 CREATE TABLE supports only CREATE in phase 1");
     }
 
-    String tablePath = ident.name();
+    String tablePath = request.tablePath;
     Engine engine = createEngine();
 
     io.delta.kernel.types.StructType kernelSchema =
-        SchemaUtils.convertSparkSchemaToKernelSchema(schema);
+        SchemaUtils.convertSparkSchemaToKernelSchema(request.schema);
 
     CreateTableTransactionBuilder builder =
         TableManager.buildCreateTableTransaction(tablePath, kernelSchema, ENGINE_INFO);
 
-    if (properties != null && !properties.isEmpty()) {
-      builder = builder.withTableProperties(properties);
+    if (request.properties != null && !request.properties.isEmpty()) {
+      builder = builder.withTableProperties(request.properties);
     }
 
-    Optional<DataLayoutSpec> dataLayoutSpec = buildDataLayoutSpec(partitions);
+    Optional<DataLayoutSpec> dataLayoutSpec = buildDataLayoutSpec(request.partitions);
     if (dataLayoutSpec.isPresent()) {
       builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
     }
 
     builder.build(engine).commit(engine, CloseableIterable.emptyIterable());
-    return new SparkTable(ident, tablePath);
+    return new SparkTable(request.ident, tablePath);
   }
 
+  /** Builds a DefaultEngine using the active Spark session's Hadoop conf. */
   private static Engine createEngine() {
     SparkSession spark = SparkSession.active();
     Configuration hadoopConf = spark.sessionState().newHadoopConf();
     return DefaultEngine.create(hadoopConf);
   }
 
+  /**
+   * Builds a Kernel DataLayoutSpec from Spark partition transforms.
+   *
+   * <p>Supports identity transforms only; non-identity transforms fail fast.
+   */
   private static Optional<DataLayoutSpec> buildDataLayoutSpec(Transform[] partitions) {
     if (partitions == null || partitions.length == 0) {
       return Optional.empty();
@@ -96,14 +117,13 @@ public final class KernelTableCreator {
     for (Transform transform : partitions) {
       if (!(transform instanceof IdentityTransform)) {
         throw new UnsupportedOperationException(
-            "V2 CREATE TABLE supports only identity partition columns in phase 1");
+            "V2 CREATE TABLE supports only identity partition columns");
       }
 
       NamedReference ref = transform.references()[0];
       String[] fieldNames = ref.fieldNames();
       if (fieldNames.length != 1) {
-        throw new IllegalArgumentException(
-            "Partition columns must be top-level columns in phase 1");
+        throw new IllegalArgumentException("Partition columns must be top-level columns");
       }
       partitionColumns.add(new Column(fieldNames[0]));
     }
@@ -111,7 +131,77 @@ public final class KernelTableCreator {
     return Optional.of(DataLayoutSpec.partitioned(partitionColumns));
   }
 
+  /** Returns true if the identifier represents a path-based Delta table (delta.`/path`). */
   private static boolean isPathIdentifier(Identifier ident) {
     return ident.namespace().length == 1 && "delta".equalsIgnoreCase(ident.namespace()[0]);
+  }
+
+  private enum CreateOperation {
+    CREATE,
+    REPLACE,
+    CREATE_OR_REPLACE,
+    CREATE_TABLE_LIKE
+  }
+
+  private static final class ResolvedCreateRequest {
+    private final Identifier ident;
+    private final String tablePath;
+    private final StructType schema;
+    private final Transform[] partitions;
+    private final Map<String, String> properties;
+    private final CreateOperation operation; // CREATE | REPLACE | CREATE_OR_REPLACE | CREATE_TABLE_LIKE
+    // Future fields (phase 2+): currently unused placeholders.
+    private final Map<String, String> writeOptions;
+    private final boolean tableByPath;
+    private final Object sourceTableOpt;
+    private final boolean isUCManaged;
+
+    private ResolvedCreateRequest(
+        Identifier ident,
+        String tablePath,
+        StructType schema,
+        Transform[] partitions,
+        Map<String, String> properties,
+        CreateOperation operation,
+        Map<String, String> writeOptions,
+        boolean tableByPath,
+        Object sourceTableOpt,
+        boolean isUCManaged) {
+      this.ident = ident;
+      this.tablePath = tablePath;
+      this.schema = schema;
+      this.partitions = partitions;
+      this.properties = properties;
+      this.operation = operation;
+      this.writeOptions = writeOptions;
+      this.tableByPath = tableByPath;
+      this.sourceTableOpt = sourceTableOpt;
+      this.isUCManaged = isUCManaged;
+    }
+
+    private static ResolvedCreateRequest forCreate(
+        Identifier ident,
+        StructType schema,
+        Transform[] partitions,
+        Map<String, String> properties) {
+      requireNonNull(ident, "ident is null");
+      requireNonNull(schema, "schema is null");
+
+      if (!isPathIdentifier(ident)) {
+        throw new UnsupportedOperationException("V2 CREATE TABLE supports only path-based tables");
+      }
+
+      return new ResolvedCreateRequest(
+          ident,
+          ident.name(),
+          schema,
+          partitions,
+          properties,
+          CreateOperation.CREATE,
+          null,
+          true,
+          null,
+          false);
+    }
   }
 }

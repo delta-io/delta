@@ -109,7 +109,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
 
   /**
    * Creates a Delta table. In STRICT mode, routes CREATE TABLE to the V2
-   * Kernel-backed implementation (phase 1). All other cases fall back to V1.
+   * Kernel-backed implementation. All other cases fall back to V1.
    */
   @Override
   public Table createTable(
@@ -148,10 +148,5 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     } else {
       return v1ConnectorSupplier.get();
     }
-  }
-
-  @Override
-  public boolean isPathIdentifier(Identifier ident) {
-    return ident.namespace().length == 1 && "delta".equalsIgnoreCase(ident.namespace()[0]);
   }
 }
