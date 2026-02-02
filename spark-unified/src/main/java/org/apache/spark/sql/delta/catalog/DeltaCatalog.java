@@ -66,17 +66,17 @@ import org.apache.spark.sql.types.StructType;
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
   @Override
-  protected Table newDeltaCatalogBasedTable(Identifier ident, CatalogTable catalogTable) {
+  public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
         () -> new SparkTable(ident, catalogTable, new HashMap<>()),
-        () -> super.newDeltaCatalogBasedTable(ident, catalogTable));
+        () -> super.loadCatalogTable(ident, catalogTable));
   }
 
   @Override
-  protected Table newDeltaPathTable(Identifier ident) {
+  public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
         () -> new SparkTable(ident, ident.name()),
-        () -> super.newDeltaPathTable(ident));
+        () -> super.loadPathTable(ident));
   }
 
   @Override

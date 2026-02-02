@@ -333,7 +333,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * @return A DeltaTableV2 instance with catalog metadata attached.
    */
   protected def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
-    newDeltaCatalogBasedTable(ident, catalogTable)
+    DeltaTableV2(
+      spark,
+      new Path(catalogTable.location),
+      catalogTable = Some(catalogTable),
+      tableIdentifier = Some(ident.toString))
   }
 
   /**
@@ -344,18 +348,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * @return A DeltaTableV2 instance loaded from the specified path.
    */
   protected def loadPathTable(ident: Identifier): Table = {
-    newDeltaPathTable(ident)
-  }
-
-  protected def newDeltaCatalogBasedTable(ident: Identifier, catalogTable: CatalogTable): Table = {
-    DeltaTableV2(
-      spark,
-      new Path(catalogTable.location),
-      catalogTable = Some(catalogTable),
-      tableIdentifier = Some(ident.toString))
-  }
-
-  protected def newDeltaPathTable(ident: Identifier): Table = {
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
