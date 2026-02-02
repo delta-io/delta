@@ -283,8 +283,12 @@ case class IcebergCompatVersionBase(knownVersions: Set[IcebergCompatBase]) {
   /**
    * @return true if a CompatVx greater or eq to the required version is enabled
    */
+  def isGeqEnabled(conf: Map[String, String], requiredVersion: Int): Boolean =
+    anyEnabled(conf).exists(_.version >= requiredVersion)
+
   def isGeqEnabled(metadata: Metadata, requiredVersion: Int): Boolean =
     anyEnabled(metadata).exists(_.version >= requiredVersion)
+
   /**
    * @return true if any version of IcebergCompat is enabled, and is incompatible
    *         with the given table feature
