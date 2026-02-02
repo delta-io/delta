@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -46,7 +47,8 @@ import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType, VariantType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -166,6 +168,8 @@ object SkippingEligibleDataType {
   // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
   def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
+    case _: VariantType =>
+      SQLConf.get.getConf(DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS)
     case _ => false
   }
 
@@ -264,7 +268,18 @@ trait DataSkippingReaderBase
 
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
-    allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
+    val parsedStats = from_json(col("stats"), statsSchema)
+    // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
+    // This avoids performance overhead for tables without variant columns.
+    // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
+    // expression has no way to decode a VariantVal from an encoded Z85 string.
+    // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
+    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+    } else {
+      parsedStats
+    }
+    allFiles.withColumn("stats", decodedStats)
   }
 
   private lazy val withStatsCache =
@@ -1341,12 +1356,18 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
+    // Check if UDF filters should be skipped for data skipping
+    val skipUdfFilters = spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_SKIP_UDF_FILTERS)
+
     // For data skipping, avoid using the filters that either:
     // 1. involve subqueries.
     // 2. are non-deterministic.
-    // 3. involve file metadata struct fields
+    // 3. involve file metadata struct fields.
+    // 4. contain UDFs (when spark.databricks.delta.skipping.udfFilters.skip is true).
     var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic || f.exists {
+      case f => containsSubquery(f) || !f.deterministic ||
+        (skipUdfFilters && DeltaTableUtils.exprContainsUdf(f)) ||
+        f.exists {
         case MetadataAttribute(_) => true
         case _ => false
       }

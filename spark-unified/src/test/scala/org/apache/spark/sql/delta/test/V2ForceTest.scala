@@ -28,7 +28,7 @@ import scala.collection.mutable
  * use the Kernel-based SparkTable implementation (V2 connector) instead of
  * DeltaTableV2 (V1 connector).
  *
- * See [[DeltaSQLConfV2.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
+ * See [[DeltaSQLConf.V2_ENABLE_MODE]] for V1 vs V2 connector definitions.
  *
  * Usage:
  * {{{

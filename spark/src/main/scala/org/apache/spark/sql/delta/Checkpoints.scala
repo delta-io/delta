@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.util.{DeltaFileOperations, DeltaLogGroupingIte
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.FileNames._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
 import org.apache.hadoop.mapred.{JobConf, TaskAttemptContextImpl, TaskAttemptID}
@@ -47,6 +48,9 @@ import org.apache.spark.sql.{Column, DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Cast, ElementAt, Literal}
+import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
+import org.apache.spark.sql.delta.schema.SchemaUtils
+import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.execution.SQLExecution
 import org.apache.spark.sql.execution.datasources.FileFormat
 import org.apache.spark.sql.execution.datasources.OutputWriter
@@ -759,7 +763,9 @@ object Checkpoints
     val (factory, serConf) = {
       val format = new ParquetFileFormat()
       val job = Job.getInstance(hadoopConf)
-      (format.prepareWrite(spark, job, Map.empty, schema),
+      // Right now, we don't shred variant stats in checkpoints.
+      val writeOptions = VariantShreddingShims.getVariantInferShreddingSchemaOptions(false)
+      (format.prepareWrite(spark, job, Map.empty ++ writeOptions, schema),
         new SerializableConfiguration(job.getConfiguration))
     }
 
@@ -1196,6 +1202,7 @@ object Checkpoints
       val partitionValues = Checkpoints.extractPartitionValues(
         snapshot.metadata.partitionSchema, "add.partitionValues")
       additionalCols ++= partitionValues
+      additionalCols ++= Checkpoints.extractStats(snapshot.statsSchema, "add.stats")
     }
     state.withColumn("add",
       when(col("add").isNotNull, struct(Seq(
@@ -1215,7 +1222,8 @@ object Checkpoints
   }
 
   def shouldWriteStatsAsStruct(conf: SQLConf, snapshot: Snapshot): Boolean = {
-    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata)
+    DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT.fromMetaData(snapshot.metadata) &&
+      !conf.getConf(DeltaSQLConf.STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED).getOrElse(false)
   }
 
   def shouldWriteStatsAsJson(snapshot: Snapshot): Boolean = {
@@ -1246,6 +1254,27 @@ object Checkpoints
     if (partitionValues.isEmpty) {
       None
     } else Some(struct(partitionValues: _*).as(STRUCT_PARTITIONS_COL_NAME))
+  }
+  // This method can be overridden in tests to create a checkpoint with parsed stats.
+  def includeStatsParsedInCheckpoint(): Boolean = true
+
+  /** Parse the stats from JSON and keep as a struct field when available. */
+  def extractStats(statsSchema: StructType, statsColName: String): Option[Column] = {
+    import org.apache.spark.sql.functions.from_json
+    Option.when(includeStatsParsedInCheckpoint() && statsSchema.nonEmpty) {
+      val parsedStats = from_json(col(statsColName), statsSchema,
+        DeltaFileProviderUtils.jsonStatsParseOption)
+      // If schema contains variant types, decode Z85-encoded strings to actual Variant values.
+      // In JSON stats, variant values are stored as Z85-encoded strings. from_json creates
+      // Variant objects containing those strings. DecodeNestedZ85EncodedVariant decodes them
+      // to proper binary Variant representation.
+      val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+        Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+      } else {
+        parsedStats
+      }
+      decodedStats.as(Checkpoints.STRUCT_STATS_COL_NAME)
+    }
   }
 }
 
