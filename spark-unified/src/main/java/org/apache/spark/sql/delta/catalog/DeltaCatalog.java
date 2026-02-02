@@ -65,6 +65,19 @@ import org.apache.spark.sql.types.StructType;
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
+  /**
+   * Loads a Delta table that is registered in the catalog.
+   *
+   * <p>Routing logic based on {@link DeltaV2Mode}:
+   * <ul>
+   *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
+   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
+   * </ul>
+   *
+   * @param ident The identifier of the table in the catalog.
+   * @param catalogTable The catalog table metadata containing table properties and location.
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
+   */
   @Override
   public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
@@ -72,9 +85,23 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         () -> super.loadCatalogTable(ident, catalogTable));
   }
 
+  /**
+   * Loads a Delta table directly from a path.
+   * This is used for path-based table access where the identifier name is the table path.
+   *
+   * <p>Routing logic based on {@link DeltaV2Mode}:
+   * <ul>
+   *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
+   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
+   * </ul>
+   *
+   * @param ident The identifier whose name contains the path to the Delta table.
+   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
+   */
   @Override
   public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
+        // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
         () -> super.loadPathTable(ident));
   }
