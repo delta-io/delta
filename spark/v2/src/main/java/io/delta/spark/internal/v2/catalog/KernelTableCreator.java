@@ -198,10 +198,10 @@ public final class KernelTableCreator {
           partitions,
           properties,
           CreateOperation.CREATE,
-          null,
-          true,
-          null,
-          false);
+          /* writeOptions = */ null,
+          /* tableByPath = */ true,
+          /* sourceTableOpt = */ null,
+          /* isUCManaged = */ false);
     }
   }
 }
