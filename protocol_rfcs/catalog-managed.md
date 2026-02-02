@@ -394,10 +394,13 @@ must exist.
 Notably, the [Version Checksum File](#version-checksum-file) for version `v` _can_ be created in the
 `_delta_log` even if the commit for version `v` is not published.
 
-Delta clients must also honor any _additional_ maintenance policies defined by the managing catalog.
-Those policies apply to the maintenance operations listed above (checkpoints, log compaction files,
-and version checksum files) and to other operations like [Metadata Cleanup](#metadata-cleanup) and
-VACUUM. Consequently, Delta clients must consult the catalog before running any maintenance job.
+By default, maintenance operations are prohibited unless the managing catalog explicitly permits
+the client to run them. The only exceptions are checkpoints, log compaction, and version checksum,
+as they are essential for all basic table operations (e.g. reads and writes) to operate reliably.
+All other maintenance operations such as the following are not allowed by default.
+- [Log and other metadata files clean up](#metadata-cleanup).
+- Data files cleanup, for example VACUUM.
+- Data layout changes, for example OPTIMIZE and REORG.
 
 ## Creating and Dropping Catalog-managed Tables
 
