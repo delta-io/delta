@@ -398,7 +398,7 @@ By default, maintenance operations are prohibited unless the managing catalog ex
 the client to run them. The only exceptions are checkpoints, log compaction, and version checksum,
 as they are essential for all basic table operations (e.g. reads and writes) to operate reliably.
 All other maintenance operations such as the following are not allowed by default.
-- [Log and other metadata file clean up](#metadata-cleanup).
+- [Log and other metadata files clean up](#metadata-cleanup).
 - Data files cleanup, for example VACUUM.
 - Data layout changes, for example OPTIMIZE and REORG.
 
