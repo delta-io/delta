@@ -2853,6 +2853,8 @@ class SchemaUtilsSuite extends QueryTest
 
     assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningWithDecimalCoercion)
       == wider)
+    assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      == wider)
   }
 
   test("schema merging override field metadata") {

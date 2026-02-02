@@ -119,10 +119,33 @@ object TypeWideningMode {
    * to find a wider schema to use.
    */
   case object AllTypeWideningToCommonWiderType extends TypeWideningMode {
+    private def getDecimalType(t: IntegralType): DecimalType = {
+      t match {
+        case _: ByteType => DecimalType(3, 0)
+        case _: ShortType => DecimalType(5, 0)
+        case _: IntegerType => DecimalType(10, 0)
+        case _: LongType => DecimalType(20, 0)
+      }
+    }
+
+    private def getWiderDecimalTypeWithInteger(
+        integralType: IntegralType,
+        decimalType: DecimalType): Option[DecimalType] = {
+      val wider = DecimalPrecisionTypeCoercion.widerDecimalType(
+        getDecimalType(integralType), decimalType)
+      Option.when(
+        TypeWidening.isTypeChangeSupported(getDecimalType(integralType), wider) &&
+          TypeWidening.isTypeChangeSupported(decimalType, wider))(wider)
+    }
+
     override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
       (left, right) match {
         case (l, r) if TypeWidening.isTypeChangeSupported(l, r) => Some(r)
         case (l, r) if TypeWidening.isTypeChangeSupported(r, l) => Some(l)
+        case (l: IntegralType, r: DecimalType) =>
+          getWiderDecimalTypeWithInteger(l, r)
+        case (l: DecimalType, r: IntegralType) =>
+          getWiderDecimalTypeWithInteger(r, l)
         case (l: DecimalType, r: DecimalType) =>
           val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
           Option.when(
