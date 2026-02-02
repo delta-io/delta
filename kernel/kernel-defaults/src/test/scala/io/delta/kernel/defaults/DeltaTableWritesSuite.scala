@@ -43,6 +43,7 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
@@ -1850,15 +1851,15 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       .add("dataChange", BooleanType.BOOLEAN)
       .add("stats", STRING)
 
-    new GenericRow(
-      schema,
-      Map(
-        0 -> path,
-        1 -> stringStringMapValue(java.util.Collections.emptyMap[String, String]()),
-        2 -> 100L,
-        3 -> System.currentTimeMillis(),
-        4 -> dataChange,
-        5 -> """{"numRecords":10}""").asJava)
+    val rowData = new java.util.HashMap[Integer, Object]()
+    rowData.put(0, path)
+    rowData.put(1, stringStringMapValue(java.util.Collections.emptyMap[String, String]())
+    rowData.put(2, 100L.asInstanceOf[Object])
+    rowData.put(3, System.currentTimeMillis().asInstanceOf[Object])
+    rowData.put(4, dataChange.asInstanceOf[Object])
+    rowData.put(5, """{"numRecords":10}""")
+
+    new GenericRow(schema, rowData)
   }
 
   // Helper to create a mock RemoveFile action row
@@ -1871,13 +1872,13 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       .add("deletionTimestamp", LONG)
       .add("dataChange", BooleanType.BOOLEAN)
 
-    new GenericRow(
-      schema,
-      Map(
-        0 -> path,
-        1 -> stringStringMapValue(java.util.Collections.emptyMap[String, String]()),
-        2 -> System.currentTimeMillis(),
-        3 -> dataChange).asJava)
+    val rowData = new java.util.HashMap[Integer, Object]()
+    rowData.put(0, path)
+    rowData.put(1, stringStringMapValue(java.util.Collections.emptyMap[String, String]())
+    rowData.put(2, System.currentTimeMillis().asInstanceOf[Object])
+    rowData.put(3, dataChange.asInstanceOf[Object])
+
+    new GenericRow(schema, rowData)
   }
 
   // Test cases: (description, actions, shouldSucceed)
@@ -1909,7 +1910,7 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
         val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
         val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
 
-        val actionsIterable = inMemoryIterable(actions.asJava)
+        val actionsIterable = inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
 
         if (shouldSucceed) {
           val result = commitTransaction(txn, engine, actionsIterable)
