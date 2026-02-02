@@ -128,24 +128,14 @@ object TypeWideningMode {
       }
     }
 
-    private def getWiderDecimalTypeWithInteger(
-        integralType: IntegralType,
-        decimalType: DecimalType): Option[DecimalType] = {
-      val wider = DecimalPrecisionTypeCoercion.widerDecimalType(
-        getDecimalType(integralType), decimalType)
-      Option.when(
-        TypeWidening.isTypeChangeSupported(getDecimalType(integralType), wider) &&
-          TypeWidening.isTypeChangeSupported(decimalType, wider))(wider)
-    }
-
     override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
       (left, right) match {
         case (l, r) if TypeWidening.isTypeChangeSupported(l, r) => Some(r)
         case (l, r) if TypeWidening.isTypeChangeSupported(r, l) => Some(l)
         case (l: IntegralType, r: DecimalType) =>
-          getWiderDecimalTypeWithInteger(l, r)
+          getWidenedType(getDecimalType(l), r)
         case (l: DecimalType, r: IntegralType) =>
-          getWiderDecimalTypeWithInteger(r, l)
+          getWidenedType(getDecimalType(r), l)
         case (l: DecimalType, r: DecimalType) =>
           val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
           Option.when(
