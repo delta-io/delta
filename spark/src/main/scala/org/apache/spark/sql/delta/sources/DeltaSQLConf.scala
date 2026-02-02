@@ -1538,6 +1538,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION =
+    buildConf("typeWidening.allowIntegralDecimalCoercion")
+      .doc("When true, the type widening mode `AllTypeWideningToCommonWiderType` " +
+        "should allow converting integral types to DecimalType and use decimal " +
+        "coercion to find a common wider type with another DecimalType")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
     buildConf("isDeltaTable.throwOnError")
       .internal()
