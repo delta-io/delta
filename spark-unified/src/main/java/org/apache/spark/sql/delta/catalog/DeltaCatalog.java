@@ -16,15 +16,17 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.spark.internal.v2.catalog.KernelTableCreator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import org.apache.spark.sql.delta.DeltaV2Mode;
 import java.util.HashMap;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -106,6 +108,27 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   }
 
   /**
+   * Creates a Delta table. In STRICT mode, routes path-based CREATE TABLE to the V2
+   * Kernel-backed implementation (phase 1). All other cases fall back to V1.
+   */
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      java.util.Map<String, String> properties) {
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
+    if (connectorMode.shouldCatalogReturnV2Tables()) {
+      if (isPathIdentifier(ident)) {
+        return KernelTableCreator.createPathTable(ident, schema, partitions, properties);
+      }
+      throw new UnsupportedOperationException(
+          "V2 CREATE TABLE supports only path-based tables in phase 1");
+    }
+    return super.createTable(ident, schema, partitions, properties);
+  }
+
+  /**
    * Loads a table based on the {@link DeltaV2Mode} SQL configuration.
    *
    * <p>This method checks the configuration and delegates to the appropriate supplier:
@@ -129,5 +152,10 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     } else {
       return v1ConnectorSupplier.get();
     }
+  }
+
+  @Override
+  public boolean isPathIdentifier(Identifier ident) {
+    return ident.namespace().length == 1 && "delta".equalsIgnoreCase(ident.namespace()[0]);
   }
 }
