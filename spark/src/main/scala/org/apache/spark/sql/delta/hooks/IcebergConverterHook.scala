@@ -66,6 +66,7 @@ trait IcebergConverterHook extends PostCommitHook with DeltaLogging {
 }
 
 object IcebergConverterHook extends IcebergConverterHook
+
 object IcebergSyncConverterHook extends IcebergConverterHook {
   override def triggerIcebergConversion(
       converter: UniversalFormatConverter,
