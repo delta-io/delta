@@ -396,8 +396,11 @@ Notably, the [Version Checksum File](#version-checksum-file) for version `v` _ca
 
 By default, maintenance operations are prohibited unless the managing catalog explicitly permits
 the client to run them. The only exceptions are checkpoints, log compaction, and version checksum,
-as they are essential for maintaining all basic table operations. All other operations, including
-but not limited to [Metadata Cleanup](#metadata-cleanup), VACUUM, OPTIMIZE, are not allowed by default. 
+as they are essential for all basic table operations (e.g. reads and writes) to operate reliably.
+All other maintenance operations such as the following are not allowed by default.
+- [Log and other metadata file clean up](#metadata-cleanup).
+- Data files cleanup, for example VACUUM.
+- Data layout changes, for example OPTIMIZE and REORG.
 
 ## Creating and Dropping Catalog-managed Tables
 
