@@ -139,9 +139,9 @@ public interface Snapshot {
    * @param engine the engine to use for publishing commits
    * @see io.delta.kernel.commit.CatalogCommitter#publish
    * @throws PublishFailedException if the publish operation fails
+   * @return a new Snapshot reflecting the published state
    */
-  // TODO: Return a new Snapshot reflecting the published state
-  void publish(Engine engine) throws PublishFailedException;
+  Snapshot publish(Engine engine) throws PublishFailedException;
 
   /**
    * Writes a checksum file for this snapshot using the specified mode:
