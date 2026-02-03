@@ -102,9 +102,9 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
           } catch {
             case e: Exception =>
               throw new IllegalStateException(
-                "Unable to load IcebergRESTCatalogPlanningClientFactory " +
-                "for server-side planning. Ensure the delta-iceberg JAR is on the " +
-                "classpath and compatible with this Delta version.",
+                "No ServerSidePlanningClientFactory has been registered. " +
+                "Ensure delta-iceberg JAR is on the classpath for auto-registration, " +
+                "or call ServerSidePlanningClientFactory.setFactory() to register manually.",
                 e)
           }
         }
