@@ -54,26 +54,15 @@ class ServerSidePlanningClientFactoryAutoRegistrationSuite
   test("auto-registration succeeds when IcebergRESTCatalogPlanningClientFactory " +
     "is on classpath") {
     withCleanFactory {
-      // Verify factory is not registered initially
-      assert(!ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should not be registered initially")
-      assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().isEmpty,
-        "Factory info should be empty initially")
-
       // Calling getFactory() should trigger auto-registration
       val factory = ServerSidePlanningClientFactory.getFactory()
 
       // Verify factory is successfully registered
       assert(factory != null, "Factory should not be null after auto-registration")
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered after getFactory() call")
 
       // Verify it's the correct type
-      val factoryInfo = ServerSidePlanningClientFactory.getRegisteredFactoryName()
-      assert(factoryInfo.isDefined,
-        "Factory info should be defined after auto-registration")
-      assert(factoryInfo.get.contains("IcebergRESTCatalogPlanningClientFactory"),
-        s"Expected IcebergRESTCatalogPlanningClientFactory, got: ${factoryInfo.get}")
+      assert(factory.getClass.getName.contains("IcebergRESTCatalogPlanningClientFactory"),
+        s"Expected IcebergRESTCatalogPlanningClientFactory, got: ${factory.getClass.getName}")
     }
   }
 
@@ -81,7 +70,6 @@ class ServerSidePlanningClientFactoryAutoRegistrationSuite
     withCleanFactory {
       // First call triggers auto-registration
       val factory1 = ServerSidePlanningClientFactory.getFactory()
-      val factoryInfo1 = ServerSidePlanningClientFactory.getRegisteredFactoryName()
 
       // Multiple calls should return the same cached instance
       val factory2 = ServerSidePlanningClientFactory.getFactory()
@@ -93,21 +81,14 @@ class ServerSidePlanningClientFactoryAutoRegistrationSuite
       assert(factory2 eq factory3,
         "Third getFactory() call should return cached instance")
 
-      // Verify factory info remains consistent
-      assert(ServerSidePlanningClientFactory.getRegisteredFactoryName() == factoryInfo1,
-        "Factory info should remain consistent across multiple calls")
-
       // After clearFactory(), should allow fresh registration
       ServerSidePlanningClientFactory.clearFactory()
       val factory4 = ServerSidePlanningClientFactory.getFactory()
 
-      // Verify new registration occurred
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
+      // Verify new registration occurred and it's the correct type
+      assert(factory4 != null,
         "Factory should be registered after clearFactory() and getFactory()")
-      assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().isDefined,
-        "Factory info should be defined after fresh registration")
-      assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().get
-        .contains("IcebergRESTCatalogPlanningClientFactory"),
+      assert(factory4.getClass.getName.contains("IcebergRESTCatalogPlanningClientFactory"),
         "Fresh registration should register Iceberg factory")
     }
   }

@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -151,10 +151,6 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
         "or call ServerSidePlanningClientFactory.setFactory() to register manually.")
     }
   }
-
-  def isFactoryRegistered(): Boolean = registeredFactory.isDefined
-
-  def getRegisteredFactoryName(): Option[String] = registeredFactory.map(_.getClass.getName)
 
   /**
    * Convenience method to create a client from metadata using the registered factory.

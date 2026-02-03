@@ -49,34 +49,15 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
   }
 
   /**
-   * Assert that factory is registered and matches expected type.
-   * Includes descriptive error messages.
-   */
-  private def assertFactoryType(
-      expectedType: String,
-      context: String = ""): Unit = {
-    val prefix = if (context.nonEmpty) s"[$context] " else ""
-
-    assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-      s"${prefix}Factory should be registered")
-
-    val factoryInfo = ServerSidePlanningClientFactory.getRegisteredFactoryName()
-    assert(factoryInfo.isDefined,
-      s"${prefix}Factory info should be defined")
-    assert(factoryInfo.get.contains(expectedType),
-      s"${prefix}Expected factory type=$expectedType, got: ${factoryInfo.get}")
-  }
-
-  /**
-   * Assert that factory is NOT registered.
+   * Assert that getFactory() throws IllegalStateException indicating no factory is registered.
    */
   private def assertNoFactory(context: String = ""): Unit = {
     val prefix = if (context.nonEmpty) s"[$context] " else ""
-
-    assert(!ServerSidePlanningClientFactory.isFactoryRegistered(),
-      s"${prefix}Factory should not be registered")
-    assert(ServerSidePlanningClientFactory.getRegisteredFactoryName().isEmpty,
-      s"${prefix}Factory info should be empty")
+    val exception = intercept[IllegalStateException] {
+      ServerSidePlanningClientFactory.getFactory()
+    }
+    assert(exception.getMessage.contains("No ServerSidePlanningClientFactory has been registered"),
+      s"${prefix}Expected 'No ServerSidePlanningClientFactory' message, got: ${exception.getMessage}")
   }
 
   // ========== Tests ==========
@@ -121,8 +102,10 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
     withCleanFactory {
       val testFactory = new TestServerSidePlanningClientFactory()
       ServerSidePlanningClientFactory.setFactory(testFactory)
-      assert(ServerSidePlanningClientFactory.isFactoryRegistered(),
-        "Factory should be registered")
+
+      // Verify factory is registered by successfully retrieving it
+      assert(ServerSidePlanningClientFactory.getFactory() eq testFactory,
+        "Factory should be registered and retrievable")
 
       // Clear factory
       ServerSidePlanningClientFactory.clearFactory()
