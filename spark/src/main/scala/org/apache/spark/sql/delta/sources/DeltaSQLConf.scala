@@ -1745,19 +1745,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(8)
 
-  val DELTA_DATASKIPPING_SKIP_UDF_FILTERS =
-    buildConf("skipping.udfFilters.skip")
-      .doc(
-        """
-           |If true, filters containing User Defined Functions (UDFs) will not be used for
-           |data skipping. UDFs are excluded because users may not correctly mark them as
-           |non-deterministic, which could lead to incorrect data skipping results if a
-           |non-deterministic UDF is evaluated against file statistics.
-           |""".stripMargin)
-      .internal()
-      .booleanConf
-      .createWithDefault(true)
-
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
