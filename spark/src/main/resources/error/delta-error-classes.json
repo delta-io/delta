@@ -1796,7 +1796,7 @@
     "subClass" : {
       "OVERWRITE_REQUIRED" : {
         "message" : [
-          "To overwrite your schema or change partitioning, please set: '.option(\"overwriteSchema\", \"true\")'.",
+          "To overwrite your schema or change partitioning, set: '.option(\"overwriteSchema\", \"true\")'.",
           "Note that the schema can't be overwritten when using 'replaceWhere'."
         ]
       },
@@ -1810,8 +1810,8 @@
       },
       "SCHEMA_MISMATCH" : {
         "message" : [
-          "A schema mismatch detected when writing to the Delta table (Table ID: <id>).",
-          "To enable schema migration using DataFrameWriter or DataStreamWriter, please set: '.option(\"mergeSchema\", \"true\")'.",
+          "A schema mismatch was detected when writing to the Delta table (Table ID: <id>).",
+          "To enable schema migration using DataFrameWriter or DataStreamWriter, set: '.option(\"mergeSchema\", \"true\")'.",
           "For other operations, set the session configuration spark.databricks.delta.schema.autoMerge.enabled to \"true\". See the documentation specific to the operation for details.",
           "",
           "Table schema:",
