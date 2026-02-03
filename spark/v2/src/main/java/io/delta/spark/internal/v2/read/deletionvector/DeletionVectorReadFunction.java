@@ -15,6 +15,7 @@
  */
 package io.delta.spark.internal.v2.read.deletionvector;
 
+import io.delta.spark.internal.v2.utils.CloseableIterator;
 import java.io.Serializable;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
@@ -23,18 +24,34 @@ import scala.Function1;
 import scala.collection.Iterator;
 import scala.runtime.AbstractFunction1;
 
-/** Extends original reader function for handling dv related business logic. */
+/**
+ * Wraps a Parquet reader function to apply deletion vector filtering.
+ *
+ * <p>This function:
+ *
+ * <ol>
+ *   <li>Reads rows from the base Parquet reader (which includes the is_row_deleted column)
+ *   <li>Filters out deleted rows (where is_row_deleted != 0)
+ *   <li>Projects out the is_row_deleted column from the output
+ * </ol>
+ *
+ * <p>The returned iterator implements {@link java.io.Closeable} to ensure proper resource cleanup
+ * of the underlying Parquet reader, even when the iterator is not fully consumed.
+ */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
+  /** Byte value in the DV column indicating the row is NOT deleted (row should be kept). */
+  private static final byte ROW_NOT_DELETED = 0;
+
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
-  private final DvSchemaContext dvSchemaContext;
+  private final DeletionVectorSchemaContext dvSchemaContext;
 
   private DeletionVectorReadFunction(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DvSchemaContext dvSchemaContext) {
+      DeletionVectorSchemaContext dvSchemaContext) {
     this.baseReadFunc = baseReadFunc;
     this.dvSchemaContext = dvSchemaContext;
   }
@@ -42,41 +59,28 @@ public class DeletionVectorReadFunction
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
     int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
-    // Use pre-computed ordinals from DvSchemaContext.
+    // Use pre-computed ordinals from DeletionVectorSchemaContext.
     ProjectingInternalRow projection =
         ProjectingInternalRow.apply(
             dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());
 
-    // Use Scala's filter/map since Spark returns scala.collection.Iterator (not
-    // java.util.Iterator).
-    // filter: keep non-deleted rows (DV column == 0)
-    // map: project out DV column using Spark's ProjectingInternalRow
-    return baseReadFunc
-        .apply(file)
-        .filter(
-            // Must use Object: Java generics are invariant, so AbstractFunction1<_, Boolean>
-            // cannot be passed to Scala's filter() which expects Function1[_, Boolean] (erased to
-            // Object)
-            new AbstractFunction1<InternalRow, Object>() {
-              @Override
-              public Object apply(InternalRow row) {
-                return row.getByte(dvColumnIndex) == 0;
-              }
-            })
-        .map(
-            new AbstractFunction1<InternalRow, InternalRow>() {
-              @Override
-              public InternalRow apply(InternalRow row) {
-                projection.project(row);
-                return projection;
-              }
+    // Wrap the base iterator as CloseableIterator to preserve close() through filter/map.
+    // This ensures proper resource cleanup even when the iterator is not fully consumed.
+    Iterator<InternalRow> baseIterator = baseReadFunc.apply(file);
+
+    return CloseableIterator.wrap(baseIterator)
+        .filterCloseable(row -> row.getByte(dvColumnIndex) == ROW_NOT_DELETED)
+        .mapCloseable(
+            row -> {
+              projection.project(row);
+              return (InternalRow) projection;
             });
   }
 
   /** Factory method to wrap a reader function with DV filtering. */
   public static DeletionVectorReadFunction wrap(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DvSchemaContext dvSchemaContext) {
+      DeletionVectorSchemaContext dvSchemaContext) {
     return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext);
   }
 }

@@ -19,10 +19,8 @@ import static io.delta.spark.internal.v2.InternalRowTestUtils.*;
 
 import java.util.List;
 import org.apache.spark.sql.catalyst.InternalRow;
-import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
-import org.apache.spark.unsafe.types.UTF8String;
 import org.junit.jupiter.api.Test;
 
 public class DeletionVectorReadFunctionTest {
@@ -40,14 +38,15 @@ public class DeletionVectorReadFunctionTest {
             row(2, "bob", (byte) 1), // Deleted.
             row(3, "charlie", (byte) 0)); // Not deleted.
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
     List<InternalRow> result = collectRows(readFunc.apply(null));
 
     // Verify filtered and projected output (DV column removed, deleted row filtered).
-    assertRowsEquals(result, List.of(List.of(1, "alice"), List.of(3, "charlie")));
+    assertRowsEquals(result, row(1, "alice"), row(3, "charlie"));
   }
 
   @Test
@@ -55,40 +54,28 @@ public class DeletionVectorReadFunctionTest {
     List<InternalRow> inputRows =
         List.of(row(1, "alice", (byte) 1), row(2, "bob", (byte) 1)); // All deleted.
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
     List<InternalRow> result = collectRows(readFunc.apply(null));
 
-    assertRowsEquals(result, List.of());
+    assertRowsEquals(result);
   }
 
   @Test
   public void testNoRowsDeleted() {
     List<InternalRow> inputRows =
-        List.of(
-            row(1, "alice", (byte) 0),
-            row(2, "bob", (byte) 0),
-            row(3, "charlie", (byte) 0)); // None deleted.
+        List.of(row(1, "alice", (byte) 0), row(2, "bob", (byte) 0), row(3, "charlie", (byte) 0));
 
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
     List<InternalRow> result = collectRows(readFunc.apply(null));
 
-    assertRowsEquals(
-        result, List.of(List.of(1, "alice"), List.of(2, "bob"), List.of(3, "charlie")));
-  }
-
-  /** Create an InternalRow from values. Strings are converted to UTF8String. */
-  private static InternalRow row(Object... values) {
-    Object[] converted = new Object[values.length];
-    for (int i = 0; i < values.length; i++) {
-      converted[i] =
-          values[i] instanceof String ? UTF8String.fromString((String) values[i]) : values[i];
-    }
-    return new GenericInternalRow(converted);
+    assertRowsEquals(result, row(1, "alice"), row(2, "bob"), row(3, "charlie"));
   }
 }

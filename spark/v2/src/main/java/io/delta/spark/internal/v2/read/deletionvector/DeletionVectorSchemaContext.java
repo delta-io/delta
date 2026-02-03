@@ -26,7 +26,7 @@ import scala.collection.immutable.Seq;
  *
  * <p>Encapsulates schema with DV column and pre-computed indices needed for DV filtering.
  */
-public class DvSchemaContext implements Serializable {
+public class DeletionVectorSchemaContext implements Serializable {
 
   private static final long serialVersionUID = 1L;
 
@@ -43,7 +43,7 @@ public class DvSchemaContext implements Serializable {
    * @param partitionSchema partition columns schema
    * @throws IllegalArgumentException if readDataSchema already contains the DV column
    */
-  public DvSchemaContext(StructType readDataSchema, StructType partitionSchema) {
+  public DeletionVectorSchemaContext(StructType readDataSchema, StructType partitionSchema) {
     // Validate that readDataSchema doesn't already contain the DV column to ensure the DV column
     // is added only once. While Delta uses the "__delta_internal_" prefix as a naming convention
     // for internal columns (listed in DeltaColumnMapping.DELTA_INTERNAL_COLUMNS), there's no

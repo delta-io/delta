@@ -26,7 +26,7 @@ import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
-import io.delta.spark.internal.v2.read.deletionvector.DvSchemaContext;
+import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -193,18 +193,23 @@ public class PartitionUtils {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     Protocol protocol = snapshotImpl.getProtocol();
     Metadata metadata = snapshotImpl.getMetadata();
-    String tablePath = snapshotImpl.getDataPath().toUri().toString();
+    // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
+    // toUri().toString() encodes special characters (e.g., space -> %20), which causes
+    // DV file path resolution failures.
+    String tablePath = snapshotImpl.getDataPath().toString();
 
     // Create DV schema context if table supports deletion vectors
     boolean isTableSupportDv =
         protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
             && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
-    Optional<DvSchemaContext> dvSchemaContext =
+    Optional<DeletionVectorSchemaContext> dvSchemaContext =
         isTableSupportDv
-            ? Optional.of(new DvSchemaContext(readDataSchema, partitionSchema))
+            ? Optional.of(new DeletionVectorSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     StructType finalReadDataSchema =
-        dvSchemaContext.map(DvSchemaContext::getSchemaWithDvColumn).orElse(readDataSchema);
+        dvSchemaContext
+            .map(DeletionVectorSchemaContext::getSchemaWithDvColumn)
+            .orElse(readDataSchema);
 
     // TODO(https://github.com/delta-io/delta/issues/5859): Enable vectorized reader for DV tables
     boolean enableVectorizedReader =

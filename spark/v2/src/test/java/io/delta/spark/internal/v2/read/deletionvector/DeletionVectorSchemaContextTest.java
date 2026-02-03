@@ -22,7 +22,7 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 
-public class DvSchemaContextTest {
+public class DeletionVectorSchemaContextTest {
 
   // Common test schemas.
   private static final StructType DATA_SCHEMA =
@@ -32,7 +32,8 @@ public class DvSchemaContextTest {
 
   @Test
   void testWithFullSchemas() {
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
 
     StructType expectedSchemaWithDv =
         DATA_SCHEMA.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
@@ -48,7 +49,8 @@ public class DvSchemaContextTest {
   @Test
   void testEmptyPartitionSchema() {
     StructType emptyPartition = new StructType();
-    DvSchemaContext context = new DvSchemaContext(DATA_SCHEMA, emptyPartition);
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(DATA_SCHEMA, emptyPartition);
 
     StructType expectedSchemaWithDv =
         DATA_SCHEMA.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
@@ -62,7 +64,8 @@ public class DvSchemaContextTest {
   @Test
   void testEmptyDataSchema() {
     StructType emptyData = new StructType();
-    DvSchemaContext context = new DvSchemaContext(emptyData, PARTITION_SCHEMA);
+    DeletionVectorSchemaContext context =
+        new DeletionVectorSchemaContext(emptyData, PARTITION_SCHEMA);
 
     StructType expectedSchemaWithDv =
         emptyData.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD());
@@ -84,7 +87,7 @@ public class DvSchemaContextTest {
     IllegalArgumentException exception =
         assertThrows(
             IllegalArgumentException.class,
-            () -> new DvSchemaContext(schemaWithDv, new StructType()));
+            () -> new DeletionVectorSchemaContext(schemaWithDv, new StructType()));
 
     assertTrue(
         exception.getMessage().contains(DeltaParquetFileFormat.IS_ROW_DELETED_COLUMN_NAME()));

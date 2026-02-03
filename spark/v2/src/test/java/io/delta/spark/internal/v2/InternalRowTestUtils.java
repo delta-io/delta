@@ -18,12 +18,14 @@ package io.delta.spark.internal.v2;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
@@ -56,23 +58,34 @@ public class InternalRowTestUtils {
     return result;
   }
 
+  /** Create an InternalRow from values. Strings are converted to UTF8String. */
+  public static InternalRow row(Object... values) {
+    Object[] converted = new Object[values.length];
+    for (int i = 0; i < values.length; i++) {
+      converted[i] =
+          values[i] instanceof String ? UTF8String.fromString((String) values[i]) : values[i];
+    }
+    return new GenericInternalRow(converted);
+  }
+
   /** Assert that actual InternalRows match expected rows. Converts to Row for comparison. */
-  public static void assertRowsEquals(List<InternalRow> actual, List<List<Object>> expected) {
-    List<Row> actualRows =
-        actual.stream()
-            .map(
-                row ->
-                    RowFactory.create(
-                        IntStream.range(0, row.numFields())
-                            .mapToObj(
-                                i ->
-                                    row.get(i, null) instanceof UTF8String
-                                        ? row.get(i, null).toString()
-                                        : row.get(i, null))
-                            .toArray()))
-            .collect(Collectors.toList());
-    List<Row> expectedRows =
-        expected.stream().map(row -> RowFactory.create(row.toArray())).collect(Collectors.toList());
-    assertEquals(expectedRows, actualRows);
+  public static void assertRowsEquals(List<InternalRow> actual, InternalRow... expected) {
+    assertEquals(toRows(Arrays.asList(expected)), toRows(actual));
+  }
+
+  /** Convert InternalRows to Rows, converting UTF8String back to String. */
+  private static List<Row> toRows(List<InternalRow> rows) {
+    return rows.stream()
+        .map(
+            r ->
+                RowFactory.create(
+                    IntStream.range(0, r.numFields())
+                        .mapToObj(
+                            i ->
+                                r.get(i, null) instanceof UTF8String
+                                    ? r.get(i, null).toString()
+                                    : r.get(i, null))
+                        .toArray()))
+        .collect(Collectors.toList());
   }
 }
