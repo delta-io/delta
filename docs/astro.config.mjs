@@ -122,6 +122,9 @@ export default defineConfig({
               slug: "delta-deletion-vectors",
             },
             {
+              slug: "delta-catalog-managed-tables",
+            },
+            {
               slug: "delta-drop-feature",
             },
             {
