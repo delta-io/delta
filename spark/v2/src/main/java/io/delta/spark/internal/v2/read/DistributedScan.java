@@ -35,17 +35,24 @@ import org.apache.spark.sql.SparkSession;
 /**
  * Kernel-compatible Scan that uses distributed DataFrame processing.
  *
- * <p>This implementation uses only standard Kernel APIs while providing lazy, distributed
- * processing. The DataFrame is not collected until getScanFiles() is called.
+ * <p><b>Two-Phase Architecture:</b>
  *
- * <p>Key design: getScanFiles() returns an iterator that lazily processes DataFrame rows,
- * satisfying Kernel API contract while maintaining distributed processing benefits.
+ * <ol>
+ *   <li><b>Log Replay (DataFrame)</b>: Distributed deduplication and sorting of AddFiles
+ *   <li><b>Data Skipping (Kernel)</b>: Predicate evaluation in getScanFiles() including
+ *       OpaquePredicate callbacks
+ * </ol>
+ *
+ * <p>This design follows Kernel's OpaquePredicate philosophy: Kernel controls the evaluation flow
+ * and calls back to the engine for custom predicate logic.
  */
 public class DistributedScan implements Scan {
   private final Scan delegateScan;
   private final Dataset<org.apache.spark.sql.Row> dataFrame;
   private final SparkSession spark;
   private final boolean maintainOrdering;
+  private final Predicate predicate; // For data skipping
+  private final Snapshot snapshot;
 
   /**
    * Create a DistributedScan.
@@ -55,16 +62,20 @@ public class DistributedScan implements Scan {
    * @param snapshot Delta snapshot
    * @param readSchema Read schema
    * @param maintainOrdering Whether to preserve DataFrame ordering (required for streaming)
+   * @param predicate Predicate for data skipping (evaluated per AddFile in getScanFiles)
    */
   public DistributedScan(
       SparkSession spark,
       Dataset<org.apache.spark.sql.Row> dataFrame,
       Snapshot snapshot,
       StructType readSchema,
-      boolean maintainOrdering) {
+      boolean maintainOrdering,
+      Predicate predicate) {
     this.spark = spark;
     this.dataFrame = dataFrame;
     this.maintainOrdering = maintainOrdering;
+    this.predicate = predicate;
+    this.snapshot = snapshot;
     // Build the scan using Kernel's standard API for delegation
     this.delegateScan = snapshot.getScanBuilder().withReadSchema(readSchema).build();
   }
@@ -77,14 +88,61 @@ public class DistributedScan implements Scan {
         io.delta.spark.internal.v2.utils.SchemaUtils.convertSparkSchemaToKernelSchema(
             dataFrame.schema());
 
-    return toCloseableIterator(dataFrame.toLocalIterator())
+    CloseableIterator<org.apache.spark.sql.Row> rowIterator =
+        toCloseableIterator(dataFrame.toLocalIterator());
+
+    // If no predicate, return all files
+    if (predicate == null) {
+      return rowIterator.map(
+          sparkRow -> {
+            ColumnarBatch batch = new SparkRowColumnarBatch(sparkRow, dataFrameSchema);
+            return new FilteredColumnarBatch(batch, Optional.empty());
+          });
+    }
+
+    // If predicate exists, evaluate it on each AddFile using evaluateOnAddFile callback
+    return rowIterator
+        .filter(
+            sparkRow -> {
+              // Wrap the Spark row as a Kernel Row
+              Row addFileRow = new SparkRowAsKernelRow(sparkRow, dataFrameSchema);
+
+              // Evaluate the predicate on the AddFile row
+              return evaluatePredicate(predicate, addFileRow);
+            })
         .map(
             sparkRow -> {
-              // Wrap full row (with "add" struct) as ColumnarBatch
-              // StreamingHelper needs to extract "add" field
               ColumnarBatch batch = new SparkRowColumnarBatch(sparkRow, dataFrameSchema);
               return new FilteredColumnarBatch(batch, Optional.empty());
             });
+  }
+
+  /**
+   * Evaluates a predicate on an AddFile row.
+   *
+   * <p>This method handles OpaquePredicate by calling back to the engine's evaluateOnAddFile,
+   * following Kernel's callback pattern for engine-specific predicate evaluation.
+   *
+   * @param predicate the predicate to evaluate
+   * @param addFileRow the AddFile row (wrapped as Kernel Row)
+   * @return true if the file should be included, false otherwise
+   */
+  private boolean evaluatePredicate(Predicate predicate, Row addFileRow) {
+    if (predicate instanceof io.delta.kernel.expressions.OpaquePredicate) {
+      io.delta.kernel.expressions.OpaquePredicate opaque =
+          (io.delta.kernel.expressions.OpaquePredicate) predicate;
+
+      // Kernel calls back to engine for evaluation
+      // Engine evaluates Spark Filters on the AddFile row (partitionValues + stats)
+      Optional<Boolean> result = opaque.getOp().evaluateOnAddFile(addFileRow);
+
+      // If evaluation returns empty, include the file (conservative approach)
+      return result.orElse(true);
+    }
+
+    // TODO: Handle other predicate types
+    // For now, include all files for non-opaque predicates
+    return true;
   }
 
   @Override

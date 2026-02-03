@@ -225,4 +225,36 @@ public class Predicate extends ScalarExpression {
   private static final Set<String> COLLATION_SUPPORTED_OPERATORS =
       Stream.of("<", "<=", ">", ">=", "=", "IS NOT DISTINCT FROM", "STARTS_WITH", "IN")
           .collect(Collectors.toSet());
+
+  /**
+   * Creates an opaque predicate that wraps an engine-specific predicate operation.
+   *
+   * <p>This allows engines to provide custom predicate implementations that Kernel carries through
+   * its APIs but delegates evaluation back to the engine.
+   *
+   * @param op the opaque predicate operation
+   * @param exprs child expressions that the opaque predicate operates on
+   * @return a new OpaquePredicate instance
+   * @since 4.1.0
+   */
+  public static Predicate opaque(OpaquePredicateOp op, List<Expression> exprs) {
+    return new OpaquePredicate(op, exprs);
+  }
+
+  /**
+   * Creates an opaque predicate with no child expressions.
+   *
+   * <p>This is a convenience method for opaque predicates that are self-contained (e.g., Spark
+   * Filters that don't need Kernel Expression children).
+   *
+   * @param op the opaque predicate operation
+   * @return a new OpaquePredicate instance
+   * @since 4.1.0
+   * @deprecated Use {@link #opaque(OpaquePredicateOp, List)} instead for consistency with Rust
+   *     Kernel
+   */
+  @Deprecated
+  public static Predicate opaque(OpaquePredicateOp op) {
+    return new OpaquePredicate(op, Collections.emptyList());
+  }
 }
