@@ -2855,6 +2855,21 @@ class SchemaUtilsSuite extends QueryTest
       == wider)
     assert(mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
       == wider)
+
+    // check that flipping conf to false prevents integral type decimal coercion
+    // for `AllTypeWideningToCommonWiderType`
+    withSQLConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION.key ->
+      "false") {
+      val exception = intercept[DeltaAnalysisException] {
+        mergeSchemas(left, right, typeWideningMode = AllTypeWideningToCommonWiderType)
+      }
+      checkError(
+        exception,
+        "DELTA_FAILED_TO_MERGE_FIELDS",
+        sqlState = "22005",
+        parameters = Map("currentField" -> "a", "updateField" -> "a")
+      )
+    }
   }
 
   test("schema merging override field metadata") {
