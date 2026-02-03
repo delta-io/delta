@@ -1745,6 +1745,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(8)
 
+  val DELTA_DATASKIPPING_SKIP_UDF_FILTERS =
+    buildConf("skipping.udfFilters.skip")
+      .doc(
+        """
+           |If true, filters containing User Defined Functions (UDFs) will not be used for
+           |data skipping. UDFs are excluded because users may not correctly mark them as
+           |non-deterministic, which could lead to incorrect data skipping results if a
+           |non-deterministic UDF is evaluated against file statistics.
+           |""".stripMargin)
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
    * already used by Databricks' data skipping implementation. There's no benefit to making OSS
@@ -2887,6 +2900,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       """
         | If true, attach the 'variantShredding-preview' table feature when enabling shredding
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
+  val COLLECT_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.collectVariantDataSkippingStats")
+    .internal()
+    .doc(
+      """
+        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
+        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
+        | Variant stats."""
+        .stripMargin)
     .booleanConf
     .createWithDefault(true)
 

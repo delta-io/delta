@@ -143,7 +143,12 @@ case class CreateDeltaTableCommand(
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
-      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
+      spark = sparkSession,
+      tableExists = deltaLog.tableExists,
+      query = query,
+      catalogTableProperties = tableWithLocation.properties,
+      existingTableSnapshotOpt =
+        if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)

@@ -375,8 +375,11 @@ object CrossSparkVersions extends AutoPlugin {
     )
 
     val additionalSourceDirSettings = spec.additionalSourceDir.map { dir =>
+      // Add both scala-shims and java-shims directories
+      val javaShimsDir = dir.replace("scala-shims", "java-shims")
       Seq(
         Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / dir,
+        Compile / unmanagedSourceDirectories += (Compile / baseDirectory).value / "src" / "main" / javaShimsDir,
         Test / unmanagedSourceDirectories += (Test / baseDirectory).value / "src" / "test" / dir
       )
     }.getOrElse(Seq.empty)

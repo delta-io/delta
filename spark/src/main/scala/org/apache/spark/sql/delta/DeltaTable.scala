@@ -184,6 +184,13 @@ object DeltaTableUtils extends PredicateHelper
       new Path(tableIdent.table).isAbsolute
   }
 
+  // Helper function to detect UDF expressions
+  def exprContainsUdf(expr: Expression): Boolean = {
+    expr.exists {
+      case _: UserDefinedExpression => true
+      case _ => false
+    }
+  }
   /** Find the root of a Delta table from the provided path. */
   def findDeltaTableRoot(
       spark: SparkSession,
