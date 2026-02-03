@@ -37,7 +37,9 @@ public class FlinkUnityCatalog extends AbstractCatalog {
   }
 
   @Override
-  public void open() throws CatalogException {}
+  public void open() throws CatalogException {
+    deltaCatalog.open();
+  }
 
   @Override
   public void close() throws CatalogException {}

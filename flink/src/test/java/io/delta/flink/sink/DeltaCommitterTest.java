@@ -20,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import io.delta.flink.TestHelper;
 import io.delta.flink.table.HadoopTable;
+import io.delta.flink.table.LocalFileSystemTable;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.types.*;
@@ -237,8 +238,8 @@ class DeltaCommitterTest extends TestHelper {
               Collections.emptyList(),
               Collections.emptyMap());
 
-          HadoopTable table =
-              new HadoopTable(
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
                   dir.toURI(), Collections.emptyMap(), anotherSchema, Collections.emptyList());
           table.open();
 

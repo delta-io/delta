@@ -23,11 +23,14 @@ import dev.failsafe.function.CheckedSupplier;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.types.*;
 import io.unitycatalog.client.ApiClient;
+import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.model.*;
+import io.unitycatalog.client.retry.JitterDelayRetryPolicy;
 import java.net.URI;
 import java.util.*;
 import java.util.function.Consumer;
@@ -123,9 +126,18 @@ public class UnityCatalog implements DeltaCatalog {
     }
   }
 
+  enum AuthMode {
+    token,
+    oauth;
+  }
+
   private final String name;
   private final URI endpoint;
-  private final String token;
+  private final AuthMode authMode;
+  private String token;
+  private URI oauthUri;
+  private String oauthClientId;
+  private String oauthClientSecret;
 
   /**
    * Lazily initialized API client used to communicate with the catalog service. This field is
@@ -136,6 +148,7 @@ public class UnityCatalog implements DeltaCatalog {
   /**
    * Creates a {@code RESTCatalog} with the given endpoint and authentication token.
    *
+   * @param name catalog name
    * @param endpoint the catalog REST endpoint URI as a string
    * @param token a bearer token used to authenticate REST requests
    */
@@ -143,6 +156,26 @@ public class UnityCatalog implements DeltaCatalog {
     this.name = name;
     this.endpoint = endpoint;
     this.token = token;
+    this.authMode = AuthMode.token;
+  }
+
+  /**
+   * Creates a {@code RESTCatalog} with the given endpoint and OAuth authentication.
+   *
+   * @param name catalog name
+   * @param endpoint the catalog REST endpoint URI as a string
+   * @param oauthUri oauth uri
+   * @param clientId oauth clientId
+   * @param clientSecret oauth client secret
+   */
+  public UnityCatalog(
+      String name, URI endpoint, URI oauthUri, String clientId, String clientSecret) {
+    this.name = name;
+    this.endpoint = endpoint;
+    this.authMode = AuthMode.oauth;
+    this.oauthUri = oauthUri;
+    this.oauthClientId = clientId;
+    this.oauthClientSecret = clientSecret;
   }
 
   /**
@@ -175,12 +208,30 @@ public class UnityCatalog implements DeltaCatalog {
   @Override
   public void open() {
     if (apiClient == null) {
+      Map<String, String> tokenProviderConf;
+      switch (authMode) {
+        case oauth:
+          tokenProviderConf =
+              Map.of(
+                  "type",
+                  "oauth",
+                  "oauth.uri",
+                  oauthUri.toString(),
+                  "oauth.clientId",
+                  oauthClientId,
+                  "oauth.clientSecret",
+                  oauthClientSecret);
+          break;
+        default:
+          tokenProviderConf = Map.of("type", "static", "token", "my-access-token");
+      }
       apiClient =
-          new ApiClient()
-              .setScheme(endpoint.getScheme())
-              .setHost(endpoint.getHost())
-              .setPort(endpoint.getPort())
-              .setRequestInterceptor(request -> request.header("Authorization", "Bearer " + token));
+          ApiClientBuilder.create()
+              .uri(endpoint)
+              .tokenProvider(TokenProvider.create(tokenProviderConf))
+              .retryPolicy(JitterDelayRetryPolicy.builder().maxAttempts(5).build())
+              .addAppVersion("DeltaFlink", "0.0.0")
+              .build();
     }
   }
 

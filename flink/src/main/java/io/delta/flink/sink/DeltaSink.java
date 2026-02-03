@@ -17,6 +17,7 @@
 package io.delta.flink.sink;
 
 import io.delta.flink.table.*;
+import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.types.StructType;
 import java.net.URI;
 import java.util.List;
@@ -210,6 +211,12 @@ public class DeltaSink
         ConfigOptions.key("unitycatalog.endpoint").stringType().noDefaultValue();
     private static final ConfigOption<String> UNITYCATALOG_TOKEN =
         ConfigOptions.key("unitycatalog.token").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_OAUTH_URI =
+        ConfigOptions.key("unitycatalog.oauth.uri").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_OAUTH_CLIENT_ID =
+        ConfigOptions.key("unitycatalog.oauth.client_id").stringType().noDefaultValue();
+    private static final ConfigOption<String> UNITYCATALOG_OAUTH_CLIENT_SECRET =
+        ConfigOptions.key("unitycatalog.oauth.client_secret").stringType().noDefaultValue();
 
     private DeltaTable deltaTable;
     private TableType tableType = TableType.hadoop;
@@ -220,8 +227,13 @@ public class DeltaSink
     // For catalog-based tables
     private String catalogName = "main";
     private String tableName;
+    // UC configuration
     private URI endpoint;
     private String token;
+    private URI oauthUri;
+    private String oauthClientId;
+    private String oauthClientSecret;
+
     private Map<String, String> configurations;
 
     private Builder() {}
@@ -264,22 +276,54 @@ public class DeltaSink
       return this;
     }
 
+    public Builder withOauthUri(String oauthUri) {
+      this.oauthUri = URI.create(oauthUri);
+      return this;
+    }
+
+    public Builder withOauthClientId(String oauthClientId) {
+      this.oauthClientId = oauthClientId;
+      return this;
+    }
+
+    public Builder withOauthClientSecret(String oauthClientSecret) {
+      this.oauthClientSecret = oauthClientSecret;
+      return this;
+    }
+
     public Builder withConfigurations(Map<String, String> configurations) {
       this.configurations = configurations;
       Configuration extract = Configuration.fromMap(configurations);
 
       // Extract everything from configurations
-      this.tableType = extract.get(TYPE, null);
-      this.tablePath = extract.get(HADOOP_TABLE_PATH, null);
-      this.catalogName = extract.get(UNITYCATALOG_NAME, "main");
-      this.tableName = extract.get(UNITYCATALOG_TABLE_NAME, null);
+      tableType = extract.get(TYPE, TableType.hadoop);
+      tablePath = extract.get(HADOOP_TABLE_PATH, tablePath);
+      catalogName = extract.get(UNITYCATALOG_NAME, "main");
+      tableName = extract.get(UNITYCATALOG_TABLE_NAME, tableName);
 
       String endpoint = extract.get(UNITYCATALOG_ENDPOINT, null);
       if (Objects.nonNull(endpoint)) {
         this.endpoint = URI.create(endpoint);
       }
-      this.token = extract.get(UNITYCATALOG_TOKEN, null);
+      token = extract.get(UNITYCATALOG_TOKEN, token);
+      String oauthUriStr = extract.get(UNITYCATALOG_OAUTH_URI, null);
+      if (Objects.nonNull(oauthUriStr)) {
+        oauthUri = URI.create(oauthUriStr);
+      }
+      this.oauthClientId = extract.get(UNITYCATALOG_OAUTH_CLIENT_ID, null);
+      this.oauthClientSecret = extract.get(UNITYCATALOG_OAUTH_CLIENT_SECRET, null);
+
       return this;
+    }
+
+    private DeltaCatalog createUnityCatalog() {
+      Preconditions.checkArgument(endpoint != null);
+      Preconditions.checkArgument(!(token == null && oauthUri == null));
+      if (token != null) {
+        return new UnityCatalog(catalogName, endpoint, token);
+      } else {
+        return new UnityCatalog(catalogName, endpoint, oauthUri, oauthClientId, oauthClientSecret);
+      }
     }
 
     public DeltaSink build() {
@@ -304,7 +348,7 @@ public class DeltaSink
               Objects.requireNonNull(endpoint);
               Objects.requireNonNull(token);
               // TODO Support separated endpoints for catalog and table
-              DeltaCatalog restCatalog = new UnityCatalog(catalogName, endpoint, token);
+              DeltaCatalog restCatalog = createUnityCatalog();
               deltaTable =
                   new CCv2Table(
                       restCatalog,
@@ -320,8 +364,7 @@ public class DeltaSink
             {
               Objects.requireNonNull(endpoint);
               Objects.requireNonNull(token);
-              // TODO Support separated endpoints for catalog and table
-              DeltaCatalog restCatalog = new UnityCatalog(catalogName, endpoint, token);
+              DeltaCatalog restCatalog = createUnityCatalog();
               deltaTable =
                   new HadoopTable(
                       restCatalog, tableName, configurations, sinkSchema, partitionColNames);

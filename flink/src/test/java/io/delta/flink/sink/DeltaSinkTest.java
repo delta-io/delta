@@ -459,7 +459,7 @@ class DeltaSinkTest extends TestHelper {
                                   "unitycatalog.table_name",
                                   "ab.cd.ef",
                                   "unitycatalog.endpoint",
-                                  "http://localhost:" + mockHttp.port() + "/",
+                                  mockHttp.uri().toString(),
                                   "unitycatalog.token",
                                   "wow"))
                           .build();
