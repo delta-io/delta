@@ -20,9 +20,9 @@ import org.apache.spark.sql.catalyst.analysis.DecimalPrecisionTypeCoercion
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{AtomicType, ByteType, DecimalType, IntegerType, IntegralType, LongType, ShortType}
 
 /**
