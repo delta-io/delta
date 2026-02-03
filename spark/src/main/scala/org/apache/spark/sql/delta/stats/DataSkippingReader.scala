@@ -1135,6 +1135,10 @@ trait DataSkippingReaderBase
   final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
     getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn).getOrElse(lit(null))
 
+  /** Overload for delta table property override */
+  override protected def getDataSkippingStringPrefixLength: Int =
+    StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
+
   /**
    * Returns an expression that can be used to check that the required statistics are present for a
    * given file. If any required statistics are missing we must include the corresponding file.

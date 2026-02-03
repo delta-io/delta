@@ -670,6 +670,18 @@ trait DeltaConfigsBase extends DeltaLogging {
       |collected.
       |""".stripMargin)
 
+  /**
+   * For string columns, how long prefix to store in the data skipping index.
+   * Note that the behavior from table property overrides the config:
+   * [[DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH]]
+   */
+  val DATA_SKIPPING_STRING_PREFIX_LENGTH = buildConfig[Option[Int]](
+    "dataSkippingStringPrefixLength",
+    null,
+    v => Option(v).map(_.toInt),
+    v => v.forall(_ >= 0),
+    "needs to be greater or equal to zero.")
+
   val SYMLINK_FORMAT_MANIFEST_ENABLED = buildConfig[Boolean](
     s"${hooks.GenerateSymlinkManifest.CONFIG_NAME_ROOT}.enabled",
     "false",
