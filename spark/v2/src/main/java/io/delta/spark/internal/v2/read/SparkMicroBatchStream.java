@@ -22,6 +22,7 @@ import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -1067,11 +1068,23 @@ public class SparkMicroBatchStream
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
         ColumnarBatch batch = filteredBatch.getData();
+        Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
 
         // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
-        // (checkpoint files) files.
+        // (checkpoint files) files. Respect the selection vector to filter out duplicate files
+        // (e.g., stats re-collection that re-adds files with updated stats).
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
+          // Skip rows that are filtered out by the selection vector
+          final int currentRowId = rowId;
+          boolean shouldSkip =
+              selectionVector
+                  .map(sv -> sv.isNullAt(currentRowId) || !sv.getBoolean(currentRowId))
+                  .orElse(false);
+          if (shouldSkip) {
+            continue;
+          }
+
+          Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, currentRowId);
           if (addOpt.isPresent()) {
             addFiles.add(addOpt.get());
 
