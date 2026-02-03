@@ -16,8 +16,8 @@
 
 package org.apache.spark.sql.delta.test
 
-import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOperations
 import org.apache.spark.sql.delta.DeltaSourceSuite
 
@@ -37,13 +37,11 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     val deltaLog = DeltaLog.forTable(spark, tablePath)
     val metadata = deltaLog.snapshot.metadata
     val newConfiguration = metadata.configuration ++ Map(
-      DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false"
-    )
+      DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false")
     deltaLog.startTransaction().commit(
       metadata.copy(configuration = newConfiguration) :: Nil,
       DeltaOperations.SetTableProperties(
-        Map(DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false"))
-    )
+        Map(DeltaConfigs.ENABLE_EXPIRED_LOG_CLEANUP.key -> "false")))
   }
 
   private lazy val shouldPassTests = Set(
@@ -95,8 +93,10 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // ========== Misc tests ==========
     "a fast writer should not starve a Delta source",
-    "should not attempt to read a non exist version"
-  )
+    "should not attempt to read a non exist version",
+    "can delete old files of a snapshot without update",
+    "Delta source advances with non-data inserts and generates empty dataframe for " +
+      "non-data operations")
 
   private lazy val shouldFailTests = Set(
     // === Null Type Column Handling ===
@@ -107,6 +107,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "skip change commits",
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
     "startingTimestamp",
+    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
 
     // === Data Loss Detection ===
     "fail on data loss - starting from missing files",
@@ -115,14 +116,12 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files with option off",
 
     // === Misc ===
+    // TODO(#5900): fix exception mismatch
     "no schema should throw an exception",
     "recreate the reservoir should fail the query",
-    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+    // TODO(#5900): fix exception mismatch
     "Delta sources should verify the protocol reader version",
-    "can delete old files of a snapshot without update",
-    "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations",
-    "Delta source advances with non-data inserts and generates empty dataframe for addl files",
+    // TODO(#5895): gracefully handle corrupt checkpoint
     "start from corrupt checkpoint",
 
     // === Tests that bypass V2 by not using loadStreamWithOptions ===
@@ -132,28 +131,15 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "handling nullability schema changes", // Uses .table() directly
     "allow user specified schema if consistent: v1 source", // Uses DataSource directly
     // Calls deltaSource.createSource() directly
-    "createSource should create source with empty or matching table schema provided",
-    // Unit test for internal API
-    "DeltaLog.createDataFrame should drop null columns with feature flag",
-    // Unit test for internal API
-    "DeltaLog.createDataFrame should not drop null columns without feature flag",
-    "unknown sourceVersion value", // Unit test for DeltaSourceOffset
-    "invalid sourceVersion value", // Unit test for DeltaSourceOffset
-    "missing sourceVersion", // Unit test for DeltaSourceOffset
-    "unmatched reservoir id", // Unit test for DeltaSourceOffset
-    "isInitialSnapshot serializes as isStartingVersion", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset deserialization", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset deserialization error", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset serialization", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset.validateOffsets" // Unit test for DeltaSourceOffset
-  )
+    "createSource should create source with empty or matching table schema provided")
 
   override protected def shouldFail(testName: String): Boolean = {
     val inPassList = shouldPassTests.contains(testName)
     val inFailList = shouldFailTests.contains(testName)
 
     assert(inPassList || inFailList, s"Test '$testName' not in shouldPassTests or shouldFailTests")
-    assert(!(inPassList && inFailList),
+    assert(
+      !(inPassList && inFailList),
       s"Test '$testName' in both shouldPassTests and shouldFailTests")
 
     inFailList
