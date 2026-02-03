@@ -22,9 +22,9 @@ import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
@@ -423,9 +423,7 @@ public class SparkMicroBatchStream
     Seq<FilePartition> filePartitions =
         FilePartition$.MODULE$.getFilePartitions(
             spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    InputPartition[] result =
-        JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
-    return result;
+    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
   }
 
   @Override
@@ -1069,14 +1067,25 @@ public class SparkMicroBatchStream
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
-        // getScanFiles returns rows with schema {add: struct, tableRoot: string}
-        // Extract AddFile directly from each row
-        try (CloseableIterator<Row> rowIter = filteredBatch.getRows()) {
-          while (rowIter.hasNext()) {
-            Row scanFileRow = rowIter.next();
-            // addFile struct is at index 0 in scan file schema
-            Row addFileRow = scanFileRow.getStruct(0);
-            addFiles.add(new AddFile(addFileRow));
+        ColumnarBatch batch = filteredBatch.getData();
+        Optional<ColumnVector> selectionVector = filteredBatch.getSelectionVector();
+
+        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
+        // (checkpoint files) files. Respect the selection vector from predicate pruning.
+        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
+          // Skip rows that are filtered out by the selection vector
+          final int currentRowId = rowId;
+          boolean shouldSkip =
+              selectionVector
+                  .map(sv -> sv.isNullAt(currentRowId) || !sv.getBoolean(currentRowId))
+                  .orElse(false);
+          if (shouldSkip) {
+            continue;
+          }
+
+          Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, currentRowId);
+          if (addOpt.isPresent()) {
+            addFiles.add(addOpt.get());
 
             // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
             // etc.).
