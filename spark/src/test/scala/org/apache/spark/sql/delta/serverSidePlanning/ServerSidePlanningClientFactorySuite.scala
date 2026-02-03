@@ -56,8 +56,10 @@ class ServerSidePlanningClientFactorySuite extends QueryTest with SharedSparkSes
     val exception = intercept[IllegalStateException] {
       ServerSidePlanningClientFactory.getFactory()
     }
-    assert(exception.getMessage.contains("No ServerSidePlanningClientFactory has been registered"),
-      s"${prefix}Expected 'No ServerSidePlanningClientFactory' message, got: ${exception.getMessage}")
+    assert(
+      exception.getMessage.contains("No ServerSidePlanningClientFactory has been registered"),
+      s"${prefix}Expected 'No ServerSidePlanningClientFactory' message, " +
+        s"got: ${exception.getMessage}")
   }
 
   // ========== Tests ==========
