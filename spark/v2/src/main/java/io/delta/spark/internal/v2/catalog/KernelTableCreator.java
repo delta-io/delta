@@ -27,9 +27,13 @@ import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -87,7 +91,8 @@ public final class KernelTableCreator {
       builder = builder.withTableProperties(request.properties);
     }
 
-    Optional<DataLayoutSpec> dataLayoutSpec = buildDataLayoutSpec(request.partitions);
+    Optional<DataLayoutSpec> dataLayoutSpec =
+        buildDataLayoutSpec(request.partitions, request.schema);
     if (dataLayoutSpec.isPresent()) {
       builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
     }
@@ -108,10 +113,15 @@ public final class KernelTableCreator {
    *
    * <p>Supports identity transforms only; non-identity transforms fail fast.
    */
-  private static Optional<DataLayoutSpec> buildDataLayoutSpec(Transform[] partitions) {
+  private static Optional<DataLayoutSpec> buildDataLayoutSpec(
+      Transform[] partitions, StructType schema) {
     if (partitions == null || partitions.length == 0) {
       return Optional.empty();
     }
+
+    requireNonNull(schema, "schema is null");
+    Set<String> schemaFields = new HashSet<>(Arrays.asList(schema.fieldNames()));
+    Set<String> seenPartitionCols = new HashSet<>();
 
     List<Column> partitionColumns = new ArrayList<>();
     for (Transform transform : partitions) {
@@ -120,12 +130,25 @@ public final class KernelTableCreator {
             "V2 CREATE TABLE supports only identity partition columns");
       }
 
-      NamedReference ref = transform.references()[0];
+      NamedReference[] refs = transform.references();
+      if (refs == null || refs.length != 1) {
+        throw new IllegalArgumentException(
+            "Partition transform must reference exactly one column");
+      }
+      NamedReference ref = refs[0];
       String[] fieldNames = ref.fieldNames();
       if (fieldNames.length != 1) {
         throw new IllegalArgumentException("Partition columns must be top-level columns");
       }
-      partitionColumns.add(new Column(fieldNames[0]));
+      String fieldName = fieldNames[0];
+      if (!schemaFields.contains(fieldName)) {
+        throw new IllegalArgumentException(
+            "Partition column does not exist in schema: " + fieldName);
+      }
+      if (!seenPartitionCols.add(fieldName)) {
+        throw new IllegalArgumentException("Duplicate partition column: " + fieldName);
+      }
+      partitionColumns.add(new Column(fieldName));
     }
 
     return Optional.of(DataLayoutSpec.partitioned(partitionColumns));
@@ -133,7 +156,15 @@ public final class KernelTableCreator {
 
   /** Returns true if the identifier represents a path-based Delta table (delta.`/path`). */
   private static boolean isPathIdentifier(Identifier ident) {
-    return ident.namespace().length == 1 && "delta".equalsIgnoreCase(ident.namespace()[0]);
+    if (ident.namespace().length != 1 || !"delta".equalsIgnoreCase(ident.namespace()[0])) {
+      return false;
+    }
+    String path = ident.name();
+    if (path == null || path.trim().isEmpty()) {
+      return false;
+    }
+    Path hadoopPath = new Path(path);
+    return hadoopPath.isAbsolute() || hadoopPath.toUri().getScheme() != null;
   }
 
   private enum CreateOperation {
@@ -197,7 +228,8 @@ public final class KernelTableCreator {
       requireNonNull(schema, "schema is null");
 
       if (!isPathIdentifier(ident)) {
-        throw new UnsupportedOperationException("V2 CREATE TABLE supports only path-based tables");
+        throw new UnsupportedOperationException(
+            "V2 CREATE TABLE supports only path-based tables (delta.`/path`)");
       }
 
       return new ResolvedCreateRequest(

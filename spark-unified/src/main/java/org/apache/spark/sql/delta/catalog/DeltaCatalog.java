@@ -107,7 +107,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   }
 
   @Override
-  protected Table createDeltaTableImpl(
+  protected Table createDeltaTableRouter(
       Identifier ident,
       StructType schema,
       Transform[] partitions,
@@ -116,7 +116,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     if (connectorMode.shouldCatalogReturnV2Tables()) {
       return KernelTableCreator.createTable(ident, schema, partitions, properties);
     }
-    return super.createDeltaTableImpl(ident, schema, partitions, properties);
+    return super.createDeltaTableUsingV1(ident, schema, partitions, properties);
   }
 
   /**

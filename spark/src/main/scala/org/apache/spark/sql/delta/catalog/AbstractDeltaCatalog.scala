@@ -385,14 +385,30 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]) : Table =
     recordFrameProfile("DeltaCatalog", "createTable") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-        createDeltaTableImpl(ident, schema, partitions, properties)
+        createDeltaTableRouter(ident, schema, partitions, properties)
       } else {
         createCatalogTable(ident, schema, partitions, properties
         )
       }
     }
 
-  protected def createDeltaTableImpl(
+  /**
+   * Hook for subclasses to route Delta CREATE TABLE to the desired implementation (V1 or V2).
+   *
+   * <p>Default behavior is V1, via {@link #createDeltaTableUsingV1}.
+   */
+  protected def createDeltaTableRouter(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): Table = {
+    createDeltaTableUsingV1(ident, schema, partitions, properties)
+  }
+
+  /**
+   * V1 CREATE TABLE implementation with UC property handling and write option extraction.
+   */
+  protected def createDeltaTableUsingV1(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
