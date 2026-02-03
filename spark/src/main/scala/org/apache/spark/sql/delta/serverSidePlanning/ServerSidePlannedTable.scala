@@ -332,12 +332,20 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
-  // Use Spark's SchemaUtils.explodeNestedFieldNames to flatten and escape field names
+  // Use Spark's SchemaUtils.explodeNestedFieldNames to flatten and escape field names,
+  // then filter out parent structs by keeping only fields that have no children.
+  // For example, for schema STRUCT<a: STRUCT<b.c: STRING>>:
+  //   - explodeNestedFieldNames returns: ["a", "a.`b.c`"]
+  //   - We filter to leaf fields only: ["a.`b.c`"]
+  // This ensures projections only include actual data columns, not parent containers.
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(SchemaUtils.explodeNestedFieldNames(requiredSchema))
+      val allFields = SchemaUtils.explodeNestedFieldNames(requiredSchema)
+      Some(allFields.filter { field =>
+        !allFields.exists(other => other.startsWith(field + "."))
+      })
     }
   }
 
