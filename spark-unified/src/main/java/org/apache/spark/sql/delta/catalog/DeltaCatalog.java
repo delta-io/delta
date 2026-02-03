@@ -16,15 +16,16 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.spark.internal.v2.catalog.KernelTableCreator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import org.apache.spark.sql.delta.DeltaV2Mode;
 import java.util.HashMap;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -103,6 +104,19 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
         () -> super.loadPathTable(ident));
+  }
+
+  @Override
+  protected Table createDeltaTableRouter(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      java.util.Map<String, String> properties) {
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
+    if (connectorMode.shouldCatalogReturnV2Tables()) {
+      return KernelTableCreator.createTable(ident, schema, partitions, properties);
+    }
+    return super.createDeltaTableUsingV1(ident, schema, partitions, properties);
   }
 
   /**
