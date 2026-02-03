@@ -152,6 +152,7 @@ public final class KernelTableCreator {
       }
 
       builder.build(engine).commit(engine, CloseableIterable.emptyIterable());
+      // TODO: UC-managed CREATE requires registering the table via the UC Tables API after commit.
       return new SparkTable(request.ident, request.tablePath);
     } finally {
       if (ucClient != null) {
