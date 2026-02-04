@@ -1892,8 +1892,15 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
       Seq(createAddFileRow(dataChange = true), createAddFileRow(dataChange = true)),
       true),
     (
-      "multiple removes with dataChange=true",
-      Seq(createRemoveFileRow(dataChange = true), createRemoveFileRow(dataChange = true)),
+      "multiple removes with dataChange=true", {
+        val path1 = "file1.parquet"
+        val path2 = "file2.parquet"
+        Seq(
+          createAddFileRow(path1, dataChange = false),
+          createAddFileRow(path2, dataChange = false),
+          createRemoveFileRow(path1, dataChange = true),
+          createRemoveFileRow(path2, dataChange = true))
+      },
       true),
     (
       "add dataChange=true, remove dataChange=false", {
