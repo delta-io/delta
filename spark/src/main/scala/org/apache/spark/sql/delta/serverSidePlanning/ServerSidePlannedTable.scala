@@ -42,23 +42,23 @@ import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
 object ServerSidePlannedTable extends DeltaLogging {
   /**
    * Property keys that indicate table credentials are available.
-   * Unity Catalog tables may expose temporary credentials via these properties.
+   * Unity Catalog sets these keys when vending credentials.
+   * See: CredPropsUtil
    */
   private val CREDENTIAL_PROPERTY_KEYS = Seq(
-    "storage.credential",
-    "aws.temporary.credentials",
-    "azure.temporary.credentials",
-    "gcs.temporary.credentials",
-    "credential",
-    // Unity Catalog credentials (prefixed with option.)
+    // AWS S3 credentials
     "option.fs.s3a.access.key",
     "option.fs.s3a.secret.key",
     "option.fs.s3a.session.token",
-    "option.fs.s3a.aws.credentials.provider",
-    "option.fs.azure.sas",  // Prefix - matches option.fs.azure.sas.<container>.<account>...
-    "option.fs.azure.sas.token.provider.type",
-    "option.fs.gs.auth.access.token",
-    "option.fs.gs.auth.access.token.provider"
+    "option.fs.s3a.aws.credentials.provider", // Renewable mode
+
+    // Azure credentials
+    "option.fs.azure.sas.fixed.token",
+    "option.fs.azure.sas.token.provider.type", // Renewable mode
+
+    // GCP Cloud Storage credentials
+    "option.fs.gs.auth.access.token.credential",
+    "option.fs.gs.auth.access.token.provider"    // Renewable mode
   )
 
   /**
@@ -177,12 +177,7 @@ object ServerSidePlannedTable extends DeltaLogging {
    */
   private def hasCredentials(table: Table): Boolean = {
     val properties = table.properties()
-    // Use startsWith to handle both exact keys and prefixes; 
-    // e.g., Azure SAS uses "option.fs.azure.sas" as prefix since 
-    // full key includes container/account.
-    properties.keySet().asScala.exists { propertyKey =>
-      CREDENTIAL_PROPERTY_KEYS.exists(credKey => propertyKey.startsWith(credKey))
-    }
+    CREDENTIAL_PROPERTY_KEYS.exists(properties.containsKey)
   }
 }
 

@@ -187,6 +187,14 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Get the request path captured from the most recent /plan request.
+   * Delegates to adapter. For test verification of endpoint construction.
+   */
+  public String getCapturedPlanRequestPath() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedPlanRequestPath();
+  }
+
+  /**
    * Set test credentials to inject into /plan responses.
    * Used for testing credential extraction in clients.
    *

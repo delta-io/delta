@@ -23,7 +23,7 @@ import java.util.Locale
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
-import org.apache.http.client.methods.HttpPost
+import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
@@ -40,6 +40,15 @@ import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, Pl
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
 
 /**
+ * Case class for parsing Iceberg REST catalog /v1/config response.
+ * Per the Iceberg REST spec, the config endpoint returns defaults and overrides.
+ * The optional "prefix" in overrides is used for multi-tenant catalog paths.
+ */
+private case class CatalogConfigResponse(
+    defaults: Map[String, String],
+    overrides: Map[String, String])
+
+/**
  * Iceberg REST implementation of ServerSidePlanningClient that calls Iceberg REST catalog server.
  *
  * This implementation calls the Iceberg REST catalog's `/plan` endpoint to perform server-side
@@ -49,13 +58,14 @@ import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
  * Thread safety: This class creates a shared HTTP client that is thread-safe for concurrent
  * requests. The HTTP client should be explicitly closed by calling close() when done.
  *
- * @param icebergRestCatalogUriRoot Base URI of the Iceberg REST catalog server, e.g.,
- *                                   "http://localhost:8181". Should not include trailing slash
- *                                   or "/v1" prefix.
+ * @param baseUri Base URI of the Iceberg REST catalog up to /v1, e.g.,
+ *                "http://localhost:8181/v1". Should not include trailing slash.
+ * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param token Authentication token for the catalog server.
  */
 class IcebergRESTCatalogPlanningClient(
-    icebergRestCatalogUriRoot: String,
+    baseUri: String,
+    catalogName: String,
     token: String) extends ServerSidePlanningClient with AutoCloseable {
 
   // Sentinel value indicating "use current snapshot" in Iceberg REST API
@@ -64,6 +74,51 @@ class IcebergRESTCatalogPlanningClient(
   // Partition spec ID for unpartitioned tables
   private val UNPARTITIONED_SPEC_ID = 0
 
+  /**
+   * Lazily fetch the catalog configuration and construct the endpoint URI root.
+   * Calls /v1/config?warehouse=<catalogName> per Iceberg REST catalog spec to get the prefix.
+   * Falls back to catalogs/<catalogName> if config call fails or returns no prefix.
+   */
+  private lazy val icebergRestCatalogUriRoot: String = {
+    val prefix = fetchCatalogPrefix().getOrElse(s"catalogs/$catalogName")
+    s"$baseUri/$prefix"
+  }
+
+  /**
+   * Fetch catalog prefix from /v1/config endpoint per Iceberg REST catalog spec.
+   * Returns None on any error, triggering fallback to default prefix.
+   */
+  private def fetchCatalogPrefix(): Option[String] = {
+    try {
+      val configUri = s"$baseUri/config?warehouse=$catalogName"
+      val httpClient = HttpClientBuilder.create().build()
+      try {
+        val httpGet = new HttpGet(configUri)
+        // Add auth headers
+        httpHeaders.asScala.foreach { header =>
+          httpGet.setHeader(header.getName, header.getValue)
+        }
+        val response = httpClient.execute(httpGet)
+        try {
+          if (response.getStatusLine.getStatusCode == HttpStatus.SC_OK) {
+            val body = EntityUtils.toString(response.getEntity)
+            val config = JsonUtils.fromJson[CatalogConfigResponse](body)
+            // Apply overrides on top of defaults per Iceberg REST spec
+            config.overrides.get("prefix").orElse(config.defaults.get("prefix"))
+          } else {
+            None
+          }
+        } finally {
+          response.close()
+        }
+      } finally {
+        httpClient.close()
+      }
+    } catch {
+      case _: Exception => None
+    }
+  }
+
   private val httpHeaders = {
     val baseHeaders = Map(
       HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
@@ -71,7 +126,7 @@ class IcebergRESTCatalogPlanningClient(
       HttpHeaders.USER_AGENT -> buildUserAgent()
     )
     // Add Bearer token authentication if token is provided
-    val headersWithAuth = if (token != null && token.nonEmpty) {
+    val headersWithAuth = if (token.nonEmpty) {
       baseHeaders + (HttpHeaders.AUTHORIZATION -> s"Bearer $token")
     } else {
       baseHeaders
@@ -186,10 +241,9 @@ class IcebergRESTCatalogPlanningClient(
       sparkProjectionOption: Option[Seq[String]] = None,
       sparkLimitOption: Option[Int] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
-    // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
-    // /v1/config to get the optional prefix and builds the proper endpoint
-    // (e.g., {ucUri}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}).
-    // For other catalogs, the endpoint is passed directly via metadata.
+    // Call /v1/config to get the catalog prefix, then construct the full endpoint.
+    // icebergRestCatalogUriRoot is lazily constructed as: {baseUri}/{prefix}
+    // where prefix comes from /v1/config?warehouse=<catalogName> per Iceberg REST spec.
     // See: https://iceberg.apache.org/rest-catalog-spec/
     val planTableScanUri = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan"
 

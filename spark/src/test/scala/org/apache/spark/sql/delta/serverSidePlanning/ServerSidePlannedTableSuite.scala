@@ -269,7 +269,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(metadata.tableProperties.isEmpty)
   }
 
-  test("UnityCatalogMetadata constructs IRC endpoint from UC URI") {
+  test("UnityCatalogMetadata constructs base IRC endpoint from UC URI") {
     val ucUri = "https://unity-catalog-server.example.com"
     val metadata = UnityCatalogMetadata(
       catalogName = "test_catalog",
@@ -278,14 +278,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       tableProps = Map.empty
     )
 
-    // This test validates the fallback case where /v1/config is unreachable.
-    // The endpoint construction logic attempts to call /v1/config at the UC URI,
-    // but since there's no server at this URL, it falls back to constructing
-    // a prefix from the catalog name. For tests of the prefix case with a real
-    // IRC server, see IcebergRESTCatalogPlanningClientSuite.
+    // UnityCatalogMetadata returns the base Iceberg REST path up to /v1.
+    // The IcebergRESTCatalogPlanningClient then calls config to get the prefix
+    // and constructs the full endpoint URL per the Iceberg REST catalog spec.
     val expectedEndpoint =
       "https://unity-catalog-server.example.com/api/2.1/unity-catalog/" +
-      "iceberg-rest/v1/catalogs/test_catalog"
+      "iceberg-rest/v1"
     assert(metadata.planningEndpointUri == expectedEndpoint)
   }
 
