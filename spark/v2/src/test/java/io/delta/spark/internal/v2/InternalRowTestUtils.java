@@ -18,7 +18,6 @@ package io.delta.spark.internal.v2;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -69,8 +68,8 @@ public class InternalRowTestUtils {
   }
 
   /** Assert that actual InternalRows match expected rows. Converts to Row for comparison. */
-  public static void assertRowsEquals(List<InternalRow> actual, InternalRow... expected) {
-    assertEquals(toRows(Arrays.asList(expected)), toRows(actual));
+  public static void assertRowsEquals(List<InternalRow> actual, List<InternalRow> expected) {
+    assertEquals(toRows(expected), toRows(actual));
   }
 
   /** Convert InternalRows to Rows, converting UTF8String back to String. */

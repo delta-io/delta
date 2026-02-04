@@ -46,7 +46,7 @@ public class DeletionVectorReadFunctionTest {
     List<InternalRow> result = collectRows(readFunc.apply(null));
 
     // Verify filtered and projected output (DV column removed, deleted row filtered).
-    assertRowsEquals(result, row(1, "alice"), row(3, "charlie"));
+    assertRowsEquals(result, List.of(row(1, "alice"), row(3, "charlie")));
   }
 
   @Test
@@ -61,7 +61,7 @@ public class DeletionVectorReadFunctionTest {
 
     List<InternalRow> result = collectRows(readFunc.apply(null));
 
-    assertRowsEquals(result);
+    assertRowsEquals(result, List.of());
   }
 
   @Test
@@ -76,6 +76,6 @@ public class DeletionVectorReadFunctionTest {
 
     List<InternalRow> result = collectRows(readFunc.apply(null));
 
-    assertRowsEquals(result, row(1, "alice"), row(2, "bob"), row(3, "charlie"));
+    assertRowsEquals(result, List.of(row(1, "alice"), row(2, "bob"), row(3, "charlie")));
   }
 }
