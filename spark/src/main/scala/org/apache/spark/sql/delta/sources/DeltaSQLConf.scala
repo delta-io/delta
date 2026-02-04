@@ -1538,6 +1538,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION =
+    buildConf("typeWidening.allowIntegralDecimalCoercion")
+      .doc("When true, the type widening mode `AllTypeWideningToCommonWiderType` " +
+        "should allow converting integral types to DecimalType and use decimal " +
+        "coercion to find a common wider type with another DecimalType")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_IS_DELTA_TABLE_THROW_ON_ERROR =
     buildConf("isDeltaTable.throwOnError")
       .internal()
@@ -1744,19 +1753,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .intConf
       .createWithDefault(8)
-
-  val DELTA_DATASKIPPING_SKIP_UDF_FILTERS =
-    buildConf("skipping.udfFilters.skip")
-      .doc(
-        """
-           |If true, filters containing User Defined Functions (UDFs) will not be used for
-           |data skipping. UDFs are excluded because users may not correctly mark them as
-           |non-deterministic, which could lead to incorrect data skipping results if a
-           |non-deterministic UDF is evaluated against file statistics.
-           |""".stripMargin)
-      .internal()
-      .booleanConf
-      .createWithDefault(true)
 
   /**
    * The below confs have a special prefix `spark.databricks.io` because this is the conf value
@@ -3027,10 +3023,10 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc(
         "Controls the Delta connector enable mode. " +
           "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
-          "supported operations), STRICT (should ONLY be enabled for testing).")
+          "supported operations, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
       .checkValues(Set("AUTO", "NONE", "STRICT"))
-      .createWithDefault("NONE")
+      .createWithDefault("AUTO")
 
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
     buildConf("streaming.initialSnapshotMaxFiles")
