@@ -156,8 +156,11 @@ final class KernelStagedDeltaTable implements StagedTable, SupportsWrite {
 
   private Engine createEngine() {
     Map<String, String> fsOptions = new HashMap<>();
+    java.lang.Iterable<String> prefixes =
+        scala.jdk.javaapi.CollectionConverters.asJava(
+            DeltaTableUtils.validDeltaTableHadoopPrefixes());
     for (Map.Entry<String, String> entry : properties.entrySet()) {
-      for (String prefix : DeltaTableUtils.validDeltaTableHadoopPrefixes()) {
+      for (String prefix : prefixes) {
         if (entry.getKey().startsWith(prefix)) {
           fsOptions.put(entry.getKey(), entry.getValue());
           break;
