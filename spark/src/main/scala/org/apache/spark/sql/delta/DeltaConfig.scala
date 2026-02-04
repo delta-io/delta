@@ -214,15 +214,6 @@ trait DeltaConfigsBase extends DeltaLogging {
               kv
             case None => throw DeltaErrors.unknownConfigurationKeyException(key)
           }
-        // case _ =>
-        //   if (entries.containsKey(key)) {
-        //     logConsole(s"""
-        //       |You are trying to set a property the key of which is the same
-        //       |as Delta config: $key. If you are trying to set a Delta config,
-        //       |prefix it with "delta.", e.g. 'delta.$key'.
-        //     """.stripMargin)
-        //   }
-        //   kv
 
         case lKey =>
           // Check if this key (without delta. prefix) matches a known Delta config
