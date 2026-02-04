@@ -133,7 +133,7 @@ jobs:
           git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
           git checkout staging-table-catalog
-          ./build/sbt clean package "client/publishM2" "spark/publishM2"
+          ./build/sbt clean package publishM2
       - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_test.yaml
         run: |

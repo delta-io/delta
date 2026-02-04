@@ -125,7 +125,7 @@ jobs:
           git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
           git checkout staging-table-catalog
-          ./build/sbt clean package "client/publishM2" "spark/publishM2"
+          ./build/sbt clean package publishM2
       - name: Scala structured logging style check
         run: |
           if [ -f ./dev/spark_structured_logging_style.py ]; then
