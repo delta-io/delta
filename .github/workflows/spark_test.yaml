@@ -120,6 +120,12 @@ jobs:
           pipenv run pip install protobuf==5.29.1
           pipenv run pip install googleapis-common-protos-stubs==2.2.0
           pipenv run pip install grpc-stubs==1.24.11
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout staging-table-catalog
+          ./build/sbt clean package publishM2
       - name: Scala structured logging style check
         run: |
           if [ -f ./dev/spark_structured_logging_style.py ]; then
