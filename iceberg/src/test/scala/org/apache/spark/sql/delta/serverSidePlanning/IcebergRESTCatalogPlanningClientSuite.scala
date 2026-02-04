@@ -72,6 +72,14 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("IcebergRESTCatalogPlanningClientFactory is auto-registered by default") {
+    // Verify that calling getFactory() returns the Iceberg factory via auto-registration
+    val factory = ServerSidePlanningClientFactory.getFactory()
+    assert(factory != null, "Factory should not be null after auto-registration")
+    assert(factory.getClass.getName.contains("IcebergRESTCatalogPlanningClientFactory"),
+      s"Expected IcebergRESTCatalogPlanningClientFactory, got: ${factory.getClass.getName}")
+  }
+
   // Tests that the REST /plan endpoint returns 0 files for an empty table.
   test("basic plan table scan via IcebergRESTCatalogPlanningClient") {
     withTempTable("testTable") { table =>
