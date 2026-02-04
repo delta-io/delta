@@ -932,7 +932,10 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
       Map<String, String> tableConf = new java.util.HashMap<>();
       tableConf.put(UC_TABLE_ID_KEY, ucResponse.getTableId());
-      tableConf.put(UC_METASTORE_ID_KEY, ucResponse.getMetastoreId());
+      // Only add metastoreId if it's not null to avoid null property values
+      if (ucResponse.getMetastoreId() != null) {
+        tableConf.put(UC_METASTORE_ID_KEY, ucResponse.getMetastoreId());
+      }
 
       return new StagingTableInfo(
         ucResponse.getTableId(),

@@ -685,7 +685,11 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // Ensure Java sources are picked up
     Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
 
-    Test / javaOptions ++= Seq("-ea"),
+    Test / javaOptions ++= Seq(
+      "-ea",
+      "-Dlog4j.configurationFile=log4j2.xml",
+      "-Dlog4j2.debug=true"
+    ),
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,

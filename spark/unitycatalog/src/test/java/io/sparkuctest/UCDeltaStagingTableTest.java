@@ -27,8 +27,8 @@ import org.junit.jupiter.api.Test;
 /**
  * Test suite for Unity Catalog staging table API with Delta tables.
  *
- * Tests the createStagingTable API that obtains storage locations from Unity Catalog
- * for catalog-owned managed tables.
+ * <p>Tests the createStagingTable API that obtains storage locations from Unity Catalog for
+ * catalog-owned managed tables.
  */
 public class UCDeltaStagingTableTest extends UCDeltaTableIntegrationBaseTest {
 
@@ -41,8 +41,8 @@ public class UCDeltaStagingTableTest extends UCDeltaTableIntegrationBaseTest {
     if (tableName != null) {
       try {
         UnityCatalogInfo uc = unityCatalogInfo();
-        String fullTableName = String.format("%s.%s.%s",
-            uc.catalogName(), uc.schemaName(), tableName);
+        String fullTableName =
+            String.format("%s.%s.%s", uc.catalogName(), uc.schemaName(), tableName);
         sql("DROP TABLE IF EXISTS %s", fullTableName);
       } catch (Exception e) {
         LOG.warn("Failed to clean up table: " + tableName, e);
@@ -52,9 +52,9 @@ public class UCDeltaStagingTableTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   /**
-   * Test creating a catalog-owned managed table using CTAS (Create Table As Select).
-   * This tests that the staging table API is properly invoked to obtain the storage
-   * location from Unity Catalog.
+   * Test creating a catalog-owned managed table using CTAS (Create Table As Select). This tests
+   * that the staging table API is properly invoked to obtain the storage location from Unity
+   * Catalog.
    */
   @Test
   public void testCreateCatalogOwnedTableWithCTAS() {
@@ -64,25 +64,27 @@ public class UCDeltaStagingTableTest extends UCDeltaTableIntegrationBaseTest {
     // Create a catalog-owned managed table using CTAS
     sql(
         "CREATE TABLE %s.%s.%s USING DELTA TBLPROPERTIES "
-            + "('delta.feature.catalogOwned-preview'='supported') AS SELECT 1 as i, 'AAA' as s",
+            + "('delta.feature.catalogManaged'='supported') AS SELECT 1 as i, 'AAA' as s",
         uc.catalogName(), uc.schemaName(), tableName);
 
     // Verify the table was created successfully
-    String fullTableName = String.format("%s.%s.%s",
-        uc.catalogName(), uc.schemaName(), tableName);
+    String fullTableName = String.format("%s.%s.%s", uc.catalogName(), uc.schemaName(), tableName);
     List<List<String>> result = sql("SELECT * FROM %s ORDER BY i", fullTableName);
 
     assertThat(result).hasSize(1);
     assertThat(result.get(0).get(0)).isEqualTo("1");
     assertThat(result.get(0).get(1)).isEqualTo("AAA");
 
-    // Verify table properties include catalog-owned feature
+    // Verify table properties include catalog-managed feature
     List<List<String>> props = sql("SHOW TBLPROPERTIES %s", fullTableName);
-    boolean hasCatalogOwnedFeature = props.stream()
-        .anyMatch(row -> row.get(0).equals("delta.feature.catalogOwned-preview")
-            && row.get(1).equals("supported"));
-    assertThat(hasCatalogOwnedFeature)
-        .as("Table should have catalogOwned-preview feature enabled")
+    boolean hasCatalogManagedFeature =
+        props.stream()
+            .anyMatch(
+                row ->
+                    row.get(0).equals("delta.feature.catalogManaged")
+                        && row.get(1).equals("supported"));
+    assertThat(hasCatalogManagedFeature)
+        .as("Table should have catalogManaged feature enabled")
         .isTrue();
   }
 }

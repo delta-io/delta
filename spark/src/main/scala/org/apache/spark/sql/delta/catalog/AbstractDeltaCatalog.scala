@@ -25,13 +25,14 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
-import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
+import io.delta.storage.commit.{CoordinatedCommitsUtils, TableIdentifier => StorageTableIdentifier}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
@@ -162,6 +163,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
 
+    // scalastyle:off println
+    println(s"===== AbstractDeltaCatalog: location determination =====")
+    println(s"  - isByPath: $isByPath")
+    println(s"  - location from properties: ${Option(allTableProperties.get("location"))}")
+    println(s"  - location: $location")
+    println(s"  - locUriOpt: $locUriOpt")
+    val propIsManagedLoc = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
+    println(s"  - PROP_IS_MANAGED_LOCATION: $propIsManagedLoc")
+    // scalastyle:on
+
     // scalastyle:off
     if (existingTableOpt.isDefined) {
       println(s"====> existingTableOpt -> tableIdentifier: ${existingTableOpt.get.identifier}")
@@ -182,19 +193,43 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       CatalogTableType.EXTERNAL
     }
     val (loc, tmpTableProperties, ignoredProperties) = locUriOpt match {
-      case Some(location) => (location, tableProperties, Map.empty[String, String])
+      case Some(location) =>
+        // scalastyle:off println
+        println(s"===== AbstractDeltaCatalog: Using provided location =====")
+        println(s"  - location: $location")
+        // scalastyle:on
+        (location, tableProperties, Map.empty[String, String])
       case None if existingTableOpt.isDefined &&
         existingTableOpt.get.storage.locationUri.isDefined =>
+        // scalastyle:off println
+        println(s"===== AbstractDeltaCatalog: Using existing table location =====")
+        // scalastyle:on
         (existingTableOpt.get.storage.locationUri.get, tableProperties, Map.empty[String, String])
       case None =>
-        if (isManagedLocation && isUnityCatalog) {
-          // For UC managed tables, get location via staging table API
+        // scalastyle:off println
+        println(s"===== AbstractDeltaCatalog: No location provided =====")
+        println(s"  - isManagedLocation: $isManagedLocation")
+        println(s"  - isUnityCatalog: $isUnityCatalog")
+        println(s"  - id.database.isDefined: ${id.database.isDefined}")
+        // scalastyle:on
+        // For UC managed tables, call createStagingTable to get storage location from UC.
+        // We check isUnityCatalog and database existence, but don't require
+        // PROP_IS_MANAGED_LOCATION since for CTAS tables this property may not be set.
+        if (isUnityCatalog && id.database.isDefined) {
+          // For UC managed tables with schema specified, get location via staging table API
           val commitCoordinator = UCCommitCoordinatorBuilder.buildForCatalog(spark, this.name())
-          val namespace = id.database.map(db => Array(this.name(), db))
-            .getOrElse(Array(this.name()))
+          val namespace = Array(this.name(), id.database.get)
           val tableIdentifier = new StorageTableIdentifier(namespace, id.table)
           val stagingInfo = commitCoordinator.createStagingTable(tableIdentifier)
           val updatedProperties = tableProperties ++ stagingInfo.getTableConf.asScala
+
+          // scalastyle:off println
+          println(s"===== AbstractDeltaCatalog: Staging table created =====")
+          println(s"  - tableId: ${stagingInfo.getTableId}")
+          println(s"  - storageLocation from staging: ${stagingInfo.getStorageLocation}")
+          println(s"  - tableConf: ${stagingInfo.getTableConf}")
+          println(s"  - updatedProperties: $updatedProperties")
+          // scalastyle:on println
 
           (CatalogUtils.stringToURI(stagingInfo.getStorageLocation),
            updatedProperties,
@@ -205,6 +240,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
            Map.empty[String, String])
         }
     }
+
+    // scalastyle:off println
+    println(s"===== AbstractDeltaCatalog: After location determination =====")
+    println(s"  - tmpTableProperties: $tmpTableProperties")
+    println(s"  - tableProperties: $tableProperties")
+    println(s"  - Will use tmpTableProperties for CatalogTable")
+    // scalastyle:on
+
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
       .copy(locationUri = Option(loc))
     val commentOpt = Option(allTableProperties.get("comment"))
@@ -218,7 +261,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       provider = Some(DeltaSourceUtils.ALT_NAME),
       partitionColumnNames = newPartitionColumns,
       bucketSpec = newBucketSpec,
-      properties = tableProperties,
+      properties = tmpTableProperties,
       comment = commentOpt
     )
 
@@ -229,13 +272,26 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         maybeClusterBySpec
       )
 
+    // scalastyle:off println
+    println(s"===== AbstractDeltaCatalog: After verifyTableAndSolidify =====")
+    println(s"  - withDb.properties: ${withDb.properties}")
+    println(s"  - Has UC table ID: ${withDb.properties.contains("io.unitycatalog.tableId")}")
+    // scalastyle:on
+
     val writer = sourceQuery.map { df =>
+      val deltaProperties = withDb.properties ++ commentOpt.map("comment" -> _)
+      // scalastyle:off println
+      println(s"===== AbstractDeltaCatalog: Creating WriteIntoDelta =====")
+      println(s"  - deltaProperties: $deltaProperties")
+      println(s"  - Has UC table ID: ${deltaProperties.contains("io.unitycatalog.tableId")}")
+      // scalastyle:on
+
       WriteIntoDelta(
         DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt, new Path(loc)),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
-        withDb.properties ++ commentOpt.map("comment" -> _),
+        deltaProperties,
         df,
         Some(tableDesc),
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
@@ -250,13 +306,19 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
-      // respect third party catalogs. Note: only handle CREATE TABLE for now, we
-      // should support CTAS later.
+      // respect third party catalogs. For CTAS, this is called AFTER data is written.
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
-      createTableFunc = Option.when(isUnityCatalog && sourceQuery.isEmpty) {
+      createTableFunc = Option.when(isUnityCatalog) {
         v1Table => {
+          // scalastyle:off println
+          println(s"===== AbstractDeltaCatalog: createTableFunc called =====")
+          println(s"  - table identifier: ${ident}")
+          println(s"  - v1Table.location: ${v1Table.location}")
+          println(s"  - v1Table.properties: ${v1Table.properties}")
+          // scalastyle:on println
+
           val t = V1Table(v1Table)
           super.createTable(ident, t.columns(), t.partitioning, t.properties)
         }

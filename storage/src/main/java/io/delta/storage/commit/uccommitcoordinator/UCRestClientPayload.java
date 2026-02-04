@@ -242,15 +242,15 @@ class UCRestClientPayload {
   static class CreateStagingTableRequest {
     String catalogName;
     String schemaName;
-    String tableName;
+    String name;
   }
 
   // ==============================
   // CreateStagingTableResponse Class
   // ==============================
   static class CreateStagingTableResponse {
-    String tableId;
-    String storageLocation;
-    String metastoreId;
+    String id;
+    String stagingLocation;
+    // metastoreId is not returned by UC server's StagingTableInfo
   }
 }

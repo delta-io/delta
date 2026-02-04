@@ -349,12 +349,27 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
+    // scalastyle:off println
+    println(s"===== CreateDeltaTableCommand: Before enforceDependenciesInConfiguration =====")
+    println(s"  - deltaWriter.configuration: ${deltaWriter.configuration}")
+    val hasUCTableIdBefore = deltaWriter.configuration.contains("io.unitycatalog.tableId")
+    println(s"  - Has UC table ID: $hasUCTableIdBefore")
+    // scalastyle:on
+
     val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
       sparkSession,
       tableWithLocation,
       deltaWriter.configuration,
       txn.snapshot
     )
+
+    // scalastyle:off println
+    println(s"===== CreateDeltaTableCommand: After enforceDependenciesInConfiguration =====")
+    println(s"  - updatedConfiguration: $updatedConfiguration")
+    val hasUCTableIdAfter = updatedConfiguration.contains("io.unitycatalog.tableId")
+    println(s"  - Has UC table ID: $hasUCTableIdAfter")
+    // scalastyle:on
+
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     var txnToReturn = txn
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS

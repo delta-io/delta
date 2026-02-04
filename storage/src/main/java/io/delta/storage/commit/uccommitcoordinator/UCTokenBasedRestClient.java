@@ -306,17 +306,26 @@ public class UCTokenBasedRestClient implements UCClient {
       new UCRestClientPayload.CreateStagingTableRequest();
     request.catalogName = catalogName;
     request.schemaName = schemaName;
-    request.tableName = tableName;
+    request.name = tableName;
+
+    System.out.println("===== UCTokenBasedRestClient.createStagingTable =====");
+    System.out.println("  - catalogName: " + catalogName);
+    System.out.println("  - schemaName: " + schemaName);
+    System.out.println("  - tableName: " + tableName);
+    System.out.println("  - endpoint: " + resolve(baseUri, "/staging-tables"));
 
     try {
       UCRestClientPayload.CreateStagingTableResponse response = executeHttpRequest(
-        new HttpPost(URI.create(resolve(baseUri, "/delta/preview/tables/staging"))),
+        new HttpPost(URI.create(resolve(baseUri, "/staging-tables"))),
         request,
         UCRestClientPayload.CreateStagingTableResponse.class);
 
       return new UCCreateStagingTableResponse(
-        response.tableId, response.storageLocation, response.metastoreId);
+        response.id, response.stagingLocation, null /* metastoreId not returned by UC server */);
     } catch (HttpError e) {
+      System.out.println("===== createStagingTable HTTP Error =====");
+      System.out.println("  - status code: " + e.statusCode);
+      System.out.println("  - response body: " + e.responseBody);
       switch (e.statusCode) {
         case HttpStatus.SC_BAD_REQUEST:
         case HttpStatus.SC_NOT_FOUND:
