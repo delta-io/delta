@@ -2938,6 +2938,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(true)
 
+  /////////////////////////////////////
+  // NORMALIZE PARTITION VALUES ON READ
+  ////////////////////////////////////
+
+  val DELTA_NORMALIZE_PARTITION_VALUES_ON_READ =
+    buildConf("normalizePartitionValuesOnRead")
+      .internal()
+      .doc(
+        "When true, we will normalize partition values on read by parsing them " +
+        "to their actual types for comparison instead of using raw strings. This helps prevent " +
+        "issues with inconsistently formatted partition values. " +
+        "UTC_TIMESTAMP_PARTITION_VALUES normalized timestamp partition values on write. However, " +
+        "data written before this flag existed may not be normalized and needs to be normalized " +
+        "on read."
+      )
+      .booleanConf
+      .createWithDefault(true)
+
   //////////////////
   // CORRECTNESS
   //////////////////
