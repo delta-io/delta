@@ -17,14 +17,22 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.DeltaSourceUtils;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
+import org.apache.spark.sql.internal.SQLConf$;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -63,6 +71,60 @@ import org.apache.spark.sql.connector.catalog.Table;
  * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    if (!isDeltaProvider(properties) || !isStrictMode()) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+
+    StagedTable staged = stageCreate(ident, schema, partitions, properties);
+    staged.commitStagedChanges();
+    return loadTable(ident);
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    if (!isDeltaProvider(properties) || !isStrictMode()) {
+      return super.stageCreate(ident, schema, partitions, properties);
+    }
+
+    boolean caseSensitive = spark().sessionState().conf().caseSensitiveAnalysis();
+    Map<String, String> safeProps = properties == null ? new HashMap<>() : new HashMap<>(properties);
+    translateUcTableIdProperty(safeProps);
+
+    if (CatalogTableUtils.isUnityCatalogManagedTableFromProperties(safeProps)) {
+      String ucTableId = safeProps.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+      if (ucTableId == null || ucTableId.isEmpty()) {
+        ucTableId = safeProps.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+      }
+      String stagingPath = safeProps.get(TableCatalog.PROP_LOCATION);
+      if (stagingPath == null || stagingPath.isEmpty()) {
+        stagingPath = safeProps.get("location");
+      }
+      ResolvedCreateRequest request =
+          ResolvedCreateRequest.forUCManagedCreate(
+              ident, schema, partitions, safeProps, ucTableId, stagingPath, caseSensitive);
+      return new KernelStagedDeltaTable(spark(), ident, request);
+    }
+
+    if (isPathIdentifier(ident)) {
+      ResolvedCreateRequest request =
+          ResolvedCreateRequest.forPathCreate(
+              ident, schema, partitions, safeProps, caseSensitive);
+      return new KernelStagedDeltaTable(spark(), ident, request);
+    }
+
+    return super.stageCreate(ident, schema, partitions, properties);
+  }
 
   /**
    * Loads a Delta table that is registered in the catalog.
@@ -129,5 +191,34 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     } else {
       return v1ConnectorSupplier.get();
     }
+  }
+
+  private boolean isStrictMode() {
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
+    return connectorMode.shouldCatalogReturnV2Tables();
+  }
+
+  private boolean isDeltaProvider(Map<String, String> properties) {
+    if (properties == null || properties.isEmpty()) {
+      return false;
+    }
+    String provider = properties.get("provider");
+    if (provider == null) {
+      provider =
+          spark()
+              .sessionState()
+              .conf()
+              .getConf(SQLConf$.MODULE$.DEFAULT_DATA_SOURCE_NAME());
+    }
+    return DeltaSourceUtils.isDeltaDataSourceName(provider);
+  }
+
+  private void translateUcTableIdProperty(Map<String, String> properties) {
+    String oldKey = UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD;
+    String newKey = UCCommitCoordinatorClient.UC_TABLE_ID_KEY;
+    if (properties.containsKey(oldKey) && !properties.containsKey(newKey)) {
+      properties.put(newKey, properties.get(oldKey));
+    }
+    properties.remove(oldKey);
   }
 }
