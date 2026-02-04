@@ -68,6 +68,12 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout staging-table-catalog
+          ./build/sbt clean package publishM2
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
