@@ -31,7 +31,8 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import io.delta.storage.commit.{
   CoordinatedCommitsUtils => JCoordinatedCommitsUtils,
-  GetCommitsResponse => JGetCommitsResponse
+  GetCommitsResponse => JGetCommitsResponse,
+  TableIdentifier
 }
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient}
 import org.apache.hadoop.fs.Path
@@ -168,5 +169,47 @@ trait UCCommitCoordinatorClientSuiteBase extends CommitCoordinatorClientImplSuit
       val fs = logPath.getFileSystem(log.newDeltaHadoopConf())
       assert(fs.exists(FileNames.unsafeDeltaFile(logPath, version)))
     }
+  }
+
+  test("createStagingTable - successful creation") {
+    val commitCoordinatorClient = UCCommitCoordinatorBuilder
+      .build(spark, Map(UCCommitCoordinatorClient.UC_METASTORE_ID_KEY -> metastoreId.toString))
+      .asInstanceOf[UCCommitCoordinatorClient]
+
+    val tableIdentifier = new TableIdentifier(Array("catalog", "schema"), "table")
+    val stagingInfo = commitCoordinatorClient.createStagingTable(tableIdentifier)
+
+    assert(stagingInfo.getTableId.contains("catalog.schema.table"))
+    assert(stagingInfo.getStorageLocation.contains("catalog/schema/table"))
+    assert(stagingInfo.getTableConf.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY) ==
+      stagingInfo.getTableId)
+    assert(stagingInfo.getTableConf.get(UCCommitCoordinatorClient.UC_METASTORE_ID_KEY) ==
+      metastoreId.toString)
+  }
+
+  test("createStagingTable - invalid table identifier") {
+    val commitCoordinator = UCCommitCoordinatorBuilder
+      .build(spark, Map(UCCommitCoordinatorClient.UC_METASTORE_ID_KEY -> metastoreId.toString))
+      .asInstanceOf[UCCommitCoordinatorClient]
+
+    val invalidTableIdentifier = new TableIdentifier(Array("only_catalog"), "table")
+    val exception = intercept[IllegalArgumentException] {
+      commitCoordinator.createStagingTable(invalidTableIdentifier)
+    }
+    assert(exception.getMessage.contains("must have at least catalog and schema"))
+  }
+
+  test("createStagingTable - unique table IDs for different tables") {
+    val commitCoordinator = UCCommitCoordinatorBuilder
+      .build(spark, Map(UCCommitCoordinatorClient.UC_METASTORE_ID_KEY -> metastoreId.toString))
+      .asInstanceOf[UCCommitCoordinatorClient]
+
+    val stagingInfo1 = commitCoordinator.createStagingTable(
+      new TableIdentifier(Array("catalog", "schema"), "table1"))
+    val stagingInfo2 = commitCoordinator.createStagingTable(
+      new TableIdentifier(Array("catalog", "schema"), "table2"))
+
+    assert(stagingInfo1.getTableId != stagingInfo2.getTableId)
+    assert(stagingInfo1.getStorageLocation != stagingInfo2.getStorageLocation)
   }
 }

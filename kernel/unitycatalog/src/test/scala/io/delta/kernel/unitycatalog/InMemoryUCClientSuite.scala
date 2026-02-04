@@ -119,4 +119,33 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       expectedVersions = 2L to 4L)
   }
 
+  test("createStagingTable returns valid table info") {
+    val client = new InMemoryUCClient("test-metastore")
+    val response = client.createStagingTable("catalog", "schema", "table")
+
+    assert(response.getTableId.contains("catalog.schema.table"))
+    assert(response.getStorageLocation == "memory:///catalog/schema/table")
+    assert(response.getMetastoreId == "test-metastore")
+  }
+
+  test("createStagingTable generates unique table IDs") {
+    val client = new InMemoryUCClient("test-metastore")
+    val response1 = client.createStagingTable("catalog", "schema", "table1")
+    val response2 = client.createStagingTable("catalog", "schema", "table2")
+    val response3 = client.createStagingTable("catalog", "schema", "table1")
+
+    assert(response1.getTableId != response2.getTableId)
+    assert(response1.getTableId != response3.getTableId)
+    assert(response2.getTableId != response3.getTableId)
+  }
+
+  test("createStagingTable generates different storage locations for different tables") {
+    val client = new InMemoryUCClient("test-metastore")
+    val response1 = client.createStagingTable("catalog1", "schema1", "table1")
+    val response2 = client.createStagingTable("catalog2", "schema2", "table2")
+
+    assert(response1.getStorageLocation == "memory:///catalog1/schema1/table1")
+    assert(response2.getStorageLocation == "memory:///catalog2/schema2/table2")
+  }
+
 }

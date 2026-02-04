@@ -36,6 +36,7 @@ import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
+import io.delta.storage.commit.StagingTableInfo;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -915,6 +916,31 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       return false;
     }
     return true;
+  }
+
+  @Override
+  public StagingTableInfo createStagingTable(TableIdentifier tableIdentifier) {
+    try {
+      String[] namespace = tableIdentifier.getNamespace();
+      if (namespace.length < 2) {
+        throw new IllegalArgumentException(
+          "Table identifier must have at least catalog and schema: " + tableIdentifier);
+      }
+
+      UCCreateStagingTableResponse ucResponse =
+        ucClient.createStagingTable(namespace[0], namespace[1], tableIdentifier.getName());
+
+      Map<String, String> tableConf = new java.util.HashMap<>();
+      tableConf.put(UC_TABLE_ID_KEY, ucResponse.getTableId());
+      tableConf.put(UC_METASTORE_ID_KEY, ucResponse.getMetastoreId());
+
+      return new StagingTableInfo(
+        ucResponse.getTableId(),
+        ucResponse.getStorageLocation(),
+        tableConf);
+    } catch (IOException | UCCommitCoordinatorException e) {
+      throw new RuntimeException("Failed to create staging table: " + tableIdentifier, e);
+    }
   }
 
   @Override

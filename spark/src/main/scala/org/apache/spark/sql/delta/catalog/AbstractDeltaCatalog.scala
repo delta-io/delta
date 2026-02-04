@@ -25,6 +25,7 @@ import scala.collection.JavaConverters._
 import scala.collection.immutable.ListMap
 import scala.collection.mutable
 
+import io.delta.storage.commit.{TableIdentifier => StorageTableIdentifier}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
@@ -35,6 +36,7 @@ import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
@@ -179,9 +181,30 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       CatalogTableType.EXTERNAL
     }
-    val loc = locUriOpt
-      .orElse(existingTableOpt.flatMap(_.storage.locationUri))
-      .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
+    val (loc, tmpTableProperties, ignoredProperties) = locUriOpt match {
+      case Some(location) => (location, tableProperties, Map.empty[String, String])
+      case None if existingTableOpt.isDefined &&
+        existingTableOpt.get.storage.locationUri.isDefined =>
+        (existingTableOpt.get.storage.locationUri.get, tableProperties, Map.empty[String, String])
+      case None =>
+        if (isManagedLocation && isUnityCatalog) {
+          // For UC managed tables, get location via staging table API
+          val commitCoordinator = UCCommitCoordinatorBuilder.buildForCatalog(spark, this.name())
+          val namespace = id.database.map(db => Array(this.name(), db))
+            .getOrElse(Array(this.name()))
+          val tableIdentifier = new StorageTableIdentifier(namespace, id.table)
+          val stagingInfo = commitCoordinator.createStagingTable(tableIdentifier)
+          val updatedProperties = tableProperties ++ stagingInfo.getTableConf.asScala
+
+          (CatalogUtils.stringToURI(stagingInfo.getStorageLocation),
+           updatedProperties,
+           Map.empty[String, String])
+        } else {
+          (spark.sessionState.catalog.defaultTablePath(id),
+           tableProperties,
+           Map.empty[String, String])
+        }
+    }
     val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
       .copy(locationUri = Option(loc))
     val commentOpt = Option(allTableProperties.get("comment"))

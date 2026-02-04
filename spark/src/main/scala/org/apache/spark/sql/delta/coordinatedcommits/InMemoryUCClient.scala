@@ -23,7 +23,7 @@ import java.util.Optional
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import io.delta.storage.commit.{Commit => JCommit, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.UCClient
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCreateStagingTableResponse}
 
 /**
  * An in-memory implementation of [[UCClient]] for testing purposes.
@@ -88,6 +88,19 @@ class InMemoryUCClient(
       tableUri,
       Option(startVersion.orElse(null)).map(_.toLong),
       Option(endVersion.orElse(null)).map(_.toLong))
+  }
+
+  override def createStagingTable(
+      catalogName: String,
+      schemaName: String,
+      tableName: String): UCCreateStagingTableResponse = {
+    // Generate a unique table ID for the staging table
+    val tableId = s"$catalogName.$schemaName.$tableName-${java.util.UUID.randomUUID()}"
+
+    // Generate a storage location (in-memory simulation)
+    val storageLocation = s"memory:///$catalogName/$schemaName/$tableName"
+
+    new UCCreateStagingTableResponse(tableId, storageLocation, metastoreId)
   }
 
   override def close(): Unit = {}

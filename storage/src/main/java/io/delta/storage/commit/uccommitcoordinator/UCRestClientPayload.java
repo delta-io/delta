@@ -235,4 +235,22 @@ class UCRestClientPayload {
   static class GetMetastoreSummaryResponse {
     String metastoreId;
   }
+
+  // ==============================
+  // CreateStagingTableRequest Class
+  // ==============================
+  static class CreateStagingTableRequest {
+    String catalogName;
+    String schemaName;
+    String tableName;
+  }
+
+  // ==============================
+  // CreateStagingTableResponse Class
+  // ==============================
+  static class CreateStagingTableResponse {
+    String tableId;
+    String storageLocation;
+    String metastoreId;
+  }
 }

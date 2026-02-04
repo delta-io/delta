@@ -117,6 +117,25 @@ public interface UCClient extends AutoCloseable {
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;
 
   /**
+   * Creates a staging table in Unity Catalog and returns its storage location and metadata.
+   *
+   * This is the first phase of the three-phase table creation process for catalog-managed tables.
+   * Unity Catalog allocates a unique storage location and table ID, which are used in subsequent
+   * operations to initialize and register the Delta table.
+   *
+   * @param catalogName The name of the catalog where the table will be created
+   * @param schemaName The name of the schema (database) within the catalog
+   * @param tableName The name of the table to create
+   * @return UCCreateStagingTableResponse containing the table ID and storage location
+   * @throws IOException if there's an error during the REST API call
+   * @throws UCCommitCoordinatorException if Unity Catalog returns an error
+   */
+  UCCreateStagingTableResponse createStagingTable(
+      String catalogName,
+      String schemaName,
+      String tableName) throws IOException, UCCommitCoordinatorException;
+
+  /**
    * Closes any resources used by this client.
    * This method should be called to properly release resources such as network
    * connections (e.g., HTTPClient) when the client is no longer needed.

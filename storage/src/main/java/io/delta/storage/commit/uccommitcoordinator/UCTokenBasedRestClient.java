@@ -294,6 +294,42 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   @Override
+  public UCCreateStagingTableResponse createStagingTable(
+      String catalogName,
+      String schemaName,
+      String tableName) throws IOException, UCCommitCoordinatorException {
+    Objects.requireNonNull(catalogName, "catalogName must not be null.");
+    Objects.requireNonNull(schemaName, "schemaName must not be null.");
+    Objects.requireNonNull(tableName, "tableName must not be null.");
+
+    UCRestClientPayload.CreateStagingTableRequest request =
+      new UCRestClientPayload.CreateStagingTableRequest();
+    request.catalogName = catalogName;
+    request.schemaName = schemaName;
+    request.tableName = tableName;
+
+    try {
+      UCRestClientPayload.CreateStagingTableResponse response = executeHttpRequest(
+        new HttpPost(URI.create(resolve(baseUri, "/delta/preview/tables/staging"))),
+        request,
+        UCRestClientPayload.CreateStagingTableResponse.class);
+
+      return new UCCreateStagingTableResponse(
+        response.tableId, response.storageLocation, response.metastoreId);
+    } catch (HttpError e) {
+      switch (e.statusCode) {
+        case HttpStatus.SC_BAD_REQUEST:
+        case HttpStatus.SC_NOT_FOUND:
+        case HttpStatus.SC_CONFLICT:
+          throw new InvalidTargetTableException(e.responseBody);
+        default:
+          throw new IOException(
+            "createStagingTable failed (HTTP " + e.statusCode + "): " + e.responseBody);
+      }
+    }
+  }
+
+  @Override
   public void close() throws IOException {
     httpClient.close();
   }
