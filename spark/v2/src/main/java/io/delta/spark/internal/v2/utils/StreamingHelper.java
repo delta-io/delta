@@ -89,7 +89,13 @@ public class StreamingHelper {
     return getAddFile(batch.getData(), rowId);
   }
 
-  /** Get AddFile action from a ColumnarBatch at the specified row, if present. */
+  /**
+   * Get AddFile action from a ColumnarBatch at the specified row, if present.
+   *
+   * <p>Caller should ensure all rows are valid (e.g., not filtered by selection vector). For
+   * FilteredColumnarBatch with selection vectors, use {@link #getAddFile(FilteredColumnarBatch,
+   * int)} instead.
+   */
   private static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
     int addIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.ADD.colName);
     ColumnVector addVector = batch.getColumnVector(addIdx);
