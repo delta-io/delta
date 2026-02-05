@@ -36,12 +36,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.TableCapability;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * Kernel-backed staged table for metadata-only CREATE operations.
@@ -54,13 +56,22 @@ public final class KernelStagedDeltaTable implements StagedTable {
   private final SparkSession spark;
   private final Identifier ident;
   private final ResolvedCreateRequest request;
+  private final Optional<String> ucCatalogName;
   private final Optional<UCClient> ucClient;
 
   public KernelStagedDeltaTable(
       SparkSession spark,
       Identifier ident,
       ResolvedCreateRequest request) {
-    this(spark, ident, request, Optional.empty());
+    this(spark, ident, request, Optional.empty(), Optional.empty());
+  }
+
+  public KernelStagedDeltaTable(
+      SparkSession spark,
+      Identifier ident,
+      ResolvedCreateRequest request,
+      String ucCatalogName) {
+    this(spark, ident, request, Optional.of(requireNonNull(ucCatalogName, "ucCatalogName is null")), Optional.empty());
   }
 
   public KernelStagedDeltaTable(
@@ -68,17 +79,19 @@ public final class KernelStagedDeltaTable implements StagedTable {
       Identifier ident,
       ResolvedCreateRequest request,
       UCClient ucClient) {
-    this(spark, ident, request, Optional.of(ucClient));
+    this(spark, ident, request, Optional.empty(), Optional.of(ucClient));
   }
 
   private KernelStagedDeltaTable(
       SparkSession spark,
       Identifier ident,
       ResolvedCreateRequest request,
+      Optional<String> ucCatalogName,
       Optional<UCClient> ucClient) {
     this.spark = requireNonNull(spark, "spark is null");
     this.ident = requireNonNull(ident, "ident is null");
     this.request = requireNonNull(request, "request is null");
+    this.ucCatalogName = requireNonNull(ucCatalogName, "ucCatalogName is null");
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
   }
 
@@ -193,9 +206,21 @@ public final class KernelStagedDeltaTable implements StagedTable {
   }
 
   private UCClient buildUcClient() {
-    String catalogName = spark.sessionState().catalogManager().currentCatalog().name();
-    CommitCoordinatorClient coordinator =
-        UCCommitCoordinatorBuilder$.MODULE$.buildForCatalog(spark, catalogName);
+    String catalogName =
+        ucCatalogName.orElseGet(
+            () -> spark.sessionState().catalogManager().currentCatalog().name());
+    CommitCoordinatorClient coordinator;
+    try {
+      coordinator = UCCommitCoordinatorBuilder$.MODULE$.buildForCatalog(spark, catalogName);
+    } catch (IllegalArgumentException e) {
+      scala.collection.immutable.Map<String, UCCatalogConfig> configs =
+          UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+      String available = String.join(", ", CollectionConverters.asJava(configs.keySet()));
+      throw new IllegalArgumentException(
+          "Unity Catalog configuration not found for catalog '" + catalogName
+              + "'. Available UC catalogs: [" + available + "]",
+          e);
+    }
     if (!(coordinator instanceof UCCommitCoordinatorClient)) {
       throw new IllegalStateException(
           "Unexpected commit coordinator type for catalog '" + catalogName + "'");

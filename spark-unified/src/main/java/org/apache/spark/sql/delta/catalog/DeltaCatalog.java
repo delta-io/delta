@@ -21,6 +21,8 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
+import org.apache.spark.sql.catalyst.analysis.NoSuchNamespaceException;
+import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.StagedTable;
@@ -146,8 +148,15 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     if (!isDeltaProvider(properties) || !isStrictMode()) {
       return super.createTable(ident, schema, partitions, properties);
     }
+    Map<String, String> safeProps =
+        properties == null ? new HashMap<>() : new HashMap<>(properties);
+    translateUcTableIdProperty(safeProps);
+    boolean isUCManaged = CatalogTableUtils.isUnityCatalogManagedTableFromProperties(safeProps);
     StagedTable staged = stageCreate(ident, schema, partitions, properties);
     staged.commitStagedChanges();
+    if (isUCManaged) {
+      registerUnityCatalogManagedTable(ident, schema, partitions, safeProps);
+    }
     return loadTable(ident);
   }
 
@@ -179,7 +188,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
               safeProps,
               ucTableId,
               stagingPath);
-      return new KernelStagedDeltaTable(spark(), ident, request);
+      return new KernelStagedDeltaTable(spark(), ident, request, name());
     }
     if (isPathIdentifier(ident)) {
       ResolvedCreateRequest request =
@@ -223,5 +232,45 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     if (oldValue != null && !oldValue.isEmpty()) {
       props.putIfAbsent(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, oldValue);
     }
+  }
+
+  private void registerUnityCatalogManagedTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    if (!(delegate instanceof TableCatalog)) {
+      String className = delegate == null ? "<null>" : delegate.getClass().getName();
+      throw new IllegalStateException(
+          "UC-managed create requires a TableCatalog delegate for registration, but found "
+              + className);
+    }
+    String delegateClass = delegate.getClass().getName();
+    if (!delegateClass.startsWith("io.unitycatalog.")) {
+      throw new IllegalStateException(
+          "UC-managed create requires a Unity Catalog delegate for registration, but found "
+              + delegateClass);
+    }
+    Map<String, String> safeProps = properties == null ? new HashMap<>() : new HashMap<>(properties);
+    translateUcTableIdProperty(safeProps);
+    safeProps.putIfAbsent(TableCatalog.PROP_PROVIDER, "delta");
+    String stagingPath = getUcStagingPath(safeProps);
+    if (stagingPath == null || stagingPath.isEmpty()) {
+      throw new IllegalArgumentException("UC staging path is required for UC-managed create");
+    }
+    try {
+      ((TableCatalog) delegate).createTable(ident, schema, partitions, safeProps);
+    } catch (TableAlreadyExistsException | NoSuchNamespaceException e) {
+      rethrowAsUnchecked(e);
+    }
+  }
+
+  private static void rethrowAsUnchecked(Throwable throwable) {
+    DeltaCatalog.<RuntimeException>throwUnchecked(throwable);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <T extends Throwable> void throwUnchecked(Throwable throwable) throws T {
+    throw (T) throwable;
   }
 }
