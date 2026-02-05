@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.sources.Filter
-import org.apache.spark.sql.types.StructType
 
 /**
  * Simple data class representing a file to scan.
@@ -28,13 +27,6 @@ case class ScanFile(
   filePath: String,
   fileSizeInBytes: Long,
   fileFormat: String  // "parquet", "orc", etc.
-)
-
-/**
- * Result of a table scan plan operation.
- */
-case class ScanPlan(
-  files: Seq[ScanFile]
 )
 
 /**
@@ -50,14 +42,25 @@ trait ServerSidePlanningClient {
    * @param databaseName The database or schema name
    * @param table The table name
    * @param filterOption Optional filter expression to push down to server (Spark Filter format)
-   * @param projection Optional projection (required columns) to push down to server
+   * @param projectionOption Optional projection (column names) to push down to server
+   * @param limitOption Optional limit to push down to server
    * @return ScanPlan containing files to read
    */
   def planScan(
       databaseName: String,
       table: String,
       filterOption: Option[Filter] = None,
-      projection: Option[StructType] = None): ScanPlan
+      projectionOption: Option[Seq[String]] = None,
+      limitOption: Option[Int] = None): ScanPlan
+
+  /**
+   * Check if all given filters can be converted to the server's native filter format.
+   * This is used during filter pushdown to determine whether to return residuals to Spark.
+   *
+   * @param filters Array of Spark filters to check
+   * @return true if ALL filters can be converted, false if ANY filter cannot be converted
+   */
+  def canConvertFilters(filters: Array[Filter]): Boolean
 }
 
 /**
@@ -78,38 +81,85 @@ private[serverSidePlanning] trait ServerSidePlanningClientFactory {
 }
 
 /**
- * Registry for client factories. Can be configured for testing or to provide
- * production implementations (e.g., IcebergRESTCatalogPlanningClientFactory).
- *
- * By default, no factory is registered. Production code should register an appropriate
- * factory implementation before attempting to create clients.
+ * Registry for client factories. Automatically discovers and registers implementations
+ * using reflection-based auto-discovery on first access to the factory. Manual registration
+ * using setFactory() is only needed for testing or to override the auto-discovered factory.
  */
 private[serverSidePlanning] object ServerSidePlanningClientFactory {
+  // Fully qualified class name for auto-registration via reflection
+  private val ICEBERG_FACTORY_CLASS_NAME =
+    "org.apache.spark.sql.delta.serverSidePlanning.IcebergRESTCatalogPlanningClientFactory"
+
   @volatile private var registeredFactory: Option[ServerSidePlanningClientFactory] = None
+  @volatile private var autoRegistrationAttempted: Boolean = false
+
+  // Lazy initialization - only runs when getFactory() is called and no factory is set.
+  // Uses reflection to load the hardcoded IcebergRESTCatalogPlanningClientFactory class.
+  private def tryAutoRegisterFactory(): Unit = {
+    // Double-checked locking pattern to ensure initialization happens only once
+    if (!autoRegistrationAttempted) {
+      synchronized {
+        if (!autoRegistrationAttempted) {
+          autoRegistrationAttempted = true
+
+          try {
+            // Use reflection to load the Iceberg factory class
+            // scalastyle:off classforname
+            val clazz = Class.forName(ICEBERG_FACTORY_CLASS_NAME)
+            // scalastyle:on classforname
+            val factory = clazz.getConstructor().newInstance()
+              .asInstanceOf[ServerSidePlanningClientFactory]
+            registeredFactory = Some(factory)
+          } catch {
+            case e: Exception =>
+              throw new IllegalStateException(
+                "No ServerSidePlanningClientFactory has been registered. " +
+                "Ensure delta-iceberg JAR is on the classpath for auto-registration, " +
+                "or call ServerSidePlanningClientFactory.setFactory() to register manually.",
+                e)
+          }
+        }
+      }
+    }
+  }
 
   /**
-   * Set a factory for production use or testing.
+   * Set a factory, overriding any auto-registered factory.
+   * Synchronized to prevent race conditions with auto-registration.
    */
   private[serverSidePlanning] def setFactory(factory: ServerSidePlanningClientFactory): Unit = {
-    registeredFactory = Some(factory)
+    synchronized {
+      registeredFactory = Some(factory)
+    }
   }
 
   /**
    * Clear the registered factory.
+   * Synchronized to ensure atomic reset of both flags.
    */
   private[serverSidePlanning] def clearFactory(): Unit = {
-    registeredFactory = None
+    synchronized {
+      registeredFactory = None
+      autoRegistrationAttempted = false
+    }
   }
 
   /**
    * Get the currently registered factory.
-   * Throws IllegalStateException if no factory has been registered.
+   * Throws IllegalStateException if no factory has been registered (either via reflection-based
+   * auto-discovery or explicit setFactory() call).
    */
   def getFactory(): ServerSidePlanningClientFactory = {
+    // Try auto-registration if not already attempted and no factory is manually set
+    if (registeredFactory.isEmpty) {
+      tryAutoRegisterFactory()
+    }
+
     registeredFactory.getOrElse {
       throw new IllegalStateException(
         "No ServerSidePlanningClientFactory has been registered. " +
-        "Call ServerSidePlanningClientFactory.setFactory() to register an implementation.")
+        "Ensure delta-iceberg JAR is on the classpath for auto-registration, " +
+        "or call ServerSidePlanningClientFactory.setFactory() to register manually.")
     }
   }
 
@@ -122,3 +172,76 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
     getFactory().buildClient(spark, metadata)
   }
 }
+
+/**
+ * Temporary storage credentials from server-side planning response.
+ */
+sealed trait ScanPlanStorageCredentials
+
+object ScanPlanStorageCredentials {
+
+  /** IRC config key mappings for each credential type. */
+  private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
+  private val AZURE_KEYS = Seq("azure.account-name", "azure.sas-token", "azure.container-name")
+  private val GCS_KEYS = Seq("gcs.oauth2.token")
+
+  /**
+   * Factory method to create credentials from IRC config map.
+   * Tries each credential type and returns the first complete match.
+   * Throws IllegalStateException if credentials are incomplete or unrecognized.
+   */
+  def fromConfig(config: Map[String, String]): ScanPlanStorageCredentials = {
+    def get(key: String): String =
+      config.getOrElse(key, throw new IllegalStateException(s"Missing required credential: $key"))
+
+    def hasAny(keys: Seq[String]): Boolean = keys.exists(config.contains)
+
+    // Try each sealed trait subtype in priority order
+    if (hasAny(S3_KEYS)) {
+      S3Credentials(
+        get("s3.access-key-id"),
+        get("s3.secret-access-key"),
+        get("s3.session-token"))
+    } else if (hasAny(AZURE_KEYS)) {
+      AzureCredentials(
+        get("azure.account-name"),
+        get("azure.sas-token"),
+        get("azure.container-name"))
+    } else if (hasAny(GCS_KEYS)) {
+      GcsCredentials(get("gcs.oauth2.token"))
+    } else {
+      throw new IllegalStateException(
+        s"Unrecognized credential keys: ${config.keys.mkString(", ")}. " +
+          "Expected S3, Azure, or GCS properties.")
+    }
+  }
+}
+
+/**
+ * AWS S3 temporary credentials.
+ */
+case class S3Credentials(
+    accessKeyId: String,
+    secretAccessKey: String,
+    sessionToken: String) extends ScanPlanStorageCredentials
+
+/**
+ * Azure ADLS Gen2 credentials with SAS token.
+ */
+case class AzureCredentials(
+    accountName: String,
+    sasToken: String,
+    containerName: String) extends ScanPlanStorageCredentials
+
+/**
+ * Google Cloud Storage OAuth2 token credentials.
+ */
+case class GcsCredentials(
+    oauth2Token: String) extends ScanPlanStorageCredentials
+
+/**
+ * Result of a table scan plan operation.
+ */
+case class ScanPlan(
+    files: Seq[ScanFile],
+    credentials: Option[ScanPlanStorageCredentials] = None)

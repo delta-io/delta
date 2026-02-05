@@ -27,6 +27,7 @@ import shadedForDelta.org.apache.iceberg.jdbc.JdbcCatalog;
 import shadedForDelta.org.apache.iceberg.relocated.com.google.common.collect.Maps;
 import shadedForDelta.org.apache.iceberg.util.PropertyUtil;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
+import java.util.List;
 
 import org.eclipse.jetty.server.Connector;
 import org.eclipse.jetty.server.Server;
@@ -162,7 +163,41 @@ public class IcebergRESTServer {
   }
 
   /**
-   * Clear captured filter. Call between tests.
+   * Get the projection (list of column names) captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public List<String> getCapturedProjection() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedProjection();
+  }
+
+  /**
+   * Get the limit (min-rows-requested) captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public Long getCapturedLimit() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedMinRowsRequested();
+  }
+
+  /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * For test verification.
+   */
+  public Boolean getCapturedCaseSensitive() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedCaseSensitive();
+  }
+
+  /**
+   * Set test credentials to inject into /plan responses.
+   * Used for testing credential extraction in clients.
+   *
+   * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
+   */
+  public void setTestCredentials(Map<String, String> credentials) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestCredentials(credentials);
+  }
+
+  /**
+   * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {
     IcebergRESTCatalogAdapterWithPlanSupport.clearCaptured();

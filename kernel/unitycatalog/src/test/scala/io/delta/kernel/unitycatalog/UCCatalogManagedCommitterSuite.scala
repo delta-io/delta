@@ -301,7 +301,8 @@ class UCCatalogManagedCommitterSuite
     }
   }
 
-  test("CATALOG_WRITE: throws IllegalStateException when convertedDeltaVersion does not match commit version") {
+  test("CATALOG_WRITE: throws exception when convertedDeltaVersion " +
+    "does not match commit version") {
     withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
       // ===== GIVEN =====
       val ucClient = new InMemoryUCClient("ucMetastoreId")

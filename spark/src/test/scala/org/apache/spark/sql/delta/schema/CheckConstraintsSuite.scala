@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.schema
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog}
+import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaConfigs, DeltaLog}
 import org.apache.spark.sql.delta.constraints.CharVarcharConstraint
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
@@ -91,6 +91,72 @@ class CheckConstraintsSuite extends QueryTest
       }
       errorContains(e.getMessage,
         "Cannot resolve \"(event_date < ((2025 - 6) - 12))\" due to data type mismatch")
+    }
+  }
+
+  test("CREATE TABLE with check constraint referencing non-existent column fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_invalid_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.invalid' = 'non_existent_column > 0')
+                 |""".stripMargin)
+          },
+          "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+          parameters = Map("colName" -> "`non_existent_column`")
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with non-boolean check constraint fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_non_boolean_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.nonbool' = 'id + 1')
+                 |""".stripMargin)
+          },
+          "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+          parameters = Map(
+            "name" -> "nonbool",
+            "expr" -> "(id + 1)"
+          )
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with valid check constraint succeeds") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_valid_constraint"
+      withTable(tableName) {
+        sql(
+          s"""
+             |CREATE TABLE $tableName (
+             |id INT,
+             |value STRING
+             |) USING DELTA
+             |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
+             |""".stripMargin)
+      }
     }
   }
 
@@ -552,10 +618,11 @@ class CheckConstraintsSuite extends QueryTest
           "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
         checkError(
           exception = intercept[AnalysisException] {
-            sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 CHECK (id < year(current_date()))")
+            sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 " +
+              s"CHECK (id > (SELECT max(id) FROM $testTable))")
           },
           "DELTA_UNSUPPORTED_EXPRESSION_CHECK_CONSTRAINT",
-          parameters = Map("expression" -> "current_date()")
+          parameters = Map("expression" -> "scalarsubquery()")
         )
       }
     }

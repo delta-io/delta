@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
+import io.delta.kernel.internal.checkpoints.Checkpointer;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumUtils;
 import io.delta.kernel.internal.checksum.ChecksumWriter;
@@ -92,6 +93,13 @@ public class SnapshotImpl implements Snapshot {
   private Lazy<SnapshotReport> lazySnapshotReport;
   private Lazy<Optional<List<Column>>> lazyClusteringColumns;
 
+  /**
+   * Indicates whether this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  private final boolean wasBuiltAsLatest;
+
   // TODO: Do not take in LogReplay as a constructor argument.
   // TODO: Also take in clustering columns for post-commit snapshot
   public SnapshotImpl(
@@ -114,6 +122,10 @@ public class SnapshotImpl implements Snapshot {
     this.metadata = requireNonNull(metadata);
     this.committer = committer;
     this.inCommitTimestampOpt = inCommitTimestampOpt;
+    // TODO: Post-commit snapshots build a version-based SnapshotQueryContext
+    // (see TransactionImpl.buildPostCommitSnapshotOpt), so isLatestQuery() may be false even
+    // when this snapshot is intended to be the latest version.
+    this.wasBuiltAsLatest = snapshotContext.isLatestQuery();
 
     // We create the actual Snapshot report lazily (on first access) instead of eagerly in this
     // constructor because some Snapshot metrics, like {@link
@@ -207,7 +219,7 @@ public class SnapshotImpl implements Snapshot {
   }
 
   @Override
-  public void publish(Engine engine) throws PublishFailedException {
+  public Snapshot publish(Engine engine) throws PublishFailedException {
     final List<ParsedCatalogCommitData> allCatalogCommits = getLogSegment().getAllCatalogCommits();
     final boolean isFileSystemBasedTable = !TableFeatures.isCatalogManagedSupported(protocol);
     final boolean isCatalogCommitter = committer instanceof CatalogCommitter;
@@ -227,14 +239,14 @@ public class SnapshotImpl implements Snapshot {
     } else {
       if (isFileSystemBasedTable) {
         logger.info("Publishing not applicable: this is a filesystem-managed table");
-        return;
+        return this;
       }
 
       if (!isCatalogCommitter) {
         logger.info(
             "[{}] Publishing not applicable: committer does not support publishing",
             committer.getClass().getName());
-        return;
+        return this;
       }
     }
 
@@ -252,13 +264,24 @@ public class SnapshotImpl implements Snapshot {
 
     if (catalogCommitsToPublish.isEmpty()) {
       logger.info("No catalog commits need to be published");
-      return;
+      return this;
     }
 
     final PublishMetadata publishMetadata =
         new PublishMetadata(version, logPath.toString(), catalogCommitsToPublish);
 
     ((CatalogCommitter) committer).publish(engine, publishMetadata);
+    LogSegment updatedLogSegment = getLogSegment().newAsPublished();
+    return new SnapshotImpl(
+        dataPath,
+        version,
+        new Lazy<>(() -> updatedLogSegment),
+        logReplay,
+        protocol,
+        metadata,
+        committer,
+        SnapshotQueryContext.forVersionSnapshot(dataPath.toString(), version),
+        this.inCommitTimestampOpt);
   }
 
   @Override
@@ -295,6 +318,17 @@ public class SnapshotImpl implements Snapshot {
     }
   }
 
+  public void writeCheckpoint(Engine engine) throws IOException {
+    // Refuse to create a checkpoint if the table is CatalogManaged but the current snapshot is not
+    // published
+    if (TableFeatures.isCatalogManagedSupported(protocol)
+        && getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L) < version) {
+      throw DeltaErrors.checkpointOnUnpublishedCommits(
+          getPath(), version, getLogSegment().getMaxPublishedDeltaVersion().orElse(-1L));
+    }
+    Checkpointer.checkpoint(engine, System::currentTimeMillis, this);
+  }
+
   ///////////////////
   // Internal APIs //
   ///////////////////
@@ -315,6 +349,15 @@ public class SnapshotImpl implements Snapshot {
 
   public Path getDataPath() {
     return dataPath;
+  }
+
+  /**
+   * Returns true if this snapshot was built as a "latest" snapshot query (i.e., no time-travel
+   * parameters were provided). This is intent-based - it indicates what the user requested, not
+   * whether the snapshot is actually the latest version.
+   */
+  public boolean wasBuiltAsLatest() {
+    return wasBuiltAsLatest;
   }
 
   public Protocol getProtocol() {

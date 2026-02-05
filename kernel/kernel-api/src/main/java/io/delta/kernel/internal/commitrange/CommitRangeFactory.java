@@ -18,11 +18,11 @@ package io.delta.kernel.internal.commitrange;
 import static io.delta.kernel.internal.DeltaErrors.*;
 import static io.delta.kernel.internal.DeltaErrorsInternal.*;
 import static io.delta.kernel.internal.DeltaLogActionUtils.listDeltaLogFilesAsIter;
-import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.Utils.resolvePath;
 
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.LogDataUtils;
@@ -58,6 +58,24 @@ class CommitRangeFactory {
     List<ParsedCatalogCommitData> ratifiedCommits = getFileBasedRatifiedCommits();
     long startVersion = resolveStartVersion(engine, ratifiedCommits);
     Optional<Long> endVersionOpt = resolveEndVersionIfSpecified(engine, ratifiedCommits);
+
+    // Apply maxCatalogVersion constraint
+    if (ctx.maxCatalogVersion.isPresent()) {
+      if (!endVersionOpt.isPresent()) {
+        // When maxCatalogVersion is specified and no end boundary is provided,
+        // the end version should be maxCatalogVersion
+        endVersionOpt = ctx.maxCatalogVersion;
+        logger.info(
+            "{}: Using maxCatalogVersion {} as end version", tablePath, endVersionOpt.get());
+      } else {
+        // Check that endVersion is <= maxCatalogVersion
+        if (endVersionOpt.get() > ctx.maxCatalogVersion.get()) {
+          throw DeltaErrors.resolvedEndVersionAfterMaxCatalogVersion(
+              tablePath.toString(), endVersionOpt.get(), ctx.maxCatalogVersion.get());
+        }
+      }
+    }
+
     validateVersionRange(startVersion, endVersionOpt);
     logResolvedVersions(startVersion, endVersionOpt);
     List<ParsedDeltaData> deltas =
@@ -124,11 +142,11 @@ class CommitRangeFactory {
 
   private void validateVersionRange(long startVersion, Optional<Long> endVersionOpt) {
     endVersionOpt.ifPresent(
-        endVersion ->
-            checkArgument(
-                startVersion <= endVersion,
-                String.format(
-                    "Resolved startVersion=%d > endVersion=%d", startVersion, endVersion)));
+        endVersion -> {
+          if (startVersion > endVersion) {
+            throw invalidResolvedVersionRange(tablePath.toString(), startVersion, endVersion);
+          }
+        });
   }
 
   private void logResolvedVersions(long startVersion, Optional<Long> endVersionOpt) {

@@ -19,9 +19,11 @@ import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.*;
 import java.util.function.Supplier;
@@ -137,7 +139,8 @@ public class SparkTable implements Table, SupportsRead {
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    this.snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    Engine kernelEngine = DefaultEngine.create(this.hadoopConf);
+    this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 
@@ -224,6 +227,34 @@ public class SparkTable implements Table, SupportsRead {
   @Override
   public String toString() {
     return "SparkTable{identifier=" + identifier + '}';
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    SparkTable that = (SparkTable) o;
+    return Objects.equals(identifier, that.identifier)
+        && Objects.equals(tablePath, that.tablePath)
+        && Objects.equals(options, that.options)
+        && Objects.equals(catalogTable, that.catalogTable)
+        && Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
+        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion();
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        identifier,
+        tablePath,
+        options,
+        catalogTable,
+        initialSnapshot.getPath(),
+        initialSnapshot.getVersion());
   }
 
   /**

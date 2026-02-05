@@ -20,6 +20,8 @@ package org.apache.spark.sql.delta
 import java.io.File
 
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, Metadata, Protocol, RemoveFile}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.commands.DescribeDeltaHistoryCommand
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -30,8 +32,11 @@ import org.scalactic.source.Position
 import org.scalatest.Tag
 
 import org.apache.spark.SparkConf
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, QueryTest, Row, SaveMode}
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
@@ -44,7 +49,8 @@ trait DescribeDeltaHistorySuiteBase
   with DeltaSQLCommandTest
   with DeltaTestUtilsForTempViews
   with MergeIntoMetricsBase
-  with CatalogOwnedTestBaseSuite {
+  with CatalogOwnedTestBaseSuite
+  with WriteOptionsTestBase {
 
   import testImplicits._
 
@@ -257,6 +263,48 @@ trait DescribeDeltaHistorySuiteBase
       checkAnswer(
         sql(s"DESCRIBE HISTORY delta_test LIMIT 1").select("operation"),
         Seq(Row("CREATE OR REPLACE TABLE AS SELECT")))
+    }
+  }
+
+  testWithFlag("describe history command passes catalogTable to getHistory") {
+    withTable("delta_catalog_test") {
+      Seq(1, 2, 3).toDF().write.format("delta").saveAsTable("delta_catalog_test")
+
+      val table = DeltaTableV2(spark, TableIdentifier("delta_catalog_test"))
+      assert(table.catalogTable.isDefined, "Managed table should have catalogTable defined")
+
+      val deltaLog = table.deltaLog
+      val originalHistory = deltaLog.history
+      var catalogTableWasPassed = false
+
+      // Create a wrapper that tracks if catalogTable is passed to getHistory.
+      // Note: getHistory(limitOpt) delegates to getHistory(limitOpt, None), so we only
+      // need to override the two-parameter version to detect whether catalogTable is passed.
+      val trackingHistory = new DeltaHistoryManager(
+        deltaLog,
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_HISTORY_PAR_SEARCH_THRESHOLD)) {
+        override def getHistory(
+            limitOpt: Option[Int],
+            catalogTableOpt: Option[CatalogTable]): Seq[DeltaHistory] = {
+          catalogTableWasPassed = catalogTableOpt.isDefined
+          originalHistory.getHistory(limitOpt, catalogTableOpt)
+        }
+      }
+
+      // Replace history field using reflection
+      val historyField = deltaLog.getClass.getDeclaredField("history")
+      historyField.setAccessible(true)
+      historyField.set(deltaLog, trackingHistory)
+
+      // Run the command
+      DescribeDeltaHistoryCommand(
+        table = table,
+        limit = Some(10),
+        output = toAttributes(ExpressionEncoder[DeltaHistory]().schema)
+      ).run(spark)
+
+      assert(catalogTableWasPassed,
+        "DescribeDeltaHistoryCommand should pass table.catalogTable to getHistory")
     }
   }
 
@@ -1594,6 +1642,367 @@ trait DescribeDeltaHistorySuiteBase
       assert(df2.schema == expectedSchema)
     }
   }
+
+  testPathWrite("DPO and replaceWhere conflict throws exception") { path =>
+    val ex = intercept[DeltaIllegalArgumentException] {
+      testData(Seq(10), Seq(1)).write.format("delta")
+        .mode(SaveMode.Overwrite)
+        .option("replaceWhere", "part = 1")
+        .option("partitionOverwriteMode", "dynamic")
+        .save(path)
+    }
+    assert(ex.getErrorClass === "DELTA_REPLACE_WHERE_WITH_DYNAMIC_PARTITION_OVERWRITE")
+  }(WriteOptionsAssertion())
+
+  override def executePathWriteTest(
+      write: String => Unit)(assertions: WriteOptionsAssertion): Unit = {
+    withTempDir { tempDir =>
+      val path = createPartitionedTable(tempDir)
+      write(path)
+      assertWriteOptions(path, assertions)
+    }
+  }
+
+  /**
+   * Execute a write operation and run assertions on a name-based table.
+   */
+  protected def executeTableWriteTest(
+      write: String => Unit)(assertions: WriteOptionsAssertion): Unit = {
+    withTable("test_table") {
+      // Create initial partitioned table
+      Seq((1, 1, "event1"), (2, 2, "event2"), (3, 1, "event3"))
+        .toDF("id", "part", "event_name")
+        .write.format("delta").partitionBy("part").saveAsTable("test_table")
+
+      // Execute the write operation
+      write("test_table")
+
+      // Assert write options using table name
+      val opParams = getTableCommitInfo("test_table")
+      assertWriteOptionsFromParams(opParams, assertions)
+    }
+  }
+
+  def assertWriteOptions(
+      path: String,
+      assertions: WriteOptionsAssertion): Unit = {
+    val opParams = getCommitOpParams(path)
+    assertWriteOptionsFromParams(opParams, assertions)
+  }
+
+  private def assertWriteOptionsFromParams(
+      opParams: Map[String, String],
+      asserts: WriteOptionsAssertion): Unit = {
+    val expected = Map.newBuilder[String, String]
+
+    if (asserts.isDynamicPartitionOverwrite) expected += ("isDynamicPartitionOverwrite" -> "true")
+    if (asserts.canOverwriteSchema) expected += ("canOverwriteSchema" -> "true")
+    if (asserts.canMergeSchema) expected += ("canMergeSchema" -> "true")
+    asserts.predicate.foreach(pred => expected += ("predicate" -> pred))
+    assertInHistory(opParams, expected.result())
+  }
+
+  def assertInHistory(opParams: Map[String, String], expected: Map[String, String]): Unit = {
+    val allParams = Seq(
+      "isDynamicPartitionOverwrite", "predicate", "canOverwriteSchema", "canMergeSchema"
+    )
+    expected.foreach { case (key, value) =>
+      assert(opParams.get(key).exists(_.contains(value)),
+        s"Expected $key=$value in DESCRIBE HISTORY, got ${opParams.get(key)}")
+    }
+
+    assertNotInHistory(opParams, (allParams.toSet -- expected.keySet).toSeq: _*)
+  }
+
+  def assertNotInHistory(opParams: Map[String, String], keys: String*): Unit = {
+    keys.foreach { key =>
+      assert(!opParams.contains(key), s"Expected $key not in DESCRIBE HISTORY")
+    }
+  }
+
+  def getCommitOpParams(tablePath: String): Map[String, String] = {
+    val recentCommits = DeltaLog.forTable(spark, tablePath).history.getHistory(Some(1))
+    DeltaLog.forTable(spark, tablePath).history.getHistory(Some(1)).head.operationParameters
+  }
+
+  def getTableCommitInfo(tableName: String): Map[String, String] = {
+    val deltaTable = io.delta.tables.DeltaTable.forName(spark, tableName)
+    deltaTable.history(1).select("operationParameters")
+      .head()
+      .getMap(0)
+      .asInstanceOf[Map[String, String]]
+  }
+}
+
+case class WriteOptionsAssertion(
+    mode: String = "",
+    isDynamicPartitionOverwrite: Boolean = false,
+    canOverwriteSchema: Boolean = false,
+    canMergeSchema: Boolean = false,
+    predicate: Option[String] = None
+)
+
+/**
+ * Shared test utilities for validating write options in DESCRIBE HISTORY / commit stats.
+ */
+trait WriteOptionsTestBase {
+  this: QueryTest with SharedSparkSession =>
+  import testImplicits._
+
+  // Execute a write operation and run assertions.
+  protected def executePathWriteTest(write: String => Unit)(assertions: WriteOptionsAssertion): Unit
+
+  // Execute a table based write operation and run assertions.
+  protected def executeTableWriteTest(
+    write: String => Unit)(assertions: WriteOptionsAssertion): Unit
+
+  // Data generation helpers
+  def createPartitionedTable(tempDir: java.io.File): String = {
+    val tablePath = tempDir.getAbsolutePath
+    Seq((1, 1, "event1"), (2, 2, "event2"), (3, 1, "event3"))
+      .toDF("id", "part", "event_name")
+      .write.format("delta").partitionBy("part").save(tablePath)
+    tablePath
+  }
+
+  def testData(ids: Seq[Int], parts: Seq[Int]): DataFrame = {
+    ids.zip(parts).map { case (id, part) => (id, part, s"event$id") }
+      .toDF("id", "part", "event_name")
+  }
+
+  def testDataWithCols(id: Int, part: Int, extraCols: (String, String)*): DataFrame = {
+    var df = Seq((id, part, s"event$id")).toDF("id", "part", "event_name")
+    extraCols.foreach { case (name, value) =>
+      df = df.withColumn(name, lit(value))
+    }
+    df
+  }
+
+  def testPathWrite(
+      testName: String)(testBody: String => Unit)(assertions: WriteOptionsAssertion): Unit = {
+    test(testName) {
+      executePathWriteTest(testBody)(assertions)
+    }
+  }
+
+  def testTableWrite(
+      testName: String)(testBody: String => Unit)(assertions: WriteOptionsAssertion): Unit = {
+    test(testName) {
+      executeTableWriteTest(testBody)(assertions)
+    }
+  }
+
+  def testWriteVariants(testName: String)(
+      writeVariants: Seq[(String, Boolean, String => Unit)])(
+      assertions: WriteOptionsAssertion): Unit = {
+    writeVariants.foreach { case (variantName, isPathBased, writeFunc) =>
+      test(s"$testName via $variantName") {
+        if (isPathBased) {
+          executePathWriteTest(writeFunc)(assertions)
+        } else {
+          executeTableWriteTest(writeFunc)(assertions)
+        }
+      }
+    }
+  }
+
+  testWriteVariants("write options for dynamic partition overwrite")(
+    Seq(
+      ("SQL", true, { path: String =>
+        withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+          spark.sql(s"INSERT OVERWRITE TABLE delta.`$path` " +
+            s"SELECT 5 as id, 1 as part, 'event5' as event_name")
+        }
+      }),
+      ("DFv1", true, { path: String =>
+        testData(Seq(4), Seq(1)).write.format("delta")
+          .mode(SaveMode.Overwrite)
+          .option("partitionOverwriteMode", "dynamic")
+          .save(path)
+      }),
+      ("DFv1 saveAsTable", false, { tableName: String =>
+        withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+          testData(Seq(7), Seq(1))
+            .write
+            .format("delta")
+            .mode(SaveMode.Overwrite)
+            .option("partitionOverwriteMode", "dynamic")
+            .partitionBy("part")
+            .saveAsTable(tableName)
+        }
+      }),
+      ("DFv2", true, { path: String =>
+        testData(Seq(5), Seq(1)).writeTo(s"delta.`$path`").overwritePartitions()
+      })
+    )
+  )(WriteOptionsAssertion(isDynamicPartitionOverwrite = true))
+
+  testWriteVariants("write options for replaceWhere")(
+    Seq(
+      ("SQL", true, { path: String =>
+        spark.sql(s"INSERT INTO TABLE delta.`$path` " +
+          s"REPLACE WHERE part = 1 SELECT 6 as id, 1 as part, 'event6' as event_name")
+      }),
+      ("DFv1", true, { path: String =>
+        testData(Seq(5, 6), Seq(1, 1)).write.format("delta")
+          .mode("overwrite")
+          .option("replaceWhere", "part = 1")
+          .save(path)
+      }),
+      ("DFv1 saveAsTable", false, { tableName: String =>
+        testData(Seq(7, 8), Seq(1, 1))
+          .write
+          .format("delta")
+          .mode(SaveMode.Overwrite)
+          .option("replaceWhere", "part = 1")
+          .partitionBy("part")
+          .saveAsTable(tableName)
+      }),
+      ("DFv2", true, { path: String =>
+        testData(Seq(5, 6), Seq(1, 1)).writeTo(s"delta.`$path`")
+          .overwrite($"part" === 1)
+      })
+    )
+  )(WriteOptionsAssertion(predicate = Some("part = 1")))
+
+  testPathWrite("explicitly false option not persisted in commit info") { path =>
+    testData(Seq(9), Seq(1)).write.format("delta")
+      .mode(SaveMode.Append)
+      .option("mergeSchema", "false")
+      .save(path)
+  }(WriteOptionsAssertion())
+
+  testPathWrite("multiple false options not persisted in commit info") { path =>
+    testData(Seq(13), Seq(1)).write.format("delta")
+      .mode(SaveMode.Overwrite)
+      .option("mergeSchema", "false")
+      .option("overwriteSchema", "false")
+      .save(path)
+  }(WriteOptionsAssertion())
+
+  testPathWrite("write options for overwriteSchema") { path =>
+    testDataWithCols(7, 1, "newcol" -> "extra").write.format("delta")
+      .mode(SaveMode.Overwrite)
+      .option("overwriteSchema", "true")
+      .save(path)
+  }(WriteOptionsAssertion(canOverwriteSchema = true))
+
+  testWriteVariants("write options for DFv2 replace with overwriteSchema")(
+    Seq(
+      ("replace()", false, { path: String =>
+        testDataWithCols(14, 1, "newcol" -> "extra")
+          .writeTo(path)
+          .using("delta")
+          .option("overwriteSchema", "true")
+          .replace()
+      }),
+      ("createOrReplace()", false, { path: String =>
+        testDataWithCols(15, 1, "newcol" -> "extra")
+          .writeTo(path)
+          .using("delta")
+          .option("overwriteSchema", "true")
+          .createOrReplace()
+      })
+    )
+  )(WriteOptionsAssertion(canOverwriteSchema = true))
+
+  testWriteVariants("write options for DFv2 replace with mergeSchema")(
+    Seq(
+      ("replace()", false, { path: String =>
+        testDataWithCols(16, 1, "newcol" -> "extra")
+          .writeTo(path)
+          .using("delta")
+          .option("mergeSchema", "true")
+          .replace()
+      }),
+      ("createOrReplace()", false, { path: String =>
+        testDataWithCols(17, 1, "newcol" -> "extra")
+          .writeTo(path)
+          .using("delta")
+          .option("mergeSchema", "true")
+          .createOrReplace()
+      })
+    )
+  )(WriteOptionsAssertion(canMergeSchema = true))
+
+  testWriteVariants("write options for mergeSchema")(
+    Seq(
+      ("DFv1 option", true, { path: String =>
+        testDataWithCols(8, 1, "newcol" -> "extra", "anothercol" -> "extra2")
+          .write.format("delta")
+          .mode(SaveMode.Append)
+          .option("mergeSchema", "true")
+          .save(path)
+      }),
+      ("saveAsTable", false, { tableName: String =>
+        testDataWithCols(14, 1, "newcol" -> "extra")
+          .write
+          .format("delta")
+          .mode(SaveMode.Append)
+          .option("mergeSchema", "true")
+          .saveAsTable(tableName)
+      }),
+      ("SQL config", true, { path: String =>
+        withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
+          testDataWithCols(13, 1, "newcol" -> "extra").write.format("delta")
+            .mode(SaveMode.Append).save(path)
+        }
+      })
+    )
+  )(WriteOptionsAssertion(mode = "Append", canMergeSchema = true))
+
+  testPathWrite("write options - both replaceWhere and overwriteSchema logged " +
+    "even though replaceWhere takes precedence") { path =>
+    testData(Seq(12), Seq(1)).write.format("delta")
+      .mode(SaveMode.Overwrite)
+      .option("replaceWhere", "part = 1")
+      .option("overwriteSchema", "true")
+      .save(path)
+  }(WriteOptionsAssertion(
+    canOverwriteSchema = true,
+    predicate = Some("part = 1")
+  ))
+
+  testPathWrite("write options - mergeSchema and overwriteSchema combination") { path =>
+    testDataWithCols(11, 1, "newcol" -> "extra").write.format("delta")
+      .mode(SaveMode.Overwrite)
+      .option("overwriteSchema", "true")
+      .option("mergeSchema", "true")
+      .save(path)
+  }(WriteOptionsAssertion(canOverwriteSchema = true, canMergeSchema = true))
+
+  testPathWrite("write options - DPO with mergeSchema") { path =>
+    testDataWithCols(14, 1, "newcol" -> "extra").write.format("delta")
+      .mode(SaveMode.Overwrite)
+      .option("partitionOverwriteMode", "dynamic")
+      .option("mergeSchema", "true")
+      .save(path)
+  }(WriteOptionsAssertion(isDynamicPartitionOverwrite = true, canMergeSchema = true))
+
+  testPathWrite("write options - DFv2 overwriteSchema option") { path =>
+    testDataWithCols(7, 1)
+      .writeTo(s"delta.`$path`")
+      .option("overwriteSchema", "true")
+      .append()
+  }(WriteOptionsAssertion(mode = "Append", canOverwriteSchema = true))
+
+  testPathWrite("write options - DFv2 mergeSchema option") { path =>
+    testDataWithCols(8, 1, "newcol" -> "extra")
+      .writeTo(s"delta.`$path`")
+      .option("mergeSchema", "true")
+      .append()
+  }(WriteOptionsAssertion(mode = "Append", canMergeSchema = true))
+
+  testPathWrite("write options - REPLACE TABLE with DPO") { path =>
+    withSQLConf(SQLConf.PARTITION_OVERWRITE_MODE.key -> "dynamic") {
+      spark.sql(s"""
+        CREATE OR REPLACE TABLE delta.`$path`
+        USING delta
+        PARTITIONED BY (part)
+        AS SELECT 7 as id, 1 as part, 'event7' as event_name
+      """)
+    }
+  }(WriteOptionsAssertion(isDynamicPartitionOverwrite = true))
 }
 
 class DescribeDeltaHistorySuite

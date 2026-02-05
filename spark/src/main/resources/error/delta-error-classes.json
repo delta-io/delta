@@ -583,20 +583,56 @@
   },
   "DELTA_CONCURRENT_APPEND" : {
     "message" : [
-      "ConcurrentAppendException: Files were added to <partition> by a concurrent update. <retryMsg><conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected. a concurrent <operation> added data to table <tableName> committed at version <version>."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation modified data that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation modified data in the partition <partitionValues> that should have been read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_DELETE_DELETE" : {
     "message" : [
-      "ConcurrentDeleteDeleteException: This transaction attempted to delete one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected, a concurrent <operation> deleted data from table <tableName> (committed at version <version>) that this transaction attempted to delete."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_DELETE_READ" : {
     "message" : [
-      "ConcurrentDeleteReadException: This transaction attempted to read one or more files that were deleted (for example <file>) by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
+      "Transaction conflict detected, a concurrent <operation> deleted data from table <tableName> (committed at version <version>) that this transaction read."
     ],
+    "subClass" : {
+      "WITHOUT_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      },
+      "WITH_PARTITION_HINT" : {
+        "message" : [
+          "The concurrent operation deleted data in the partition <partitionValues> that was read by this operation. Please retry the operation. Refer to <docLink> for more information."
+        ]
+      }
+    },
     "sqlState" : "2D521"
   },
   "DELTA_CONCURRENT_TRANSACTION" : {
@@ -1499,7 +1535,7 @@
   },
   "DELTA_INVALID_COMMITTED_VERSION" : {
     "message" : [
-      "The committed version is <committedVersion> but the current version is <currentVersion>."
+      "The commit succeeded at version <committedVersion>, but post-commit validation detected version <currentVersion>."
     ],
     "sqlState" : "XXKDS"
   },
@@ -1752,6 +1788,42 @@
       "MetadataChangedException: The metadata of the Delta table has been changed by a concurrent update. Please try the operation again.<conflictingCommit>\nRefer to <docLink> for more details."
     ],
     "sqlState" : "2D521"
+  },
+  "DELTA_METADATA_MISMATCH" : {
+    "message" : [
+      "A metadata mismatch was detected when writing to the Delta table."
+    ],
+    "subClass" : {
+      "OVERWRITE_REQUIRED" : {
+        "message" : [
+          "To overwrite your schema or change partitioning, please set: '.option(\"overwriteSchema\", \"true\")'.",
+          "Note that the schema can't be overwritten when using 'replaceWhere'."
+        ]
+      },
+      "PARTITIONING_MISMATCH" : {
+        "message" : [
+          "Partition columns do not match the partition columns of the table.",
+          "Given: <provided>",
+          "Table: <original>",
+          ""
+        ]
+      },
+      "SCHEMA_MISMATCH" : {
+        "message" : [
+          "A schema mismatch detected when writing to the Delta table (Table ID: <id>).",
+          "To enable schema migration using DataFrameWriter or DataStreamWriter, please set: '.option(\"mergeSchema\", \"true\")'.",
+          "For other operations, set the session configuration spark.databricks.delta.schema.autoMerge.enabled to \"true\". See the documentation specific to the operation for details.",
+          "",
+          "Table schema:",
+          "<tableSchema>",
+          "",
+          "Data schema:",
+          "<dataSchema>",
+          ""
+        ]
+      }
+    },
+    "sqlState" : "42KDG"
   },
   "DELTA_MISSING_CHANGE_DATA" : {
     "message" : [
@@ -2477,6 +2549,13 @@
       "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
     ],
     "sqlState" : "42KD4"
+  },
+  "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE" : {
+    "message" : [
+      "Initial snapshot for Delta streaming at table '<tablePath>' (version <snapshotVersion>) contains <numFiles> files, which exceeds the maximum allowed <maxFiles> files.",
+      "<suggestions>"
+    ],
+    "sqlState" : "54000"
   },
   "DELTA_STREAMING_METADATA_EVOLUTION" : {
     "message" : [
@@ -3294,11 +3373,6 @@
   "_LEGACY_ERROR_TEMP_DELTA_0006" : {
     "message" : [
       "Inconsistent IDENTITY metadata for column <colName> detected: <hasStart>, <hasStep>, <hasInsert>"
-    ]
-  },
-  "_LEGACY_ERROR_TEMP_DELTA_0007" : {
-    "message" : [
-      "<message>"
     ]
   },
   "_LEGACY_ERROR_TEMP_DELTA_0008" : {

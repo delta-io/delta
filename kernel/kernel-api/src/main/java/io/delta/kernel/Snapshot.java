@@ -19,6 +19,7 @@ package io.delta.kernel;
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.commit.PublishFailedException;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.statistics.SnapshotStatistics;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -138,9 +139,9 @@ public interface Snapshot {
    * @param engine the engine to use for publishing commits
    * @see io.delta.kernel.commit.CatalogCommitter#publish
    * @throws PublishFailedException if the publish operation fails
+   * @return a new Snapshot reflecting the published state
    */
-  // TODO: Return a new Snapshot reflecting the published state
-  void publish(Engine engine) throws PublishFailedException;
+  Snapshot publish(Engine engine) throws PublishFailedException;
 
   /**
    * Writes a checksum file for this snapshot using the specified mode:
@@ -171,4 +172,17 @@ public interface Snapshot {
    * @see SnapshotStatistics#getChecksumWriteMode()
    */
   void writeChecksum(Engine engine, ChecksumWriteMode mode) throws IOException;
+
+  /**
+   * Writes a checkpoint for the current snapshot.
+   *
+   * @param engine The execution engine used to write the checkpoint and, if necessary, read log
+   *     entries required to compute it.
+   * @throws IOException If an I/O error occurs while computing or writing the checkpoint.
+   * @throws IllegalStateException If attempting to create a checkpoint on an unpublished catalog
+   *     managed commit.
+   * @throws CheckpointAlreadyExistsException If a checkpoint already exists for the target snapshot
+   *     version.
+   */
+  void writeCheckpoint(Engine engine) throws IOException, CheckpointAlreadyExistsException;
 }

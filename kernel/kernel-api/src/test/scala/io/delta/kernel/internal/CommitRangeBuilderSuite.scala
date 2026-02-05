@@ -193,7 +193,8 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
 
   def getExpectedException(
       startBoundary: RequiredBoundaryDef,
-      endBoundary: BoundaryDef): Option[(Class[_ <: Throwable], String)] = {
+      endBoundary: BoundaryDef,
+      fileStatuses: Seq[FileStatus]): Option[(Class[_ <: Throwable], String)] = {
     // These two cases fail on CommitRangeBuilderImpl.validateInputOnBuild
     if (startBoundary.version.isDefined && endBoundary.version.isDefined) {
       if (startBoundary.version.get > endBoundary.version.get) {
@@ -205,6 +206,19 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         return Some(classOf[IllegalArgumentException], "startTimestamp must be <= endTimestamp")
       }
     }
+    if (endBoundary.version.isDefined) {
+      val stagedCommits = fileStatuses
+        .filter(fs => FileNames.isStagedDeltaFile(fs.getPath))
+      if (stagedCommits.nonEmpty) {
+        val tailStagedCommit = stagedCommits(stagedCommits.length - 1)
+        if (endBoundary.version.get > FileNames.deltaVersion(tailStagedCommit.getPath)) {
+          return Some(
+            classOf[IllegalArgumentException],
+            "When endVersion is specified with logData, the last logData version")
+        }
+      }
+    }
+
     // We try to resolve any timestamps, first startVersion then endVersion (CommitRangeFactory)
     if (startBoundary.expectError && startBoundary.timestamp.isDefined) {
       return Some(classOf[KernelException], "is after the latest available version")
@@ -219,8 +233,8 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
       (endBoundary.timestamp.isDefined || endBoundary.version.isDefined)
     ) {
       return Some(
-        classOf[IllegalArgumentException],
-        s"Resolved startVersion=${startBoundary.expectedVersion} > " +
+        classOf[KernelException],
+        s"startVersion=${startBoundary.expectedVersion} > " +
           s"endVersion=${endBoundary.expectedVersion}")
     }
     // Now we query the file list, this is where we fail if the provided versions do not exist
@@ -245,7 +259,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     startBoundaries.foreach { startBound =>
       endBoundaries.foreach { endBound =>
         test(s"$description: build CommitRange with startBound=$startBound endBound=$endBound") {
-          val expectedException = getExpectedException(startBound, endBound)
+          val expectedException = getExpectedException(startBound, endBound, fileStatuses)
           if (expectedException.isDefined) {
             val e = intercept[Throwable] {
               buildCommitRange(
@@ -424,7 +438,7 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     startBoundaries.foreach { startBound =>
       endBoundaries.foreach { endBound =>
         test(s"$description: build CommitRange with startBound=$startBound endBound=$endBound") {
-          val expectedException = getExpectedException(startBound, endBound)
+          val expectedException = getExpectedException(startBound, endBound, fileStatuses)
           if (expectedException.isDefined) {
             val e = intercept[Throwable] {
               buildCommitRange(
@@ -784,13 +798,13 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
         createMockFSAndJsonEngineForICT(fileList, versionToICT),
         fileList,
         startBoundary = VersionBoundaryDef(0),
-        endBoundary = VersionBoundaryDef(3),
+        endBoundary = VersionBoundaryDef(2),
         logData = Some(parsedLogData),
         ictEnablementInfo = Some((0, 0)))
     }
     assert(e.getMessage.contains(
       "Missing delta file: found staged ratified commit for version 0 but no published " +
-        "delta file. Found published deltas for later versions: [1, 2, 3]"))
+        "delta file. Found published deltas for later versions: [1, 2]"))
   }
 
   test("build CommitRange fails if published commits and catalog commits are not contiguous") {
@@ -862,5 +876,249 @@ class CommitRangeBuilderSuite extends AnyFunSuite with MockFileSystemClientUtils
     }.getMessage
 
     assert(exMsg.contains("Log data must be sorted and contiguous"))
+  }
+
+  //////////////////////////////////////////////
+  // withMaxCatalogVersion Tests
+  //////////////////////////////////////////////
+
+  test("withMaxCatalogVersion: negative version throws IllegalArgumentException") {
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withMaxCatalogVersion(-1)
+    }.getMessage
+
+    assert(exMsg.contains("maxCatalogVersion must be >= 0"))
+  }
+
+  test("withMaxCatalogVersion: zero is valid") {
+    val fileList = deltaFileStatuses(Seq(0, 1, 2))
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(0)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 0)
+  }
+
+  test("withMaxCatalogVersion: positive version is valid") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(5)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 5)
+  }
+
+  test("withMaxCatalogVersion: start version must be <= maxCatalogVersion") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(6))
+        .withMaxCatalogVersion(5)
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("startVersion (6) must be <= maxCatalogVersion (5)"))
+  }
+
+  test("withMaxCatalogVersion: start version equal to maxCatalogVersion is valid") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(5))
+      .withMaxCatalogVersion(5)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 5)
+    assert(commitRange.getEndVersion == 5)
+  }
+
+  test("withMaxCatalogVersion: end version must be <= maxCatalogVersion") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withMaxCatalogVersion(5)
+        .withEndBoundary(CommitBoundary.atVersion(6))
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("endVersion (6) must be <= maxCatalogVersion (5)"))
+  }
+
+  test("withMaxCatalogVersion: end version equal to maxCatalogVersion is valid") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(5)
+      .withEndBoundary(CommitBoundary.atVersion(5))
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 5)
+  }
+
+  test(
+    "withMaxCatalogVersion: start timestamp boundary requires snapshot version = " +
+      "maxCatalogVersion") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(
+          dataPath.toString,
+          CommitBoundary.atTimestamp(50, mockLatestSnapshot))
+        .withMaxCatalogVersion(5)
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("the provided snapshot version (10) must equal maxCatalogVersion (5)"))
+  }
+
+  test("withMaxCatalogVersion: start timestamp boundary with matching snapshot version is valid") {
+    val fileList = deltaFileStatuses(0L to 5L)
+    val mockLatestSnapshot = getMockSnapshot(dataPath, 5)
+
+    val builder = TableManager
+      .loadCommitRange(
+        dataPath.toString,
+        CommitBoundary.atTimestamp(30, mockLatestSnapshot))
+      .withMaxCatalogVersion(5)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 3) // timestamp 30 maps to version 3
+    assert(commitRange.getEndVersion == 5)
+  }
+
+  test(
+    "withMaxCatalogVersion: end timestamp boundary requires snapshot version = maxCatalogVersion") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val mockLatestSnapshot = getMockSnapshot(dataPath, 10)
+
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withMaxCatalogVersion(5)
+        .withEndBoundary(CommitBoundary.atTimestamp(50, mockLatestSnapshot))
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("the provided snapshot version (10) must equal maxCatalogVersion (5)"))
+  }
+
+  test("withMaxCatalogVersion: end timestamp boundary with matching snapshot version is valid") {
+    val fileList = deltaFileStatuses(0L to 5L)
+    val mockLatestSnapshot = getMockSnapshot(dataPath, 5)
+
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(5)
+      .withEndBoundary(CommitBoundary.atTimestamp(30, mockLatestSnapshot))
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 3) // timestamp 30 maps to version 3
+  }
+
+  test("withMaxCatalogVersion: without end boundary, logData must end with maxCatalogVersion") {
+    val logData = parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4))
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withMaxCatalogVersion(5)
+        .withLogData(logData.toList.asJava)
+        .build(mockEngine())
+    }.getMessage
+
+    assert(exMsg.contains("the last logData version (4) must equal maxCatalogVersion (5)"))
+  }
+
+  test(
+    "withMaxCatalogVersion: without end boundary, logData ending with maxCatalogVersion is valid") {
+    val fileList = deltaFileStatuses(0L to 5L)
+    val logData = parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5))
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(5)
+      .withLogData(logData.toList.asJava)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 5)
+  }
+
+  test("withMaxCatalogVersion: empty logData with maxCatalogVersion is valid") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(5)
+      .withLogData(Collections.emptyList())
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 5)
+  }
+
+  test("withMaxCatalogVersion: with end boundary and logData is valid") {
+    val fileList = deltaFileStatuses(0L to 10L)
+    val logData = parsedRatifiedStagedCommits(Seq(0, 1, 2, 3))
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withMaxCatalogVersion(10)
+      .withEndBoundary(CommitBoundary.atVersion(3))
+      .withLogData(logData.toList.asJava)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 3)
+  }
+
+  //////////////////////////////////////////////
+  // withLogData + endVersion validation tests
+  //////////////////////////////////////////////
+
+  test("withLogData: with endVersion, logData must cover the requested range") {
+    val logData = parsedRatifiedStagedCommits(Seq(0, 1, 2))
+    val fileList = deltaFileStatuses(0L to 3L)
+    val exMsg = intercept[IllegalArgumentException] {
+      TableManager
+        .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+        .withEndBoundary(CommitBoundary.atVersion(3))
+        .withLogData(logData.toList.asJava)
+        .build(createMockFSListFromEngine(fileList))
+    }.getMessage
+
+    assert(exMsg.contains("the last logData version (2) must be >= endVersion (3)"))
+  }
+
+  test("withLogData: with endVersion equal to last logData version is valid") {
+    val logData = parsedRatifiedStagedCommits(Seq(0, 1, 2, 3))
+    val fileList = deltaFileStatuses(0L to 3L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withEndBoundary(CommitBoundary.atVersion(3))
+      .withLogData(logData.toList.asJava)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 3)
+  }
+
+  test("withLogData: with endVersion less than last logData version is valid") {
+    val logData = parsedRatifiedStagedCommits(Seq(0, 1, 2, 3, 4, 5))
+    val fileList = deltaFileStatuses(0L to 5L)
+    val builder = TableManager
+      .loadCommitRange(dataPath.toString, CommitBoundary.atVersion(0))
+      .withEndBoundary(CommitBoundary.atVersion(3))
+      .withLogData(logData.toList.asJava)
+
+    val commitRange = builder.build(createMockFSListFromEngine(fileList))
+    assert(commitRange.getStartVersion == 0)
+    assert(commitRange.getEndVersion == 3)
   }
 }

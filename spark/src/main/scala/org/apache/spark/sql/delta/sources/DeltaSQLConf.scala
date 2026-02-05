@@ -176,6 +176,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .createWithDefault("MEMORY_AND_DISK_SER")
 
+  val DELTA_SNAPSHOT_LOGGING_MAX_FILES_THRESHOLD =
+    buildConf("snapshot.logging.maxFilesThreshold")
+      .internal()
+      .doc("Threshold for number of files in a snapshot. When exceeded, emits a warning with " +
+        "remediation hints. Set to 0 to disable snapshot logging completely.")
+      .longConf
+      .checkValue(_ >= 0, "must be non-negative")
+      .createWithDefault(500000L)
+
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
       .internal()
@@ -1232,6 +1241,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(30)
 
+  val STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED =
+    buildConf("statsAsStructInCheckpoint.forcedDisabled")
+      .internal()
+      .doc("""
+          |Force disables storing statistics as struct in the checkpoint.
+          |Note that should only be used as a kill switch.
+          |This functionality should normally be controlled using the delta config
+          |'checkpoint.writeStatsAsStruct'.
+          |""".stripMargin)
+      .booleanConf
+      .createOptional
+
   val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
     buildConf("lastCheckpoint.sidecars.threshold")
       .internal()
@@ -1241,6 +1262,14 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |""".stripMargin)
       .intConf
       .createWithDefault(30)
+
+  val USE_CHECKPOINT_SCHEMA_FROM_CHECKPOINT_METADATA =
+    buildConf("checkpointSchema.useFromCheckpointMetadata")
+      .internal()
+      .doc("If enabled, use checkpoint schema from checkpoint metadata file instead of reading it" +
+        " from the checkpoint file")
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
@@ -1474,7 +1503,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "instead.")
       .internal()
       .booleanConf
-      .createWithDefault(true)
+      .createWithDefault(false)
 
   val DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK =
     buildConf("typeWidening.bypassStreamingTypeChangeCheck")
@@ -1505,6 +1534,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("typeWidening.removeSchemaMetadata")
       .doc("When true, type widening metadata is removed from schemas that are surfaced outside " +
         "of Delta or used for schema comparisons")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION =
+    buildConf("typeWidening.allowIntegralDecimalCoercion")
+      .doc("When true, the type widening mode `AllTypeWideningToCommonWiderType` " +
+        "should allow converting integral types to DecimalType and use decimal " +
+        "coercion to find a common wider type with another DecimalType")
       .internal()
       .booleanConf
       .createWithDefault(true)
@@ -2027,7 +2065,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
            | range.
         """.stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val DELTA_CHANGE_COLUMN_CHECK_DEPENDENT_EXPRESSIONS_USE_V2 =
     buildConf("changeColumn.checkDependentExpressionsUseV2")
@@ -2861,6 +2899,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(true)
 
+  val COLLECT_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.collectVariantDataSkippingStats")
+    .internal()
+    .doc(
+      """
+        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
+        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
+        | Variant stats."""
+        .stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
   ///////////
   // TESTING
   ///////////
@@ -2948,6 +2998,42 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |instead of normal table loading.""".stripMargin)
       .booleanConf
       .createWithDefault(false)
+
+  /**
+   * Controls which connector implementation to use for Delta table operations.
+   *
+   * Valid values:
+   * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
+   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   *           Intended for testing sparkV2 connector capabilities
+   *
+   * sparkV1 vs sparkV2 Connectors:
+   * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   *   uses DeltaLog for metadata management
+   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
+   *   uses Kernel's Table API for metadata management
+   *
+   * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets
+   * this configuration.
+   */
+  val V2_ENABLE_MODE =
+    buildConf("v2.enableMode")
+      .doc(
+        "Controls the Delta connector enable mode. " +
+          "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
+          "supported operations, default), STRICT (should ONLY be enabled for testing).")
+      .stringConf
+      .checkValues(Set("AUTO", "NONE", "STRICT"))
+      .createWithDefault("AUTO")
+
+  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
+    buildConf("streaming.initialSnapshotMaxFiles")
+      .internal()
+      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
+      .intConf
+      .createWithDefault(50000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
