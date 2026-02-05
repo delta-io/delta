@@ -149,12 +149,8 @@ object ServerSidePlannedTable extends DeltaLogging {
 
   /**
    * Check if a table has credentials available.
-   * Unity Catalog tables may lack credentials when accessed without proper permissions.
    * UC injects credentials as table properties with "option.fs.*" prefix for filesystem configs.
-   * This future-proofs detection for any filesystem credential options UC might add.
-   * See: CredPropsUtil in
-   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala
+   * See: CredPropsUtil in UCSingleCatalog.
    */
   private def hasCredentials(table: Table): Boolean = {
     val properties = table.properties()

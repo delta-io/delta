@@ -59,7 +59,7 @@ private case class CatalogConfigResponse(
  * requests. The HTTP client should be explicitly closed by calling close() when done.
  *
  * @param baseUriRaw Base URI of the Iceberg REST catalog up to /v1, e.g.,
- *                   "http://localhost:8181/v1". Trailing slashes are handled automatically.
+ *                   "http://<catalog-URL>/iceberg/v1". Trailing slashes are handled automatically.
  * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param token Authentication token for the catalog server.
  */
@@ -68,7 +68,7 @@ class IcebergRESTCatalogPlanningClient(
     catalogName: String,
     token: String) extends ServerSidePlanningClient with AutoCloseable {
 
-  // Normalize baseUri to handle trailing slashes robustly
+  // Normalize baseUri to handle trailing slashes
   private val baseUri = baseUriRaw.stripSuffix("/")
 
   // Sentinel value indicating "use current snapshot" in Iceberg REST API

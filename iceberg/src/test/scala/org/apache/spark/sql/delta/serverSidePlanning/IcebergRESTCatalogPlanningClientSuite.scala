@@ -187,7 +187,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         // Verify the server received a /plan request using baseUri directly (no prefix)
         val capturedPath = server.getCapturedPlanRequestPath()
         assert(capturedPath != null, "Server should have captured the request path")
-        // Per Iceberg spec, when no prefix is returned, use baseUri directly without adding prefix
+        // When no prefix is returned, use baseUri directly without adding prefix
         assert(
           !capturedPath.contains("catalogs/"),
           s"Expected path to NOT contain 'catalogs/' when no prefix, but got: $capturedPath")
