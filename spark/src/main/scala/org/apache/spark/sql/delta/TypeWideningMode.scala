@@ -18,9 +18,11 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.catalyst.analysis.DecimalPrecisionTypeCoercion
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.AllowAutomaticWideningMode
 import org.apache.spark.sql.util.ScalaExtensions._
 
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{AtomicType, ByteType, DecimalType, IntegerType, IntegralType, LongType, ShortType}
 
 /**
@@ -119,10 +121,25 @@ object TypeWideningMode {
    * to find a wider schema to use.
    */
   case object AllTypeWideningToCommonWiderType extends TypeWideningMode {
-    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] =
+    private def getDecimalType(t: IntegralType): DecimalType = {
+      t match {
+        case _: ByteType => DecimalType(3, 0)
+        case _: ShortType => DecimalType(5, 0)
+        case _: IntegerType => DecimalType(10, 0)
+        case _: LongType => DecimalType(20, 0)
+      }
+    }
+
+    override def getWidenedType(left: AtomicType, right: AtomicType): Option[AtomicType] = {
+      val allowIntegralDecimalCoercion: Boolean =
+        SQLConf.get.getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION)
       (left, right) match {
         case (l, r) if TypeWidening.isTypeChangeSupported(l, r) => Some(r)
         case (l, r) if TypeWidening.isTypeChangeSupported(r, l) => Some(l)
+        case (l: IntegralType, r: DecimalType) if allowIntegralDecimalCoercion =>
+          getWidenedType(getDecimalType(l), r)
+        case (l: DecimalType, r: IntegralType) if allowIntegralDecimalCoercion =>
+          getWidenedType(getDecimalType(r), l)
         case (l: DecimalType, r: DecimalType) =>
           val wider = DecimalPrecisionTypeCoercion.widerDecimalType(l, r)
           Option.when(
@@ -130,6 +147,7 @@ object TypeWideningMode {
             TypeWidening.isTypeChangeSupported(r, wider))(wider)
         case _ => None
       }
+    }
   }
 
   /**

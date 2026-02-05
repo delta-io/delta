@@ -1113,6 +1113,8 @@ lazy val testDeltaIcebergJar = (project in file("testDeltaIcebergJar"))
 val deltaIcebergSparkIncludePrefixes = Seq(
   // We want everything from this package
   "org/apache/spark/sql/delta/icebergShaded",
+  // Server-side planning support
+  "org/apache/spark/sql/delta/serverSidePlanning",
 
   // We only want the files in this project from this package. e.g. we want to exclude
   // org/apache/spark/sql/delta/commands/convert/ConvertTargetFile.class (from delta-spark project).
