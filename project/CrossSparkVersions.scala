@@ -533,7 +533,13 @@ object CrossSparkVersions extends AutoPlugin {
 
         // Build scoped task for each Spark-dependent project sequentially
         sparkDependentProjects.foldLeft(state) { (currentState, projRef) =>
-          val scopedTask = s"${projRef.project}/$task"
+          // Handle SBT cross-build prefix: "+publishSigned" must become
+          // "+project/publishSigned", not "project/+publishSigned"
+          val scopedTask = if (task.startsWith("+")) {
+            s"+${projRef.project}/${task.stripPrefix("+")}"
+          } else {
+            s"${projRef.project}/$task"
+          }
           Command.process(scopedTask, currentState)
         }
       }
