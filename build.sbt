@@ -1058,6 +1058,8 @@ lazy val storage = (project in file("storage"))
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
     ),
 
     // Unidoc settings
