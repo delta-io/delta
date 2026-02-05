@@ -32,9 +32,12 @@ import io.delta.kernel.internal.files.ParsedCatalogCommitData;
 import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.lang.Lazy;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.metrics.UcLoadSnapshotTelemetry;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
@@ -126,7 +129,11 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long maxUcTableVersion = response.getLatestTableVersion();
+                final long latestVersionFromUC = response.getLatestTableVersion();
+                final long maxUcTableVersion =
+                    latestVersionFromUC >= 0
+                        ? latestVersionFromUC
+                        : resolveMaxCatalogVersionFromFileSystem(engine, ucTableId, tablePath);
 
                 versionOpt.ifPresent(
                     version ->
@@ -419,6 +426,57 @@ public class UCCatalogManagedClient {
         response.getLatestTableVersion());
 
     return response;
+  }
+
+  private long resolveMaxCatalogVersionFromFileSystem(
+      Engine engine, String ucTableId, String tablePath) {
+    Objects.requireNonNull(engine, "engine is null");
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+
+    return timeUncheckedOperation(
+        logger,
+        "Resolve max catalog version from filesystem due to missing UC ratified commits",
+        ucTableId,
+        () -> {
+          final String logPath = new Path(tablePath, "_delta_log").toString();
+          final String resolvedLogPath;
+          try {
+            resolvedLogPath = engine.getFileSystemClient().resolvePath(logPath);
+          } catch (IOException e) {
+            throw new UncheckedIOException("Failed to resolve log path " + logPath, e);
+          }
+          final String listFromPath =
+              FileNames.listingPrefix(new io.delta.kernel.internal.fs.Path(resolvedLogPath), 0L);
+
+          long maxPublishedVersion = -1L;
+          try (CloseableIterator<FileStatus> files =
+              engine.getFileSystemClient().listFrom(listFromPath)) {
+            while (files.hasNext()) {
+              FileStatus file = files.next();
+              String filePath = file.getPath();
+              if (FileNames.isPublishedDeltaFile(filePath)) {
+                maxPublishedVersion =
+                    Math.max(maxPublishedVersion, FileNames.deltaVersion(filePath));
+              }
+            }
+          } catch (IOException e) {
+            throw new UncheckedIOException(
+                "Failed to list delta log files from " + listFromPath, e);
+          }
+
+          if (maxPublishedVersion < 0) {
+            throw new IllegalStateException(
+                "[" + ucTableId + "] No published delta files found in log path: " + logPath);
+          }
+
+          logger.info(
+              "[{}] UC has not ratified any commits yet. Using filesystem max version {} from {}",
+              ucTableId,
+              maxPublishedVersion,
+              resolvedLogPath);
+          return maxPublishedVersion;
+        });
   }
 
   private void validateTimeTravelVersionNotPastMax(
