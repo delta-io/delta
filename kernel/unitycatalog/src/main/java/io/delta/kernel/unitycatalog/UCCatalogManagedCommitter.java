@@ -39,6 +39,7 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
@@ -366,6 +367,28 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
               commitType == CommitMetadata.CommitType.CATALOG_WRITE,
               "Only supported commit type is CATALOG_WRITE, but got: " + commitType);
 
+          // Extract and validate Uniform metadata if present
+          Optional<UniformMetadata> uniformMetadataOpt =
+              UniformAdapter.fromCommitterProperties(commitMetadata.getCommitterProperties().get());
+
+          // Validate that convertedDeltaVersion matches the current commit version
+          uniformMetadataOpt.ifPresent(
+              uniformMetadata -> {
+                uniformMetadata
+                    .getIcebergMetadata()
+                    .ifPresent(
+                        icebergMetadata -> {
+                          long convertedVersion = icebergMetadata.getConvertedDeltaVersion();
+                          long commitVersion = commitMetadata.getVersion();
+                          checkState(
+                              convertedVersion == commitVersion,
+                              String.format(
+                                  "Uniform convertedDeltaVersion (%d) must match "
+                                      + "commit version (%d)",
+                                  convertedVersion, commitVersion));
+                        });
+              });
+
           try {
             ucClient.commit(
                 ucTableId,
@@ -375,8 +398,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
                 false /* isDisown */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
-                UniformAdapter.fromCommitterProperties(
-                    commitMetadata.getCommitterProperties().get()));
+                uniformMetadataOpt);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);

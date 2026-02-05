@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,11 @@ import org.slf4j.LoggerFactory;
  *
  * <p>This adapter extracts Uniform metadata (e.g., Iceberg) from committer properties and provides
  * it in the format expected by Unity Catalog.
+ *
+ * <p>The committer properties are provided by the connector which is responsible for computing the
+ * Uniform metadata during write operations. The connector injects these properties into Kernel via
+ * the CommitMetadata.withCommitterProperties, and Kernel propagates them to the
+ * UCCatalogManagedCommitter, which then forwards them to Unity Catalog.
  */
 public class UniformAdapter {
   private static final Logger logger = LoggerFactory.getLogger(UniformAdapter.class);
