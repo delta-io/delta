@@ -9,7 +9,7 @@ import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
   This feature is available in Delta Lake 4.0.1 and above.
 </Aside>
 
-Catalog-managed tables introduce a `catalogManaged` reader-writer table feature that changes how Delta Lake discovers and accesses tables. With this feature enabled, the catalog becomes the source of truth for commits instead of relying on filesystem PUT-if-absent primitives.
+[Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#catalog-managed-tables) introduce a `catalogManaged` reader-writer table feature that changes how Delta Lake discovers and accesses tables. With this feature enabled, the catalog becomes the source of truth for commits instead of relying on filesystem PUT-if-absent primitives.
 
 ## Overview
 
@@ -29,11 +29,11 @@ Filesystem-based access to catalog-managed tables is not supported. Delta client
 
 ## Enable catalog-managed commits
 
-You can enable catalog-managed commits on new tables.
+You can enable catalog-managed commits for new tables when using a catalog that supports this feature, such as [Unity Catalog](https://www.unitycatalog.io/).
 
 ### Enable catalog-managed commits for new tables
 
-Use the `delta.feature.catalogManaged` table property when creating a table:
+Enable the `catalogManaged` table feature by setting the following table property when creating a table:
 
 <Tabs>
   <TabItem label="SQL">
