@@ -41,18 +41,6 @@ import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
  */
 object ServerSidePlannedTable extends DeltaLogging {
   /**
-   * Property keys that indicate table credentials are available.
-   * Unity Catalog tables may expose temporary credentials via these properties.
-   */
-  private val CREDENTIAL_PROPERTY_KEYS = Seq(
-    "storage.credential",
-    "aws.temporary.credentials",
-    "azure.temporary.credentials",
-    "gcs.temporary.credentials",
-    "credential"
-  )
-
-  /**
    * Determine if server-side planning should be used based on catalog type,
    * credential availability, and configuration.
    *
@@ -161,15 +149,19 @@ object ServerSidePlannedTable extends DeltaLogging {
 
   /**
    * Check if a table has credentials available.
-   * Unity Catalog tables may lack credentials when accessed without proper permissions.
-   * UC injects credentials as table properties, see:
-   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   * UC injects credentials as table properties with "option.fs.*" prefix for filesystem configs.
+   * See: CredPropsUtil in UCSingleCatalog.
    */
   private def hasCredentials(table: Table): Boolean = {
-    // Check table properties for credential information
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+    val keys = properties.keySet()
+    val iter = keys.iterator()
+    while (iter.hasNext) {
+      if (iter.next().startsWith("option.fs.")) {
+        return true
+      }
+    }
+    false
   }
 }
 
