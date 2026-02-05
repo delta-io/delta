@@ -169,4 +169,41 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     }
   }
 
+  test("streaming read should pick up Hadoop file system options") {
+    // This test validates that fs.* options (like UC-vended credentials) are passed through
+    // the streaming code path. Without this fix, streaming reads from EXTERNAL tables in
+    // Unity Catalog would fail with 403 errors because credentials weren't propagated.
+    // See: https://github.com/delta-io/delta/pull/5981
+    withTempPaths(2) { case Seq(inputDir, checkpointDir) =>
+      val path = fakeFileSystemPath(inputDir)
+
+      // Create a Delta table with the fake file system
+      spark.range(1, 10).write.format("delta")
+        .options(fakeFileSystemOptions)
+        .save(path)
+      clearCachedDeltaLogToForceReload()
+
+      // Start a streaming query reading from the fake:// path
+      // This will fail if options aren't passed to DeltaLog.forTableWithSnapshot
+      val query = spark.readStream
+        .format("delta")
+        .options(fakeFileSystemOptions)
+        .load(path)
+        .writeStream
+        .format("memory")
+        .queryName("streaming_hadoop_options_test")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+
+      try {
+        query.processAllAvailable()
+        // Verify data was read correctly
+        val result = spark.table("streaming_hadoop_options_test").count()
+        assert(result == 9, s"Expected 9 rows but got $result")
+      } finally {
+        query.stop()
+      }
+    }
+  }
+
 }
