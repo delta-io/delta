@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.actions
 import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, DeltaRuntimeException}
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.catalyst.expressions.{Cast, Literal}
@@ -26,7 +27,8 @@ import org.apache.spark.sql.errors.QueryErrorsBase
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
-class AddFileSuite extends SparkFunSuite with SharedSparkSession with QueryErrorsBase {
+class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCommandTest
+    with QueryErrorsBase {
 
   private def createAddFileWithPartitionValue(partitionValues: Map[String, String]): AddFile = {
     AddFile(
