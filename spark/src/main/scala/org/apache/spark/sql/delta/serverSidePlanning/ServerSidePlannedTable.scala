@@ -41,27 +41,6 @@ import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
  */
 object ServerSidePlannedTable extends DeltaLogging {
   /**
-   * Property keys that indicate table credentials are available.
-   * Unity Catalog sets these keys when vending credentials.
-   * See: CredPropsUtil
-   */
-  private val CREDENTIAL_PROPERTY_KEYS = Seq(
-    // AWS S3 credentials
-    "option.fs.s3a.access.key",
-    "option.fs.s3a.secret.key",
-    "option.fs.s3a.session.token",
-    "option.fs.s3a.aws.credentials.provider", // Renewable mode
-
-    // Azure credentials
-    "option.fs.azure.sas.fixed.token",
-    "option.fs.azure.sas.token.provider.type", // Renewable mode
-
-    // GCP Cloud Storage credentials
-    "option.fs.gs.auth.access.token.credential",
-    "option.fs.gs.auth.access.token.provider"    // Renewable mode
-  )
-
-  /**
    * Determine if server-side planning should be used based on catalog type,
    * credential availability, and configuration.
    *
@@ -171,13 +150,22 @@ object ServerSidePlannedTable extends DeltaLogging {
   /**
    * Check if a table has credentials available.
    * Unity Catalog tables may lack credentials when accessed without proper permissions.
-   * UC injects credentials as table properties, see:
+   * UC injects credentials as table properties with "option.fs.*" prefix for filesystem configs.
+   * This future-proofs detection for any filesystem credential options UC might add.
+   * See: CredPropsUtil in
    * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
    *   io/unitycatalog/spark/UCSingleCatalog.scala
    */
   private def hasCredentials(table: Table): Boolean = {
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(properties.containsKey)
+    val keys = properties.keySet()
+    val iter = keys.iterator()
+    while (iter.hasNext) {
+      if (iter.next().startsWith("option.fs.")) {
+        return true
+      }
+    }
+    false
   }
 }
 

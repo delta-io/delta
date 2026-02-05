@@ -170,10 +170,10 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  test("IcebergRESTCatalogPlanningClient falls back when /v1/config returns no prefix") {
+  test("IcebergRESTCatalogPlanningClient uses baseUri directly when /v1/config returns no prefix") {
     server.clearCaptured()  // Clear any previous state
 
-    // Configure server to return no prefix (fallback case)
+    // Configure server to return no prefix
     server.setCatalogPrefix(null)
 
     withTempTable("testTable") { table =>
@@ -184,12 +184,16 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
         assert(scanPlan != null, "Scan plan should not be null")
 
-        // Verify the server received a /plan request with the fallback path
+        // Verify the server received a /plan request using baseUri directly (no prefix)
         val capturedPath = server.getCapturedPlanRequestPath()
         assert(capturedPath != null, "Server should have captured the request path")
+        // Per Iceberg spec, when no prefix is returned, use baseUri directly without adding prefix
         assert(
-          capturedPath.startsWith("v1/catalogs/test_catalog/"),
-          s"Expected path to start with fallback 'v1/catalogs/test_catalog/' but got: " +
+          !capturedPath.contains("catalogs/"),
+          s"Expected path to NOT contain 'catalogs/' when no prefix, but got: $capturedPath")
+        assert(
+          capturedPath.startsWith("v1/namespaces/"),
+          s"Expected path to start with 'v1/namespaces/' (using baseUri directly), but got: " +
             s"$capturedPath")
       } finally {
         client.close()

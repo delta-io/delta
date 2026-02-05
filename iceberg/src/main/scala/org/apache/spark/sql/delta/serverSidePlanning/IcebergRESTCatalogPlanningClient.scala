@@ -58,15 +58,18 @@ private case class CatalogConfigResponse(
  * Thread safety: This class creates a shared HTTP client that is thread-safe for concurrent
  * requests. The HTTP client should be explicitly closed by calling close() when done.
  *
- * @param baseUri Base URI of the Iceberg REST catalog up to /v1, e.g.,
- *                "http://localhost:8181/v1". Should not include trailing slash.
+ * @param baseUriRaw Base URI of the Iceberg REST catalog up to /v1, e.g.,
+ *                   "http://localhost:8181/v1". Trailing slashes are handled automatically.
  * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param token Authentication token for the catalog server.
  */
 class IcebergRESTCatalogPlanningClient(
-    baseUri: String,
+    baseUriRaw: String,
     catalogName: String,
     token: String) extends ServerSidePlanningClient with AutoCloseable {
+
+  // Normalize baseUri to handle trailing slashes robustly
+  private val baseUri = baseUriRaw.stripSuffix("/")
 
   // Sentinel value indicating "use current snapshot" in Iceberg REST API
   private val CURRENT_SNAPSHOT_ID = 0L
@@ -77,42 +80,35 @@ class IcebergRESTCatalogPlanningClient(
   /**
    * Lazily fetch the catalog configuration and construct the endpoint URI root.
    * Calls /v1/config?warehouse=<catalogName> per Iceberg REST catalog spec to get the prefix.
-   * Falls back to catalogs/<catalogName> if config call fails or returns no prefix.
+   * If no prefix is returned, uses baseUri directly without any prefix per Iceberg spec.
    */
   private lazy val icebergRestCatalogUriRoot: String = {
-    val prefix = fetchCatalogPrefix().getOrElse(s"catalogs/$catalogName")
-    s"$baseUri/$prefix"
+    fetchCatalogPrefix() match {
+      case Some(prefix) => s"$baseUri/$prefix"
+      case None => baseUri
+    }
   }
 
   /**
    * Fetch catalog prefix from /v1/config endpoint per Iceberg REST catalog spec.
-   * Returns None on any error, triggering fallback to default prefix.
+   * Returns None on any error or if no prefix is defined in the config.
    */
   private def fetchCatalogPrefix(): Option[String] = {
     try {
       val configUri = s"$baseUri/config?warehouse=$catalogName"
-      val httpClient = HttpClientBuilder.create().build()
+      val httpGet = new HttpGet(configUri)
+      val response = httpClient.execute(httpGet)
       try {
-        val httpGet = new HttpGet(configUri)
-        // Add auth headers
-        httpHeaders.asScala.foreach { header =>
-          httpGet.setHeader(header.getName, header.getValue)
-        }
-        val response = httpClient.execute(httpGet)
-        try {
-          if (response.getStatusLine.getStatusCode == HttpStatus.SC_OK) {
-            val body = EntityUtils.toString(response.getEntity)
-            val config = JsonUtils.fromJson[CatalogConfigResponse](body)
-            // Apply overrides on top of defaults per Iceberg REST spec
-            config.overrides.get("prefix").orElse(config.defaults.get("prefix"))
-          } else {
-            None
-          }
-        } finally {
-          response.close()
+        if (response.getStatusLine.getStatusCode == HttpStatus.SC_OK) {
+          val body = EntityUtils.toString(response.getEntity)
+          val config = JsonUtils.fromJson[CatalogConfigResponse](body)
+          // Apply overrides on top of defaults per Iceberg REST spec
+          config.overrides.get("prefix").orElse(config.defaults.get("prefix"))
+        } else {
+          None
         }
       } finally {
-        httpClient.close()
+        response.close()
       }
     } catch {
       case _: Exception => None
