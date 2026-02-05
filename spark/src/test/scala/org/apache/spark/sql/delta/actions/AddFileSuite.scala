@@ -338,7 +338,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with QueryError
 
   test("normalizedPartitionValues for DateType should return the original date string") {
     withSQLConf(
-      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true"
     ) {
       withTempDir { tempDir =>
         spark.createDataFrame(
@@ -363,7 +363,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with QueryError
 
   test("normalizedPartitionValues should handle __HIVE_DEFAULT_PARTITION__") {
     withSQLConf(
-      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true"
     ) {
       withTempDir { tempDir =>
         spark.createDataFrame(
@@ -386,7 +386,7 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with QueryError
 
   test("normalizedPartitionValues preserves escaped characters in AddFile partition values") {
     withSQLConf(
-      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true"
     ) {
       withTempDir { tempDir =>
         spark.createDataFrame(
