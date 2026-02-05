@@ -90,7 +90,7 @@ public class StreamingHelper {
   }
 
   /** Get AddFile action from a ColumnarBatch at the specified row, if present. */
-  public static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
+  private static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
     int addIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.ADD.colName);
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
