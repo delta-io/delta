@@ -66,6 +66,10 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Static field for test credential injection - credentials to inject into /plan responses
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Map<String, String> testCredentials = null;
+  
+  // Static field to capture the request path of /plan requests for test verification
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile String capturedPlanRequestPath = null;
 
   IcebergRESTCatalogAdapterWithPlanSupport(Catalog catalog) {
     super(catalog);
@@ -126,6 +130,14 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
+   * Get the request path captured from the most recent /plan request.
+   * Package-private for test access.
+   */
+  static String getCapturedPlanRequestPath() {
+    return capturedPlanRequestPath;
+  }
+
+  /**
    * Set test credentials to inject into /plan responses.
    * Package-private for test access.
    *
@@ -153,6 +165,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     capturedMinRowsRequested = null;
     capturedCaseSensitive = null;
     testCredentials = null;
+    capturedPlanRequestPath = null;
   }
 
   @Override
@@ -166,6 +179,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
 
     // Intercept /plan requests before they reach the base adapter
     if (isPlanTableScanRequest(request)) {
+      capturedPlanRequestPath = request.path();  // Capture the path for test verification
       try {
         PlanTableScanResponse response = handlePlanTableScan(request, parserContext);
         return (T) response;
