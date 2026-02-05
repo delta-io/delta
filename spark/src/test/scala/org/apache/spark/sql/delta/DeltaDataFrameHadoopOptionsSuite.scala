@@ -173,7 +173,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     // This test validates that fs.* options (e.g., catalog-vended credentials) are passed
     // through all Delta code paths. If any code path fails to propagate options, operations
     // on the fake:// filesystem will fail since Hadoop won't know how to handle the scheme.
-    withTempPaths(2) { case Seq(inputDir, checkpointDir) =>
+    withTempPaths(/* numPaths = */ 2) { case Seq(inputDir, checkpointDir) =>
       val path = fakeFileSystemPath(inputDir)
 
       // Test batch write (initial)
