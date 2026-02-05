@@ -169,16 +169,15 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     }
   }
 
-  test("all DataFrame operations should propagate Hadoop file system options") {
+  test("all operations should propagate Hadoop file system options") {
     // This test validates that fs.* options (e.g., catalog-vended credentials) are passed
     // through all Delta code paths. If any code path fails to propagate options, operations
     // on the fake:// filesystem will fail since Hadoop won't know how to handle the scheme.
-    // See: https://github.com/delta-io/delta/pull/5981
     withTempPaths(2) { case Seq(inputDir, checkpointDir) =>
       val path = fakeFileSystemPath(inputDir)
 
       // Test batch write (initial)
-      spark.range(1, 10).write.format("delta")
+      spark.range(2).write.format("delta")
         .options(fakeFileSystemOptions)
         .save(path)
       clearCachedDeltaLogToForceReload()
@@ -188,11 +187,11 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
         .options(fakeFileSystemOptions)
         .load(path)
         .count()
-      assert(batchReadCount == 9, s"Batch read: expected 9 rows but got $batchReadCount")
+      assert(batchReadCount == 2, s"Batch read: expected 2 rows but got $batchReadCount")
       clearCachedDeltaLogToForceReload()
 
       // Test batch write (append)
-      spark.range(10, 19).write.format("delta")
+      spark.range(2).write.format("delta")
         .options(fakeFileSystemOptions)
         .mode("append")
         .save(path)
@@ -203,7 +202,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
         .options(fakeFileSystemOptions)
         .load(path)
         .count()
-      assert(afterAppendCount == 18, s"After append: expected 18 rows but got $afterAppendCount")
+      assert(afterAppendCount == 4, s"After append: expected 4 rows but got $afterAppendCount")
       clearCachedDeltaLogToForceReload()
 
       // Test streaming read
@@ -219,7 +218,7 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
       try {
         query.processAllAvailable()
         val streamingCount = spark.table("options_propagation_test").count()
-        assert(streamingCount == 18, s"Streaming read: expected 18 rows but got $streamingCount")
+        assert(streamingCount == 4, s"Streaming read: expected 4 rows but got $streamingCount")
       } finally {
         query.stop()
       }
