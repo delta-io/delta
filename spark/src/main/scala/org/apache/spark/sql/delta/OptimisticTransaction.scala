@@ -333,6 +333,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected var commitEndNano = -1L;
 
   protected var commitInfo: CommitInfo = _
+  def getCommitInfo: CommitInfo = commitInfo
 
   /** Whether the txn should trigger a checkpoint after the commit */
   private[delta] var needsCheckpoint = false
