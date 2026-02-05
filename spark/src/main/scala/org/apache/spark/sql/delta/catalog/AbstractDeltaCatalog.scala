@@ -220,8 +220,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
-      // respect third party catalogs. Note: only handle CREATE TABLE for now, we
-      // should support CTAS later.
+      // respect third party catalogs. Unity Catalog staging table API supports CTAS, RTAS,
+      // and partitioned tables.
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
@@ -547,7 +547,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
     val db = tableDesc.identifier.database.getOrElse(catalog.getCurrentDatabase)
-    val tableIdentWithDB = tableDesc.identifier.copy(database = Some(db))
+    val tableIdentWithDB = tableDesc.identifier.copy(
+      database = Some(db),
+      catalog = tableDesc.identifier.catalog)
     tableDesc.copy(
       identifier = tableIdentWithDB,
       schema = schema,
@@ -556,21 +558,38 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   /** Checks if a table already exists for the provided identifier. */
   def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
-    // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
-    // will check the file system itself
+    // Path identifiers don't have catalog tables - file system is checked directly
     if (isPathIdentifier(table)) return None
-    val tableExists = catalog.tableExists(table)
-    if (tableExists) {
-      val oldTable = catalog.getTableMetadata(table)
-      if (oldTable.tableType == CatalogTableType.VIEW) {
-        throw DeltaErrors.cannotWriteIntoView(table)
+
+    val namespace = (table.catalog, table.database) match {
+      case (Some(cat), db) => Array(cat, db.getOrElse("default"))
+      case (None, db) => Array(db.getOrElse("default"))
+    }
+
+    getExistingTableIfExists(Identifier.of(namespace, table.table))
+  }
+
+  /** Checks if a table already exists for the provided identifier. */
+  def getExistingTableIfExists(ident: Identifier): Option[CatalogTable] = {
+    try {
+      val catalogTable = loadTable(ident) match {
+        case v1: V1Table => Some(v1.catalogTable)
+        case v2: DeltaTableV2 => v2.catalogTable
+        case _ => None
       }
-      if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
-        throw DeltaErrors.notADeltaTable(table.table)
+
+      catalogTable.foreach { table =>
+        if (table.tableType == CatalogTableType.VIEW) {
+          throw DeltaErrors.cannotWriteIntoView(TableIdentifier(ident.name()))
+        }
+        if (!DeltaSourceUtils.isDeltaTable(table.provider)) {
+          throw DeltaErrors.notADeltaTable(ident.toString)
+        }
       }
-      Some(oldTable)
-    } else {
-      None
+
+      catalogTable
+    } catch {
+      case _: NoSuchTableException => None
     }
   }
 

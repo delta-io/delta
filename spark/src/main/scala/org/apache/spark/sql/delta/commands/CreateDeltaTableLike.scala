@@ -65,6 +65,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         case _ =>
       }
       table.copy(
+        identifier = existingTable.identifier,
         storage = existingTable.storage,
         tableType = existingTable.tableType)
     } else if (table.storage.locationUri.isEmpty) {
@@ -106,7 +107,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        // UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
