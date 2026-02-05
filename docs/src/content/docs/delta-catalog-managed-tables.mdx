@@ -24,8 +24,8 @@ Filesystem-based access to catalog-managed tables is not supported. Delta client
 - Catalog-managed tables requires the following Delta protocols:
     - Reader version 3 or above.
     - Writer version 7 or above.
-- The in-commit timestamps table feature must be enabled, as commit publishing can occur asynchronously and file modification timestamps may not reflect actual commit times.
-- The VACUUM Protocol check table feature must be enabled to provide proper vacuum operations on catalog-managed tables.
+- The [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) table feature must be enabled, as commit publishing can occur asynchronously and file modification timestamps may not reflect actual commit times.
+- The [VACUUM Protocol Check](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check) table feature must be enabled to provide proper vacuum operations on catalog-managed tables.
 
 ## Enable catalog-managed commits
 
