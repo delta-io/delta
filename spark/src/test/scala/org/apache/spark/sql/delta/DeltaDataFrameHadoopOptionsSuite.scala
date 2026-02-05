@@ -169,37 +169,57 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     }
   }
 
-  test("streaming read should pick up Hadoop file system options") {
-    // This test validates that fs.* options (like UC-vended credentials) are passed through
-    // the streaming code path. Without this fix, streaming reads from EXTERNAL tables in
-    // Unity Catalog would fail with 403 errors because credentials weren't propagated.
+  test("all DataFrame operations should propagate Hadoop file system options") {
+    // This test validates that fs.* options (e.g., catalog-vended credentials) are passed
+    // through all Delta code paths. If any code path fails to propagate options, operations
+    // on the fake:// filesystem will fail since Hadoop won't know how to handle the scheme.
     // See: https://github.com/delta-io/delta/pull/5981
     withTempPaths(2) { case Seq(inputDir, checkpointDir) =>
       val path = fakeFileSystemPath(inputDir)
 
-      // Create a Delta table with the fake file system
+      // Test batch write (initial)
       spark.range(1, 10).write.format("delta")
         .options(fakeFileSystemOptions)
         .save(path)
       clearCachedDeltaLogToForceReload()
 
-      // Start a streaming query reading from the fake:// path
-      // This will fail if options aren't passed to DeltaLog.forTableWithSnapshot
-      val query = spark.readStream
-        .format("delta")
+      // Test batch read
+      val batchReadCount = spark.read.format("delta")
+        .options(fakeFileSystemOptions)
+        .load(path)
+        .count()
+      assert(batchReadCount == 9, s"Batch read: expected 9 rows but got $batchReadCount")
+      clearCachedDeltaLogToForceReload()
+
+      // Test batch write (append)
+      spark.range(10, 19).write.format("delta")
+        .options(fakeFileSystemOptions)
+        .mode("append")
+        .save(path)
+      clearCachedDeltaLogToForceReload()
+
+      // Verify append worked
+      val afterAppendCount = spark.read.format("delta")
+        .options(fakeFileSystemOptions)
+        .load(path)
+        .count()
+      assert(afterAppendCount == 18, s"After append: expected 18 rows but got $afterAppendCount")
+      clearCachedDeltaLogToForceReload()
+
+      // Test streaming read
+      val query = spark.readStream.format("delta")
         .options(fakeFileSystemOptions)
         .load(path)
         .writeStream
         .format("memory")
-        .queryName("streaming_hadoop_options_test")
+        .queryName("options_propagation_test")
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .start()
 
       try {
         query.processAllAvailable()
-        // Verify data was read correctly
-        val result = spark.table("streaming_hadoop_options_test").count()
-        assert(result == 9, s"Expected 9 rows but got $result")
+        val streamingCount = spark.table("options_propagation_test").count()
+        assert(streamingCount == 18, s"Streaming read: expected 18 rows but got $streamingCount")
       } finally {
         query.stop()
       }
