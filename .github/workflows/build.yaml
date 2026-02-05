@@ -1,5 +1,13 @@
 name: "Delta Build"
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
 jobs:
   test:
     name: "Build Test"
