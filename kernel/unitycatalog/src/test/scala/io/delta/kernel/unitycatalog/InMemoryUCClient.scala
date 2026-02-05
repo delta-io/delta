@@ -26,7 +26,7 @@ import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
-import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
+import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient, UCCreateStagingTableResponse}
 
 object InMemoryUCClient {
 
@@ -181,6 +181,19 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     val tableData = getTableDataElseThrow(tableId)
     val filteredCommits = tableData.getCommitsInRange(startVersion, endVersion)
     new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
+  }
+
+  override def createStagingTable(
+      catalogName: String,
+      schemaName: String,
+      tableName: String): UCCreateStagingTableResponse = {
+    // Generate a unique table ID for the staging table
+    val tableId = s"$catalogName.$schemaName.$tableName-${java.util.UUID.randomUUID()}"
+
+    // Generate a storage location (in-memory simulation)
+    val storageLocation = s"memory:///$catalogName/$schemaName/$tableName"
+
+    new UCCreateStagingTableResponse(tableId, storageLocation, ucMetastoreId)
   }
 
   override def close(): Unit = {}

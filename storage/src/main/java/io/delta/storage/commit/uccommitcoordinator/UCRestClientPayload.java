@@ -235,4 +235,22 @@ class UCRestClientPayload {
   static class GetMetastoreSummaryResponse {
     String metastoreId;
   }
+
+  // ==============================
+  // CreateStagingTableRequest Class
+  // ==============================
+  static class CreateStagingTableRequest {
+    String catalogName;
+    String schemaName;
+    String name;
+  }
+
+  // ==============================
+  // CreateStagingTableResponse Class
+  // ==============================
+  static class CreateStagingTableResponse {
+    String id;
+    String stagingLocation;
+    // metastoreId is not returned by UC server's StagingTableInfo
+  }
 }

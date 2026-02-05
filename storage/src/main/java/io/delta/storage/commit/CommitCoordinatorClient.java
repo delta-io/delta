@@ -149,6 +149,27 @@ public interface CommitCoordinatorClient {
     Long lastKnownBackfilledVersion) throws IOException;
 
   /**
+   * API to create a staging table and obtain its storage location from the catalog.
+   *
+   * This is used for catalog-managed tables where the catalog needs to generate and allocate
+   * a unique storage location before the Delta table is physically created. This implements
+   * phase 1 of the three-phase table creation process described in the catalog-managed tables RFC.
+   *
+   * The staging table approach ensures:
+   * - The catalog can track the table even before data is written
+   * - A unique table ID and storage location are allocated atomically
+   * - The table creation process maintains atomicity across catalog and storage operations
+   *
+   * @param tableIdentifier The identifier for the table being created (catalog.schema.table)
+   * @return StagingTableInfo containing the table ID, storage location, and table configuration
+   * @throws UnsupportedOperationException if the commit coordinator does not support staging tables
+   */
+  default StagingTableInfo createStagingTable(TableIdentifier tableIdentifier) {
+    throw new UnsupportedOperationException(
+      "createStagingTable is not supported by this commit coordinator");
+  }
+
+  /**
    * Determines whether this CommitCoordinatorClient is semantically equal to another
    * CommitCoordinatorClient.
    *

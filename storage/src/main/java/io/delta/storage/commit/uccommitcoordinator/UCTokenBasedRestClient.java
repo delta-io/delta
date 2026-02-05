@@ -294,6 +294,51 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   @Override
+  public UCCreateStagingTableResponse createStagingTable(
+      String catalogName,
+      String schemaName,
+      String tableName) throws IOException, UCCommitCoordinatorException {
+    Objects.requireNonNull(catalogName, "catalogName must not be null.");
+    Objects.requireNonNull(schemaName, "schemaName must not be null.");
+    Objects.requireNonNull(tableName, "tableName must not be null.");
+
+    UCRestClientPayload.CreateStagingTableRequest request =
+      new UCRestClientPayload.CreateStagingTableRequest();
+    request.catalogName = catalogName;
+    request.schemaName = schemaName;
+    request.name = tableName;
+
+    System.out.println("===== UCTokenBasedRestClient.createStagingTable =====");
+    System.out.println("  - catalogName: " + catalogName);
+    System.out.println("  - schemaName: " + schemaName);
+    System.out.println("  - tableName: " + tableName);
+    System.out.println("  - endpoint: " + resolve(baseUri, "/staging-tables"));
+
+    try {
+      UCRestClientPayload.CreateStagingTableResponse response = executeHttpRequest(
+        new HttpPost(URI.create(resolve(baseUri, "/staging-tables"))),
+        request,
+        UCRestClientPayload.CreateStagingTableResponse.class);
+
+      return new UCCreateStagingTableResponse(
+        response.id, response.stagingLocation, null /* metastoreId not returned by UC server */);
+    } catch (HttpError e) {
+      System.out.println("===== createStagingTable HTTP Error =====");
+      System.out.println("  - status code: " + e.statusCode);
+      System.out.println("  - response body: " + e.responseBody);
+      switch (e.statusCode) {
+        case HttpStatus.SC_BAD_REQUEST:
+        case HttpStatus.SC_NOT_FOUND:
+        case HttpStatus.SC_CONFLICT:
+          throw new InvalidTargetTableException(e.responseBody);
+        default:
+          throw new IOException(
+            "createStagingTable failed (HTTP " + e.statusCode + "): " + e.responseBody);
+      }
+    }
+  }
+
+  @Override
   public void close() throws IOException {
     httpClient.close();
   }

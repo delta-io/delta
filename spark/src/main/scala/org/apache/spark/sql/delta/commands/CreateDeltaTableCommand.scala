@@ -184,6 +184,10 @@ case class CreateDeltaTableCommand(
       }
     }
 
+    // scalastyle:off
+    // println(s"====> deltaLog.update(catalogTableOpt = catalogTable) -> ${deltaLog.update(catalogTableOpt = Option(tableWithLocation)).metadata.partitionColumns}")
+    // scalastyle:on
+
     var txn = startTxnForTableCreation(sparkSession, deltaLog, tableWithLocation)
 
     OptimisticTransaction.withActive(txn) {
@@ -198,12 +202,20 @@ case class CreateDeltaTableCommand(
             commandMetrics = Some(metrics))
         case Some(deltaWriter: WriteIntoDeltaLike) =>
           checkPathEmpty(txn)
+
+          // scalastyle:off
+          println(s"====> CreateDeltaTableCommand ==> Some(deltaWriter: WriteIntoDeltaLike) $query")
+          // scalastyle:on
+
           txn = handleCreateTableAsSelect(
             sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
           Nil
         case Some(query) =>
           checkPathEmpty(txn)
           require(!query.isInstanceOf[RunnableCommand])
+          // scalastyle:off
+          println(s"====> CreateDeltaTableCommand ==> Some(query) ==> query: $query")
+          // scalastyle:on
           // When using V1 APIs, the `query` plan is not yet optimized, therefore, it is safe
           // to once again go through analysis
           val data = DataFrameUtils.ofRows(sparkSession, query)
@@ -220,6 +232,10 @@ case class CreateDeltaTableCommand(
             sparkSession, txn, deltaLog, deltaWriter, tableWithLocation)
           Nil
         case _ =>
+          // scalastyle:off
+          println(s"====> CreateDeltaTableCommand ==> case _ ==> query: $query")
+          // scalastyle:on
+
           handleCreateTable(sparkSession, txn, tableWithLocation, fs, hadoopConf)
           Nil
       }
@@ -340,12 +356,27 @@ case class CreateDeltaTableCommand(
       )
       (taggedCommitData, op)
     }
+    // scalastyle:off println
+    println(s"===== CreateDeltaTableCommand: Before enforceDependenciesInConfiguration =====")
+    println(s"  - deltaWriter.configuration: ${deltaWriter.configuration}")
+    val hasUCTableIdBefore = deltaWriter.configuration.contains("io.unitycatalog.tableId")
+    println(s"  - Has UC table ID: $hasUCTableIdBefore")
+    // scalastyle:on
+
     val updatedConfiguration = UniversalFormat.enforceDependenciesInConfiguration(
       sparkSession,
       tableWithLocation,
       deltaWriter.configuration,
       txn.snapshot
     )
+
+    // scalastyle:off println
+    println(s"===== CreateDeltaTableCommand: After enforceDependenciesInConfiguration =====")
+    println(s"  - updatedConfiguration: $updatedConfiguration")
+    val hasUCTableIdAfter = updatedConfiguration.contains("io.unitycatalog.tableId")
+    println(s"  - Has UC table ID: $hasUCTableIdAfter")
+    // scalastyle:on
+
     val updatedWriter = deltaWriter.withNewWriterConfiguration(updatedConfiguration)
     var txnToReturn = txn
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
@@ -794,7 +825,7 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    val txn = deltaLog.startTransaction(Some(tableWithLocation), snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion

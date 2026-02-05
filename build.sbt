@@ -700,7 +700,7 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = "0.3.1"
+val unityCatalogVersion = "0.3.0-SNAPSHOT"
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
@@ -719,7 +719,11 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // Ensure Java sources are picked up
     Test / unmanagedSourceDirectories += baseDirectory.value / "src" / "test" / "java",
 
-    Test / javaOptions ++= Seq("-ea"),
+    Test / javaOptions ++= Seq(
+      "-ea",
+      "-Dlog4j.configurationFile=log4j2.xml",
+      "-Dlog4j2.debug=true"
+    ),
 
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
