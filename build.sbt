@@ -1539,10 +1539,17 @@ lazy val releaseSettings = Seq(
     sys.env.getOrElse("SONATYPE_USERNAME", ""),
     sys.env.getOrElse("SONATYPE_PASSWORD", "")
   ),
+  credentials += Credentials(
+    "Sonatype Nexus Repository Manager",
+    "central.sonatype.com",
+    sys.env.getOrElse("SONATYPE_USERNAME", ""),
+    sys.env.getOrElse("SONATYPE_PASSWORD", "")
+  ),
   publishTo := {
     val ossrhBase = "https://ossrh-staging-api.central.sonatype.com/"
+    val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
     if (isSnapshot.value) {
-      Some("snapshots" at ossrhBase + "content/repositories/snapshots")
+      Some("snapshots" at centralSnapshots)
     } else {
       Some("releases"  at ossrhBase + "service/local/staging/deploy/maven2")
     }
@@ -1606,7 +1613,7 @@ lazy val releaseSettings = Seq(
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
 publish / skip := true
-publishTo := Some("snapshots" at "https://ossrh-staging-api.central.sonatype.com/content/repositories/snapshots")
+publishTo := Some("snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
 releaseCrossBuild := false  // Don't use sbt-release's cross facility
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
