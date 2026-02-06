@@ -1451,7 +1451,7 @@ lazy val sparkGroup = {
       // crossScalaVersions must be set to Nil on the aggregating project
       crossScalaVersions := Nil,
       publishArtifact := false,
-      publish / skip := false,
+      publish / skip := true,
     )
 }
 
@@ -1468,7 +1468,7 @@ lazy val icebergGroup = {
       // crossScalaVersions must be set to Nil on the aggregating project
       crossScalaVersions := Nil,
       publishArtifact := false,
-      publish / skip := false,
+      publish / skip := true,
     )
 }
 
@@ -1478,7 +1478,7 @@ lazy val kernelGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false,
+    publish / skip := true,
     unidocSourceFilePatterns := {
       (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
@@ -1491,7 +1491,7 @@ lazy val flinkGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false,
+    publish / skip := true,
   )
 
 /*
