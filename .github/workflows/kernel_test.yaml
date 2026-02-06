@@ -69,11 +69,7 @@ jobs:
             echo "❌ Cache MISS - will download dependencies"
           fi
       - name: Setup Unity Catalog for testing
-        run: |
-          git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
-          cd /tmp/unitycatalog
-          git checkout staging-table-catalog
-          ./build/sbt clean package publishM2
+        run: dev/setup-unitycatalog.sh
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -89,6 +85,8 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "11"
+      - name: Setup Unity Catalog for testing
+        run: dev/setup-unitycatalog.sh
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
