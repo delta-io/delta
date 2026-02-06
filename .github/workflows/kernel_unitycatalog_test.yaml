@@ -32,11 +32,7 @@ jobs:
           distribution: "zulu"
           java-version: "17"
       - name: Setup Unity Catalog for testing
-        run: |
-          git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
-          cd /tmp/unitycatalog
-          git checkout staging-table-catalog
-          ./build/sbt clean package publishM2
+        run: dev/setup-unitycatalog.sh
       - name: Run Unity tests with coverage
         run: |
           ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v

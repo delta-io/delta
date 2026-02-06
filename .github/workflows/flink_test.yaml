@@ -52,11 +52,7 @@ jobs:
             echo "❌ Cache MISS - will download dependencies"
           fi
       - name: Setup Unity Catalog for testing
-        run: |
-          git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
-          cd /tmp/unitycatalog
-          git checkout staging-table-catalog
-          ./build/sbt clean package publishM2
+        run: dev/setup-unitycatalog.sh
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test
