@@ -65,7 +65,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         case _ =>
       }
       table.copy(
-        identifier = existingTable.identifier,
         storage = existingTable.storage,
         tableType = existingTable.tableType)
     } else if (table.storage.locationUri.isEmpty) {
@@ -94,33 +93,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       createTableFunc: Option[CatalogTable => Unit] = None
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
-    // scalastyle:off println
-    println(s"[DEBUG updateCatalog] operation=${operation}, tableByPath=${tableByPath}")
-    println(s"[DEBUG updateCatalog] existingTableOpt=${existingTableOpt.map(t =>
-      s"tableType=${t.tableType}")}")
-    println(s"[DEBUG updateCatalog] cleaned.identifier=${cleaned.identifier}, " +
-      s"cleaned.properties=${cleaned.properties}")
-    println(s"[DEBUG updateCatalog] snapshot.metadata.configuration=" +
-      s"${snapshot.metadata.configuration}")
-    // scalastyle:on println
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
-        // scalastyle:off println
-        println(s"[DEBUG updateCatalog] Matched case: tableByPath - doing nothing")
-        // scalastyle:on println
       case TableCreationModes.Create =>
-        // scalastyle:off println
-        println(s"[DEBUG updateCatalog] Matched case: Create")
-        // scalastyle:on println
         if (createTableFunc.isDefined) {
-          // scalastyle:off println
-          println(s"[DEBUG updateCatalog] Calling createTableFunc")
-          // scalastyle:on println
           createTableFunc.get.apply(cleaned)
         } else {
-          // scalastyle:off println
-          println(s"[DEBUG updateCatalog] Calling catalog.createTable")
-          // scalastyle:on println
           spark.sessionState.catalog.createTable(
             cleaned,
             ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
@@ -128,47 +106,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
-          // scalastyle:off println
-          println(s"[DEBUG updateCatalog] Matched case: Replace/CreateOrReplace " +
-            s"with existing table")
-          println(s"[DEBUG updateCatalog] existingTable.tableType=" +
-            s"${existingTableOpt.get.tableType}")
-          // scalastyle:on println
-          if (existingTableOpt.get.tableType == CatalogTableType.EXTERNAL) {
-            // scalastyle:off println
-            println(s"[DEBUG updateCatalog] Calling updateSchema for EXTERNAL table")
-            // scalastyle:on println
-            UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
-          } else {
-            // scalastyle:off println
-            println(s"[DEBUG updateCatalog] Skipping updateSchema for MANAGED table - " +
-              s"assuming transaction.commit already synced to UC")
-            // scalastyle:on println
-          }
+        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       case TableCreationModes.Replace =>
-        // scalastyle:off println
-        println(s"[DEBUG updateCatalog] Matched case: Replace without existing table")
-        // scalastyle:on println
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace =>
-        // scalastyle:off println
-        println(s"[DEBUG updateCatalog] Matched case: CreateOrReplace without existing table")
-        // scalastyle:on println
-        if (createTableFunc.isDefined) {
-          // scalastyle:off println
-          println(s"[DEBUG updateCatalog] Calling createTableFunc")
-          // scalastyle:on println
-          createTableFunc.get.apply(cleaned)
-        } else {
-          // scalastyle:off println
-          println(s"[DEBUG updateCatalog] Calling catalog.createTable")
-          // scalastyle:on println
-          spark.sessionState.catalog.createTable(
-            cleaned,
-            ignoreIfExists = false,
-            validateLocation = false)
-        }
+      spark.sessionState.catalog.createTable(
+        cleaned,
+        ignoreIfExists = false,
+        validateLocation = false)
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)

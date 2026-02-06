@@ -244,7 +244,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           }
           for (boolean withAsSelect : List.of(true, false)) {
             for (boolean replaceTable : List.of(true, false)) {
-              // Skip RTAS (Replace Table As Select) tests for now
+              // Disable RTAS (Replace Table As Select) tests for now
               if (replaceTable && withAsSelect) {
                 continue;
               }
@@ -309,11 +309,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     String fullTableName = options.fullTableName();
     if (replaceTable) {
-      if (tableType == TableType.EXTERNAL) {
-        // Replace the managed table with external table is not allowed. skip the test
-        return;
-      }
-
       // First, create a different table to replace.
       sql(
           "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
