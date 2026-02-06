@@ -21,6 +21,8 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import io.sparkuctest.UCDeltaTableIntegrationBaseTest.TestAllTableTypes;
+import io.sparkuctest.UnityCatalogSupport.UnityCatalogInfo;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
@@ -303,6 +305,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     String fullTableName = options.fullTableName();
     if (replaceTable) {
+      if (tableType == TableType.EXTERNAL) {
+        // Replace the managed table with external table is not allowed. skip the test
+        return;
+      }
+
       // First, create a different table to replace.
       sql(
           "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
