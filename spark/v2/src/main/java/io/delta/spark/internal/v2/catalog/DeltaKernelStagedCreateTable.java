@@ -180,7 +180,9 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
         commitFilesystemCreate();
       }
     } catch (TableAlreadyExistsException tae) {
-      throw new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident);
+      // Spark's TableAlreadyExistsException is checked in Java, but StagedTable doesn't declare
+      // checked exceptions. Use a "sneaky throw" to preserve Spark semantics.
+      throwSparkTableAlreadyExists(ident);
     }
 
     if (postCommitHook != null) {
@@ -283,5 +285,15 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
       result.put(key, e.getValue());
     }
     return result;
+  }
+
+  private static void throwSparkTableAlreadyExists(Identifier ident) {
+    DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(
+        new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <E extends Throwable> void sneakyThrow(Throwable throwable) throws E {
+    throw (E) throwable;
   }
 }
