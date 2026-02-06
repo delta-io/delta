@@ -951,9 +951,19 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
     )
 
     // Let's also test the case when we only have one offset in the checkpoint without any committed
-    // Clear existing checkpoint dir and schema log dir
-    FileUtils.deleteDirectory(new File(ckpt.stripPrefix("file:")))
-    new File(ckpt.stripPrefix("file:")).mkdirs()
+    // Delete everything except the metadata file to avoid triggering metadata validation error
+    val ckptDir = new File(ckpt.stripPrefix("file:"))
+    val metadataFile = new File(ckptDir, "metadata")
+    // Delete all checkpoint subdirectories and files except metadata
+    ckptDir.listFiles().foreach { f =>
+      if (f.getAbsolutePath != metadataFile.getAbsolutePath) {
+        if (f.isDirectory) {
+          FileUtils.deleteDirectory(f)
+        } else {
+          f.delete()
+        }
+      }
+    }
     FileUtils.deleteDirectory(new File(schemaLoc.stripPrefix("file:")))
 
     // Create a single offset that points to the latest version of the table.

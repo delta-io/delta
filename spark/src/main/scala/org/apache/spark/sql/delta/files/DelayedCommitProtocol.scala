@@ -185,8 +185,10 @@ class DelayedCommitProtocol(
         .zip(
           parsedPartition
             .literals
-            .map(l => Cast(l, StringType).eval())
-            .map(Option(_).map(_.toString).orNull))
+            .map(PartitionUtils.literalToNormalizedString(
+              _,
+              Some(timezone.getID),
+              useUtcNormalizedTimestamps)))
         .toMap
   }
 

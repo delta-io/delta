@@ -31,8 +31,16 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
 
   // Types that support equality and ordering operations
   // (EqualTo, NotEqualTo, LessThan, GreaterThan, LessThanOrEqual, GreaterThanOrEqual)
-  // Note: Spark Filter API sends Date/Timestamp as java.sql.Date/Timestamp, but our converter
+  //
+  // Note on Date/Timestamp: Spark Filter API sends java.sql.Date/Timestamp, but our converter
   // transforms them to Int (days since epoch) and Long (microseconds since epoch) for Iceberg.
+  //
+  // Note on escaped column names: Per Spark's Filter documentation, column names with special
+  // characters (dots, spaces, etc.) arrive already escaped with backticks when they represent
+  // literal column names. We verify the converter passes these through unchanged. Examples:
+  //   - "address.intCol" = nested field access (struct address, field intCol)
+  //   - "`address.city`" = literal column named "address.city" (backtick-quoted by Spark)
+  //   - "parent.`child.name`" = nested access where child field name is literally "child.name"
   private val orderableTypeTestCases = Seq(
     ("intCol", 42, "Int"), // (column name, test value, label to identify test case)
     ("longCol", 100L, "Long"),
@@ -46,7 +54,10 @@ class SparkToIcebergExpressionConverterSuite extends AnyFunSuite {
     ("localDateTimeCol", java.time.LocalDateTime.of(2024, 1, 1, 12, 0, 0), "LocalDateTime"),
     ("instantCol", java.time.Instant.parse("2024-01-01T12:00:00Z"), "Instant"),
     ("address.intCol", 42, "Nested Int"),
-    ("metadata.stringCol", "test", "Nested String")
+    ("metadata.stringCol", "test", "Nested String"),
+    ("`address.city`", "Seattle", "Escaped Literal String"),
+    ("`a.b.c`", "value", "Escaped Multi-Dot String"),
+    ("parent.`child.name`", "childValue", "Nested with Escaped Field")
   )
 
   // Types that only support equality operators (EqualTo, NotEqualTo, IsNull, IsNotNull)

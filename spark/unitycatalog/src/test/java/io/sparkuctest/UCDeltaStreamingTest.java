@@ -45,7 +45,6 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import scala.Option;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -137,13 +136,13 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testStreamingReadFromTable(TableType tableType) throws Exception {
+    String uniqueTableName = "streaming_read_test_" + UUID.randomUUID().toString().replace("-", "");
     withNewTable(
-        "streaming_read_test",
+        uniqueTableName,
         "id BIGINT, value STRING",
         tableType,
         (tableName) -> {
           SparkSession spark = spark();
-          Option<String> originalMode = spark.conf().getOption(V2_ENABLE_MODE_KEY);
           String queryName =
               "uc_streaming_read_"
                   + tableType.name().toLowerCase()
@@ -153,13 +152,9 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
 
           try {
             List<List<String>> expected = new ArrayList<>();
-            // TODO: Remove manual V2/V1 switch when V2 to V1 AUTO mode is supported.
-            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
             // Seed an initial commit (required for managed tables, harmless for external).
             spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
             expected.add(List.of("0", "seed"));
-            // Enable V2 for streaming reads.
-            spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
             Dataset<Row> input = spark.readStream().table(tableName);
             // Start the streaming query into a memory sink
             query =
@@ -174,15 +169,11 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             assertTrue(query.isActive(), "Streaming query should be active");
 
             // Write a few batches and verify the stream consumes them.
-            // For writing, we disable V2 mode, write, then re-enable it for reading
             for (long i = 1; i <= 3; i += 1) {
               String value = "value_" + i;
-
-              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_NONE);
               spark
                   .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
                   .collect();
-              spark.conf().set(V2_ENABLE_MODE_KEY, V2_ENABLE_MODE_STRICT);
 
               query.processAllAvailable();
               // Validate by checking if query and expected match.
@@ -190,13 +181,14 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
               check(queryName, expected);
             }
           } finally {
-            // TODO: remove additional processAllAvailable once interrupt is handled gracefully
-            query.processAllAvailable();
-            query.stop();
-            query.awaitTermination();
-            assertFalse(query.isActive(), "Streaming query should have stopped");
+            if (query != null) {
+              // TODO: remove additional processAllAvailable once interrupt is handled gracefully
+              query.processAllAvailable();
+              query.awaitTermination(10000);
+              query.stop();
+              assertFalse(query.isActive(), "Streaming query should have stopped");
+            }
             spark.sql("DROP VIEW IF EXISTS " + queryName);
-            restoreV2Mode(spark, originalMode);
           }
         });
   }
@@ -223,13 +215,5 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
     return JavaConverters.asScalaIteratorConverter(Arrays.asList(rows).iterator())
         .asScala()
         .toSeq();
-  }
-
-  private static void restoreV2Mode(SparkSession spark, Option<String> originalMode) {
-    if (originalMode.isDefined()) {
-      spark.conf().set(V2_ENABLE_MODE_KEY, originalMode.get());
-    } else {
-      spark.conf().unset(V2_ENABLE_MODE_KEY);
-    }
   }
 }

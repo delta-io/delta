@@ -48,10 +48,6 @@ import org.junit.jupiter.api.TestFactory;
  * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
-  protected static final String V2_ENABLE_MODE_KEY = "spark.databricks.delta.v2.enableMode";
-  protected static final String V2_ENABLE_MODE_STRICT = "STRICT";
-  protected static final String V2_ENABLE_MODE_NONE = "NONE";
-
   public static final List<TableType> ALL_TABLE_TYPES =
       List.of(TableType.EXTERNAL, TableType.MANAGED);
 
