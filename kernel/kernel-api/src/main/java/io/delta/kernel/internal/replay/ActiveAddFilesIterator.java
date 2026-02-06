@@ -266,6 +266,12 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
         scanAddFiles.withNewColumn(
             1, InternalScanFileUtils.TABLE_ROOT_STRUCT_FIELD, tableRootVector);
 
+    // Skip batch if no AddFiles are selected (all unselected)
+    if (numSelectedRows == 0) {
+      prepareNext();
+      return;
+    }
+
     Optional<ColumnVector> selectionColumnVector = Optional.empty();
     if (atLeastOneUnselected) {
       selectionColumnVector =
@@ -277,7 +283,6 @@ public class ActiveAddFilesIterator implements CloseableIterator<FilteredColumna
                           .createSelectionVector(selectionVectorBuffer, 0, addsVector.getSize()),
                   "Create selection vector for selected scan files"));
     }
-    // TODO: skip batch if all AddFiles are unselected; issue #4941
     next =
         Optional.of(
             new FilteredColumnarBatch(
