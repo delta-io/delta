@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import scala.collection.mutable
+import scala.concurrent.duration
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.Relocated._
@@ -25,11 +26,13 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf, DeltaStreamUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.GeneratedColumnValidateOnWriteMode
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.catalyst.expressions.EqualNullSafe
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
@@ -125,7 +128,15 @@ object ColumnWithDefaultExprUtils extends DeltaLogging {
       case GeneratedColumnValidateOnWriteMode.LOG_ONLY |
            GeneratedColumnValidateOnWriteMode.ASSERT =>
         try {
+          val startTime = System.nanoTime()
           GeneratedColumn.validateGeneratedColumns(data.sparkSession, schema)
+          val durationMs =
+            duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
+          logInfo(
+            log"Validated Generated Column expressions on table " +
+            log"${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)} " +
+            log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms"
+          )
         } catch {
           case NonFatal(e) =>
             val errorClassName = e match {
