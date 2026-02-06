@@ -69,25 +69,49 @@ public final class UCUtils {
     }
     String catalogName = catalogOption.get();
 
-    // Get UC endpoint and token from Spark configs
+    UCCatalogConfig config =
+        resolveUcCatalogConfig(spark, catalogName, "table " + catalogTable.identifier());
+    return Optional.of(
+        new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig())));
+  }
+
+  /**
+   * Builds {@link UCTableInfo} for a UC-managed table when tableId/path are already known.
+   *
+   * <p>This is useful for code paths (like CREATE TABLE) that detect UC-managed tables from
+   * properties rather than from an existing {@link CatalogTable} descriptor.
+   */
+  public static UCTableInfo buildTableInfo(
+      String tableId, String tablePath, SparkSession spark, String catalogName) {
+    requireNonNull(tableId, "tableId is null");
+    requireNonNull(tablePath, "tablePath is null");
+    requireNonNull(spark, "spark is null");
+    if (catalogName == null || catalogName.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Cannot create UC-managed table at "
+              + tablePath
+              + ": catalogName is missing. Expected the catalog plugin name to resolve UC "
+              + "configuration.");
+    }
+
+    UCCatalogConfig config = resolveUcCatalogConfig(spark, catalogName, "table at " + tablePath);
+    return new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig()));
+  }
+
+  private static UCCatalogConfig resolveUcCatalogConfig(
+      SparkSession spark, String catalogName, String context) {
     scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
         UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
-
     scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
-
     if (configOpt.isEmpty()) {
       throw new IllegalArgumentException(
-          "Cannot create UC client for table "
-              + catalogTable.identifier()
+          "Cannot create UC client for "
+              + context
               + ": Unity Catalog configuration not found for catalog '"
               + catalogName
               + "'.");
     }
-
-    UCCatalogConfig config = configOpt.get();
-    String ucUri = config.uri();
-
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
+    return configOpt.get();
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

@@ -28,6 +28,8 @@ import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.utils.CloseableIterable;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
@@ -49,8 +51,6 @@ import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.IdentityTransform;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
-import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
-import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 
 /**
  * Kernel-backed staged table for metadata-only CREATE TABLE.
@@ -79,8 +79,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
   // UC-managed table info (optional). When present, commits go through UC's CatalogCommitter
   // (CCv2).
-  private final Optional<String> ucTableIdOpt;
-  private final Optional<UcConfig> ucConfigOpt;
+  private final Optional<UCTableInfo> ucTableInfoOpt;
 
   public DeltaKernelStagedCreateTable(
       SparkSession spark,
@@ -113,12 +112,12 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     filtered.remove("test.simulateUC");
     this.filteredTableProperties = filtered;
 
-    this.ucTableIdOpt =
-        Optional.ofNullable(filteredTableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY));
-    if (ucTableIdOpt.isPresent()) {
-      this.ucConfigOpt = Optional.of(resolveUcConfig(spark, catalogName, tablePath));
+    String ucTableId = filteredTableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    if (ucTableId != null) {
+      this.ucTableInfoOpt =
+          Optional.of(UCUtils.buildTableInfo(ucTableId, tablePath, spark, catalogName));
     } else {
-      this.ucConfigOpt = Optional.empty();
+      this.ucTableInfoOpt = Optional.empty();
     }
   }
 
@@ -150,8 +149,8 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   @Override
   public void commitStagedChanges() {
     try {
-      if (ucTableIdOpt.isPresent()) {
-        commitUCManagedCreate();
+      if (ucTableInfoOpt.isPresent()) {
+        commitUCManagedCreate(ucTableInfoOpt.get());
       } else {
         commitFilesystemCreate();
       }
@@ -184,17 +183,18 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     commitMetadataOnly(builder);
   }
 
-  private void commitUCManagedCreate() {
-    final UcConfig ucConfig = ucConfigOpt.orElseThrow();
-    final TokenProvider tokenProvider = TokenProvider.create(ucConfig.authConfig);
+  private void commitUCManagedCreate(UCTableInfo tableInfo) {
+    requireNonNull(tableInfo, "tableInfo is null");
+    final TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
 
     // The committer created by UCCatalogManagedClient holds onto the UCClient, so keep it open for
     // the duration of the transaction commit.
-    try (UCClient ucClient = new UCTokenBasedRestClient(ucConfig.ucUri, tokenProvider)) {
+    try (UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tokenProvider)) {
       UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
       CreateTableTransactionBuilder builder =
           ucCatalogClient
-              .buildCreateTableTransaction(ucTableIdOpt.get(), tablePath, kernelSchema, ENGINE_INFO)
+              .buildCreateTableTransaction(
+                  tableInfo.getTableId(), tableInfo.getTablePath(), kernelSchema, ENGINE_INFO)
               .withTableProperties(filteredTableProperties);
       // Note: per UCCatalogManagedClient contract, a UC Tables API call may be required after
       // 000.json is committed to inform UC of successful create.
@@ -283,48 +283,6 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     String oldValue = properties.remove(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
     if (oldValue != null && !oldValue.isEmpty()) {
       properties.putIfAbsent(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, oldValue);
-    }
-  }
-
-  private static UcConfig resolveUcConfig(
-      SparkSession spark, String catalogName, String tablePath) {
-    requireNonNull(spark, "spark is null");
-    if (catalogName == null || catalogName.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Cannot create UC-managed table at "
-              + tablePath
-              + ": catalogName is missing. Expected the catalog plugin name to resolve UC "
-              + "configuration.");
-    }
-
-    scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
-        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
-    scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
-    if (configOpt.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Cannot create UC-managed table at "
-              + tablePath
-              + ": Unity Catalog configuration not found for catalog '"
-              + catalogName
-              + "'.");
-    }
-
-    final UCCatalogConfig config = configOpt.get();
-    final String ucUri = config.uri();
-    final java.util.Map<String, String> authConfig =
-        scala.jdk.javaapi.CollectionConverters.asJava(config.authConfig());
-    return new UcConfig(ucUri, authConfig);
-  }
-
-  private static final class UcConfig {
-    private final String ucUri;
-    private final java.util.Map<String, String> authConfig;
-
-    private UcConfig(String ucUri, java.util.Map<String, String> authConfig) {
-      this.ucUri = requireNonNull(ucUri, "ucUri is null");
-      this.authConfig =
-          Collections.unmodifiableMap(
-              new HashMap<>(requireNonNull(authConfig, "authConfig is null")));
     }
   }
 
