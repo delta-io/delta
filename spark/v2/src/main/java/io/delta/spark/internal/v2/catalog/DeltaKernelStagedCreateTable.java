@@ -35,6 +35,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import io.unitycatalog.client.auth.TokenProvider;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -78,9 +79,28 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   private final Map<String, String> filteredTableProperties;
 
   // UC-managed table info (optional). When present, commits go through UC's CatalogCommitter
-  // (CCv2).
   private final Optional<UCTableInfo> ucTableInfoOpt;
 
+  /**
+   * Create a Kernel-backed staged table for metadata-only {@code CREATE TABLE}.
+   *
+   * <p>The constructor performs the "planning" step and caches the resolved state needed for the
+   * eventual commit:
+   *
+   * <ul>
+   *   <li>Initializes a Kernel {@link Engine} using the session Hadoop configuration
+   *   <li>Converts Spark schema to Kernel schema
+   *   <li>Converts Spark partition transforms to a Kernel {@link DataLayoutSpec} (identity-only)
+   *   <li>Filters Spark catalog properties down to user/Delta properties (V1-compatible), and
+   *       translates legacy UC table id key to the current key
+   *   <li>Detects UC-managed tables from properties and, when present, resolves {@link UCTableInfo}
+   *       (UC URI + auth config) via {@link UCUtils}
+   * </ul>
+   *
+   * <p>{@link #commitStagedChanges()} then uses this planned state to commit protocol+metadata to
+   * the Delta log (no data actions). For catalog-based tables, callers may provide {@code
+   * postCommitHook} to register the table in Spark's catalog after a successful Kernel commit.
+   */
   public DeltaKernelStagedCreateTable(
       SparkSession spark,
       String catalogName,
@@ -94,10 +114,8 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     this.ident = requireNonNull(ident, "ident is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.sparkSchema = requireNonNull(sparkSchema, "sparkSchema is null");
-    this.partitions = requireNonNull(partitions, "partitions is null").clone();
-    this.allTableProperties =
-        Collections.unmodifiableMap(
-            new HashMap<>(requireNonNull(allTableProperties, "allTableProperties is null")));
+    this.partitions = requireNonNull(partitions, "partitions is null");
+    this.allTableProperties = requireNonNull(allTableProperties, "allTableProperties is null");
     this.postCommitHook = postCommitHook;
 
     final Configuration hadoopConf = spark.sessionState().newHadoopConf();
@@ -133,7 +151,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
   @Override
   public Transform[] partitioning() {
-    return partitions.clone();
+    return partitions;
   }
 
   @Override
@@ -155,19 +173,12 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
         commitFilesystemCreate();
       }
     } catch (TableAlreadyExistsException tae) {
-      org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException sparkException =
-          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident);
-      sparkException.initCause(tae);
-      DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(sparkException);
+      DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(
+          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
     }
 
     if (postCommitHook != null) {
-      try {
-        postCommitHook.run();
-      } catch (RuntimeException e) {
-        throw new RuntimeException(
-            "Kernel CREATE TABLE commit succeeded but post-commit hook failed for " + ident, e);
-      }
+      postCommitHook.run();
     }
   }
 
@@ -184,7 +195,6 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   }
 
   private void commitUCManagedCreate(UCTableInfo tableInfo) {
-    requireNonNull(tableInfo, "tableInfo is null");
     final TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
 
     // The committer created by UCCatalogManagedClient holds onto the UCClient, so keep it open for
@@ -200,7 +210,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
       // 000.json is committed to inform UC of successful create.
       commitMetadataOnly(builder);
     } catch (java.io.IOException ioe) {
-      throw new RuntimeException("Failed to close UC client after create table", ioe);
+      throw new UncheckedIOException(ioe);
     }
   }
 
