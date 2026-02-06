@@ -354,6 +354,14 @@ public class LogReplay {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
+
+        // Stop before processing any batch from a version below minLogVersion. We use
+        // less-than (not equality) to ensure all batches from the minLogVersion file are
+        // fully processed, since a single large log file may produce multiple batches.
+        if (minLogVersion.isPresent() && version < minLogVersion.get()) {
+          break;
+        }
+
         final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
         logReadCount++;
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
@@ -363,9 +371,6 @@ public class LogReplay {
         // We are performing a reverse log replay. This function ensures that only the first
         // encountered domain metadata for each domain is added to the map.
         DomainMetadataUtils.populateDomainMetadataMap(dmVector, domainMetadataMap);
-        if (minLogVersion.isPresent() && minLogVersion.get() == version) {
-          break;
-        }
       }
       logger.info(
           "{}: Loading domain metadata from log for version {}, "
