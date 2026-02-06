@@ -461,38 +461,63 @@ object CrossSparkVersions extends AutoPlugin {
    * - Step 1 publishes: delta-spark_2.13, delta-storage, delta-kernel-api, etc. (no suffix)
    * - Step 2 publishes: delta-spark_4.0_2.13, delta-spark_4.1_2.13, etc. (with suffix)
    *
+   * Each step runs as a separate SBT subprocess so the build reloads with
+   * the correct sparkVersion/skipSparkSuffix settings (SBT settings like
+   * moduleName are evaluated once at build load time and can't be changed
+   * at runtime).
+   *
    * Usage in build.sbt:
    *   releaseProcess := Seq[ReleaseStep](
    *     ...,
-   *   ) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq(
+   *   ) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq(
    *     ...
    *   )
    */
   def crossSparkReleaseSteps(task: String): Seq[ReleaseStep] = {
-    import sbtrelease.ReleasePlugin.autoImport._
-    import sbtrelease.ReleaseStateTransformations._
+    // SBT settings (like moduleName) are evaluated once at build load time.
+    // To publish with different Spark versions or suffix modes, we must run
+    // separate SBT processes so the build reloads with the correct settings.
+    // The release version is already committed to version.sbt by prior steps,
+    // so subprocess SBT instances will pick up the correct version.
 
-    // Step 1: Publish all modules WITHOUT Spark suffix (backward compatibility)
-    // Uses skipSparkSuffix=true to get artifact names like delta-spark_2.13
-    val backwardCompatStep: ReleaseStep = { (state: State) =>
-      sys.props("skipSparkSuffix") = "true"
-      val result = Command.process(task, state)
-      sys.props.remove("skipSparkSuffix")
-      result
+    def runSbtSubprocess(state: State, sbtArgs: Seq[String], description: String): State = {
+      val extracted = Project.extract(state)
+      val baseDir = extracted.get(ThisBuild / Keys.baseDirectory)
+      val cmd = Seq(s"${baseDir.getAbsolutePath}/build/sbt") ++ sbtArgs
+      println(s"[info] ========================================")
+      println(s"[info] $description")
+      println(s"[info] Running: ${cmd.mkString(" ")}")
+      println(s"[info] ========================================")
+      val exitCode = scala.sys.process.Process(cmd, baseDir).!
+      if (exitCode != 0) {
+        sys.error(s"$description failed with exit code $exitCode")
+      }
+      state
     }
 
-    // Step 2: Publish Spark-dependent modules WITH suffix for each non-master Spark version
+    // Step 1: Publish ALL modules WITHOUT Spark suffix (backward compatibility)
+    // Uses skipSparkSuffix=true to get artifact names like delta-spark_2.13
+    val backwardCompatStep: ReleaseStep = { (state: State) =>
+      runSbtSubprocess(
+        state,
+        Seq("-DskipSparkSuffix=true", task),
+        "Publishing all modules without Spark suffix (backward compat)"
+      )
+    }
+
+    // Step 2+: Publish Spark-dependent modules WITH suffix for each non-master Spark version
     // This gives users versioned artifacts like delta-spark_4.0_2.13, delta-spark_4.1_2.13
     val suffixedSparkSteps: Seq[ReleaseStep] = SparkVersionSpec.ALL_SPECS
       .filterNot(_.isMaster) // Exclude master/snapshot versions
-      .flatMap { spec =>
-        Seq[ReleaseStep](
-          { (state: State) =>
-            sys.props("sparkVersion") = spec.fullVersion
-            // Normal publish - suffix is added by default
-            Command.process(s"runOnlyForReleasableSparkModules $task", state)
-          }: ReleaseStep
-        )
+      .map { spec =>
+        { (state: State) =>
+          runSbtSubprocess(
+            state,
+            Seq(s"-DsparkVersion=${spec.fullVersion}",
+                s"runOnlyForReleasableSparkModules $task"),
+            s"Publishing Spark-dependent modules with suffix for Spark ${spec.fullVersion}"
+          )
+        }: ReleaseStep
       }
 
     backwardCompatStep +: suffixedSparkSteps
