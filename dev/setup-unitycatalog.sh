@@ -35,6 +35,6 @@ for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
   fi
 
   echo "Build failed — clearing Coursier cache and retrying in ${RETRY_DELAY}s..."
-  rm -rf "${HOME}/.cache/coursier" "${HOME}/.coursier/cache" "${COURSIER_CACHE:-/dev/null}"
+  rm -rf "${HOME}/.cache/coursier" "${HOME}/.coursier/cache"
   sleep "${RETRY_DELAY}"
 done
