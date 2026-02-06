@@ -57,14 +57,14 @@ public final class SnapshotManagerFactory {
 
     if (catalogTable.isPresent()) {
       Optional<UCTableInfo> ucTableInfo =
-          UCUtils.extractTableInfo(catalogTable.get(), SparkSession.active());
+          UCUtils.extractCatalogManagedTableInfo(catalogTable.get(), SparkSession.active());
       if (ucTableInfo.isPresent()) {
         return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
       }
       // Catalog table without UC metadata falls back to path-based handling.
     }
 
-    // Default: path-based snapshot manager for non-UC tables
+    // Default: path-based snapshot manager for non-catalog-managed tables
     return new PathBasedSnapshotManager(tablePath, kernelEngine);
   }
 
