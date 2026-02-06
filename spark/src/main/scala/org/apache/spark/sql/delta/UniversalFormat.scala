@@ -47,6 +47,8 @@ import org.apache.spark.sql.types.{ByteType, CalendarIntervalType, NullType, Sho
  * Note that UniForm (Iceberg) depends on IcebergCompat, but IcebergCompat does not
  * depend on or require UniForm (Iceberg). It is perfectly valid for a Delta table to have
  * IcebergCompatV1 or V2 enabled but UniForm (Iceberg) not enabled.
+ * Similarly, UniForm (Hudi) depends on HudiCompat, but HudiCompat does not depend on
+ * or require UniForm (Hudi).
  */
 object UniversalFormat extends DeltaLogging {
 
