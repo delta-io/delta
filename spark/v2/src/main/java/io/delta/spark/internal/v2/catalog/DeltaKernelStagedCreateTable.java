@@ -124,11 +124,18 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     this.kernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
     this.dataLayoutSpecOpt = toDataLayoutSpec(this.partitions);
 
-    final Map<String, String> filtered = filterTableProperties(this.allTableProperties);
-    translateUcTableIdProperty(filtered);
+    final Map<String, String> filteredProperties = filterTableProperties(this.allTableProperties);
+
+    // Compatibility: the UC table ID property was renamed from `ucTableId` to
+    // `io.unitycatalog.tableId`. Normalize old -> new, and drop the old key if both exist.
+    String oldUcTableId = filteredProperties.remove(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    if (oldUcTableId != null && !oldUcTableId.isEmpty()) {
+      filteredProperties.putIfAbsent(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, oldUcTableId);
+    }
+
     // Never persist test-only markers.
-    filtered.remove("test.simulateUC");
-    this.filteredTableProperties = filtered;
+    filteredProperties.remove("test.simulateUC");
+    this.filteredTableProperties = filteredProperties;
 
     String ucTableId = filteredTableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId != null) {
@@ -173,8 +180,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
         commitFilesystemCreate();
       }
     } catch (TableAlreadyExistsException tae) {
-      DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(
-          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
+      throw new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident);
     }
 
     if (postCommitHook != null) {
@@ -215,13 +221,11 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   }
 
   private void commitMetadataOnly(CreateTableTransactionBuilder builder) {
-    builder = withLayoutSpecIfPresent(builder);
+    if (dataLayoutSpecOpt.isPresent()) {
+      builder = builder.withDataLayoutSpec(dataLayoutSpecOpt.get());
+    }
     Transaction txn = builder.build(engine);
     txn.commit(engine, CloseableIterable.emptyIterable());
-  }
-
-  private CreateTableTransactionBuilder withLayoutSpecIfPresent(CreateTableTransactionBuilder b) {
-    return dataLayoutSpecOpt.map(b::withDataLayoutSpec).orElse(b);
   }
 
   private static Optional<DataLayoutSpec> toDataLayoutSpec(Transform[] partitions) {
@@ -237,22 +241,18 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
         throw new UnsupportedOperationException(
             "Partitioning by expressions is not supported: " + transform.name());
       }
-      partitionCols.add(toTopLevelPartitionColumn(transform));
+      NamedReference[] refs = transform.references();
+      if (refs == null || refs.length != 1) {
+        throw new IllegalArgumentException("Invalid partition transform: " + transform);
+      }
+      String[] fieldNames = refs[0].fieldNames();
+      if (fieldNames == null || fieldNames.length != 1) {
+        throw new UnsupportedOperationException(
+            "Partition columns must be top-level columns: " + refs[0].describe());
+      }
+      partitionCols.add(new Column(fieldNames[0]));
     }
     return Optional.of(DataLayoutSpec.partitioned(partitionCols));
-  }
-
-  private static Column toTopLevelPartitionColumn(Transform transform) {
-    NamedReference[] refs = transform.references();
-    if (refs == null || refs.length != 1) {
-      throw new IllegalArgumentException("Invalid partition transform: " + transform);
-    }
-    String[] fieldNames = refs[0].fieldNames();
-    if (fieldNames == null || fieldNames.length != 1) {
-      throw new UnsupportedOperationException(
-          "Partition columns must be top-level columns: " + refs[0].describe());
-    }
-    return new Column(fieldNames[0]);
   }
 
   /**
@@ -265,39 +265,23 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     final Map<String, String> result = new HashMap<>();
     for (Map.Entry<String, String> e : allTableProperties.entrySet()) {
       final String key = e.getKey();
-      if (key == null || isSparkInternalTablePropertyKey(key)) {
+      if (key == null) {
         continue;
+      }
+      switch (key) {
+        case TableCatalog.PROP_LOCATION:
+        case TableCatalog.PROP_PROVIDER:
+        case TableCatalog.PROP_COMMENT:
+        case TableCatalog.PROP_OWNER:
+        case TableCatalog.PROP_EXTERNAL:
+        case "path":
+        case "option.path":
+          continue;
+        default:
+          break;
       }
       result.put(key, e.getValue());
     }
     return result;
-  }
-
-  private static boolean isSparkInternalTablePropertyKey(String key) {
-    return TableCatalog.PROP_LOCATION.equals(key)
-        || TableCatalog.PROP_PROVIDER.equals(key)
-        || TableCatalog.PROP_COMMENT.equals(key)
-        || TableCatalog.PROP_OWNER.equals(key)
-        || TableCatalog.PROP_EXTERNAL.equals(key)
-        || "path".equals(key)
-        || "option.path".equals(key);
-  }
-
-  /**
-   * Translate the legacy UC table ID key to the new one, matching V1 behavior.
-   *
-   * <p>If both are set, drop the old one.
-   */
-  private static void translateUcTableIdProperty(Map<String, String> properties) {
-    requireNonNull(properties, "properties is null");
-    String oldValue = properties.remove(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
-    if (oldValue != null && !oldValue.isEmpty()) {
-      properties.putIfAbsent(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, oldValue);
-    }
-  }
-
-  @SuppressWarnings("unchecked")
-  private static <E extends Throwable> void sneakyThrow(Throwable throwable) throws E {
-    throw (E) throwable;
   }
 }
