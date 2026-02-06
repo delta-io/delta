@@ -46,10 +46,12 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
   // Domain metadata will load from checkpoint as well.
   protected def getExpectedCheckpointReadSize(size: Seq[Long]): Seq[Long] = size
 
-  // Domain metadata log replay reads one extra file past the stop version when falling
-  // back to an earlier CRC, because the break condition (version < minLogVersion) requires
-  // reading one batch from the next file to check its version.
-  protected def readsExtraFileOnCrcFallback: Boolean = false
+  // When loading from a CRC at an earlier version, domain metadata and P&M use different
+  // replay strategies. P&M replay checks the CRC eagerly at (crcVersion + 1) and returns
+  // without opening files at or below the CRC version. Domain metadata replay instead scans
+  // all files in reverse and breaks when version < minLogVersion, which requires reading one
+  // batch from the file just below minLogVersion to discover its version.
+  protected def isDomainMetadataReplay: Boolean = false
 
   ///////////
   // Tests //
@@ -99,7 +101,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
         tablePath,
         engine,
         expJsonVersionsRead =
-          if (readsExtraFileOnCrcFallback) Seq(8, 7) else Seq(8),
+          if (isDomainMetadataReplay) Seq(8, 7) else Seq(8),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(7),
@@ -158,7 +160,7 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
         // We find the checksum from crc at version 4, but still read commit files 5 and 6
         // to find the P&M which could have been updated in version 5 and 6.
         expJsonVersionsRead =
-          if (readsExtraFileOnCrcFallback) Seq(6, 5, 4) else Seq(6, 5),
+          if (isDomainMetadataReplay) Seq(6, 5, 4) else Seq(6, 5),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(4),
@@ -192,9 +194,9 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
         engine,
         expJsonVersionsRead = Seq(readVersion),
         expParquetVersionsRead =
-          if (readsExtraFileOnCrcFallback) Seq(checkpointVersion.toLong) else Nil,
+          if (isDomainMetadataReplay) Seq(checkpointVersion.toLong) else Nil,
         expParquetReadSetSizes =
-          if (readsExtraFileOnCrcFallback) Seq(1L) else Nil,
+          if (isDomainMetadataReplay) Seq(1L) else Nil,
         expChecksumReadSet = Seq(checkpointVersion),
         version = readVersion)
     }

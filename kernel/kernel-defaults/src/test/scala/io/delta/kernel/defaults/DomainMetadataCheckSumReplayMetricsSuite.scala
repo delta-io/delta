@@ -83,7 +83,7 @@ trait AbstractDomainMetadataCheckSumReplayMetricsSuite extends ChecksumLogReplay
       expChecksumReadSet = expChecksumReadSet)
   }
 
-  override protected def readsExtraFileOnCrcFallback: Boolean = true
+  override protected def isDomainMetadataReplay: Boolean = true
 
   // Domain metadata requires reading checkpoint files twice:
   // 1. First read happens during loading Protocol & Metadata in snapshot construction.
