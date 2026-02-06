@@ -9,14 +9,14 @@ import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
   This feature is available in Delta Lake 4.0.1 and above.
 </Aside>
 
-[Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#catalog-managed-tables) introduce a `catalogManaged` reader-writer table feature that changes how Delta Lake discovers and accesses tables. With this feature enabled, the catalog becomes the source of truth for commits instead of relying on filesystem PUT-if-absent primitives.
+[Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#catalog-managed-tables) introduce a `catalogManaged` reader-writer table feature that changes how Delta Lake discovers and accesses tables. With this feature enabled, the catalog coordinates commit atomicity, allowing for features like multi-table transactions that are difficult to achieve with filesystem-only primitives.
 
 ## Overview
 
 By default, Delta Lake relies entirely on the filesystem for read-time discovery and write-time commit atomicity. Each table manages its own transaction logs and conflict detection independently. Catalog-managed tables shift this responsibility to the managing catalog, which allows the catalog to orchestrate commits across multiple tables within a single transaction boundary while maintaining Delta Lake's ACID guarantees.
 
 <Aside type="caution" title="Important">
-Filesystem-based access to catalog-managed tables is not supported. Delta clients must discover and access these tables through the managing catalog, not by direct path-based access.
+Filesystem-based access to catalog-managed tables is not supported. Delta clients must discover and access these tables through the managing catalog, not by direct path-based access. This ensures consistency across distributed environments. Users can use any catalog implementation that supports the Delta Catalog-Managed Table protocol.
 </Aside>
 
 ## Requirements
