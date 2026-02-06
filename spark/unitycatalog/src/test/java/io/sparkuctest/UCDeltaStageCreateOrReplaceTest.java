@@ -54,7 +54,7 @@ public class UCDeltaStageCreateOrReplaceTest extends UCDeltaTableIntegrationBase
   }
 
   @Test
-  @Disabled("RTAS tests disabled - needs property sync fix")
+  @Disabled("RTAS tests disabled - Not implement the StagingTableCatalog API yet.")
   public void testRTAS() {
     UnityCatalogInfo uc = unityCatalogInfo();
     String tableName = "rtas_test";
