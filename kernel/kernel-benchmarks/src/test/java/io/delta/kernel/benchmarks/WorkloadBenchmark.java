@@ -34,6 +34,77 @@ import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 import org.openjdk.jmh.runner.options.TimeValue;
 
+/** Configuration for benchmark command line arguments. */
+class BenchmarkConfig {
+  String includeTest = null;
+  int warmupIterations = 3;
+  int measurementIterations = 5;
+  int warmupTimeSeconds = 1;
+  int measurementTimeSeconds = 1;
+  int forks = 1;
+
+  static BenchmarkConfig parseArgs(String[] args) {
+    BenchmarkConfig config = new BenchmarkConfig();
+    for (int i = 0; i < args.length; i++) {
+      String arg = args[i];
+      switch (arg) {
+        case "--include-test":
+          if (i + 1 < args.length) {
+            config.includeTest = args[++i];
+          }
+          break;
+        case "--warmup-iterations":
+          if (i + 1 < args.length) {
+            config.warmupIterations = Integer.parseInt(args[++i]);
+          }
+          break;
+        case "--measurement-iterations":
+          if (i + 1 < args.length) {
+            config.measurementIterations = Integer.parseInt(args[++i]);
+          }
+          break;
+        case "--warmup-time":
+          if (i + 1 < args.length) {
+            config.warmupTimeSeconds = Integer.parseInt(args[++i]);
+          }
+          break;
+        case "--measurement-time":
+          if (i + 1 < args.length) {
+            config.measurementTimeSeconds = Integer.parseInt(args[++i]);
+          }
+          break;
+        case "--forks":
+          if (i + 1 < args.length) {
+            config.forks = Integer.parseInt(args[++i]);
+          }
+          break;
+        case "--help":
+          printHelp();
+          System.exit(0);
+          break;
+        default:
+          System.err.println("Unknown option: " + arg);
+          printHelp();
+          System.exit(1);
+      }
+    }
+    return config;
+  }
+
+  static void printHelp() {
+    System.out.println("Usage: WorkloadBenchmark [options]");
+    System.out.println();
+    System.out.println("Options:");
+    System.out.println("  --include-test <name>          Filter benchmark specs by name (substring match)");
+    System.out.println("  --warmup-iterations <n>        Number of warmup iterations (default: 3)");
+    System.out.println("  --measurement-iterations <n>   Number of measurement iterations (default: 5)");
+    System.out.println("  --warmup-time <seconds>        Warmup time per iteration in seconds (default: 1)");
+    System.out.println("  --measurement-time <seconds>   Measurement time per iteration in seconds (default: 1)");
+    System.out.println("  --forks <n>                    Number of forks (default: 1)");
+    System.out.println("  --help                         Print this help message");
+  }
+}
+
 /**
  * Generic JMH benchmark for all workload types. Automatically loads and runs benchmarks based on
  * JSON workload specifications.
@@ -76,6 +147,9 @@ public class WorkloadBenchmark<T> {
    * can be easily constructed.
    */
   public static void main(String[] args) throws RunnerException, IOException {
+    // Parse command line arguments
+    BenchmarkConfig config = BenchmarkConfig.parseArgs(args);
+
     // Get workload specs from the workloads directory
     List<WorkloadSpec> workloadSpecs = BenchmarkUtils.loadAllWorkloads(WORKLOAD_SPECS_DIR);
     if (workloadSpecs.isEmpty()) {
@@ -83,11 +157,21 @@ public class WorkloadBenchmark<T> {
           "No workloads found. Please add workload specs to the workloads directory.");
     }
 
-    // Parse the Json specs from the json paths
+    // Parse the Json specs from the json paths and filter if needed
     List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
-      // TODO(#5420): In the future, we can filter specific workloads using command line args here.
-      filteredSpecs.addAll(spec.getWorkloadVariants());
+      List<WorkloadSpec> variants = spec.getWorkloadVariants();
+      for (WorkloadSpec variant : variants) {
+        // Filter by name if --include-test is specified (substring match)
+        if (config.includeTest == null || variant.getFullName().contains(config.includeTest)) {
+          filteredSpecs.add(variant);
+        }
+      }
+    }
+
+    if (filteredSpecs.isEmpty()) {
+      throw new RunnerException(
+          "No workloads matched the filter criteria: " + config.includeTest);
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
@@ -102,12 +186,11 @@ public class WorkloadBenchmark<T> {
             .param("workloadSpecJson", workloadSpecsArray)
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
-            // TODO(#5420): Allow configuring forks, warmup, and measurement via command line args.
-            .forks(1)
-            .warmupIterations(3) // Proper warmup for production benchmarks
-            .measurementIterations(5) // Proper measurement iterations for production benchmarks
-            .warmupTime(TimeValue.seconds(1))
-            .measurementTime(TimeValue.seconds(1))
+            .forks(config.forks)
+            .warmupIterations(config.warmupIterations)
+            .measurementIterations(config.measurementIterations)
+            .warmupTime(TimeValue.seconds(config.warmupTimeSeconds))
+            .measurementTime(TimeValue.seconds(config.measurementTimeSeconds))
             .addProfiler(KernelMetricsProfiler.class)
             .build();
 
