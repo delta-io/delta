@@ -807,18 +807,20 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
         domainMetadatas = Seq(initDm),
         expectedValue = Map("init" -> initDm))
 
-      // Commit 3 domain metadata actions using Spark in a single transaction.
+      // Commit 3 domain metadata actions in a single transaction.
       // The commit JSON has 4 rows: commitInfo + 3 DomainMetadata actions.
       // With a JSON reader batch size of 2, this produces 2 batches:
       //   Batch 1: [commitInfo, d1]
       //   Batch 2: [d2, d3]
-      val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
-      deltaLog.startTransaction().commitManuallyWithValidation(
-        SparkDomainMetadata("d1", """{"key":"v1"}""", removed = false),
-        SparkDomainMetadata("d2", """{"key":"v2"}""", removed = false),
-        SparkDomainMetadata("d3", """{"key":"v3"}""", removed = false))
-
-      val dmVersion = deltaLog.update().version
+      val dm1 = new DomainMetadata("d1", """{"key":"v1"}""", false)
+      val dm2 = new DomainMetadata("d2", """{"key":"v2"}""", false)
+      val dm3 = new DomainMetadata("d3", """{"key":"v3"}""", false)
+      val dmTxn = createTxnWithDomainMetadatas(
+        engine,
+        tablePath,
+        Seq(dm1, dm2, dm3),
+        enableDomainMetadata = false)
+      val dmVersion = commitTransaction(dmTxn, engine, emptyIterable()).getVersion
 
       // Delete CRC for the new version to force Case 3 in loadDomainMetadataMap:
       // CRC at the earlier version (with "init" DM) exists, CRC at dmVersion is missing.
@@ -831,10 +833,6 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
       val snapshot = getTableManagerAdapter.getSnapshotAtLatest(
         defaultEngineBatchSize2,
         tablePath)
-
-      val dm1 = new DomainMetadata("d1", """{"key":"v1"}""", false)
-      val dm2 = new DomainMetadata("d2", """{"key":"v2"}""", false)
-      val dm3 = new DomainMetadata("d3", """{"key":"v3"}""", false)
 
       assertDomainMetadata(
         snapshot,
