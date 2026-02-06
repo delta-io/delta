@@ -169,59 +169,95 @@ class DeltaDataFrameHadoopOptionsSuite extends QueryTest
     }
   }
 
+  /**
+   * Clears the DeltaLog cache, runs the operation, then verifies that
+   * the resulting DeltaLog carries the expected fs.* options internally.
+   */
+  private def withOptionsPropagationCheck(path: String, desc: String)(op: => Unit): Unit = {
+    withClue(s"$desc: ") {
+      clearCachedDeltaLogToForceReload()
+      op
+      val deltaLog = DeltaLog.forTable(spark, new Path(path), fakeFileSystemOptions)
+      assert(
+        deltaLog.options("fs.fake.impl") == classOf[FakeFileSystem].getName,
+        "fs.fake.impl was not propagated to DeltaLog.options")
+      assert(
+        deltaLog.newDeltaHadoopConf().get("fs.fake.impl") == classOf[FakeFileSystem].getName,
+        "fs.fake.impl was not propagated to Hadoop configuration")
+    }
+  }
+
   test("all operations should propagate Hadoop file system options") {
-    // This test validates that fs.* options (e.g., catalog-vended credentials) are passed
-    // through all Delta code paths. If any code path fails to propagate options, operations
-    // on the fake:// filesystem will fail since Hadoop won't know how to handle the scheme.
     withTempPaths(/* numPaths = */ 2) { case Seq(inputDir, checkpointDir) =>
       val path = fakeFileSystemPath(inputDir)
 
-      // Test batch write (initial)
+      // Seed the table
       spark.range(2).write.format("delta")
-        .options(fakeFileSystemOptions)
-        .save(path)
-      clearCachedDeltaLogToForceReload()
+        .options(fakeFileSystemOptions).save(path)
 
-      // Test batch read
-      val batchReadCount = spark.read.format("delta")
-        .options(fakeFileSystemOptions)
-        .load(path)
-        .count()
-      assert(batchReadCount == 2, s"Batch read: expected 2 rows but got $batchReadCount")
-      clearCachedDeltaLogToForceReload()
-
-      // Test batch write (append)
-      spark.range(2).write.format("delta")
-        .options(fakeFileSystemOptions)
-        .mode("append")
-        .save(path)
-      clearCachedDeltaLogToForceReload()
-
-      // Verify append worked
-      val afterAppendCount = spark.read.format("delta")
-        .options(fakeFileSystemOptions)
-        .load(path)
-        .count()
-      assert(afterAppendCount == 4, s"After append: expected 4 rows but got $afterAppendCount")
-      clearCachedDeltaLogToForceReload()
-
-      // Test streaming read
-      val query = spark.readStream.format("delta")
-        .options(fakeFileSystemOptions)
-        .load(path)
-        .writeStream
-        .format("memory")
-        .queryName("options_propagation_test")
-        .option("checkpointLocation", checkpointDir.getCanonicalPath)
-        .start()
-
-      try {
-        query.processAllAvailable()
-        val streamingCount = spark.table("options_propagation_test").count()
-        assert(streamingCount == 4, s"Streaming read: expected 4 rows but got $streamingCount")
-      } finally {
-        query.stop()
+      withOptionsPropagationCheck(path, "batch write (overwrite)") {
+        spark.range(3).write.format("delta")
+          .options(fakeFileSystemOptions).mode("overwrite").save(path)
       }
+
+      withOptionsPropagationCheck(path, "batch read") {
+        assert(spark.read.format("delta")
+          .options(fakeFileSystemOptions).load(path).count() == 3)
+      }
+
+      withOptionsPropagationCheck(path, "batch append") {
+        spark.range(1).write.format("delta")
+          .options(fakeFileSystemOptions).mode("append").save(path)
+      }
+
+      withOptionsPropagationCheck(path, "streaming read") {
+        val query = spark.readStream.format("delta")
+          .options(fakeFileSystemOptions)
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("options_propagation_test")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start()
+        try {
+          query.processAllAvailable()
+          assert(spark.table("options_propagation_test").count() == 4)
+        } finally {
+          query.stop()
+        }
+      }
+    }
+  }
+
+  testQuietly("operations without Hadoop options should fail for fake:// filesystem") {
+    withTempPaths(/* numPaths = */ 2) { case Seq(inputDir, checkpointDir) =>
+      val path = fakeFileSystemPath(inputDir)
+
+      // Write data with options so the Delta table physically exists.
+      spark.range(2).write.format("delta")
+        .options(fakeFileSystemOptions).save(path)
+      clearCachedDeltaLogToForceReload()
+
+      // Batch read without options should fail
+      val batchEx = intercept[Exception] {
+        spark.read.format("delta").load(path).foreach(_ => {})
+      }
+      assert(batchEx.getMessage.contains("""No FileSystem for scheme "fake""""))
+
+      clearCachedDeltaLogToForceReload()
+
+      // Streaming read without options should fail
+      val streamEx = intercept[Exception] {
+        spark.readStream.format("delta")
+          .load(path)
+          .writeStream
+          .format("memory")
+          .queryName("options_failure_test")
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .start()
+          .processAllAvailable()
+      }
+      assert(streamEx.getMessage.contains("""No FileSystem for scheme "fake""""))
     }
   }
 
