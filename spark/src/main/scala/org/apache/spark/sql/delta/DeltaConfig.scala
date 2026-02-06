@@ -808,7 +808,7 @@ trait DeltaConfigsBase extends DeltaLogging {
 
   /**
    * Convert the table's metadata into other storage formats after each Delta commit.
-   * Only Iceberg is supported for now
+   * Supports both Iceberg and Hudi formats.
    */
   val UNIVERSAL_FORMAT_ENABLED_FORMATS = buildConfig[Seq[String]](
     "universalFormat.enabledFormats",
