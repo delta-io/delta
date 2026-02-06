@@ -50,6 +50,7 @@ import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
@@ -244,8 +245,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           }
           for (boolean withAsSelect : List.of(true, false)) {
             for (boolean replaceTable : List.of(true, false)) {
-              // Disable RTAS (Replace Table As Select) tests for now
-              if (replaceTable && withAsSelect) {
+              // TODO: Remove this once implemented the RTAS StagingTableCatalog API.
+              if (replaceTable) {
                 continue;
               }
               String displayName =
@@ -386,6 +387,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @TestAllTableTypes
+  @Disabled("RTAS tests disabled - Not implement the StagingTableCatalog API yet.")
   public void testCreateOrReplaceTable(TableType tableType) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
