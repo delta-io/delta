@@ -46,6 +46,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.TableCapability;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.connector.expressions.IdentityTransform;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
@@ -64,8 +65,6 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   /** Engine info marker used for test verification. */
   public static final String ENGINE_INFO = "kernel-spark-dsv2";
 
-  private final SparkSession spark;
-  private final String catalogName;
   private final Identifier ident;
   private final String tablePath;
   private final org.apache.spark.sql.types.StructType sparkSchema;
@@ -92,22 +91,23 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
       Transform[] partitions,
       Map<String, String> allTableProperties,
       Runnable postCommitHook) {
-    this.spark = requireNonNull(spark, "spark is null");
-    this.catalogName = catalogName; // may be null for path-based tables
+    requireNonNull(spark, "spark is null");
     this.ident = requireNonNull(ident, "ident is null");
     this.tablePath = requireNonNull(tablePath, "tablePath is null");
     this.sparkSchema = requireNonNull(sparkSchema, "sparkSchema is null");
-    this.partitions = requireNonNull(partitions, "partitions is null");
-    this.allTableProperties = requireNonNull(allTableProperties, "allTableProperties is null");
+    this.partitions = requireNonNull(partitions, "partitions is null").clone();
+    this.allTableProperties =
+        Collections.unmodifiableMap(
+            new HashMap<>(requireNonNull(allTableProperties, "allTableProperties is null")));
     this.postCommitHook = postCommitHook;
 
     final Configuration hadoopConf = spark.sessionState().newHadoopConf();
     this.engine = DefaultEngine.create(hadoopConf);
 
     this.kernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(sparkSchema);
-    this.dataLayoutSpecOpt = toDataLayoutSpec(partitions);
+    this.dataLayoutSpecOpt = toDataLayoutSpec(this.partitions);
 
-    final Map<String, String> filtered = filterTableProperties(allTableProperties);
+    final Map<String, String> filtered = filterTableProperties(this.allTableProperties);
     translateUcTableIdProperty(filtered);
     // Never persist test-only markers.
     filtered.remove("test.simulateUC");
@@ -134,7 +134,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
   @Override
   public Transform[] partitioning() {
-    return partitions;
+    return partitions.clone();
   }
 
   @Override
@@ -153,15 +153,22 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
       if (ucTableIdOpt.isPresent()) {
         commitUCManagedCreate();
       } else {
-        commitFileSystemManagedCreate();
+        commitFilesystemCreate();
       }
     } catch (TableAlreadyExistsException tae) {
-      DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(
-          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
+      org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException sparkException =
+          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident);
+      sparkException.initCause(tae);
+      DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(sparkException);
     }
 
     if (postCommitHook != null) {
-      postCommitHook.run();
+      try {
+        postCommitHook.run();
+      } catch (RuntimeException e) {
+        throw new RuntimeException(
+            "Kernel CREATE TABLE commit succeeded but post-commit hook failed for " + ident, e);
+      }
     }
   }
 
@@ -170,13 +177,11 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     // No-op for metadata-only create. Future work: cleanup staging artifacts for CTAS/RTAS.
   }
 
-  private void commitFileSystemManagedCreate() {
+  private void commitFilesystemCreate() {
     CreateTableTransactionBuilder builder =
         TableManager.buildCreateTableTransaction(tablePath, kernelSchema, ENGINE_INFO)
             .withTableProperties(filteredTableProperties);
-    builder = withLayoutSpecIfPresent(builder);
-    Transaction txn = builder.build(engine);
-    txn.commit(engine, CloseableIterable.emptyIterable());
+    commitMetadataOnly(builder);
   }
 
   private void commitUCManagedCreate() {
@@ -191,12 +196,18 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
           ucCatalogClient
               .buildCreateTableTransaction(ucTableIdOpt.get(), tablePath, kernelSchema, ENGINE_INFO)
               .withTableProperties(filteredTableProperties);
-      builder = withLayoutSpecIfPresent(builder);
-      Transaction txn = builder.build(engine);
-      txn.commit(engine, CloseableIterable.emptyIterable());
+      // Note: per UCCatalogManagedClient contract, a UC Tables API call may be required after
+      // 000.json is committed to inform UC of successful create.
+      commitMetadataOnly(builder);
     } catch (java.io.IOException ioe) {
       throw new RuntimeException("Failed to close UC client after create table", ioe);
     }
+  }
+
+  private void commitMetadataOnly(CreateTableTransactionBuilder builder) {
+    builder = withLayoutSpecIfPresent(builder);
+    Transaction txn = builder.build(engine);
+    txn.commit(engine, CloseableIterable.emptyIterable());
   }
 
   private CreateTableTransactionBuilder withLayoutSpecIfPresent(CreateTableTransactionBuilder b) {
@@ -204,29 +215,34 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   }
 
   private static Optional<DataLayoutSpec> toDataLayoutSpec(Transform[] partitions) {
+    requireNonNull(partitions, "partitions is null");
     if (partitions.length == 0) {
       return Optional.empty();
     }
 
-    final List<Column> partitionCols = new ArrayList<>();
+    final List<Column> partitionCols = new ArrayList<>(partitions.length);
     for (Transform transform : partitions) {
       // Only support identity partitioning transforms (PARTITIONED BY col1, col2, ...).
-      if (!"identity".equalsIgnoreCase(transform.name())) {
+      if (!(transform instanceof IdentityTransform)) {
         throw new UnsupportedOperationException(
             "Partitioning by expressions is not supported: " + transform.name());
       }
-      NamedReference[] refs = transform.references();
-      if (refs == null || refs.length != 1) {
-        throw new IllegalArgumentException("Invalid partition transform: " + transform);
-      }
-      String[] fieldNames = refs[0].fieldNames();
-      if (fieldNames == null || fieldNames.length != 1) {
-        throw new UnsupportedOperationException(
-            "Partition columns must be top-level columns: " + refs[0].describe());
-      }
-      partitionCols.add(new Column(fieldNames[0]));
+      partitionCols.add(toTopLevelPartitionColumn(transform));
     }
     return Optional.of(DataLayoutSpec.partitioned(partitionCols));
+  }
+
+  private static Column toTopLevelPartitionColumn(Transform transform) {
+    NamedReference[] refs = transform.references();
+    if (refs == null || refs.length != 1) {
+      throw new IllegalArgumentException("Invalid partition transform: " + transform);
+    }
+    String[] fieldNames = refs[0].fieldNames();
+    if (fieldNames == null || fieldNames.length != 1) {
+      throw new UnsupportedOperationException(
+          "Partition columns must be top-level columns: " + refs[0].describe());
+    }
+    return new Column(fieldNames[0]);
   }
 
   /**
@@ -235,24 +251,26 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
    * <p>Matches the filtering done by V1 {@code AbstractDeltaCatalog#createDeltaTable}.
    */
   private static Map<String, String> filterTableProperties(Map<String, String> allTableProperties) {
+    requireNonNull(allTableProperties, "allTableProperties is null");
     final Map<String, String> result = new HashMap<>();
     for (Map.Entry<String, String> e : allTableProperties.entrySet()) {
       final String key = e.getKey();
-      if (key == null) {
-        continue;
-      }
-      if (TableCatalog.PROP_LOCATION.equals(key)
-          || TableCatalog.PROP_PROVIDER.equals(key)
-          || TableCatalog.PROP_COMMENT.equals(key)
-          || TableCatalog.PROP_OWNER.equals(key)
-          || TableCatalog.PROP_EXTERNAL.equals(key)
-          || "path".equals(key)
-          || "option.path".equals(key)) {
+      if (key == null || isSparkInternalTablePropertyKey(key)) {
         continue;
       }
       result.put(key, e.getValue());
     }
     return result;
+  }
+
+  private static boolean isSparkInternalTablePropertyKey(String key) {
+    return TableCatalog.PROP_LOCATION.equals(key)
+        || TableCatalog.PROP_PROVIDER.equals(key)
+        || TableCatalog.PROP_COMMENT.equals(key)
+        || TableCatalog.PROP_OWNER.equals(key)
+        || TableCatalog.PROP_EXTERNAL.equals(key)
+        || "path".equals(key)
+        || "option.path".equals(key);
   }
 
   /**
@@ -261,6 +279,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
    * <p>If both are set, drop the old one.
    */
   private static void translateUcTableIdProperty(Map<String, String> properties) {
+    requireNonNull(properties, "properties is null");
     String oldValue = properties.remove(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
     if (oldValue != null && !oldValue.isEmpty()) {
       properties.putIfAbsent(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, oldValue);
@@ -269,6 +288,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
   private static UcConfig resolveUcConfig(
       SparkSession spark, String catalogName, String tablePath) {
+    requireNonNull(spark, "spark is null");
     if (catalogName == null || catalogName.isEmpty()) {
       throw new IllegalArgumentException(
           "Cannot create UC-managed table at "
@@ -302,7 +322,9 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
     private UcConfig(String ucUri, java.util.Map<String, String> authConfig) {
       this.ucUri = requireNonNull(ucUri, "ucUri is null");
-      this.authConfig = requireNonNull(authConfig, "authConfig is null");
+      this.authConfig =
+          Collections.unmodifiableMap(
+              new HashMap<>(requireNonNull(authConfig, "authConfig is null")));
     }
   }
 
