@@ -202,7 +202,8 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   private void commitKernelTransaction(CloseableIterable<Row> dataActions) {
     try {
       // Choose commit coordination at execution time (filesystem vs UC/CCv2) based on plan-time UC
-      // resolution. This keeps the commit path linear: pick builder -> apply plan -> commit actions.
+      // resolution. This keeps the commit path linear: pick builder -> apply plan -> commit
+      // actions.
       if (ucTableInfoOpt.isPresent()) {
         commitUCManagedCreate(ucTableInfoOpt.get(), dataActions);
       } else {
@@ -253,14 +254,15 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
    * <p>The provided {@code builder} comes from either:
    *
    * <ul>
-   *   <li>{@link TableManager#buildCreateTableTransaction}: a filesystem-backed builder that uses the
-   *       default Kernel commit coordination for the table path, or
+   *   <li>{@link TableManager#buildCreateTableTransaction}: a filesystem-backed builder that uses
+   *       the default Kernel commit coordination for the table path, or
    *   <li>{@link UCCatalogManagedClient#buildCreateTableTransaction}: a UC-managed builder whose
    *       commit path is wired to Unity Catalog's Catalog Committer (CCv2).
    * </ul>
    *
-   * <p>Shared commit logic: applies planned properties/layout, builds the Kernel {@link Transaction},
-   * and commits {@code dataActions}. The builder determines how/where the commit occurs.
+   * <p>Shared commit logic: applies planned properties/layout, builds the Kernel {@link
+   * Transaction}, and commits {@code dataActions}. The builder determines how/where the commit
+   * occurs.
    */
   private void commit(CreateTableTransactionBuilder builder, CloseableIterable<Row> dataActions) {
     if (!filteredTableProperties.isEmpty()) {
