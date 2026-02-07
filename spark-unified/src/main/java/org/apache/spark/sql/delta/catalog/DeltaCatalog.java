@@ -173,8 +173,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
 
     // Catalog-based identifier: commit metadata via Kernel, then register in Spark catalog.
     scala.Tuple2<CatalogTable, String> spec =
-        V2CreateTableHelper$.MODULE$.buildCatalogTableSpec(
-            spark(), ident, schema, partitions, properties);
+        V2CreateTableHelper.buildCatalogTableSpec(spark(), ident, schema, partitions, properties);
     CatalogTable tableDesc = spec._1();
     String tablePath = spec._2();
 
@@ -186,7 +185,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
             schema,
             partitions,
             properties,
-            () -> V2CreateTableHelper$.MODULE$.registerTable(spark(), tableDesc))
+            () -> V2CreateTableHelper.registerTable(spark(), tableDesc))
         .commitStagedChanges();
 
     return loadTable(ident);
