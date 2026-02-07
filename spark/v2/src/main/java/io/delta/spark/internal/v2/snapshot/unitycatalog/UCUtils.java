@@ -118,7 +118,6 @@ public final class UCUtils {
     Map<String, String> storageProperties =
         scala.jdk.javaapi.CollectionConverters.asJava(catalogTable.storage().properties());
 
-    // TODO: UC constants should be consolidated in a shared location (future PR)
     String ucTableId = storageProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId == null || ucTableId.isEmpty()) {
       throw new IllegalArgumentException(
