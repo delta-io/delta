@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, OptimisticTransaction, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, ColumnMappingTableFeature, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames.{BackfilledDeltaFile, CompactedDeltaFile, DeltaFile, UnbackfilledDeltaFile}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, GetCommitsResponse => JGetCommitsResponse, TableIdentifier}
+import io.delta.storage.commit.{CommitCoordinatorClient, TableIdentifier, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.AbstractMetadata
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 import org.apache.hadoop.conf.Configuration
@@ -174,6 +174,125 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case _ =>
         None
     }
+  }
+
+  /**
+   * The "Quality of Life" table features that will be enabled automatically
+   * when creating CatalogOwned tables.
+   * Note that we also include the properties (i.e., DeltaConfig and target value)
+   * used to determine whether the table features and the corresponding
+   * properties/metadata have been enabled or not.
+   */
+  val QOL_TABLE_FEATURES_AND_PROPERTIES: Seq[(TableFeature, DeltaConfig[_], String)] =
+    qolTableFeatureAndProperties
+
+  def qolTableFeatureAndProperties
+      : Seq[(TableFeature, DeltaConfig[_], String)] =
+    Seq(
+      (DeletionVectorsTableFeature, DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION, "true"),
+      (V2CheckpointTableFeature, DeltaConfigs.CHECKPOINT_POLICY, CheckpointPolicy.V2.name),
+      // RowTracking is enabled by default.
+      // ColumnMapping is excluded by default (see [[isExcludedFeature]]).
+      (RowTrackingFeature, DeltaConfigs.ROW_TRACKING_ENABLED, "true"),
+      (ColumnMappingTableFeature, DeltaConfigs.COLUMN_MAPPING_MODE,
+        NameMapping.name)
+    )
+
+  /**
+   * Return true if we should enable CatalogOwned either via default spark
+   * session configuration during creating a new table,
+   * or via the explicit table property overrides.
+   */
+  def shouldEnableCatalogOwned(
+      spark: SparkSession,
+      propertyOverrides: Map[String, String],
+      isCreatingNew: Boolean = true): Boolean = {
+    // Check explicit property overrides when creating a new or upgrading an existing table.
+    val isExplicitlyEnablingCO = TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
+      configs = propertyOverrides).contains(CatalogOwnedTableFeature)
+
+    // Check default spark session configuration only when creating a new table.
+    val isEnablingCOByDefault =
+      isCreatingNew && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+
+    isExplicitlyEnablingCO || isEnablingCOByDefault
+  }
+
+  /**
+   * Checks if a QoL feature is excluded.
+   * Column mapping is excluded by default as it can have performance implications
+   * and changes column evolution behavior.
+   *
+   * Note: Visible only for testing.
+   */
+  private[delta] def isExcludedFeature(feature: TableFeature): Boolean = {
+    feature match {
+      // Column mapping is excluded by default
+      case ColumnMappingTableFeature => true
+      case _ => false
+    }
+  }
+
+  /**
+   * Checks if a configuration is already set in metadata or Spark defaults.
+   * Ensures we don't override user preferences.
+   */
+  private def isAlreadyConfigured(
+      config: DeltaConfig[_],
+      configuration: Map[String, String],
+      spark: SparkSession): Boolean = {
+    configuration.contains(config.key) ||
+      spark.sessionState.conf.contains(config.defaultTablePropertyKey)
+  }
+
+  /**
+   * Determines which QoL configurations should be added.
+   * See [[shouldAddQoLFeature]] for the evaluation logic.
+   */
+  private def getQoLConfigsToAdd(
+      spark: SparkSession,
+      configuration: Map[String, String]
+      ): Map[String, String] = {
+    QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+      case (feature, config, targetValue) if
+          shouldAddQoLFeature(feature, config, spark, configuration) =>
+        config.key -> targetValue
+    }.toMap
+  }
+
+  /**
+   * Evaluates whether a QoL feature should be enabled.
+   * Note: Visible only for testing.
+   */
+  private[delta] def shouldAddQoLFeature(
+      feature: TableFeature,
+      config: DeltaConfig[_],
+      spark: SparkSession,
+      configuration: Map[String, String]
+      ): Boolean = {
+    !isAlreadyConfigured(config, configuration, spark) &&
+      !isExcludedFeature(feature)
+  }
+
+  /**
+   * Updates table metadata with appropriate QoL features for CatalogManaged tables.
+   *
+   * Main entry point for QoL feature enablement during table creation.
+   * See [[getQoLConfigsToAdd]] for the logic that determines which features are added.
+   *
+   * @param spark SparkSession for configuration
+   * @param metadata Table metadata to update
+   * @return Updated metadata with QoL features
+   */
+  def updateMetadataForQoLFeatures(
+      spark: SparkSession,
+      metadata: Metadata
+      ): Metadata = {
+    metadata.copy(
+      configuration = metadata.configuration ++
+        getQoLConfigsToAdd(spark, metadata.configuration
+            )
+    )
   }
 
   val ICT_TABLE_PROPERTY_CONFS = Seq(

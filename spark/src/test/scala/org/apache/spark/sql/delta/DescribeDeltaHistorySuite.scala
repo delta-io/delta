@@ -179,7 +179,11 @@ trait DescribeDeltaHistorySuiteBase
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
     val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
-      Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
+      Map(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false",
+        DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
+        DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name
+      )
     } else {
       Map.empty[String, String]
     }
