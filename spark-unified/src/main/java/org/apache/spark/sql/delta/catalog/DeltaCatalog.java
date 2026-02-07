@@ -17,14 +17,20 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils$;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -128,6 +134,94 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       return v2ConnectorSupplier.get();
     } else {
       return v1ConnectorSupplier.get();
+    }
+  }
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    if (!isDeltaProvider(properties) || !isStrictMode()) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+    StagedTable staged = stageCreate(ident, schema, partitions, properties);
+    staged.commitStagedChanges();
+    return loadTable(ident);
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    if (!isDeltaProvider(properties) || !isStrictMode()) {
+      return super.stageCreate(ident, schema, partitions, properties);
+    }
+    Map<String, String> safeProps = properties == null ? new HashMap<>() : new HashMap<>(properties);
+    translateUcTableIdProperty(safeProps);
+    if (CatalogTableUtils.isUnityCatalogManagedTableFromProperties(safeProps)) {
+      String ucTableId = safeProps.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+      if (ucTableId == null || ucTableId.isEmpty()) {
+        throw new IllegalArgumentException("UC table id is required for UC-managed create");
+      }
+      String stagingPath = getUcStagingPath(safeProps);
+      if (stagingPath == null || stagingPath.isEmpty()) {
+        throw new IllegalArgumentException("UC staging path is required for UC-managed create");
+      }
+      ResolvedCreateRequest request =
+          ResolvedCreateRequest.forUCManagedCreate(
+              ident,
+              schema,
+              partitions,
+              safeProps,
+              ucTableId,
+              stagingPath);
+      return new KernelStagedDeltaTable(spark(), ident, request);
+    }
+    if (isPathIdentifier(ident)) {
+      ResolvedCreateRequest request =
+          ResolvedCreateRequest.forPathCreate(ident, schema, partitions, safeProps);
+      return new KernelStagedDeltaTable(spark(), ident, request);
+    }
+    return super.stageCreate(ident, schema, partitions, properties);
+  }
+
+  private boolean isStrictMode() {
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
+    return connectorMode.shouldCatalogReturnV2Tables();
+  }
+
+  private boolean isDeltaProvider(Map<String, String> properties) {
+    String provider = getProvider(properties);
+    return DeltaSourceUtils$.MODULE$.isDeltaDataSourceName(provider);
+  }
+
+  private String getProvider(Map<String, String> properties) {
+    if (properties != null) {
+      String provider = properties.get(TableCatalog.PROP_PROVIDER);
+      if (provider != null) {
+        return provider;
+      }
+    }
+    return spark().sessionState().conf()
+        .getConfString("spark.sql.sources.default", "parquet");
+  }
+
+  private static String getUcStagingPath(Map<String, String> properties) {
+    String location = properties.get(TableCatalog.PROP_LOCATION);
+    if (location != null) {
+      return location;
+    }
+    return properties.get("location");
+  }
+
+  private static void translateUcTableIdProperty(Map<String, String> props) {
+    String oldValue = props.remove(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    if (oldValue != null && !oldValue.isEmpty()) {
+      props.putIfAbsent(UCCommitCoordinatorClient.UC_TABLE_ID_KEY, oldValue);
     }
   }
 }
