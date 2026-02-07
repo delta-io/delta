@@ -65,6 +65,7 @@ val flinkVersion = "2.0.1"
 
 // Define the ecosystem support flags.
 val supportIceberg = CrossSparkVersions.getSparkVersionSpec().supportIceberg
+val supportServerSidePlanning = CrossSparkVersions.getSparkVersionSpec().supportServerSidePlanning
 val supportHudi = CrossSparkVersions.getSparkVersionSpec().supportHudi
 
 // For Java 11 use the following on command line
@@ -1150,16 +1151,39 @@ lazy val iceberg = (project in file("iceberg"))
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
           "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided"
         )
+      } else if (supportServerSidePlanning) {
+        // Minimal dependencies for serverSidePlanning only (uses shaded iceberg-core, no spark-runtime needed)
+        Seq(
+          "org.scala-lang.modules" %% "scala-collection-compat" % "2.1.1",
+          "com.github.ben-manes.caffeine" % "caffeine" % "2.9.3",  // Runtime dep for shaded iceberg-core
+          "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4",
+          "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1"
+        )
       } else {
         Seq.empty
       }
     },
-    // Skip compilation and publishing when supportIceberg is false
-    Compile / skip := !supportIceberg,
+    // Filter sources when only building serverSidePlanning
+    Compile / sources := {
+      val allSources = (Compile / sources).value
+      if (supportIceberg) {
+        // Include all sources
+        allSources
+      } else if (supportServerSidePlanning) {
+        // Only include serverSidePlanning sources
+        allSources.filter(_.getPath.contains("serverSidePlanning"))
+      } else {
+        // No sources
+        Seq.empty
+      }
+    },
+    // Skip compilation and publishing when neither flag is enabled
+    Compile / skip := !supportIceberg && !supportServerSidePlanning,
+    // Skip tests when only serverSidePlanning is enabled (tests need iceberg-spark-runtime)
     Test / skip := !supportIceberg,
-    publish / skip := !supportIceberg,
-    publishLocal / skip := !supportIceberg,
-    publishM2 / skip := !supportIceberg,
+    publish / skip := !supportIceberg && !supportServerSidePlanning,
+    publishLocal / skip := !supportIceberg && !supportServerSidePlanning,
+    publishM2 / skip := !supportIceberg && !supportServerSidePlanning,
     Compile / unmanagedJars += (icebergShaded / assembly).value,
     // Generate the assembly JAR as the package JAR
     Compile / packageBin := assembly.value,
@@ -1495,6 +1519,9 @@ lazy val sparkGroup = {
 lazy val icebergGroup = {
   val allProjects = if (supportIceberg) {
     Seq(iceberg, testDeltaIcebergJar)
+  } else if (supportServerSidePlanning) {
+    // Include iceberg project for serverSidePlanning only (no testDeltaIcebergJar needed)
+    Seq(iceberg)
   } else {
     Seq.empty
   }
