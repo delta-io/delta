@@ -19,6 +19,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
@@ -54,12 +55,17 @@ import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
 
 /**
- * Kernel-backed staged table for metadata-only CREATE TABLE.
+ * Kernel-backed staged table used to implement Delta DDL operations in the Spark DSv2 connector.
  *
- * <p>This class is scaffolding for future CTAS/RTAS support: it captures the planned table schema,
- * layout, and table properties, and can later be extended to implement {@code SupportsWrite}.
+ * <p>This class is meant to be the single place where Spark DSv2 DDL entrypoints (for example,
+ * {@code CREATE TABLE}, {@code REPLACE TABLE}, CTAS/RTAS) are translated into Delta Kernel
+ * transactions. Higher-level catalog code resolves Spark inputs (identifier, location, schema,
+ * partitioning, and properties), then delegates to this staged table to plan and commit the
+ * corresponding Kernel operation.
  *
- * <p>Today, {@link #commitStagedChanges()} commits only protocol + metadata (no data actions).
+ * <p>The current implementation only executes the metadata-only {@code CREATE TABLE} transaction
+ * (protocol + metadata, no data actions), but the structure is intended to grow into the shared
+ * commit path for CTAS/RTAS by adding {@code SupportsWrite}.
  */
 public final class DeltaKernelStagedCreateTable implements StagedTable {
 
@@ -82,24 +88,15 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   private final Optional<UCTableInfo> ucTableInfoOpt;
 
   /**
-   * Create a Kernel-backed staged table for metadata-only {@code CREATE TABLE}.
+   * Create a Kernel-backed staged table for a Delta DDL operation.
    *
-   * <p>The constructor performs the "planning" step and caches the resolved state needed for the
-   * eventual commit:
+   * <p>The constructor performs the <em>planning</em> step: it converts Spark inputs into a
+   * Kernel-ready plan and caches the resolved state needed for the eventual commit (engine, schema,
+   * layout, filtered properties, and optional UC table info).
    *
-   * <ul>
-   *   <li>Initializes a Kernel {@link Engine} using the session Hadoop configuration
-   *   <li>Converts Spark schema to Kernel schema
-   *   <li>Converts Spark partition transforms to a Kernel {@link DataLayoutSpec} (identity-only)
-   *   <li>Filters Spark catalog properties down to user/Delta properties (V1-compatible), and
-   *       translates legacy UC table id key to the current key
-   *   <li>Detects UC-managed tables from properties and, when present, resolves {@link UCTableInfo}
-   *       (UC URI + auth config) via {@link UCUtils}
-   * </ul>
-   *
-   * <p>{@link #commitStagedChanges()} then uses this planned state to commit protocol+metadata to
-   * the Delta log (no data actions). For catalog-based tables, callers may provide {@code
-   * postCommitHook} to register the table in Spark's catalog after a successful Kernel commit.
+   * <p>{@link #commitStagedChanges()} then uses this planned state to execute the Kernel
+   * transaction. For catalog-based tables, callers may provide {@code postCommitHook} to register
+   * the table in Spark's catalog after a successful commit.
    */
   public DeltaKernelStagedCreateTable(
       SparkSession spark,
@@ -173,11 +170,15 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
   @Override
   public void commitStagedChanges() {
+    commitKernelTransaction(CloseableIterable.emptyIterable());
+  }
+
+  private void commitKernelTransaction(CloseableIterable<Row> dataActions) {
     try {
       if (ucTableInfoOpt.isPresent()) {
-        commitUCManagedCreate(ucTableInfoOpt.get());
+        commitUCManagedCreate(ucTableInfoOpt.get(), dataActions);
       } else {
-        commitFilesystemCreate();
+        commitFilesystemCreate(dataActions);
       }
     } catch (TableAlreadyExistsException tae) {
       // Spark's TableAlreadyExistsException is checked in Java, but StagedTable doesn't declare
@@ -195,14 +196,13 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     // No-op for metadata-only create. Future work: cleanup staging artifacts for CTAS/RTAS.
   }
 
-  private void commitFilesystemCreate() {
+  private void commitFilesystemCreate(CloseableIterable<Row> dataActions) {
     CreateTableTransactionBuilder builder =
-        TableManager.buildCreateTableTransaction(tablePath, kernelSchema, ENGINE_INFO)
-            .withTableProperties(filteredTableProperties);
-    commitMetadataOnly(builder);
+        TableManager.buildCreateTableTransaction(tablePath, kernelSchema, ENGINE_INFO);
+    commit(builder, dataActions);
   }
 
-  private void commitUCManagedCreate(UCTableInfo tableInfo) {
+  private void commitUCManagedCreate(UCTableInfo tableInfo, CloseableIterable<Row> dataActions) {
     final TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
 
     // The committer created by UCCatalogManagedClient holds onto the UCClient, so keep it open for
@@ -210,24 +210,25 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     try (UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tokenProvider)) {
       UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
       CreateTableTransactionBuilder builder =
-          ucCatalogClient
-              .buildCreateTableTransaction(
-                  tableInfo.getTableId(), tableInfo.getTablePath(), kernelSchema, ENGINE_INFO)
-              .withTableProperties(filteredTableProperties);
+          ucCatalogClient.buildCreateTableTransaction(
+              tableInfo.getTableId(), tableInfo.getTablePath(), kernelSchema, ENGINE_INFO);
       // Note: per UCCatalogManagedClient contract, a UC Tables API call may be required after
       // 000.json is committed to inform UC of successful create.
-      commitMetadataOnly(builder);
+      commit(builder, dataActions);
     } catch (java.io.IOException ioe) {
       throw new UncheckedIOException(ioe);
     }
   }
 
-  private void commitMetadataOnly(CreateTableTransactionBuilder builder) {
+  private void commit(CreateTableTransactionBuilder builder, CloseableIterable<Row> dataActions) {
+    if (!filteredTableProperties.isEmpty()) {
+      builder = builder.withTableProperties(filteredTableProperties);
+    }
     if (dataLayoutSpecOpt.isPresent()) {
       builder = builder.withDataLayoutSpec(dataLayoutSpecOpt.get());
     }
     Transaction txn = builder.build(engine);
-    txn.commit(engine, CloseableIterable.emptyIterable());
+    txn.commit(engine, dataActions);
   }
 
   private static Optional<DataLayoutSpec> toDataLayoutSpec(Transform[] partitions) {
