@@ -69,6 +69,10 @@ object V2CreateTableHelper {
       ident.namespace().lastOption.getOrElse(spark.sessionState.catalog.getCurrentDatabase)
     val tableIdent = TableIdentifier(ident.name(), Some(db))
 
+    if (spark.sessionState.catalog.tableExists(tableIdent)) {
+      throw new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident)
+    }
+
     // For managed tables without explicit LOCATION, Spark uses the warehouse default.
     val locUri =
       locationOpt

@@ -31,40 +31,11 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
+ * Delta Lake catalog plugin for Spark's DataSource V2 catalog API.
  *
- * To use this catalog, configure it in your Spark session:
- * <pre>{@code
- * // Scala example
- * val spark = SparkSession
- *   .builder()
- *   .appName("...")
- *   .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
- *   .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
- *   .getOrCreate()
- *
- *
- * // Python example
- * spark = SparkSession \
- *   .builder \
- *   .appName("...") \
- *   .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
- *   .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
- *   .getOrCreate()
- * }</pre>
- *
- * <h2>Architecture and Delegation Logic</h2>
- *
- * This class sits in the delta-spark (unified) module and provides a single entry point for
- * Delta Lake catalog operations.
- *
- * <p>The unified module can access both implementations:</p>
- * <ul>
- *   <li>V1 connector: {@link DeltaTableV2} - Legacy connector using DeltaLog, full read/write support</li>
- *   <li>V2 connector: {@link SparkTable} - sparkV2 connector, read-only support</li>
- * </ul>
- *
- * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
+ * <p>Routing is controlled by {@link DeltaV2Mode}: in STRICT mode this catalog returns V2
+ * {@link SparkTable} instances and routes supported DDLs through the Kernel-backed implementation;
+ * otherwise it falls back to the V1 implementation.
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
@@ -157,12 +128,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       return super.createTable(ident, schema, partitions, properties);
     }
 
-    // Align with Spark semantics: CREATE TABLE should fail if the table already exists.
-    if (tableExists(ident)) {
-      DeltaCatalog.<RuntimeException>sneakyThrow(
-          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
-    }
-
     final String catalogName = name();
 
     if (isPathIdentifier(ident)) {
@@ -199,10 +164,5 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         .commitStagedChanges();
 
     return loadTable(ident);
-  }
-
-  @SuppressWarnings("unchecked")
-  private static <E extends Throwable> void sneakyThrow(Throwable throwable) throws E {
-    throw (E) throwable;
   }
 }
