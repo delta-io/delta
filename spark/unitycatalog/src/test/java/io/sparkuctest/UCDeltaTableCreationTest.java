@@ -551,6 +551,24 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  @Test
+  public void testKernelStagedCreateManagedTable() throws Exception {
+    String confKey = "spark.databricks.delta.v2.enableMode";
+    String originalMode = spark().conf().get(confKey, "AUTO");
+    try {
+      spark().conf().set(confKey, "STRICT");
+      withNewTable(
+          "kernel_staged_managed",
+          "id INT, data STRING",
+          TableType.MANAGED,
+          tableName ->
+              assertUCTableInfo(
+                  TableType.MANAGED, tableName, List.of("id", "data"), Map.of(), null, null));
+    } finally {
+      spark().conf().set(confKey, originalMode);
+    }
+  }
+
   private void assertUCTableInfo(
       TableType tableType,
       String fullTableName,
