@@ -385,33 +385,57 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties: util.Map[String, String]) : Table =
     recordFrameProfile("DeltaCatalog", "createTable") {
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
-        // TODO: we should extract write options from table properties for all the cases. We
-        //       can remove the UC check when we have confidence.
-        val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
-        val (props, writeOptions) = if (isUC) {
-          val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
-          expandTableProps(props, writeOptions, spark.sessionState.conf)
-          props.remove("test.simulateUC")
-          translateUCTableIdProperty(props)
-          (props, writeOptions)
-        } else {
-          (properties, Map.empty[String, String])
-        }
-
-        createDeltaTable(
-          ident,
-          schema,
-          partitions,
-          props,
-          writeOptions,
-          sourceQuery = None,
-          TableCreationModes.Create
-        )
+        createDeltaTableRouter(ident, schema, partitions, properties)
       } else {
         createCatalogTable(ident, schema, partitions, properties
         )
       }
     }
+
+  /**
+   * Router hook for Delta CREATE TABLE implementations.
+   *
+   * <p>Default behavior routes to the existing V1 implementation.
+   */
+  protected def createDeltaTableRouter(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): Table = {
+    createDeltaTableUsingV1(ident, schema, partitions, properties)
+  }
+
+  /**
+   * V1 CREATE TABLE implementation with UC property handling and write option extraction.
+   */
+  protected def createDeltaTableUsingV1(
+      ident: Identifier,
+      schema: StructType,
+      partitions: Array[Transform],
+      properties: util.Map[String, String]): Table = {
+    // TODO: we should extract write options from table properties for all the cases. We
+    //       can remove the UC check when we have confidence.
+    val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
+    val (props, writeOptions) = if (isUC) {
+      val (props, writeOptions) = getTablePropsAndWriteOptions(properties)
+      expandTableProps(props, writeOptions, spark.sessionState.conf)
+      props.remove("test.simulateUC")
+      translateUCTableIdProperty(props)
+      (props, writeOptions)
+    } else {
+      (properties, Map.empty[String, String])
+    }
+
+    createDeltaTable(
+      ident,
+      schema,
+      partitions,
+      props,
+      writeOptions,
+      sourceQuery = None,
+      TableCreationModes.Create
+    )
+  }
 
   override def stageReplace(
       ident: Identifier,
