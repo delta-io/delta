@@ -239,6 +239,25 @@ case class WriteIntoDelta(
       }
     }
 
+    if (mode == SaveMode.Overwrite && options.validateWhere.nonEmpty) {
+      throw DeltaErrors.validateWhereException(
+        DeltaOptions.VALIDATE_WHERE_OPTION,
+        s"cannot be used with `overwrite` mode. Use '${DeltaOptions.REPLACE_WHERE_OPTION}' instead"
+      )
+    }
+
+    // validateWhere is a validation-only predicate. If provided, we enforce it as a write-time
+    // invariant for any write mode (including append), so the write remains atomic
+    // (fail => no commit) and efficient (no second pass).
+    val validateConstraints = options.validateWhere.toSeq.flatMap { validate =>
+      val parsed = parsePredicates(sparkSession, validate)
+      // If validateWhere is set, enforce it via constraints during write.
+      parsed.map { e =>
+        val arbitraryExpression = ArbitraryExpression(e)
+        Check(arbitraryExpression.name, arbitraryExpression.expression)
+      }
+    }
+
     if (txn.readVersion < 0) {
       // Initialize the log path
       deltaLog.createLogDirectoriesIfNotExists()
@@ -247,7 +266,7 @@ case class WriteIntoDelta(
     val (newFiles, addFiles, deletedFiles) = (mode, replaceWhere) match {
       case (SaveMode.Overwrite, Some(predicates)) if !replaceWhereOnDataColsEnabled =>
         // fall back to match on partition cols only when replaceArbitrary is disabled.
-        val newFiles = txn.writeFiles(data, Some(options))
+        val newFiles = txn.writeFiles(data, Some(options), validateConstraints)
         val addFiles = newFiles.collect { case a: AddFile => a }
         // Check to make sure the files we wrote out were actually valid.
         val matchingFiles = DeltaLog.filterFileList(
@@ -263,7 +282,7 @@ case class WriteIntoDelta(
         }
         (newFiles, addFiles, txn.filterFiles(predicates).map(_.remove))
       case (SaveMode.Overwrite, Some(conditions)) if txn.snapshot.version >= 0 =>
-        val constraints = extractConstraints(sparkSession, conditions)
+        val constraints = extractConstraints(sparkSession, conditions) ++ validateConstraints
 
         val removedFileActions = removeFiles(sparkSession, txn, conditions)
         val cdcExistsInRemoveOp = removedFileActions.exists(_.isInstanceOf[AddCDCFile])
@@ -329,9 +348,7 @@ case class WriteIntoDelta(
           newFiles.collect { case a: AddFile => a },
           removedFileActions)
       case (SaveMode.Overwrite, None) =>
-        val newFiles = writeFiles(
-          txn, data, options
-        )
+        val newFiles = txn.writeFiles(data, Some(options), validateConstraints)
         val addFiles = newFiles.collect { case a: AddFile => a }
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
           // with dynamic partition overwrite for any partition that is being written to all
@@ -344,9 +361,7 @@ case class WriteIntoDelta(
         }
         (newFiles, addFiles, deletedFiles)
       case _ =>
-        val newFiles = writeFiles(
-          txn, data, options
-        )
+        val newFiles = txn.writeFiles(data, Some(options), validateConstraints)
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
