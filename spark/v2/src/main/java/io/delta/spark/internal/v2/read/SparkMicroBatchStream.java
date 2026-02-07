@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
@@ -1056,11 +1055,37 @@ public class SparkMicroBatchStream
     return Utils.toCloseableIterator(indexedFiles.iterator());
   }
 
-  /** Loads snapshot files at the specified version. */
+  /** Loads snapshot files at the specified version using distributed log replay and sorting. */
   private List<IndexedFile> loadAndValidateSnapshot(long version) {
     Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
 
-    Scan scan = snapshot.getScanBuilder().build();
+    // Use distributed log replay + sorting (V1's DeltaSourceSnapshot algorithm)
+    SparkSession spark = SparkSession.active();
+    int numPartitions =
+        spark
+            .conf()
+            .getOption("spark.databricks.delta.v2.streaming.initialSnapshot.numPartitions")
+            .map(Integer::parseInt)
+            .getOrElse(() -> 50);
+
+    // Get sorted files using distributed DataFrame operations
+    // Returns DataFrame with "add" struct, sorted by (modificationTime, path)
+    org.apache.spark.sql.Dataset<org.apache.spark.sql.Row> sortedFilesDF =
+        DistributedLogReplayHelper.getInitialSnapshotForStreaming(spark, snapshot, numPartitions);
+
+    // Validate size limit (use count for efficiency)
+    long fileCount = sortedFilesDF.count();
+    if (fileCount > maxInitialSnapshotFiles) {
+      throw (RuntimeException)
+          DeltaErrors.initialSnapshotTooLargeForStreaming(
+              version, fileCount, maxInitialSnapshotFiles, tablePath);
+    }
+
+    // Convert sorted DataFrame to AddFiles using DistributedScanBuilder
+    // withSortKey() ensures ordering is preserved for streaming
+    io.delta.kernel.ScanBuilder scanBuilder =
+        new DistributedScanBuilder(spark, snapshot, numPartitions, sortedFilesDF).withSortKey();
+    io.delta.kernel.Scan scan = scanBuilder.build();
 
     List<AddFile> addFiles = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
@@ -1068,22 +1093,10 @@ public class SparkMicroBatchStream
         FilteredColumnarBatch filteredBatch = filesIter.next();
         ColumnarBatch batch = filteredBatch.getData();
 
-        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
-        // (checkpoint files) files.
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
           Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
           if (addOpt.isPresent()) {
             addFiles.add(addOpt.get());
-
-            // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
-            // etc.).
-            // This limit aims to prevent OOM for large tables.
-            // TODO(#5318): support large tables and remove this limit.
-            if (addFiles.size() > maxInitialSnapshotFiles) {
-              throw (RuntimeException)
-                  DeltaErrors.initialSnapshotTooLargeForStreaming(
-                      version, addFiles.size(), maxInitialSnapshotFiles, tablePath);
-            }
           }
         }
       }
@@ -1091,11 +1104,6 @@ public class SparkMicroBatchStream
       throw new RuntimeException(
           String.format("Failed to read snapshot files at version %d", version), e);
     }
-
-    // TODO(#5318): For large snapshots, consider external sorting.
-    // CRITICAL: Sort by modificationTime, then path for deterministic ordering
-    addFiles.sort(
-        Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
 
     // Build IndexedFile list with sentinels
     List<IndexedFile> indexedFiles = new ArrayList<>();

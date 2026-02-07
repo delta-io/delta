@@ -18,18 +18,13 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.spark.internal.v2.utils.ExpressionUtils.dsv2PredicateToCatalystExpression;
 
 import io.delta.kernel.Snapshot;
-import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
-import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
-import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
-import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -271,34 +266,73 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   /**
    * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
-   * Ensures all iterators are closed to avoid resource leaks.
+   * Uses Kernel API (ScanBuilder/Scan) with distributed log replay.
    */
   private void planScanFiles() {
-    final Engine tableEngine = DefaultEngine.create(hadoopConf);
+    SparkSession spark = SparkSession.active();
     final String tablePath = getTablePath();
-    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    final Engine engine = DefaultEngine.create(hadoopConf);
 
-    final String[] locations = new String[0];
-    final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
+    // Get number of partitions from config
+    int numPartitions =
+        spark
+            .conf()
+            .getOption("spark.databricks.delta.v2.distributedLogReplay.numPartitions")
+            .map(Integer::parseInt)
+            .getOrElse(() -> 50);
 
-    while (scanFileBatches.hasNext()) {
-      final FilteredColumnarBatch batch = scanFileBatches.next();
+    // Step 1: Use Kernel API - create ScanBuilder
+    io.delta.kernel.ScanBuilder scanBuilder =
+        new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
 
-      try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
-        while (addFileRowIter.hasNext()) {
-          final Row row = addFileRowIter.next();
-          final AddFile addFile = new AddFile(row.getStruct(0));
+    // Step 2: Build scan using Kernel API
+    io.delta.kernel.Scan scan = scanBuilder.build();
 
-          final PartitionedFile partitionedFile =
-              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+    // Step 3: Get scan files using Kernel API (lazy iterator)
+    // Use flatMap to flatten nested iterators - cleaner than nested loops
+    try (io.delta.kernel.utils.CloseableIterator<io.delta.kernel.data.Row> addFileRows =
+        scan.getScanFiles(engine).flatMap(batch -> batch.getRows())) {
 
-          totalBytes += addFile.getSize();
-          partitionedFiles.add(partitionedFile);
-        }
-      } catch (IOException e) {
-        throw new RuntimeException(e);
+      while (addFileRows.hasNext()) {
+        io.delta.kernel.data.Row dataFrameRow = addFileRows.next();
+
+        // Extract "add" struct from DataFrame row (first field)
+        io.delta.kernel.data.Row addFileRow =
+            dataFrameRow.getStruct(dataFrameRow.getSchema().indexOf("add"));
+
+        // Use Kernel Row API to extract AddFile fields
+        String path = addFileRow.getString(addFileRow.getSchema().indexOf("path"));
+        long size = addFileRow.getLong(addFileRow.getSchema().indexOf("size"));
+        long modificationTime =
+            addFileRow.getLong(addFileRow.getSchema().indexOf("modificationTime"));
+
+        // Get partition values using Kernel MapValue API
+        io.delta.kernel.data.MapValue partitionValues =
+            addFileRow.getMap(addFileRow.getSchema().indexOf("partitionValues"));
+
+        // Build partition row from Kernel MapValue
+        InternalRow partitionRow =
+            io.delta.spark.internal.v2.utils.PartitionUtils.getPartitionRow(
+                partitionValues, partitionSchema, zoneId);
+
+        // Create PartitionedFile
+        final PartitionedFile partitionedFile =
+            new PartitionedFile(
+                partitionRow,
+                org.apache.spark.paths.SparkPath.fromUrlString(
+                    new org.apache.hadoop.fs.Path(tablePath, path).toString()),
+                /* start= */ 0L,
+                /* length= */ size,
+                /* locations= */ new String[0],
+                modificationTime,
+                /* fileSize= */ size,
+                scala.collection.immutable.Map$.MODULE$.empty());
+
+        totalBytes += size;
+        partitionedFiles.add(partitionedFile);
       }
+    } catch (Exception e) {
+      throw new RuntimeException("Failed to plan scan files", e);
     }
 
     // Pre-compute estimated size accounting for column projection

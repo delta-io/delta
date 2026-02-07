@@ -216,6 +216,7 @@ public class SparkTable implements Table, SupportsRead {
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
     return new SparkScanBuilder(
+        SparkSession.active(),
         name(),
         initialSnapshot,
         snapshotManager,

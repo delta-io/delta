@@ -65,6 +65,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
     SparkScanBuilder builder =
         new SparkScanBuilder(
+            spark,
             tableName,
             snapshot,
             snapshotManager,
@@ -109,6 +110,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
     SparkScanBuilder builder =
         new SparkScanBuilder(
+            spark,
             tableName,
             snapshot,
             snapshotManager,
@@ -686,6 +688,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
     return new SparkScanBuilder(
+        spark,
         tableName,
         snapshot,
         snapshotManager,
