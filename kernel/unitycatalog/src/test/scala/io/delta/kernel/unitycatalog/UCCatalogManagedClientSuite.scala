@@ -19,11 +19,13 @@ package io.delta.kernel.unitycatalog
 import java.util.Optional
 
 import scala.collection.JavaConverters._
+import scala.collection.mutable.ArrayBuffer
 
 import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.internal.CreateTableTransactionBuilderImpl
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.tablefeatures.TableFeatures.{CATALOG_MANAGED_RW_FEATURE, TABLE_FEATURES_MIN_READER_VERSION, TABLE_FEATURES_MIN_WRITER_VERSION}
+import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -146,6 +148,25 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
 
         assert(snapshot.getVersion == 0L)
       }
+  }
+
+  test(
+    "loadTable falls back to filesystem when UC has no ratified commits yet (maxRatifiedVersion=-1)") {
+    val tablePath = getTestResourceFilePath("catalog-owned-preview")
+    val ucClient = new InMemoryUCClientWithMetrics("ucMetastoreId")
+    val tableData = new InMemoryUCClient.TableData(-1L, ArrayBuffer.empty[Commit])
+    ucClient.insertTableData(testUcTableId, tableData)
+
+    val snapshot = loadSnapshot(
+      new UCCatalogManagedClient(ucClient),
+      ucTableId = testUcTableId,
+      tablePath = tablePath)
+
+    val protocol = snapshot.getProtocol
+    assert(snapshot.getVersion == 0L)
+    assert(protocol.getReaderFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
+    assert(protocol.getWriterFeatures.contains(CATALOG_MANAGED_RW_FEATURE.featureName()))
+    assert(ucClient.getNumGetCommitCalls == 1)
   }
 
   test("loadTable correctly loads a UC table -- versionToLoad is empty => load latest") {
