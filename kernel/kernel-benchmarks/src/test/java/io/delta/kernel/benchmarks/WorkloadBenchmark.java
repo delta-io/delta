@@ -72,10 +72,57 @@ public class WorkloadBenchmark<T> {
   }
 
   /**
+   * Parses command line arguments for benchmark configuration.
+   * Supported arguments:
+   * --include-test <substring> - Filter benchmark specs by name (substring match)
+   * --warmup-iterations <int> - Number of warmup iterations (default: 3)
+   * --measurement-iterations <int> - Number of measurement iterations (default: 5)
+   * --warmup-time <int> - Warmup time in seconds (default: 1)
+   */
+  private static class BenchmarkArgs {
+    String includeTest = null;
+    int warmupIterations = 3;
+    int measurementIterations = 5;
+    int warmupTime = 1;
+
+    BenchmarkArgs(String[] args) {
+      for (int i = 0; i < args.length; i++) {
+        switch (args[i]) {
+          case "--include-test":
+            if (i + 1 < args.length) {
+              includeTest = args[++i];
+            }
+            break;
+          case "--warmup-iterations":
+            if (i + 1 < args.length) {
+              warmupIterations = Integer.parseInt(args[++i]);
+            }
+            break;
+          case "--measurement-iterations":
+            if (i + 1 < args.length) {
+              measurementIterations = Integer.parseInt(args[++i]);
+            }
+            break;
+          case "--warmup-time":
+            if (i + 1 < args.length) {
+              warmupTime = Integer.parseInt(args[++i]);
+            }
+            break;
+          default:
+            // Ignore unknown arguments
+            break;
+        }
+      }
+    }
+  }
+
+  /**
    * TODO: In the future, this can be extracted so that new benchmarks with custom BenchmarkStates
    * can be easily constructed.
    */
   public static void main(String[] args) throws RunnerException, IOException {
+    BenchmarkArgs benchmarkArgs = new BenchmarkArgs(args);
+
     // Get workload specs from the workloads directory
     List<WorkloadSpec> workloadSpecs = BenchmarkUtils.loadAllWorkloads(WORKLOAD_SPECS_DIR);
     if (workloadSpecs.isEmpty()) {
@@ -83,11 +130,21 @@ public class WorkloadBenchmark<T> {
           "No workloads found. Please add workload specs to the workloads directory.");
     }
 
-    // Parse the Json specs from the json paths
+    // Parse the Json specs from the json paths and apply filters
     List<WorkloadSpec> filteredSpecs = new ArrayList<>();
     for (WorkloadSpec spec : workloadSpecs) {
-      // TODO(#5420): In the future, we can filter specific workloads using command line args here.
-      filteredSpecs.addAll(spec.getWorkloadVariants());
+      for (WorkloadSpec variant : spec.getWorkloadVariants()) {
+        // Apply include-test filter if specified
+        if (benchmarkArgs.includeTest == null
+            || variant.getFullName().toLowerCase().contains(benchmarkArgs.includeTest.toLowerCase())) {
+          filteredSpecs.add(variant);
+        }
+      }
+    }
+
+    if (filteredSpecs.isEmpty()) {
+      throw new RunnerException(
+          "No workloads matched the filter criteria: --include-test=" + benchmarkArgs.includeTest);
     }
 
     // Convert paths into a String array for JMH. JMH requires that parameters be of type String[].
@@ -102,11 +159,10 @@ public class WorkloadBenchmark<T> {
             .param("workloadSpecJson", workloadSpecsArray)
             // TODO: In the future, this can be extended to support multiple engines.
             .param("engineName", "default")
-            // TODO(#5420): Allow configuring forks, warmup, and measurement via command line args.
             .forks(1)
-            .warmupIterations(3) // Proper warmup for production benchmarks
-            .measurementIterations(5) // Proper measurement iterations for production benchmarks
-            .warmupTime(TimeValue.seconds(1))
+            .warmupIterations(benchmarkArgs.warmupIterations)
+            .measurementIterations(benchmarkArgs.measurementIterations)
+            .warmupTime(TimeValue.seconds(benchmarkArgs.warmupTime))
             .measurementTime(TimeValue.seconds(1))
             .addProfiler(KernelMetricsProfiler.class)
             .build();
