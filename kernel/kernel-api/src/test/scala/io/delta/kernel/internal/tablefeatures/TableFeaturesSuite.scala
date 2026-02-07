@@ -68,7 +68,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "inCommitTimestamp",
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
-    "clustering")
+    "clustering",
+    "materializePartitionColumns")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -286,7 +287,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "clustering",
       "variantType-preview",
       "variantType",
-      "variantShredding-preview")
+      "variantShredding-preview",
+      "materializePartitionColumns")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -643,6 +645,11 @@ class TableFeaturesSuite extends AnyFunSuite {
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with clustering",
     new Protocol(3, 7, emptySet(), singleton("clustering")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with materializePartitionColumns",
+    new Protocol(3, 7, emptySet(), singleton("materializePartitionColumns")),
     testMetadata())
 
   checkWriteSupported(
