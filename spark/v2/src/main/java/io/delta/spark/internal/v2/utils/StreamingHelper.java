@@ -21,6 +21,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
+import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
@@ -64,8 +65,38 @@ public class StreamingHelper {
     return batch.getColumnVector(versionColIdx).getLong(0);
   }
 
-  /** Get AddFile action from a batch at the specified row, if present. */
-  public static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
+  /**
+   * Get AddFile action from a FilteredColumnarBatch at the specified row, if present.
+   *
+   * <p>This method respects the selection vector to filter out duplicate files that may appear when
+   * stats re-collection (e.g., ANALYZE TABLE COMPUTE STATISTICS) re-adds files with updated stats.
+   * The Kernel uses selection vectors to mark which rows (AddFiles) are logically valid.
+   *
+   * @param batch the FilteredColumnarBatch containing AddFile actions
+   * @param rowId the row index to check
+   * @return Optional containing the AddFile if present and selected, empty otherwise
+   */
+  public static Optional<AddFile> getAddFile(FilteredColumnarBatch batch, int rowId) {
+    // Check selection vector first - rows may be filtered out when stats re-collection
+    // re-adds files with updated stats
+    Optional<ColumnVector> selectionVector = batch.getSelectionVector();
+    boolean isFiltered =
+        selectionVector.map(sv -> sv.isNullAt(rowId) || !sv.getBoolean(rowId)).orElse(false);
+    if (isFiltered) {
+      return Optional.empty();
+    }
+
+    return getAddFile(batch.getData(), rowId);
+  }
+
+  /**
+   * Get AddFile action from a ColumnarBatch at the specified row, if present.
+   *
+   * <p>Caller should ensure all rows are valid (e.g., not filtered by selection vector). For
+   * FilteredColumnarBatch with selection vectors, use {@link #getAddFile(FilteredColumnarBatch,
+   * int)} instead.
+   */
+  private static Optional<AddFile> getAddFile(ColumnarBatch batch, int rowId) {
     int addIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.ADD.colName);
     ColumnVector addVector = batch.getColumnVector(addIdx);
     if (addVector.isNullAt(rowId)) {
