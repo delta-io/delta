@@ -31,7 +31,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{
   DeltaJobStatisticsTracker,
-  StatisticsCollection
+  StatisticsCollection,
+  StatsCollectionUtils
 }
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
@@ -371,6 +372,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         override val spark: SparkSession = data.sparkSession
         override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
+        override def getDataSkippingStringPrefixLength: Int =
+          StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
       }
       val (statsColExpr, newOutputStatsCollectionSchema) =
         getStatsColExpr(outputStatsCollectionSchema, statsCollection)
