@@ -178,7 +178,8 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
    * Finalize the staged table creation.
    *
    * <p>This is the entrypoint Spark calls to commit the staged DDL. For metadata-only CREATE TABLE,
-   * the commit is executed with an empty iterable of data actions.
+   * the commit is executed with an empty iterable of data actions. For CTAS/RTAS, the commit is
+   * executed with the data actions produced by the writer.
    */
   @Override
   public void commitStagedChanges() {
@@ -194,12 +195,14 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
    *   <li>Select commit coordination based on whether UC table info was resolved at plan time.
    *   <li>Build a Kernel create-table transaction builder (filesystem or UC/CCv2).
    *   <li>Apply table properties and layout spec.
-   *   <li>Commit the transaction with the provided data actions.
+   *   <li>Commit the transaction with the provided data actions (if any).
    *   <li>Run the optional post-commit hook (e.g., catalog registration).
    * </ul>
    */
   private void commitKernelTransaction(CloseableIterable<Row> dataActions) {
     try {
+      // Choose commit coordination at execution time (filesystem vs UC/CCv2) based on plan-time UC
+      // resolution. This keeps the commit path linear: pick builder -> apply plan -> commit actions.
       if (ucTableInfoOpt.isPresent()) {
         commitUCManagedCreate(ucTableInfoOpt.get(), dataActions);
       } else {
@@ -231,8 +234,6 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
   private void commitUCManagedCreate(UCTableInfo tableInfo, CloseableIterable<Row> dataActions) {
     final TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
 
-    // The committer created by UCCatalogManagedClient holds onto the UCClient, so keep it open for
-    // the duration of the transaction commit.
     try (UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tokenProvider)) {
       UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
       CreateTableTransactionBuilder builder =
@@ -246,6 +247,21 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     }
   }
 
+  /**
+   * Commit a planned create-table transaction through the selected commit coordinator.
+   *
+   * <p>The provided {@code builder} comes from either:
+   *
+   * <ul>
+   *   <li>{@link TableManager#buildCreateTableTransaction}: a filesystem-backed builder that uses the
+   *       default Kernel commit coordination for the table path, or
+   *   <li>{@link UCCatalogManagedClient#buildCreateTableTransaction}: a UC-managed builder whose
+   *       commit path is wired to Unity Catalog's Catalog Committer (CCv2).
+   * </ul>
+   *
+   * <p>Shared commit logic: applies planned properties/layout, builds the Kernel {@link Transaction},
+   * and commits {@code dataActions}. The builder determines how/where the commit occurs.
+   */
   private void commit(CreateTableTransactionBuilder builder, CloseableIterable<Row> dataActions) {
     if (!filteredTableProperties.isEmpty()) {
       builder = builder.withTableProperties(filteredTableProperties);
