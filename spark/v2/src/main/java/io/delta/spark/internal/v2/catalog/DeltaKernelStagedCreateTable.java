@@ -63,9 +63,15 @@ import org.apache.spark.sql.connector.expressions.Transform;
  * partitioning, and properties), then delegates to this staged table to plan and commit the
  * corresponding Kernel operation.
  *
- * <p>The current implementation only executes the metadata-only {@code CREATE TABLE} transaction
- * (protocol + metadata, no data actions), but the structure is intended to grow into the shared
- * commit path for CTAS/RTAS by adding {@code SupportsWrite}.
+ * <ul>
+ *   <li>The constructor performs the planning step (resolve Engine, schema, partition layout, and
+ *       filtered table properties, plus optional UC table info).
+ *   <li>{@link #commitStagedChanges()} executes the Kernel create-table transaction using the
+ *       planned state, selecting the appropriate committer (filesystem vs UC/CCv2).
+ * </ul>
+ *
+ * <p>Commit execution is expressed in terms of a Kernel transaction plus an iterable of data
+ * actions; metadata-only DDL uses an empty iterable.
  */
 public final class DeltaKernelStagedCreateTable implements StagedTable {
 
@@ -168,11 +174,30 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
     return Collections.emptySet();
   }
 
+  /**
+   * Finalize the staged table creation.
+   *
+   * <p>This is the entrypoint Spark calls to commit the staged DDL. For metadata-only CREATE TABLE,
+   * the commit is executed with an empty iterable of data actions.
+   */
   @Override
   public void commitStagedChanges() {
     commitKernelTransaction(CloseableIterable.emptyIterable());
   }
 
+  /**
+   * Execute the Kernel create-table transaction using the planned state.
+   *
+   * <p>Flow:
+   *
+   * <ul>
+   *   <li>Select commit coordination based on whether UC table info was resolved at plan time.
+   *   <li>Build a Kernel create-table transaction builder (filesystem or UC/CCv2).
+   *   <li>Apply table properties and layout spec.
+   *   <li>Commit the transaction with the provided data actions.
+   *   <li>Run the optional post-commit hook (e.g., catalog registration).
+   * </ul>
+   */
   private void commitKernelTransaction(CloseableIterable<Row> dataActions) {
     try {
       if (ucTableInfoOpt.isPresent()) {
@@ -181,9 +206,10 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
         commitFilesystemCreate(dataActions);
       }
     } catch (TableAlreadyExistsException tae) {
-      // Spark's TableAlreadyExistsException is checked in Java, but StagedTable doesn't declare
-      // checked exceptions. Use a "sneaky throw" to preserve Spark semantics.
-      throwSparkTableAlreadyExists(ident);
+      org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException sparkException =
+          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident);
+      sparkException.initCause(tae);
+      DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(sparkException);
     }
 
     if (postCommitHook != null) {
@@ -193,7 +219,7 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
 
   @Override
   public void abortStagedChanges() {
-    // No-op for metadata-only create. Future work: cleanup staging artifacts for CTAS/RTAS.
+    // No-op for metadata-only create.
   }
 
   private void commitFilesystemCreate(CloseableIterable<Row> dataActions) {
@@ -286,11 +312,6 @@ public final class DeltaKernelStagedCreateTable implements StagedTable {
       result.put(key, e.getValue());
     }
     return result;
-  }
-
-  private static void throwSparkTableAlreadyExists(Identifier ident) {
-    DeltaKernelStagedCreateTable.<RuntimeException>sneakyThrow(
-        new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
   }
 
   @SuppressWarnings("unchecked")
