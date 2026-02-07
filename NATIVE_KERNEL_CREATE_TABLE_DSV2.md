@@ -188,7 +188,8 @@ File: `spark-unified/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatal
 Behavior:
 - gates on `new DeltaV2Mode(conf).shouldCatalogReturnV2Tables()` (STRICT mode)
 - only intercepts when `properties.get(TableCatalog.PROP_PROVIDER)` is a Delta provider
-- pre-checks `tableExists(ident)` to match Spark semantics (`CREATE TABLE` fails if exists)
+- for catalog-based identifiers, `V2CreateTableHelper.buildCatalogTableSpec(...)` checks table
+  existence up front so `CREATE TABLE` fails before any Kernel commit side effects
 - routes by identifier type:
   - **path-based**: commit directly to `ident.name()`, no catalog registration hook
   - **catalog-based**: resolve `(CatalogTable, tablePath)` via `V2CreateTableHelper`, then
