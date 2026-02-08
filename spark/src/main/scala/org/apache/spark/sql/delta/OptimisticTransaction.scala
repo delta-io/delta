@@ -1415,6 +1415,29 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
+  /**
+   * Records a delta event for a commit conflict exception, including the operation type
+   * of the winning/conflicting transaction for observability purposes.
+   */
+  protected def recordConflictEvent(e: DeltaConcurrentModificationException): Unit = {
+    // Extract the operation of the winning/conflicting transaction from the exception message.
+    // This is for visibility/observability purpose to track which type of transaction
+    // (e.g., OPTIMIZE/VACUUM) is causing the conflict.
+    // Handle two message formats:
+    // 1. New structured errors: "A concurrent <operation> added/modified/deleted data..."
+    // 2. Old JSON format in conflicting commit: "operation":"<operation>"
+    val newFormatPattern = """[Aa] concurrent (.+?) (?:added|modified|deleted)""".r
+    val oldFormatPattern = """"operation"\s*:\s*"([^"]+)"""".r
+    val winningTxnOperation = newFormatPattern
+      .findFirstMatchIn(e.getMessage).map(_.group(1))
+      .orElse(oldFormatPattern.findFirstMatchIn(e.getMessage).map(_.group(1)))
+      .getOrElse("Unknown Operation")
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.commit.conflict." + e.conflictType,
+      data = Map("winningTxnOperation" -> winningTxnOperation))
+  }
+
   @throws(classOf[ConcurrentModificationException])
   protected def commitImpl(
       actions: Seq[Action],
@@ -1535,7 +1558,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
-        recordDeltaEvent(deltaLog, "delta.commit.conflict." + e.conflictType)
+        recordConflictEvent(e)
         executionObserver.transactionAborted()
         throw e
       case NonFatal(e) =>
