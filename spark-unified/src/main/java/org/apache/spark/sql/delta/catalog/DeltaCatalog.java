@@ -21,7 +21,6 @@ import io.delta.spark.internal.v2.catalog.SparkTable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;

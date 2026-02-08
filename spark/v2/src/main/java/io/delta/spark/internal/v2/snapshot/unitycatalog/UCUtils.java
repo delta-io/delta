@@ -41,10 +41,6 @@ public final class UCUtils {
   /**
    * Resolve the UC endpoint and auth config from Spark for the given catalog name.
    *
-   * <p>This helper exists because some call sites (for example, DSv2 DDL planning) identify UC-managed
-   * tables via a UC table id injected into a request, and therefore do not have a {@link CatalogTable}
-   * available to derive UC connection information.
-   *
    * @param spark SparkSession for resolving Unity Catalog configurations
    * @param catalogName Spark catalog name used to resolve UC configuration
    * @return resolved UC catalog configuration
@@ -60,6 +56,7 @@ public final class UCUtils {
 
     scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
         UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+
     scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
     if (configOpt.isEmpty()) {
       throw new IllegalArgumentException(

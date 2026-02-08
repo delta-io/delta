@@ -15,6 +15,7 @@
  */
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.spark.internal.v2.catalog.DeltaKernelStagedDDLTable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,7 +86,7 @@ final class V2CreateTableHelper {
             : CatalogTableType.EXTERNAL();
 
     URI locationUri =
-        location != null
+        location != null && !location.isEmpty()
             ? CatalogUtils.stringToURI(location)
             : spark.sessionState().catalog().defaultTablePath(tableIdent);
 
@@ -156,17 +157,8 @@ final class V2CreateTableHelper {
       if (key == null) {
         continue;
       }
-      switch (key) {
-        case TableCatalog.PROP_LOCATION:
-        case TableCatalog.PROP_PROVIDER:
-        case TableCatalog.PROP_COMMENT:
-        case TableCatalog.PROP_OWNER:
-        case TableCatalog.PROP_EXTERNAL:
-        case "path":
-        case "option.path":
-          continue;
-        default:
-          break;
+      if (DeltaKernelStagedDDLTable.isSparkReservedPropertyKey(key)) {
+        continue;
       }
       result = result.$plus(new scala.Tuple2<>(key, e.getValue()));
     }

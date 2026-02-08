@@ -25,8 +25,10 @@ import java.io.File
 import java.util.Locale
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.JsonNode
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.connector.catalog.Identifier
+import scala.jdk.CollectionConverters._
 
 /**
  * Unit tests for DeltaCatalog's V2 connector routing logic.
@@ -119,6 +121,83 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
       withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
         sql(s"CREATE TABLE $tableName USING delta LOCATION '$location' AS SELECT 1 AS id")
         assert(!isKernelEngineInfo(readEngineInfo(location)))
+        assert(sql(s"SELECT * FROM $tableName").collect().toSeq == Seq(org.apache.spark.sql.Row(1)))
+      }
+    }
+  }
+
+  test("STRICT: CREATE TABLE IF NOT EXISTS is a no-op when table already exists") {
+    withTempDir { tempDir =>
+      val tableName = "test_kernel_create_if_not_exists"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(s"CREATE TABLE $tableName (id INT) USING delta LOCATION '$location'")
+        val jsonFilesBefore = listDeltaJsonCommits(location)
+
+        sql(s"CREATE TABLE IF NOT EXISTS $tableName (id INT) USING delta LOCATION '$location'")
+        val jsonFilesAfter = listDeltaJsonCommits(location)
+
+        assert(isKernelEngineInfo(readEngineInfo(location)))
+        assert(jsonFilesAfter == jsonFilesBefore)
+      }
+    }
+  }
+
+  test("STRICT: CREATE TABLE with partitioning commits partition columns via Kernel") {
+    withTempDir { tempDir =>
+      val tableName = "test_kernel_create_partitioned"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(
+          s"CREATE TABLE $tableName (id INT, dt STRING) USING delta " +
+            s"PARTITIONED BY (dt) LOCATION '$location'")
+
+        assert(isKernelEngineInfo(readEngineInfo(location)))
+        assert(readPartitionColumns(location) == Seq("dt"))
+      }
+    }
+  }
+
+  test("STRICT: CREATE TABLE persists user table properties and filters Spark reserved keys") {
+    withTempDir { tempDir =>
+      val tableName = "test_kernel_create_properties"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(
+          s"CREATE TABLE $tableName (id INT) USING delta LOCATION '$location' " +
+            s"TBLPROPERTIES ('delta.appendOnly'='true')")
+
+        val conf = readMetadataConfiguration(location)
+        assert(conf.get("delta.appendOnly").contains("true"))
+
+        Seq(
+          "provider",
+          "location",
+          "isManagedLocation",
+          "comment",
+          "owner",
+          "external",
+          "path",
+          "option.path").foreach { k =>
+          assert(!conf.contains(k), s"metadata.configuration unexpectedly contains reserved key: $k")
+        }
+      }
+    }
+  }
+
+  test("STRICT: CREATE TABLE throws TableAlreadyExistsException when table exists") {
+    withTempDir { tempDir =>
+      val tableName = "test_kernel_create_already_exists"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(s"CREATE TABLE $tableName (id INT) USING delta LOCATION '$location'")
+        intercept[org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException] {
+          sql(s"CREATE TABLE $tableName (id INT) USING delta LOCATION '$location'")
+        }
       }
     }
   }
@@ -160,22 +239,60 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
   }
 
   private def readEngineInfo(tablePath: String): Option[String] = {
+    readSingleAction(tablePath, "commitInfo").flatMap { commitInfo =>
+      val engineInfo = commitInfo.get("engineInfo")
+      if (engineInfo != null) Option(engineInfo.asText()) else None
+    }
+  }
+
+  private def readPartitionColumns(tablePath: String): Seq[String] = {
+    val metadataOpt = readSingleAction(tablePath, "metaData")
+    val cols = metadataOpt.map(_.get("partitionColumns")).orNull
+    if (cols == null || !cols.isArray) {
+      Nil
+    } else {
+      cols.elements().asScala.map(_.asText()).toSeq
+    }
+  }
+
+  private def readMetadataConfiguration(tablePath: String): Map[String, String] = {
+    val metadataOpt = readSingleAction(tablePath, "metaData")
+    val conf = metadataOpt.map(_.get("configuration")).orNull
+    if (conf == null || !conf.isObject) {
+      Map.empty
+    } else {
+      conf.fields().asScala.map { e => e.getKey -> e.getValue.asText() }.toMap
+    }
+  }
+
+  private def readSingleAction(tablePath: String, actionKey: String): Option[JsonNode] = {
     val logPath = new Path(new File(tablePath, "_delta_log/00000000000000000000.json").getPath)
     val fs = logPath.getFileSystem(spark.sessionState.newHadoopConf())
     val in = fs.open(logPath)
+    val source = scala.io.Source.fromInputStream(in, "UTF-8")
     try {
-      val it = scala.io.Source.fromInputStream(in, "UTF-8").getLines()
-      it.flatMap { line =>
-        val node = jsonMapper.readTree(line)
-        val commitInfo = node.get("commitInfo")
-        if (commitInfo != null && commitInfo.has("engineInfo")) {
-          Option(commitInfo.get("engineInfo").asText())
-        } else {
-          None
+      source
+        .getLines()
+        .flatMap { line =>
+          val node = jsonMapper.readTree(line)
+          val action = node.get(actionKey)
+          if (action != null) Option(action) else None
         }
-      }.toSeq.headOption
+        .toSeq
+        .headOption
     } finally {
+      source.close()
       in.close()
     }
+  }
+
+  private def listDeltaJsonCommits(tablePath: String): Seq[String] = {
+    val logDir = new Path(new File(tablePath, "_delta_log").getPath)
+    val fs = logDir.getFileSystem(spark.sessionState.newHadoopConf())
+    fs.listStatus(logDir)
+      .map(_.getPath.getName)
+      .filter(_.endsWith(".json"))
+      .sorted
+      .toSeq
   }
 }

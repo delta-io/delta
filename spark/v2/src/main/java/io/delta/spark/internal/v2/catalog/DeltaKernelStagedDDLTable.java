@@ -322,21 +322,28 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
       if (key == null) {
         continue;
       }
-      switch (key) {
-        case TableCatalog.PROP_LOCATION:
-        case TableCatalog.PROP_PROVIDER:
-        case TableCatalog.PROP_COMMENT:
-        case TableCatalog.PROP_OWNER:
-        case TableCatalog.PROP_EXTERNAL:
-        case "path":
-        case "option.path":
-          continue;
-        default:
-          break;
+      if (isSparkReservedPropertyKey(key)) {
+        continue;
       }
       result.put(key, e.getValue());
     }
     return result;
+  }
+
+  public static boolean isSparkReservedPropertyKey(String key) {
+    switch (key) {
+      case TableCatalog.PROP_LOCATION:
+      case TableCatalog.PROP_PROVIDER:
+      case TableCatalog.PROP_IS_MANAGED_LOCATION:
+      case TableCatalog.PROP_COMMENT:
+      case TableCatalog.PROP_OWNER:
+      case TableCatalog.PROP_EXTERNAL:
+      case "path":
+      case "option.path":
+        return true;
+      default:
+        return false;
+    }
   }
 
   @SuppressWarnings("unchecked")
