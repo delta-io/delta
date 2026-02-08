@@ -671,6 +671,12 @@ public class SparkMicroBatchStream
       // If the requested version range doesn't exist (e.g., we're asking for version 6 when
       // the table only has versions 0-5).
       return Utils.toCloseableIterator(Collections.emptyIterator());
+    } catch (IllegalArgumentException e) {
+      // For UC-managed tables, the requested version may not have been ratified by
+      // the UC server yet (e.g., the filesystem shows version 2 but UC only ratified
+      // version 1). Treat this the same as CommitRangeNotFoundException - no new data
+      // is available yet, and the stream should retry on the next micro-batch cycle.
+      return Utils.toCloseableIterator(Collections.emptyIterator());
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
