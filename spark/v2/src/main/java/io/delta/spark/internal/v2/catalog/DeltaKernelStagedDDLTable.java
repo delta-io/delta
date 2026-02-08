@@ -138,7 +138,7 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
 
     // Never persist test-only markers.
     filteredProperties.remove("test.simulateUC");
-    this.filteredTableProperties = filteredProperties;
+    this.filteredTableProperties = Collections.unmodifiableMap(filteredProperties);
 
     String ucTableId = filteredTableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId != null) {
@@ -224,6 +224,10 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     }
 
     if (postCommitHook != null) {
+      // TODO: If postCommitHook fails (e.g. HMS unavailable), the Kernel commit (000.json) has
+      //  already been written. The table exists on the filesystem but has no catalog entry. V1
+      //  handles this inside CreateDeltaTableCommand's single-command execution context. Consider
+      //  adding compensating cleanup or an operator-visible warning for this edge case.
       postCommitHook.run();
     }
   }
@@ -282,6 +286,13 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     txn.commit(engine, dataActions);
   }
 
+  /**
+   * Convert Spark partition transforms to a Kernel {@link DataLayoutSpec}.
+   *
+   * <p>Note: the same IdentityTransform validation exists in {@code
+   * V2CreateTableHelper.toPartitionColumnNames} (Scala, produces column name strings for
+   * CatalogTable). Keep both in sync if the validation logic changes.
+   */
   private static Optional<DataLayoutSpec> toDataLayoutSpec(Transform[] partitions) {
     requireNonNull(partitions, "partitions is null");
     if (partitions.length == 0) {
@@ -346,6 +357,12 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     }
   }
 
+  /**
+   * Re-throw a checked exception without declaring it. Spark's {@code TableAlreadyExistsException}
+   * extends {@code AnalysisException} (checked), but {@link StagedTable#commitStagedChanges()} does
+   * not declare checked exceptions. We cannot wrap in {@code RuntimeException} because Spark's
+   * analyzer catches {@code AnalysisException} specifically for proper error messaging.
+   */
   @SuppressWarnings("unchecked")
   private static <E extends Throwable> void sneakyThrow(Throwable throwable) throws E {
     throw (E) throwable;

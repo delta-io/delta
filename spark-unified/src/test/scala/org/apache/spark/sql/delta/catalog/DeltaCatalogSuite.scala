@@ -281,8 +281,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
         .toSeq
         .headOption
     } finally {
-      source.close()
-      in.close()
+      source.close() // also closes the underlying InputStream
     }
   }
 

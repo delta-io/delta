@@ -52,6 +52,8 @@ private[delta] object V2CreateTableHelper {
     require(partitions != null, "partitions is null")
     require(properties != null, "properties is null")
 
+    // Use the last namespace segment as the database name, matching Spark's V2SessionCatalog
+    // behavior. This only works correctly for the session catalog (spark_catalog).
     val namespace = Option(ident.namespace()).getOrElse(Array.empty[String])
     val db =
       if (namespace.nonEmpty) namespace.last
@@ -126,6 +128,8 @@ private[delta] object V2CreateTableHelper {
     }
   }
 
+  // Same IdentityTransform validation as DeltaKernelStagedDDLTable.toDataLayoutSpec (Java,
+  // produces Kernel Column objects). Keep both in sync if the validation logic changes.
   private def toPartitionColumnNames(partitions: Array[Transform]): Seq[String] = {
     partitions.toSeq.map {
       case identity: IdentityTransform =>
