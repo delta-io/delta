@@ -142,8 +142,12 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
 
     String ucTableId = filteredTableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId != null) {
+      UCUtils.ResolvedUCCatalogConfig resolved =
+          UCUtils.resolveCatalogConfig(spark, catalogName);
       this.ucTableInfoOpt =
-          Optional.of(UCUtils.buildTableInfo(ucTableId, tablePath, spark, catalogName));
+          Optional.of(
+              new UCTableInfo(
+                  ucTableId, tablePath, resolved.getUcUri(), resolved.getAuthConfig()));
     } else {
       this.ucTableInfoOpt = Optional.empty();
     }

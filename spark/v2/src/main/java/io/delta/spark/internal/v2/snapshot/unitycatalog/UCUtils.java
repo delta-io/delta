@@ -39,27 +39,45 @@ public final class UCUtils {
   private UCUtils() {}
 
   /**
-   * Build {@link UCTableInfo} for a UC-managed table.
+   * Resolved UC connection information for a Spark catalog name.
    *
-   * <p>This resolves the UC endpoint and auth config from Spark for the given catalog name.
+   * <p>This is the minimum information needed to create a UC client for CCv2-coordinated commits.
+   */
+  public static final class ResolvedUCCatalogConfig {
+    private final String ucUri;
+    private final Map<String, String> authConfig;
+
+    private ResolvedUCCatalogConfig(String ucUri, Map<String, String> authConfig) {
+      this.ucUri = ucUri;
+      this.authConfig = authConfig;
+    }
+
+    public String getUcUri() {
+      return ucUri;
+    }
+
+    public Map<String, String> getAuthConfig() {
+      return authConfig;
+    }
+  }
+
+  /**
+   * Resolve the UC endpoint and auth config from Spark for the given catalog name.
    *
-   * @param tableId Unity Catalog table ID
-   * @param tablePath table base path
+   * <p>This helper exists because some call sites (for example, DSv2 DDL planning) identify UC-managed
+   * tables via a UC table id injected into a request, and therefore do not have a {@link CatalogTable}
+   * available to derive UC connection information.
+   *
    * @param spark SparkSession for resolving Unity Catalog configurations
    * @param catalogName Spark catalog name used to resolve UC configuration
-   * @return resolved UC table info
+   * @return resolved UC endpoint and auth config
    * @throws IllegalArgumentException if configuration is invalid or missing
    */
-  public static UCTableInfo buildTableInfo(
-      String tableId, String tablePath, SparkSession spark, String catalogName) {
-    requireNonNull(tableId, "tableId is null");
-    requireNonNull(tablePath, "tablePath is null");
+  public static ResolvedUCCatalogConfig resolveCatalogConfig(
+      SparkSession spark, String catalogName) {
     requireNonNull(spark, "spark is null");
     requireNonNull(catalogName, "catalogName is null");
 
-    if (tableId.isEmpty()) {
-      throw new IllegalArgumentException("Unity Catalog tableId is empty.");
-    }
     if (catalogName.isEmpty()) {
       throw new IllegalArgumentException("Unity Catalog catalogName is empty.");
     }
@@ -69,15 +87,13 @@ public final class UCUtils {
     scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
     if (configOpt.isEmpty()) {
       throw new IllegalArgumentException(
-          "Cannot create UC client for table with ucTableId="
-              + tableId
-              + ": Unity Catalog configuration not found for catalog '"
+          "Cannot create UC client: Unity Catalog configuration not found for catalog '"
               + catalogName
               + "'.");
     }
 
     UCCatalogConfig config = configOpt.get();
-    return new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig()));
+    return new ResolvedUCCatalogConfig(config.uri(), asJava(config.authConfig()));
   }
 
   /**
@@ -111,7 +127,9 @@ public final class UCUtils {
     }
     String catalogName = catalogOption.get();
 
-    return Optional.of(buildTableInfo(tableId, tablePath, spark, catalogName));
+    ResolvedUCCatalogConfig resolved = resolveCatalogConfig(spark, catalogName);
+    return Optional.of(
+        new UCTableInfo(tableId, tablePath, resolved.getUcUri(), resolved.getAuthConfig()));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
