@@ -222,7 +222,7 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     }
 
     if (postCommitHook != null) {
-      // The two-phase approach (Kernel commit → catalog registration) has inherent gaps:
+      // The two-phase approach (Kernel commit -> catalog registration) has inherent gaps:
       //
       // 1. TOCTOU: V2CreateTableHelper checks catalog existence before this commit. Another
       //    session could create the table between the check and the Kernel commit. The early

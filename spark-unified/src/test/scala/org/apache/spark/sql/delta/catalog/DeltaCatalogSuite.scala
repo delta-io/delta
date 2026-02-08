@@ -234,6 +234,47 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
     }
   }
 
+  test("NONE: CREATE TABLE routes through V1 (engineInfo is not kernel)") {
+    withTempDir { tempDir =>
+      val tableName = "test_v1_create_none_mode"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
+        sql(s"CREATE TABLE $tableName (id INT) USING delta LOCATION '$location'")
+        assert(!isKernelEngineInfo(readEngineInfo(location)))
+      }
+    }
+  }
+
+  test("STRICT: CREATE TABLE with non-Delta provider falls through to V1 delegate") {
+    withTempDir { tempDir =>
+      val tableName = "test_parquet_strict_fallback"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(s"CREATE TABLE $tableName (id INT) USING parquet LOCATION '$location'")
+        // Table should exist and be readable (created via V1/delegate, not Kernel)
+        assert(sql(s"SELECT * FROM $tableName").collect().isEmpty)
+      }
+    }
+  }
+
+  test("STRICT: CREATE TABLE with multi-column partitioning commits all partition columns") {
+    withTempDir { tempDir =>
+      val tableName = "test_kernel_create_multi_partition"
+      val location = new File(tempDir, tableName).getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(
+          s"CREATE TABLE $tableName (id INT, year INT, month INT) USING delta " +
+            s"PARTITIONED BY (year, month) LOCATION '$location'")
+
+        assert(isKernelEngineInfo(readEngineInfo(location)))
+        assert(readPartitionColumns(location) == Seq("year", "month"))
+      }
+    }
+  }
+
   private def isKernelEngineInfo(engineInfoOpt: Option[String]): Boolean = {
     engineInfoOpt.exists(_.endsWith(DeltaKernelStagedDDLTable.ENGINE_INFO))
   }
