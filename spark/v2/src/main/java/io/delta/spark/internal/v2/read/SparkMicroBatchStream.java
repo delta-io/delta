@@ -674,13 +674,9 @@ public class SparkMicroBatchStream
     } catch (IllegalArgumentException e) {
       // For UC-managed tables, the requested version may not have been ratified by
       // the UC server yet (e.g., the filesystem shows version 2 but UC only ratified
-      // version 1). Only handle the specific UC version lag case - re-throw other exceptions.
-      if (e.getMessage() != null && e.getMessage().contains("Cannot load commit range")) {
-        // Treat this the same as CommitRangeNotFoundException - no new data is available yet,
-        // and the stream should retry on the next micro-batch cycle.
-        return Utils.toCloseableIterator(Collections.emptyIterator());
-      }
-      throw e;
+      // version 1). Treat this the same as CommitRangeNotFoundException - no new data
+      // is available yet, and the stream should retry on the next micro-batch cycle.
+      return Utils.toCloseableIterator(Collections.emptyIterator());
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
