@@ -39,29 +39,6 @@ public final class UCUtils {
   private UCUtils() {}
 
   /**
-   * Resolved UC connection information for a Spark catalog name.
-   *
-   * <p>This is the minimum information needed to create a UC client for CCv2-coordinated commits.
-   */
-  public static final class ResolvedUCCatalogConfig {
-    private final String ucUri;
-    private final Map<String, String> authConfig;
-
-    private ResolvedUCCatalogConfig(String ucUri, Map<String, String> authConfig) {
-      this.ucUri = ucUri;
-      this.authConfig = authConfig;
-    }
-
-    public String getUcUri() {
-      return ucUri;
-    }
-
-    public Map<String, String> getAuthConfig() {
-      return authConfig;
-    }
-  }
-
-  /**
    * Resolve the UC endpoint and auth config from Spark for the given catalog name.
    *
    * <p>This helper exists because some call sites (for example, DSv2 DDL planning) identify UC-managed
@@ -70,11 +47,10 @@ public final class UCUtils {
    *
    * @param spark SparkSession for resolving Unity Catalog configurations
    * @param catalogName Spark catalog name used to resolve UC configuration
-   * @return resolved UC endpoint and auth config
+   * @return resolved UC catalog configuration
    * @throws IllegalArgumentException if configuration is invalid or missing
    */
-  public static ResolvedUCCatalogConfig resolveCatalogConfig(
-      SparkSession spark, String catalogName) {
+  public static UCCatalogConfig resolveCatalogConfig(SparkSession spark, String catalogName) {
     requireNonNull(spark, "spark is null");
     requireNonNull(catalogName, "catalogName is null");
 
@@ -92,8 +68,7 @@ public final class UCUtils {
               + "'.");
     }
 
-    UCCatalogConfig config = configOpt.get();
-    return new ResolvedUCCatalogConfig(config.uri(), asJava(config.authConfig()));
+    return configOpt.get();
   }
 
   /**
@@ -127,9 +102,9 @@ public final class UCUtils {
     }
     String catalogName = catalogOption.get();
 
-    ResolvedUCCatalogConfig resolved = resolveCatalogConfig(spark, catalogName);
+    UCCatalogConfig resolved = resolveCatalogConfig(spark, catalogName);
     return Optional.of(
-        new UCTableInfo(tableId, tablePath, resolved.getUcUri(), resolved.getAuthConfig()));
+        new UCTableInfo(tableId, tablePath, resolved.uri(), asJava(resolved.authConfig())));
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
