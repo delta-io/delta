@@ -60,6 +60,19 @@ private[delta] object V2CreateTableHelper {
       else spark.sessionState.catalog.getCurrentDatabase
 
     val tableIdent = TableIdentifier(ident.name(), Some(db))
+    // Best-effort early-fail: check the catalog (metastore) before attempting the Kernel commit.
+    // This is a TOCTOU check -- another session could create the table between this check and the
+    // Kernel commit -- but it prevents the more common failure mode where the Kernel commit
+    // succeeds (writing 000.json) and then registerTable fails because the catalog entry already
+    // exists, leaving an orphaned Delta log.
+    //
+    // Kernel's CreateTableTransactionBuilder.build() separately checks for an existing _delta_log
+    // on the filesystem. Together: catalog check catches "table registered in metastore" and
+    // Kernel catches "Delta log exists on disk." Neither alone is sufficient.
+    //
+    // Note: unlike the V1 path (CreateDeltaTableCommand.handleCreateTable / assertPathEmpty),
+    // we do not check for non-Delta files at the target path. Kernel is the authoritative source
+    // for filesystem-level Delta table existence.
     if (spark.sessionState.catalog.tableExists(tableIdent)) {
       throw new TableAlreadyExistsException(ident)
     }
@@ -113,19 +126,11 @@ private[delta] object V2CreateTableHelper {
     require(spark != null, "spark is null")
     require(tableDesc != null, "tableDesc is null")
 
-    if (tableDesc.tableType == CatalogTableType.MANAGED) {
-      // The Kernel commit creates the table directory before we register the table in Spark's
-      // catalog, so location validation would fail for managed tables.
-      spark.sessionState.catalog.createTable(
-        tableDesc,
-        ignoreIfExists = false,
-        validateLocation = false)
-    } else {
-      spark.sessionState.catalog.createTable(
-        tableDesc,
-        ignoreIfExists = false,
-        validateLocation = true)
-    }
+    // Kernel creates the table directory before catalog registration, so location validation
+    // would fail for managed tables (the directory already exists).
+    val validateLoc = tableDesc.tableType != CatalogTableType.MANAGED
+    spark.sessionState.catalog.createTable(
+      tableDesc, ignoreIfExists = false, validateLocation = validateLoc)
   }
 
   // Same IdentityTransform validation as DeltaKernelStagedDDLTable.toDataLayoutSpec (Java,

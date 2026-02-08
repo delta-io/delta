@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.catalog;
 
 import static java.util.Objects.requireNonNull;
+import static scala.jdk.javaapi.CollectionConverters.asJava;
 
 import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
@@ -36,6 +37,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
 import io.unitycatalog.client.auth.TokenProvider;
+import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -53,6 +55,7 @@ import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.IdentityTransform;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 
 /**
  * Kernel-backed staged table used to implement Delta DDL operations in the Spark DSv2 connector.
@@ -142,15 +145,10 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
 
     String ucTableId = filteredTableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId != null) {
-      org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig resolved =
-          UCUtils.resolveCatalogConfig(spark, catalogName);
+      UCCatalogConfig resolved = UCUtils.resolveCatalogConfig(spark, catalogName);
       this.ucTableInfoOpt =
           Optional.of(
-              new UCTableInfo(
-                  ucTableId,
-                  tablePath,
-                  resolved.uri(),
-                  scala.jdk.javaapi.CollectionConverters.asJava(resolved.authConfig())));
+              new UCTableInfo(ucTableId, tablePath, resolved.uri(), asJava(resolved.authConfig())));
     } else {
       this.ucTableInfoOpt = Optional.empty();
     }
@@ -224,10 +222,17 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     }
 
     if (postCommitHook != null) {
-      // TODO: If postCommitHook fails (e.g. HMS unavailable), the Kernel commit (000.json) has
-      //  already been written. The table exists on the filesystem but has no catalog entry. V1
-      //  handles this inside CreateDeltaTableCommand's single-command execution context. Consider
-      //  adding compensating cleanup or an operator-visible warning for this edge case.
+      // The two-phase approach (Kernel commit → catalog registration) has inherent gaps:
+      //
+      // 1. TOCTOU: V2CreateTableHelper checks catalog existence before this commit. Another
+      //    session could create the table between the check and the Kernel commit. The early
+      //    check is best-effort to avoid the worse failure mode below.
+      //
+      // 2. Orphaned 000.json: if postCommitHook fails (e.g. HMS unavailable), the Kernel commit
+      //    has already been written. The table exists on the filesystem but has no catalog entry.
+      //    V1 handles this inside CreateDeltaTableCommand's single-command execution context.
+      //
+      // TODO: Consider adding compensating cleanup or an operator-visible warning for case 2.
       postCommitHook.run();
     }
   }
@@ -254,27 +259,12 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
       // Note: per UCCatalogManagedClient contract, a UC Tables API call may be required after
       // 000.json is committed to inform UC of successful create.
       commit(builder, dataActions);
-    } catch (java.io.IOException ioe) {
+    } catch (IOException ioe) {
       throw new UncheckedIOException(ioe);
     }
   }
 
-  /**
-   * Commit a planned create-table transaction through the selected commit coordinator.
-   *
-   * <p>The provided {@code builder} comes from either:
-   *
-   * <ul>
-   *   <li>{@link TableManager#buildCreateTableTransaction}: a filesystem-backed builder that uses
-   *       the default Kernel commit coordination for the table path, or
-   *   <li>{@link UCCatalogManagedClient#buildCreateTableTransaction}: a UC-managed builder whose
-   *       commit path is wired to Unity Catalog's Catalog Committer (CCv2).
-   * </ul>
-   *
-   * <p>Shared commit logic: applies planned properties/layout, builds the Kernel {@link
-   * Transaction}, and commits {@code dataActions}. The builder determines how/where the commit
-   * occurs.
-   */
+  /** Apply planned properties/layout to the builder, build, and commit. */
   private void commit(CreateTableTransactionBuilder builder, CloseableIterable<Row> dataActions) {
     if (!filteredTableProperties.isEmpty()) {
       builder = builder.withTableProperties(filteredTableProperties);

@@ -176,7 +176,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
         Seq(
           "provider",
           "location",
-          "isManagedLocation",
+          "is_managed_location",
           "comment",
           "owner",
           "external",
