@@ -32,10 +32,11 @@ import org.apache.spark.sql.types.StructType
 import scala.jdk.CollectionConverters._
 
 /**
- * Helpers for implementing metadata-only CREATE TABLE in the unified DeltaCatalog STRICT path.
+ * Scala helpers for Spark-catalyst CatalogTable construction and
+ * SessionCatalog registration used by the DSv2 STRICT DDL path.
  *
- * This isolates Spark-catalyst table descriptor construction and SessionCatalog registration so the
- * Java catalog routing code stays small and readable.
+ * The Java routing code in DeltaCatalog delegates here because
+ * CatalogTable uses Scala named/default constructor parameters.
  */
 private[delta] object V2CreateTableHelper {
 
