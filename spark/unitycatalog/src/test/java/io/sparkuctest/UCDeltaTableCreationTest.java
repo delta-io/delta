@@ -242,10 +242,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           }
           for (boolean withAsSelect : List.of(true, false)) {
             for (boolean replaceTable : List.of(true, false)) {
-              // TODO: Remove this once implemented the RTAS StagingTableCatalog API.
-              if (replaceTable) {
-                continue;
-              }
               String displayName =
                   String.format(
                       "tableType=%s, withPartition=%s, withCluster=%s, withAsSelect=%s, replaceTable=%s",
