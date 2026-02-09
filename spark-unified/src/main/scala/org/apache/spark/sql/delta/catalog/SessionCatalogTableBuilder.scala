@@ -32,14 +32,14 @@ import org.apache.spark.sql.types.StructType
 import scala.jdk.CollectionConverters._
 
 /**
- * Scala helpers for Spark-catalyst CatalogTable construction used by the DSv2 STRICT DDL path.
+ * Builds Spark-catalyst {@link CatalogTable} entries for the session catalog (spark_catalog).
  *
- * The Java routing code in DeltaCatalog delegates here because CatalogTable uses Scala
- * named/default constructor parameters.
+ * The unified Java routing code delegates here because CatalogTable uses Scala named/default
+ * constructor parameters.
  */
-private[delta] object V2CreateTableHelper {
+private[delta] object SessionCatalogTableBuilder {
 
-  def buildCatalogTableSpec(
+  def buildSessionCatalogEntry(
       spark: SparkSession,
       ident: Identifier,
       schema: StructType,

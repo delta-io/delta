@@ -16,20 +16,19 @@
 package io.delta.spark.internal.v2.catalog;
 
 /**
- * Finalizes catalog-visible state after a successful Kernel commit.
+ * Performs additional work after a successful Kernel commit.
  *
  * <p>Examples include registering a table in the session catalog, or performing catalog-specific
- * completion actions for catalog-managed tables. Implementations should treat {@link
- * #finalizeAfterCommit()} as best-effort: failures may leave the table committed on storage without
- * a catalog entry.
+ * completion actions for catalog-managed tables. Implementations should treat {@link #execute()} as
+ * best-effort: failures may leave the table committed on storage without a catalog entry.
  */
-public interface CatalogFinalizer {
+public interface PostCommitAction {
 
   /** Run after a successful Kernel commit. */
-  void finalizeAfterCommit();
+  void execute();
 
   /**
-   * Best-effort cleanup/diagnostics when commit/finalize fails.
+   * Best-effort cleanup/diagnostics when commit/action execution fails.
    *
    * @param cause the failure that triggered abort
    */

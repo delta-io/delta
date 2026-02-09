@@ -16,10 +16,10 @@
 
 package org.apache.spark.sql.delta.catalog;
 
-import io.delta.spark.internal.v2.catalog.CatalogFinalizer;
-import io.delta.spark.internal.v2.catalog.CatalogFinalizers;
 import io.delta.spark.internal.v2.catalog.DdlOperation;
 import io.delta.spark.internal.v2.catalog.DeltaKernelStagedDDLTable;
+import io.delta.spark.internal.v2.catalog.PostCommitAction;
+import io.delta.spark.internal.v2.catalog.PostCommitActions;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import java.util.HashMap;
 import java.util.Map;
@@ -159,7 +159,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
 
     final String catalogName = name();
 
-    final DeltaKernelStagedDDLTable staged = stageKernelCreateTable(
+    final DeltaKernelStagedDDLTable staged = buildStagedCreateTable(
         spark(),
         catalogName,
         ident,
@@ -171,7 +171,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     return loadTable(ident);
   }
 
-  private DeltaKernelStagedDDLTable stageKernelCreateTable(
+  private DeltaKernelStagedDDLTable buildStagedCreateTable(
       SparkSession spark,
       String catalogName,
       Identifier ident,
@@ -189,20 +189,21 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
           partitions,
           properties,
           DdlOperation.CREATE,
-          CatalogFinalizers.noOp());
+          PostCommitActions.none());
     }
 
     // Catalog-based identifier: commit metadata via Kernel, then finalize catalog visibility if
     // required.
     scala.Tuple2<CatalogTable, String> spec =
-        V2CreateTableHelper.buildCatalogTableSpec(spark, ident, schema, partitions, properties);
+        SessionCatalogTableBuilder.buildSessionCatalogEntry(
+            spark, ident, schema, partitions, properties);
     CatalogTable tableDesc = spec._1();
     String tablePath = spec._2();
 
-    CatalogFinalizer finalizer =
+    PostCommitAction postCommitAction =
         CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)
-            ? CatalogFinalizers.ucManaged()
-            : CatalogFinalizers.sessionCatalog(spark, tableDesc);
+            ? PostCommitActions.unityCatalog()
+            : PostCommitActions.sessionCatalog(spark, tableDesc);
 
     return new DeltaKernelStagedDDLTable(
         spark,
@@ -213,6 +214,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         partitions,
         properties,
         DdlOperation.CREATE,
-        finalizer);
+        postCommitAction);
   }
 }

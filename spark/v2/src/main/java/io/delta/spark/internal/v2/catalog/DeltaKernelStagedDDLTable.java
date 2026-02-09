@@ -61,7 +61,7 @@ import org.apache.spark.sql.delta.util.CatalogTableUtils;
  *
  * <p>The constructor performs the planning step (resolve engine, schema/layout, filtered table
  * properties, and optional UC table info). {@link #commitStagedChanges()} executes the Kernel
- * transaction using the planned state and then invokes a {@link CatalogFinalizer} to make the
+ * transaction using the planned state and then invokes a {@link PostCommitAction} to make the
  * result visible to Spark catalogs when required.
  */
 public final class DeltaKernelStagedDDLTable implements StagedTable {
@@ -75,7 +75,7 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
   private final Transform[] partitions;
   private final Map<String, String> allTableProperties;
   private final DdlOperation operation;
-  private final CatalogFinalizer finalizer;
+  private final PostCommitAction postCommitAction;
 
   private final Engine engine;
   private final StructType kernelSchema;
@@ -93,7 +93,7 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
       Transform[] partitions,
       Map<String, String> allTableProperties,
       DdlOperation operation,
-      CatalogFinalizer finalizer) {
+      PostCommitAction postCommitAction) {
     requireNonNull(spark, "spark is null");
     requireNonNull(catalogName, "catalogName is null");
     this.ident = requireNonNull(ident, "ident is null");
@@ -102,7 +102,7 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     this.partitions = requireNonNull(partitions, "partitions is null");
     this.allTableProperties = requireNonNull(allTableProperties, "allTableProperties is null");
     this.operation = requireNonNull(operation, "operation is null");
-    this.finalizer = requireNonNull(finalizer, "finalizer is null");
+    this.postCommitAction = requireNonNull(postCommitAction, "postCommitAction is null");
 
     final Configuration hadoopConf = spark.sessionState().newHadoopConf();
     this.engine = DefaultEngine.create(hadoopConf);
@@ -171,10 +171,10 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     // When CTAS/RTAS is implemented, the same commit path will accept data actions from the writer.
     try {
       commitKernelTransaction(CloseableIterable.emptyIterable());
-      finalizer.finalizeAfterCommit();
+      postCommitAction.execute();
     } catch (Throwable t) {
       try {
-        finalizer.abort(t);
+        postCommitAction.abort(t);
       } catch (Throwable ignored) {
         // Best effort: preserve original failure.
       }
@@ -202,7 +202,7 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
 
   @Override
   public void abortStagedChanges() {
-    finalizer.abort(new RuntimeException("aborted"));
+    postCommitAction.abort(new RuntimeException("aborted"));
   }
 
   private void commitFilesystemCreate(CloseableIterable<Row> dataActions) {

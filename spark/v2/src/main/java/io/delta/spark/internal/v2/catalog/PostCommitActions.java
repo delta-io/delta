@@ -21,58 +21,58 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.catalyst.catalog.CatalogTableType;
 
-/** Factories for common {@link CatalogFinalizer} implementations. */
-public final class CatalogFinalizers {
+/** Factories for common {@link PostCommitAction} implementations. */
+public final class PostCommitActions {
 
-  private CatalogFinalizers() {}
+  private PostCommitActions() {}
 
-  public static CatalogFinalizer noOp() {
-    return NoOpCatalogFinalizer.INSTANCE;
+  public static PostCommitAction none() {
+    return NoOpPostCommitAction.INSTANCE;
   }
 
-  /** Finalizer used for UC-managed tables. Currently a no-op. */
-  public static CatalogFinalizer ucManaged() {
-    return UCManagedCatalogFinalizer.INSTANCE;
+  /** Post-commit action used for Unity Catalog managed tables. Currently a no-op. */
+  public static PostCommitAction unityCatalog() {
+    return UnityCatalogPostCommitAction.INSTANCE;
   }
 
-  /** Finalizer that registers a {@link CatalogTable} via Spark's {@code SessionCatalog}. */
-  public static CatalogFinalizer sessionCatalog(SparkSession spark, CatalogTable tableDesc) {
+  /** Action that registers a {@link CatalogTable} via Spark's {@code SessionCatalog}. */
+  public static PostCommitAction sessionCatalog(SparkSession spark, CatalogTable tableDesc) {
     requireNonNull(spark, "spark is null");
     requireNonNull(tableDesc, "tableDesc is null");
-    return new SessionCatalogFinalizer(spark, tableDesc);
+    return new SessionCatalogPostCommitAction(spark, tableDesc);
   }
 
-  private static final class NoOpCatalogFinalizer implements CatalogFinalizer {
-    private static final NoOpCatalogFinalizer INSTANCE = new NoOpCatalogFinalizer();
+  private static final class NoOpPostCommitAction implements PostCommitAction {
+    private static final NoOpPostCommitAction INSTANCE = new NoOpPostCommitAction();
 
     @Override
-    public void finalizeAfterCommit() {}
+    public void execute() {}
 
     @Override
     public void abort(Throwable cause) {}
   }
 
-  private static final class UCManagedCatalogFinalizer implements CatalogFinalizer {
-    private static final UCManagedCatalogFinalizer INSTANCE = new UCManagedCatalogFinalizer();
+  private static final class UnityCatalogPostCommitAction implements PostCommitAction {
+    private static final UnityCatalogPostCommitAction INSTANCE = new UnityCatalogPostCommitAction();
 
     @Override
-    public void finalizeAfterCommit() {}
+    public void execute() {}
 
     @Override
     public void abort(Throwable cause) {}
   }
 
-  private static final class SessionCatalogFinalizer implements CatalogFinalizer {
+  private static final class SessionCatalogPostCommitAction implements PostCommitAction {
     private final SparkSession spark;
     private final CatalogTable tableDesc;
 
-    private SessionCatalogFinalizer(SparkSession spark, CatalogTable tableDesc) {
+    private SessionCatalogPostCommitAction(SparkSession spark, CatalogTable tableDesc) {
       this.spark = spark;
       this.tableDesc = tableDesc;
     }
 
     @Override
-    public void finalizeAfterCommit() {
+    public void execute() {
       // Kernel creates the table directory before catalog registration, so location validation
       // would fail for managed tables (the directory already exists).
       boolean validateLoc = tableDesc.tableType() != CatalogTableType.MANAGED();
