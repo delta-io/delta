@@ -24,7 +24,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
-import io.delta.kernel.expressions.Column;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
@@ -51,9 +50,6 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.TableCapability;
-import org.apache.spark.sql.connector.catalog.TableCatalog;
-import org.apache.spark.sql.connector.expressions.IdentityTransform;
-import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 
@@ -215,6 +211,9 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
         commitFilesystemCreate(dataActions);
       }
     } catch (TableAlreadyExistsException tae) {
+      // Spark's TableAlreadyExistsException extends AnalysisException (checked), but
+      // commitStagedChanges() cannot declare checked exceptions. sneakyThrow bypasses this;
+      // Spark's analyzer catches AnalysisException for proper error messaging.
       org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException sparkException =
           new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident);
       sparkException.initCause(tae);
@@ -276,38 +275,18 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
     txn.commit(engine, dataActions);
   }
 
-  /**
-   * Convert Spark partition transforms to a Kernel {@link DataLayoutSpec}.
-   *
-   * <p>Note: the same IdentityTransform validation exists in {@code
-   * V2CreateTableHelper.toPartitionColumnNames} (Scala, produces column name strings for
-   * CatalogTable). Keep both in sync if the validation logic changes.
-   */
+  /** Convert Spark partition transforms to a Kernel {@link DataLayoutSpec}. */
   private static Optional<DataLayoutSpec> toDataLayoutSpec(Transform[] partitions) {
     requireNonNull(partitions, "partitions is null");
     if (partitions.length == 0) {
       return Optional.empty();
     }
-
-    final List<Column> partitionCols = new ArrayList<>(partitions.length);
-    for (Transform transform : partitions) {
-      // Only support identity partitioning transforms (PARTITIONED BY col1, col2, ...).
-      if (!(transform instanceof IdentityTransform)) {
-        throw new UnsupportedOperationException(
-            "Partitioning by expressions is not supported: " + transform.name());
-      }
-      NamedReference[] refs = transform.references();
-      if (refs == null || refs.length != 1) {
-        throw new IllegalArgumentException("Invalid partition transform: " + transform);
-      }
-      String[] fieldNames = refs[0].fieldNames();
-      if (fieldNames == null || fieldNames.length != 1) {
-        throw new UnsupportedOperationException(
-            "Partition columns must be top-level columns: " + refs[0].describe());
-      }
-      partitionCols.add(new Column(fieldNames[0]));
+    List<String> names = PartitionTransformUtils.extractPartitionColumnNames(partitions);
+    List<io.delta.kernel.expressions.Column> cols = new ArrayList<>(names.size());
+    for (String name : names) {
+      cols.add(new io.delta.kernel.expressions.Column(name));
     }
-    return Optional.of(DataLayoutSpec.partitioned(partitionCols));
+    return Optional.of(DataLayoutSpec.partitioned(cols));
   }
 
   /**
@@ -323,28 +302,12 @@ public final class DeltaKernelStagedDDLTable implements StagedTable {
       if (key == null) {
         continue;
       }
-      if (isSparkReservedPropertyKey(key)) {
+      if (SparkDDLPropertyUtils.isSparkReservedPropertyKey(key)) {
         continue;
       }
       result.put(key, e.getValue());
     }
     return result;
-  }
-
-  public static boolean isSparkReservedPropertyKey(String key) {
-    switch (key) {
-      case TableCatalog.PROP_LOCATION:
-      case TableCatalog.PROP_PROVIDER:
-      case TableCatalog.PROP_IS_MANAGED_LOCATION:
-      case TableCatalog.PROP_COMMENT:
-      case TableCatalog.PROP_OWNER:
-      case TableCatalog.PROP_EXTERNAL:
-      case "path":
-      case "option.path":
-        return true;
-      default:
-        return false;
-    }
   }
 
   /**

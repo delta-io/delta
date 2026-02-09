@@ -15,7 +15,7 @@
  */
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.DeltaKernelStagedDDLTable
+import io.delta.spark.internal.v2.catalog.{PartitionTransformUtils, SparkDDLPropertyUtils}
 
 import java.net.URI
 import java.util
@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
-import org.apache.spark.sql.connector.expressions.{IdentityTransform, Transform}
+import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.types.StructType
 
@@ -46,12 +46,6 @@ private[delta] object V2CreateTableHelper {
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]): (CatalogTable, String) = {
-    require(spark != null, "spark is null")
-    require(ident != null, "ident is null")
-    require(schema != null, "schema is null")
-    require(partitions != null, "partitions is null")
-    require(properties != null, "properties is null")
-
     // Use the last namespace segment as the database name, matching Spark's V2SessionCatalog
     // behavior. This only works correctly for the session catalog (spark_catalog).
     val namespace = Option(ident.namespace()).getOrElse(Array.empty[String])
@@ -94,7 +88,7 @@ private[delta] object V2CreateTableHelper {
       properties.asScala.iterator
         .collect {
           case (k, v)
-              if k != null && !DeltaKernelStagedDDLTable.isSparkReservedPropertyKey(k) =>
+              if k != null && !SparkDDLPropertyUtils.isSparkReservedPropertyKey(k) =>
             k -> v
         }
         .toMap
@@ -103,7 +97,7 @@ private[delta] object V2CreateTableHelper {
     val partitionColumnNames = toPartitionColumnNames(partitions)
 
     // Provider is always delta for this code path (validated by DeltaCatalog routing).
-    val providerOpt = Some(DeltaSourceUtils.ALT_NAME)
+    val providerOpt = Some(DeltaSourceUtils.NAME)
 
     val storage =
       CatalogStorageFormat.empty.copy(locationUri = Some(locationUri))
@@ -123,9 +117,6 @@ private[delta] object V2CreateTableHelper {
   }
 
   def registerTable(spark: SparkSession, tableDesc: CatalogTable): Unit = {
-    require(spark != null, "spark is null")
-    require(tableDesc != null, "tableDesc is null")
-
     // Kernel creates the table directory before catalog registration, so location validation
     // would fail for managed tables (the directory already exists).
     val validateLoc = tableDesc.tableType != CatalogTableType.MANAGED
@@ -133,25 +124,8 @@ private[delta] object V2CreateTableHelper {
       tableDesc, ignoreIfExists = false, validateLocation = validateLoc)
   }
 
-  // Same IdentityTransform validation as DeltaKernelStagedDDLTable.toDataLayoutSpec (Java,
-  // produces Kernel Column objects). Keep both in sync if the validation logic changes.
   private def toPartitionColumnNames(partitions: Array[Transform]): Seq[String] = {
-    partitions.toSeq.map {
-      case identity: IdentityTransform =>
-        val refs = identity.references()
-        if (refs == null || refs.length != 1) {
-          throw new IllegalArgumentException(s"Invalid partition transform: ${identity.name}")
-        }
-        val fieldNames = refs(0).fieldNames()
-        if (fieldNames == null || fieldNames.length != 1) {
-          throw new UnsupportedOperationException(
-            s"Partition columns must be top-level columns: ${refs(0).describe()}")
-        }
-        fieldNames(0)
-      case other =>
-        throw new UnsupportedOperationException(
-          s"Partitioning by expressions is not supported: ${other.name}")
-    }
+    PartitionTransformUtils.extractPartitionColumnNames(partitions).asScala.toSeq
   }
 }
 
