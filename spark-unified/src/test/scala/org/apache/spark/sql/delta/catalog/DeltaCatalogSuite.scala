@@ -134,7 +134,12 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
       .select("metaData.configuration")
     val rows = df.collect()
     assert(rows.length == 1, s"Expected single metaData action in $commitFile")
-    rows.head.get(0).asInstanceOf[scala.collection.Map[String, String]].toMap
+    val confRow = rows.head.getAs[org.apache.spark.sql.Row](0)
+    confRow.schema.fieldNames.zipWithIndex
+      .flatMap { case (k, idx) =>
+        if (confRow.isNullAt(idx)) None else Some(k -> confRow.getString(idx))
+      }
+      .toMap
   }
 
   test("STRICT: CREATE TABLE commits via Kernel (catalog-based external)") {
