@@ -17,7 +17,7 @@ Delta Lake is an open-source storage framework that enables building a [Lakehous
 
 The following are some of the more popular Delta Lake integrations, refer to [delta.io/integrations](https://delta.io/integrations/) for the complete list:
 
-* [Apache Spark™](https://docs.delta.io/): This connector allows Apache Spark™ to read from and write to Delta Lake.
+* [Apache Spark™]([https://docs.delta.io/](https://docs.delta.io/latest/delta-spark.html)): This connector allows Apache Spark™ to read from and write to Delta Lake.
 * [Apache Flink (Preview)](https://github.com/delta-io/delta/tree/master/connectors/flink): This connector allows Apache Flink to write to Delta Lake.
 * [PrestoDB](https://prestodb.io/docs/current/connector/deltalake.html): This connector allows PrestoDB to read from Delta Lake.
 * [Trino](https://trino.io/docs/current/connector/delta-lake.html): This connector allows Trino to read from and write to Delta Lake.
