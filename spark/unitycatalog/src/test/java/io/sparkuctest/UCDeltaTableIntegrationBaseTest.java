@@ -34,7 +34,6 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
@@ -70,7 +69,6 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     List<Method> methods =
         Stream.of(this.getClass().getDeclaredMethods())
             .filter(m -> m.isAnnotationPresent(TestAllTableTypes.class))
-            .filter(m -> !m.isAnnotationPresent(Disabled.class))
             .collect(Collectors.toList());
     List<DynamicContainer> containers = new ArrayList<>();
     for (Method method : methods) {
