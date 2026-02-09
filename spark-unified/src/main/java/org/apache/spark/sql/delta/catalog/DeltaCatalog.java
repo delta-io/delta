@@ -27,6 +27,7 @@ import java.util.function.Supplier;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.expressions.Transform;
@@ -157,18 +158,29 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       return super.createTable(ident, schema, partitions, properties);
     }
 
-    final String catalogName = name();
-
-    final DeltaKernelStagedDDLTable staged = buildStagedCreateTable(
-        spark(),
-        catalogName,
-        ident,
-        schema,
-        partitions,
-        properties);
-
+    StagedTable staged = stageCreate(ident, schema, partitions, properties);
     staged.commitStagedChanges();
     return loadTable(ident);
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!connectorMode.shouldCatalogReturnV2Tables()) {
+      return super.stageCreate(ident, schema, partitions, properties);
+    }
+
+    String provider = properties.get(TableCatalog.PROP_PROVIDER);
+    if (provider == null || !DeltaSourceUtils.isDeltaDataSourceName(provider)) {
+      return super.stageCreate(ident, schema, partitions, properties);
+    }
+
+    final String catalogName = name();
+    return buildStagedCreateTable(spark(), catalogName, ident, schema, partitions, properties);
   }
 
   private DeltaKernelStagedDDLTable buildStagedCreateTable(

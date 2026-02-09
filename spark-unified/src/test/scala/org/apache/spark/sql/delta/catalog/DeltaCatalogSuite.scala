@@ -171,9 +171,10 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
       val location = new File(tempDir, tableName).getAbsolutePath
 
       withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
-        sql(
-          s"CREATE TABLE $tableName USING delta LOCATION '$location' AS SELECT 1 AS id, 'a' AS name")
-        assert(!isKernelEngineInfo(readEngineInfo(location)))
+        intercept[Exception] {
+          sql(
+            s"CREATE TABLE $tableName USING delta LOCATION '$location' AS SELECT 1 AS id, 'a' AS name")
+        }
       }
     }
   }
