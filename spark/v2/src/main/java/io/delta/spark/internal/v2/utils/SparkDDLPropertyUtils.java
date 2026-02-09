@@ -13,16 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.catalog;
+package io.delta.spark.internal.v2.utils;
 
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 
 /**
  * Identifies Spark DSv2 reserved table property keys that should not be persisted into the Delta
  * log's {@code metadata.configuration}.
- *
- * <p>Used by both {@link DeltaKernelStagedDDLTable} (Java, filters before Kernel commit) and {@code
- * V2CreateTableHelper} (Scala, filters before building the {@code CatalogTable} descriptor).
  */
 public final class SparkDDLPropertyUtils {
 

@@ -15,7 +15,7 @@
  */
 package org.apache.spark.sql.delta.catalog
 
-import io.delta.spark.internal.v2.catalog.{PartitionTransformUtils, SparkDDLPropertyUtils}
+import io.delta.spark.internal.v2.utils.{PartitionTransformUtils, SparkDDLPropertyUtils}
 
 import java.net.URI
 import java.util

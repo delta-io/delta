@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.catalog;
+package io.delta.spark.internal.v2.utils;
 
 import static java.util.Objects.requireNonNull;
 
@@ -23,20 +23,15 @@ import org.apache.spark.sql.connector.expressions.IdentityTransform;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.Transform;
 
-/**
- * Shared validation and extraction for Spark partition {@link Transform}s.
- *
- * <p>Used by both {@link DeltaKernelStagedDDLTable} (Java, produces Kernel {@code Column} objects)
- * and {@code V2CreateTableHelper} (Scala, produces column name strings for {@code CatalogTable}).
- * Centralising here eliminates duplicate validation logic.
- */
+/** Shared validation and extraction for Spark DSv2 partition {@link Transform}s. */
 public final class PartitionTransformUtils {
 
   private PartitionTransformUtils() {}
 
   /**
-   * Validate partition transforms and extract top-level column names. Only identity transforms on
-   * top-level columns are supported.
+   * Validate partition transforms and extract top-level column names.
+   *
+   * <p>Only identity transforms on top-level columns are supported.
    *
    * @param partitions Spark partition transforms
    * @return ordered list of partition column names
