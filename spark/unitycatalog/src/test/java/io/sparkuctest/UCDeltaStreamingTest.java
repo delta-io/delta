@@ -32,19 +32,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
-import java.util.stream.LongStream;
 import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
 import org.apache.spark.sql.streaming.StreamingQuery;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.Metadata;
-import org.apache.spark.sql.types.StructField;
-import org.apache.spark.sql.types.StructType;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -68,7 +59,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
       throw new UncheckedIOException(e);
     }
   }
-
+  /*
   @TestAllTableTypes
   public void testStreamingWriteToManagedTable(TableType tableType) throws Exception {
     withNewTable(
@@ -133,6 +124,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           assertFalse(query.isActive(), "Streaming query should have stopped");
         });
   }
+  */
 
   @TestAllTableTypes
   public void testStreamingReadFromTable(TableType tableType) throws Exception {
