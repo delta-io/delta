@@ -362,7 +362,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]
   ): Table = {
-      // Use the Column[]-based API; the StructType overload is deprecated in Spark 4.0.
       val columns =
         org.apache.spark.sql.connector.catalog.CatalogV2Util.structTypeToV2Columns(schema)
       super.createTable(ident, columns, partitions, properties)
