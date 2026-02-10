@@ -59,7 +59,9 @@ class AbstractKernelTableTest extends TestHelper {
    * @param callback callback invoked with the created table
    */
   private void withTestTable(
-      StructType schema, List<String> partitionCols, CheckedConsumer<HadoopTableForTest> callback) {
+      StructType schema,
+      List<String> partitionCols,
+      CheckedConsumer<LocalFileSystemTable> callback) {
     withTestTable(schema, partitionCols, Collections.emptyMap(), callback);
   }
 
@@ -75,11 +77,11 @@ class AbstractKernelTableTest extends TestHelper {
       StructType schema,
       List<String> partitionCols,
       Map<String, String> tableConfig,
-      CheckedConsumer<HadoopTableForTest> callback) {
+      CheckedConsumer<LocalFileSystemTable> callback) {
     withTempDir(
         dir -> {
-          HadoopTableForTest table =
-              new HadoopTableForTest(dir.toURI(), tableConfig, schema, partitionCols);
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(dir.toURI(), tableConfig, schema, partitionCols);
           table.open();
 
           callback.accept(table);
@@ -182,7 +184,7 @@ class AbstractKernelTableTest extends TestHelper {
           verifyTableContent(
               table.getTablePath().toString(),
               (version, addFiles, properties) -> {
-                assertEquals(0L, version);
+                assertEquals(1L, version);
                 // There should be 5 files to scan
                 List<AddFile> actionsList = new ArrayList<>();
                 addFiles.forEach(actionsList::add);
@@ -194,15 +196,15 @@ class AbstractKernelTableTest extends TestHelper {
   }
 
   @Test
-  void testCommitToEmptyTable() {
+  void testCommitToEmptyTableWithPartition() {
     withTempDir(
         dir -> {
           String tablePath = dir.getAbsolutePath();
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
 
-          HadoopTableForTest table =
-              new HadoopTableForTest(
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
                   URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
           table.open();
 
@@ -233,7 +235,7 @@ class AbstractKernelTableTest extends TestHelper {
           verifyTableContent(
               dir.toString(),
               (version, addFiles, properties) -> {
-                assertEquals(0L, version);
+                assertEquals(1L, version);
                 // There should be 5 files to scan
                 List<AddFile> actionsList = new ArrayList<>();
                 addFiles.forEach(actionsList::add);
@@ -258,18 +260,16 @@ class AbstractKernelTableTest extends TestHelper {
           String tablePath = dir.getAbsolutePath();
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
-
-          HadoopTableForTest table =
-              new HadoopTableForTest(
-                  URI.create(tablePath), Collections.emptyMap(), schema, Collections.emptyList());
-          table.open();
-
           createNonEmptyTable(
               DefaultEngine.create(new Configuration()),
               tablePath,
               schema,
               Collections.emptyList(),
               30);
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
+                  URI.create(tablePath), Collections.emptyMap(), schema, Collections.emptyList());
+          table.open();
 
           List<Row> actions =
               IntStream.range(0, 5)
@@ -303,14 +303,13 @@ class AbstractKernelTableTest extends TestHelper {
           String tablePath = dir.getAbsolutePath();
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
-
-          HadoopTableForTest table =
-              new HadoopTableForTest(
-                  URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
-          table.open();
-
           createNonEmptyTable(
               DefaultEngine.create(new Configuration()), tablePath, schema, List.of("part"), 30);
+
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
+                  URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
+          table.open();
 
           List<Row> actions =
               IntStream.range(0, 5)
@@ -355,14 +354,14 @@ class AbstractKernelTableTest extends TestHelper {
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
 
-          HadoopTableForTest table =
-              new HadoopTableForTest(
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
                   URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
           table.open();
-
           table.refresh();
-
-          assertTrue(table.snapshot().isEmpty());
+          assertTrue(table.snapshot().isPresent());
+          Snapshot snapshot = table.snapshot().get();
+          assertEquals(0, snapshot.getVersion());
         });
   }
 
@@ -374,13 +373,12 @@ class AbstractKernelTableTest extends TestHelper {
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
 
-          HadoopTableForTest table =
-              new HadoopTableForTest(
-                  URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
-          table.open();
-
           createNonEmptyTable(
               DefaultEngine.create(new Configuration()), tablePath, schema, List.of("part"), 30);
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
+                  URI.create(tablePath), Collections.emptyMap(), schema, List.of("part"));
+          table.open();
 
           table.refresh();
           assertEquals(0, table.snapshot().get().getVersion());
@@ -398,8 +396,8 @@ class AbstractKernelTableTest extends TestHelper {
 
           int[] callCounter = {0};
 
-          HadoopTableForTest table =
-              new HadoopTableForTest(
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
                   dir.toURI(), Collections.emptyMap(), schema, Collections.emptyList()) {
 
                 @Override
@@ -489,8 +487,8 @@ class AbstractKernelTableTest extends TestHelper {
           int[] retryCounter = {0};
           int[] loadCounter = {0};
 
-          HadoopTableForTest testHadoopTable =
-              new HadoopTableForTest(
+          LocalFileSystemTable testHadoopTable =
+              new LocalFileSystemTable(
                   dir.toURI(), Collections.emptyMap(), schema, Collections.emptyList()) {
 
                 @Override
@@ -537,8 +535,8 @@ class AbstractKernelTableTest extends TestHelper {
           int[] retryCounter = {0};
           int[] loadCounter = {0};
 
-          HadoopTableForTest testHadoopTable =
-              new HadoopTableForTest(
+          LocalFileSystemTable testHadoopTable =
+              new LocalFileSystemTable(
                   dir.toURI(), Collections.emptyMap(), schema, Collections.emptyList()) {
 
                 @Override
@@ -576,8 +574,8 @@ class AbstractKernelTableTest extends TestHelper {
           int[] retryCounter = {0};
           int[] loadCounter = {0};
 
-          HadoopTableForTest testHadoopTable =
-              new HadoopTableForTest(
+          LocalFileSystemTable testHadoopTable =
+              new LocalFileSystemTable(
                   dir.toURI(), Collections.emptyMap(), schema, Collections.emptyList()) {
 
                 @Override
@@ -619,7 +617,7 @@ class AbstractKernelTableTest extends TestHelper {
           int numColumns = 2;
           ColumnVector[] columnVectors = new ColumnVector[numColumns];
 
-          List<List<Object>> dataBuffer = List.of(List.of(1, "Jack"), List.of(2, "Amy"));
+          List<List<?>> dataBuffer = List.of(List.of(1, "Jack"), List.of(2, "Amy"));
 
           for (int colIdx = 0; colIdx < numColumns; colIdx++) {
             var colDataType = schema.at(colIdx).getDataType();
@@ -654,8 +652,8 @@ class AbstractKernelTableTest extends TestHelper {
         dir -> {
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
-          HadoopTableForTest table =
-              new HadoopTableForTest(
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
                   dir.toURI(), Collections.emptyMap(), schema, Collections.emptyList());
           table.open();
 
@@ -688,8 +686,8 @@ class AbstractKernelTableTest extends TestHelper {
         dir -> {
           StructType schema =
               new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
-          HadoopTableForTest table =
-              new HadoopTableForTest(
+          LocalFileSystemTable table =
+              new LocalFileSystemTable(
                   dir.toURI(),
                   Map.of(TableConf.CHECKPOINT_FREQUENCY.key(), "1.0"),
                   schema,
@@ -717,7 +715,7 @@ class AbstractKernelTableTest extends TestHelper {
             assertTrue(checkpointFile.exists(), checkpointPath);
             // Ensure cache is updated
             var cachedSnapshot = table.snapshot().get();
-            assertEquals(i, cachedSnapshot.getVersion());
+            assertEquals(i + 1, cachedSnapshot.getVersion());
           }
         });
   }
