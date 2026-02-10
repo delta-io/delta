@@ -186,24 +186,32 @@ class UCTokenBasedRestClientSuite
   }
 
   test("commit throws appropriate exceptions for HTTP errors") {
-    // 404 -> InvalidTargetTableException
-    commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
-    withClient { client =>
-      intercept[InvalidTargetTableException] {
+    def commitWith(status: Int): Unit = {
+      commitsHandler = exchange => sendJson(exchange, status, s"""{"error":"$status"}""")
+      withClient { client =>
         client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
           Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
       }
     }
 
-    // 409 -> CommitFailedException with conflict
-    commitsHandler = exchange => sendJson(exchange, HttpStatus.SC_CONFLICT, "{}")
-    withClient { client =>
-      val ex = intercept[CommitFailedException] {
-        client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
-      }
-      assert(ex.getConflict)
-    }
+    // 400 -> CommitFailedException (non-retryable, non-conflict)
+    val e400 = intercept[CommitFailedException] { commitWith(400) }
+    assert(!e400.getRetryable && !e400.getConflict)
+
+    // 404 -> InvalidTargetTableException
+    intercept[InvalidTargetTableException] { commitWith(404) }
+
+    // 409 -> CommitFailedException (retryable, conflict)
+    val e409 = intercept[CommitFailedException] { commitWith(409) }
+    assert(e409.getRetryable && e409.getConflict)
+
+    // Note: 429 (CommitLimitReachedException) cannot be tested here because the SDK's
+    // RetryingHttpClient intercepts 429 before it reaches handleCommitException.
+    // The 429 path is exercised via UCCommitCoordinatorClientSuite integration tests.
+
+    // 500 (default branch) -> CommitFailedException (retryable, non-conflict)
+    val e500 = intercept[CommitFailedException] { commitWith(500) }
+    assert(e500.getRetryable && !e500.getConflict)
   }
 
   // getCommits tests
