@@ -898,16 +898,17 @@ The following table properties control which columns have per-column statistics 
 
 Property | Description
 -|-
-`delta.dataSkippingStatsColumns` | A comma-separated list of column names for which to collect per-column statistics. Column names may refer to nested struct fields using dot notation (e.g., `a.b.c`), in which case statistics are collected for all leaf fields within that struct. When this property is set, it takes precedence over `delta.dataSkippingNumIndexedCols`. Partition columns cannot be specified.
+`delta.dataSkippingStatsColumns` | A comma-separated list of column names for which to collect per-column statistics. Column names may refer to nested struct fields using dot notation (e.g., `a.b.c`), in which case statistics are collected for all leaf fields within that struct. Column names containing special characters (including commas, dots, or spaces) must be enclosed in backticks (e.g., `` `column.with" +special,chars` ``). When this property is set, it takes precedence over `delta.dataSkippingNumIndexedCols`. Partition columns cannot be specified.
 `delta.dataSkippingNumIndexedCols` | The number of leading leaf columns in the table schema for which to collect per-column statistics. Defaults to 32. This property is ignored if `delta.dataSkippingStatsColumns` is set. A negative value indicates that statistics should be collected for all columns.
 
 When neither property is set, statistics are collected for the first 32 leaf columns in the table schema (excluding partition columns).
-When [Column Mapping](#column-mapping) is enabled, per-column statistics are keyed by physical column names.
 
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
 
 The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
+
+When column mapping is enabled, [per-column statistics](#per-file-statistics) are keyed by physical column names.
 
 The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
 ```json
