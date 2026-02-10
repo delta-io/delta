@@ -8,8 +8,8 @@
 
 set -euo pipefail
 
-UC_REPO="https://github.com/openinx/unitycatalog.git"
-UC_BRANCH="staging-table-catalog"
+UC_REPO="https://github.com/unitycatalog/unitycatalog.git"
+UC_BRANCH="main"
 UC_DIR="/tmp/unitycatalog"
 MAX_ATTEMPTS=3
 RETRY_DELAY=15
