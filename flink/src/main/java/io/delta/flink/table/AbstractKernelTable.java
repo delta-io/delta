@@ -30,10 +30,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.defaults.internal.json.JsonUtils;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.exceptions.ConcurrentTransactionException;
-import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.exceptions.TableAlreadyExistsException;
-import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaLogActionUtils;
@@ -52,7 +49,6 @@ import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Function;
-import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -69,7 +65,7 @@ import org.slf4j.LoggerFactory;
  * such as table discovery, path resolution, and storage I/O.
  *
  * <p>This class centralizes shared behavior so that different table backends (e.g., Hadoop-based
- * tables, CCv2 catalog tables, custom catalogs) can implement only the backend-specific portions
+ * tables, catalog-managed tables, custom catalogs) can implement only the backend-specific portions
  * while inheriting consistent Delta table semantics.
  *
  * <p>Subclasses must provide their own mechanisms for interpreting table identifiers and resolving
@@ -79,29 +75,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   protected static String ENGINE_INFO = "DeltaSink";
   protected static Logger LOG = LoggerFactory.getLogger(AbstractKernelTable.class);
-
-  static Predicate<Throwable> isTableNotFound =
-      ExceptionUtils.recursiveCheck(ex -> ex instanceof TableNotFoundException);
-
-  static Predicate<Throwable> isSnapshotUpdated =
-      ExceptionUtils.recursiveCheck(
-          ex ->
-              ex instanceof ConcurrentModificationException
-                  || ex instanceof ConcurrentWriteException
-                  || ex instanceof TableAlreadyExistsException);
-
-  static Predicate<Throwable> isSwallowable =
-      ExceptionUtils.recursiveCheck(ex -> ex instanceof ConcurrentTransactionException);
-
-  /**
-   * Check if an exception is retryable.
-   *
-   * @param e exception
-   * @return true if the exception is Authentication or Concurrency related.
-   */
-  protected static boolean isRetryableException(Throwable e) {
-    return CredentialManager.isCredentialsExpired.test(e) || isSnapshotUpdated.test(e);
-  }
 
   /**
    * Normalizes the given URI string to a canonical form. The normalization includes:
@@ -145,6 +118,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return target;
   }
 
+  /**
+   * Normalize the provided partition column names.
+   *
+   * @param rawPartitions input list of column names.
+   * @return a partition info that does not contain null or empty string.
+   */
   protected static List<String> normalize(List<String> rawPartitions) {
     if (rawPartitions == null) {
       return List.of();
@@ -187,7 +166,12 @@ public abstract class AbstractKernelTable implements DeltaTable {
       List<String> partitionColumns) {
     this.catalog = catalog;
     this.tableId = tableId;
-    this.conf = new TableConf(conf);
+
+    // Allow subclasses to provide extra confs
+    Map<String, String> mergedConfs = new HashMap<>(conf);
+    mergedConfs.putAll(extraConf());
+    this.conf = new TableConf(mergedConfs);
+
     this.schema = schema;
     this.partitionColumns = normalize(partitionColumns);
 
@@ -201,6 +185,24 @@ public abstract class AbstractKernelTable implements DeltaTable {
 
   public AbstractKernelTable(DeltaCatalog catalog, String tableId, Map<String, String> conf) {
     this(catalog, tableId, conf, null, null);
+  }
+
+  // =====================
+  // Override methods
+  // =====================
+  @Override
+  public String getId() {
+    return tableId;
+  }
+
+  @Override
+  public StructType getSchema() {
+    return schema;
+  }
+
+  @Override
+  public List<String> getPartitionColumns() {
+    return partitionColumns;
   }
 
   @Override
@@ -219,7 +221,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
     if (serializedTableState == null) {
       withRetry(
           () -> {
-            initTable();
+            loadDeltaTable();
             return null;
           });
     }
@@ -229,31 +231,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
     if (schema == null) {
       schema = TransactionStateRow.getLogicalSchema(tableState);
     }
-  }
-
-  /**
-   * Load snapshot using a separated thread. This will allow external request to interrupt the
-   * thread during time-consuming operations in loading snapshot, such as log replay.
-   *
-   * @return loaded snapshot, null if the table does not exist
-   */
-  protected Optional<Snapshot> snapshot() {
-    Function<String, Optional<Snapshot>> body =
-        (key) -> {
-          try {
-            return withTiming(
-                "loadLatestSnapshot",
-                () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
-          } catch (Exception e) {
-            if (isTableNotFound.test(e)) {
-              return Optional.empty();
-            }
-            throw ExceptionUtils.wrap(e);
-          }
-        };
-    String path = tablePath.toString();
-    LOG.debug("Loading snapshot for path {}", path);
-    return cacheManager.get(path, this::probeVersion, body);
   }
 
   @Override
@@ -271,63 +248,9 @@ public abstract class AbstractKernelTable implements DeltaTable {
     }
   }
 
-  /**
-   * Subclass must implement this method to fetch a Kernel snapshot
-   *
-   * @return latest snapshot of the table
-   */
-  protected abstract Snapshot loadLatestSnapshot();
-
-  /**
-   * Subclass may implement this to achieve fast cache validation. This method is expected to be
-   * faster than {@link #loadLatestSnapshot()}. The default implementation checks if a file with the
-   * given version exists.
-   *
-   * @return the latest version of the table, null if unknown / not supported
-   */
-  protected boolean probeVersion(Long version) {
-    try {
-      return !DeltaLogActionUtils.getCommitFilesForVersionRange(
-              getEngine(),
-              new io.delta.kernel.internal.fs.Path(tablePath),
-              version,
-              Optional.empty())
-          .isEmpty();
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
   @Override
   public void refresh() {
     refresh(null);
-  }
-
-  /** Refresh with the provided snapshot */
-  protected void refresh(Snapshot snapshot) {
-    withTiming(
-        "refresh",
-        () ->
-            withRetry(
-                () -> {
-                  Snapshot currentSnapshot = snapshot;
-                  if (currentSnapshot == null) {
-                    currentSnapshot = snapshot().orElse(null);
-                  }
-                  if (currentSnapshot == null) {
-                    return null;
-                  }
-                  this.schema = currentSnapshot.getSchema();
-                  this.partitionColumns = currentSnapshot.getPartitionColumnNames();
-                  // Refresh table state
-                  this.tableState =
-                      currentSnapshot
-                          .buildUpdateTableTransaction("dummy", Operation.WRITE)
-                          .build(getEngine())
-                          .getTransactionState(getEngine());
-                  this.serializedTableState = JsonUtils.rowToJson(this.tableState);
-                  return null;
-                }));
   }
 
   @Override
@@ -341,39 +264,25 @@ public abstract class AbstractKernelTable implements DeltaTable {
                   Engine localEngine = getEngine();
                   Transaction txn;
                   Optional<Snapshot> snapshotOpt = snapshot();
-                  if (snapshotOpt.isPresent()) {
-                    Snapshot snapshot = snapshotOpt.get();
-                    UpdateTableTransactionBuilder txnBuilder =
-                        snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
-                    txnBuilder.withTransactionId(appId, txnId);
-                    txnBuilder.withTablePropertiesAdded(properties);
-                    txn = txnBuilder.build(engine);
-                  } else {
-                    CreateTableTransactionBuilder txnBuilder =
-                        TableManager.buildCreateTableTransaction(
-                            getTablePath().toString(), getSchema(), ENGINE_INFO);
-                    if (!getPartitionColumns().isEmpty()) {
-                      txnBuilder.withDataLayoutSpec(
-                          DataLayoutSpec.partitioned(
-                              getPartitionColumns().stream()
-                                  .map(Column::new)
-                                  .collect(Collectors.toList())));
-                    }
-                    Map<String, String> baseProp = new HashMap<>(conf.catalogConf());
-                    baseProp.putAll(properties);
-                    txnBuilder.withTableProperties(baseProp);
-                    txn = txnBuilder.build(localEngine);
+                  if (snapshotOpt.isEmpty()) {
+                    throw new IllegalStateException("Snapshot should exist");
                   }
+                  Snapshot snapshot = snapshotOpt.get();
+                  UpdateTableTransactionBuilder txnBuilder =
+                      snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
+                  txnBuilder.withTransactionId(appId, txnId);
+                  txnBuilder.withTablePropertiesAdded(properties);
+                  txn = txnBuilder.build(engine);
 
                   TransactionCommitResult result =
                       withTiming("commit.txn", () -> txn.commit(localEngine, actions));
                   return result
                       .getPostCommitSnapshot()
                       .map(
-                          snapshot -> {
-                            this.refresh(snapshot);
-                            onPostCommit(snapshot);
-                            return snapshot;
+                          pcSnapshot -> {
+                            this.refresh(pcSnapshot);
+                            onPostCommit(pcSnapshot);
+                            return pcSnapshot;
                           });
                 }));
   }
@@ -407,44 +316,147 @@ public abstract class AbstractKernelTable implements DeltaTable {
   }
 
   /**
-   * Perform necessary initialization tasks. This method loads the table if it exists, or creates a
-   * new table entry in catalog if the table does not exist
+   * Load snapshot using a separated thread. This will allow external request to interrupt the
+   * thread during time-consuming operations in loading snapshot, such as log replay.
+   *
+   * @return loaded snapshot, null if the table does not exist
    */
-  protected void initTable() {
-    DeltaCatalog.TableDescriptor info = catalog.getTable(tableId);
-    tableUUID = info.uuid;
-    tablePath = info.tablePath;
-    // With an existing table, partitions loaded from the table take precedence
-    final Optional<Snapshot> latestSnapshotOpt = snapshot();
-    if (latestSnapshotOpt.isPresent()) {
-      Snapshot latestSnapshot = latestSnapshotOpt.get();
-      // We use a temporary transaction to generate a TransactionStateRow.
-      // It serves as a holder for schema and partition columns.
-      // The transaction will not be committed, and is discarded afterward.
-      Row existingTableState =
-          latestSnapshot
-              .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
-              .build(getEngine())
-              .getTransactionState(getEngine());
-      this.serializedTableState = JsonUtils.rowToJson(existingTableState);
-      this.schema = latestSnapshot.getSchema();
-      this.partitionColumns = latestSnapshot.getPartitionColumnNames();
-    } else {
-      // Init the table in catalog
-      getCatalog().createTable(tableId, schema, partitionColumns, conf.catalogConf());
-      CreateTableTransactionBuilder createTxnBuilder =
-          TableManager.buildCreateTableTransaction(getTablePath().toString(), schema, ENGINE_INFO);
-      if (!partitionColumns.isEmpty()) {
-        createTxnBuilder.withDataLayoutSpec(
-            DataLayoutSpec.partitioned(
-                Optional.of(partitionColumns)
-                    .map(
-                        nonEmpty -> nonEmpty.stream().map(Column::new).collect(Collectors.toList()))
-                    .orElseGet(Collections::emptyList)));
-      }
-      Row newTableState = createTxnBuilder.build(getEngine()).getTransactionState(getEngine());
-      this.serializedTableState = JsonUtils.rowToJson(newTableState);
+  protected Optional<Snapshot> snapshot() {
+    Function<String, Optional<Snapshot>> body =
+        (key) -> {
+          try {
+            return withTiming(
+                "loadLatestSnapshot",
+                () -> Optional.of(refreshThreadPool.submit(this::loadLatestSnapshot).get()));
+          } catch (Exception e) {
+            if (ExceptionUtils.isTableNotFound.test(e)) {
+              return Optional.empty();
+            }
+            throw ExceptionUtils.wrap(e);
+          }
+        };
+    String path = tablePath.toString();
+    LOG.debug("Loading snapshot for path {}", path);
+    return cacheManager.get(path, this::versionExists, body);
+  }
+
+  /**
+   * Subclass must implement this method to fetch a Kernel snapshot
+   *
+   * @return latest snapshot of the table
+   */
+  protected abstract Snapshot loadLatestSnapshot();
+
+  /**
+   * Subclass may implement this to achieve fast cache validation. This method is expected to be
+   * faster than {@link #loadLatestSnapshot()}. The default implementation checks if a file with the
+   * given version exists.
+   *
+   * @return the latest version of the table, null if unknown / not supported
+   */
+  protected boolean versionExists(Long version) {
+    try {
+      return !DeltaLogActionUtils.getCommitFilesForVersionRange(
+              getEngine(),
+              new io.delta.kernel.internal.fs.Path(tablePath),
+              version,
+              Optional.empty())
+          .isEmpty();
+    } catch (Exception e) {
+      return false;
     }
+  }
+
+  /** Refresh with the provided snapshot */
+  protected void refresh(Snapshot snapshot) {
+    withTiming(
+        "refresh",
+        () ->
+            withRetry(
+                () -> {
+                  Snapshot currentSnapshot = snapshot;
+                  if (currentSnapshot == null) {
+                    currentSnapshot = snapshot().orElse(null);
+                  }
+                  if (currentSnapshot == null) {
+                    return null;
+                  }
+                  this.schema = currentSnapshot.getSchema();
+                  this.partitionColumns = currentSnapshot.getPartitionColumnNames();
+                  // Refresh table state
+                  this.tableState =
+                      currentSnapshot
+                          .buildUpdateTableTransaction("dummy", Operation.WRITE)
+                          .build(getEngine())
+                          .getTransactionState(getEngine());
+                  this.serializedTableState = JsonUtils.rowToJson(this.tableState);
+                  return null;
+                }));
+  }
+
+  protected CreateTableTransactionBuilder buildCreateTableTransaction() {
+    return TableManager.buildCreateTableTransaction(tablePath.toString(), schema, ENGINE_INFO);
+  }
+
+  /** Create a new Delta snapshot representing the empty table at the given location. */
+  protected void createDeltaTable() {
+    Engine engine = getEngine();
+    CreateTableTransactionBuilder txnBuilder =
+        buildCreateTableTransaction().withTableProperties(conf.catalogConf());
+    if (!partitionColumns.isEmpty()) {
+      txnBuilder.withDataLayoutSpec(
+          DataLayoutSpec.partitioned(
+              Optional.of(partitionColumns)
+                  .map(nonEmpty -> nonEmpty.stream().map(Column::new).collect(Collectors.toList()))
+                  .orElseGet(Collections::emptyList)));
+    }
+    try {
+      TransactionCommitResult result =
+          txnBuilder.build(engine).commit(engine, CloseableIterable.emptyIterable());
+      result.getPostCommitSnapshot().ifPresent(this::onPostCommit);
+    } catch (TableAlreadyExistsException ignore) {
+      // Concurrent open may cause this. Ignore it safely.
+    }
+  }
+
+  /**
+   * Load table information from the delta table. This method loads the table if it exists, or
+   * creates a new table entry in catalog if the table does not exist
+   */
+  protected void loadDeltaTable() {
+    DeltaCatalog.TableDescriptor info;
+    try {
+      info = catalog.getTable(tableId);
+      tableUUID = info.uuid;
+      tablePath = normalize(info.tablePath);
+    } catch (ExceptionUtils.ResourceNotFoundException notFound) {
+      catalog.createTable(
+          tableId,
+          schema,
+          partitionColumns,
+          conf.catalogConf(),
+          tableDesc -> {
+            this.tablePath = normalize(tableDesc.tablePath);
+            this.tableUUID = tableDesc.uuid;
+            createDeltaTable();
+          });
+    }
+    final Optional<Snapshot> latestSnapshotOpt = snapshot();
+    if (latestSnapshotOpt.isEmpty()) {
+      throw new IllegalStateException("Snapshot not initialized");
+    }
+    Snapshot latestSnapshot = latestSnapshotOpt.get();
+    // We use a temporary transaction to generate a TransactionStateRow.
+    // It serves as a holder for schema and partition columns.
+    // The transaction will not be committed, and is discarded afterward.
+    Row existingTableState =
+        latestSnapshot
+            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+            .build(getEngine())
+            .getTransactionState(getEngine());
+    this.serializedTableState = JsonUtils.rowToJson(existingTableState);
+    this.schema = latestSnapshot.getSchema();
+    this.partitionColumns = latestSnapshot.getPartitionColumnNames();
   }
 
   // Engine will be invalidated when credentials expire
@@ -507,11 +519,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return catalog;
   }
 
-  @Override
-  public String getId() {
-    return tableId;
-  }
-
   public String getTableUUID() {
     return tableUUID;
   }
@@ -529,14 +536,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
     return tablePath;
   }
 
-  @Override
-  public StructType getSchema() {
-    return schema;
-  }
-
-  @Override
-  public List<String> getPartitionColumns() {
-    return partitionColumns;
+  protected Map<String, String> extraConf() {
+    return Map.of();
   }
 
   private CredentialManager createCredentialManager() {
@@ -544,10 +545,17 @@ public abstract class AbstractKernelTable implements DeltaTable {
         () -> catalog.getCredentials(this.getTableUUID()), this::refreshCredential);
   }
 
+  /**
+   * Retry on retryable exceptions. It must be used on all methods that need storage credentials.
+   * {@see ExceptionUtils.isRetryableException}
+   *
+   * @param body the execution body.
+   * @return the return value from body
+   */
   protected <RET> RET withRetry(CheckedSupplier<RET> body) {
     RetryPolicy<Object> retryPolicy =
         RetryPolicy.builder()
-            .handleIf(AbstractKernelTable::isRetryableException)
+            .handleIf(ExceptionUtils::isRetryableException)
             .withBackoff(
                 Duration.ofMillis(Conf.getInstance().getSinkRetryDelayMs()),
                 Duration.ofMillis(Conf.getInstance().getSinkRetryMaxDelayMs()),
@@ -567,7 +575,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                 })
             .build();
     Fallback<Object> fallback =
-        Fallback.builder((Object) Optional.empty()).handleIf(isSwallowable).build();
+        Fallback.builder((Object) Optional.empty()).handleIf(ExceptionUtils.isSwallowable).build();
     return Failsafe.with(retryPolicy, fallback).get(body);
   }
 

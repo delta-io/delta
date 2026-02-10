@@ -16,35 +16,22 @@
 
 package io.delta.flink.table;
 
+import io.delta.kernel.Snapshot;
+import io.delta.kernel.TableManager;
 import io.delta.kernel.types.StructType;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
 
-public class HadoopCatalogForTest implements DeltaCatalog {
+public class LocalFileSystemTable extends AbstractKernelTable {
 
-  private final Map<String, String> configurations;
-
-  public HadoopCatalogForTest(Map<String, String> conf) {
-    this.configurations = conf;
+  public LocalFileSystemTable(
+      URI tablePath, Map<String, String> conf, StructType schema, List<String> partitionColumns) {
+    super(new LocalFileSystemCatalog(conf), tablePath.toString(), conf, schema, partitionColumns);
   }
 
   @Override
-  public TableDescriptor getTable(String tableId) {
-    URI tablePath = AbstractKernelTable.normalize(URI.create(tableId));
-    TableDescriptor info = new TableDescriptor();
-    info.tableId = tableId;
-    info.tablePath = tablePath;
-    info.uuid = tableId;
-    return info;
-  }
-
-  @Override
-  public void createTable(
-      String tableId, StructType schema, List<String> partitions, Map<String, String> properties) {}
-
-  @Override
-  public Map<String, String> getCredentials(String uuid) {
-    return configurations;
+  protected Snapshot loadLatestSnapshot() {
+    return TableManager.loadSnapshot(getTablePath().toString()).build(getEngine());
   }
 }

@@ -17,6 +17,7 @@
 package io.delta.flink.table.postcommit;
 
 import io.delta.flink.table.AbstractKernelTable;
+import io.delta.flink.table.ExceptionUtils;
 import io.delta.flink.table.TableEventListener;
 import io.delta.kernel.Snapshot;
 import org.slf4j.Logger;
@@ -33,7 +34,13 @@ public class ChecksumListener implements TableEventListener {
       // Write checksum asynchronously
       source.executeWithTiming(
           "postcommit.checksum",
-          () -> snapshot.writeChecksum(source.getEngine(), Snapshot.ChecksumWriteMode.SIMPLE));
+          () ->
+              snapshot
+                  .getStatistics()
+                  .getChecksumWriteMode()
+                  .ifPresent(
+                      ExceptionUtils.wrap(
+                          mode -> snapshot.writeChecksum(source.getEngine(), mode))));
     }
   }
 }
