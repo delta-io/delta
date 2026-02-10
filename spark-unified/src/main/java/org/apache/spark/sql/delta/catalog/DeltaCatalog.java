@@ -16,15 +16,19 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.spark.internal.v2.catalog.DeltaKernelStagedCreateTable;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -129,5 +133,76 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     } else {
       return v1ConnectorSupplier.get();
     }
+  }
+
+  /**
+   * CREATE TABLE routing for STRICT mode.
+   *
+   * <p>In STRICT mode, the catalog should not just return V2 tables; it must also create them via
+   * Kernel (metadata-only) so commit provenance is unambiguous (commitInfo.engineInfo).
+   *
+   * <p>Non-STRICT modes fall back to the existing V1 create pipeline in {@link AbstractDeltaCatalog}.
+   */
+  @Override
+  public Table createTable(
+      Identifier ident, StructType schema, Transform[] partitions, Map<String, String> properties) {
+    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!connectorMode.shouldCatalogReturnV2Tables()) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+
+    // STRICT mode: only intercept Delta tables.
+    String provider = properties.get(TableCatalog.PROP_PROVIDER);
+    if (provider == null || !DeltaSourceUtils.isDeltaDataSourceName(provider)) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+
+    // Align with Spark semantics: CREATE TABLE should fail if the table already exists.
+    if (tableExists(ident)) {
+      DeltaCatalog.<RuntimeException>sneakyThrow(
+          new org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException(ident));
+    }
+
+    final String catalogName = name();
+
+    if (isPathIdentifier(ident)) {
+      // Path-based identifier: no catalog registration required.
+      new DeltaKernelStagedCreateTable(
+              spark(),
+              catalogName,
+              ident,
+              ident.name(),
+              schema,
+              partitions,
+              properties,
+              null)
+          .commitStagedChanges();
+      return loadTable(ident);
+    }
+
+    // Catalog-based identifier: commit metadata via Kernel, then register in Spark catalog.
+    scala.Tuple2<CatalogTable, String> spec =
+        V2CreateTableHelper$.MODULE$.buildCatalogTableSpec(
+            spark(), ident, schema, partitions, properties);
+    CatalogTable tableDesc = spec._1();
+    String tablePath = spec._2();
+
+    new DeltaKernelStagedCreateTable(
+            spark(),
+            catalogName,
+            ident,
+            tablePath,
+            schema,
+            partitions,
+            properties,
+            () -> V2CreateTableHelper$.MODULE$.registerTable(spark(), tableDesc))
+        .commitStagedChanges();
+
+    return loadTable(ident);
+  }
+
+  @SuppressWarnings("unchecked")
+  private static <E extends Throwable> void sneakyThrow(Throwable throwable) throws E {
+    throw (E) throwable;
   }
 }
