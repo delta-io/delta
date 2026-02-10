@@ -42,7 +42,6 @@ import org.apache.hadoop.fs.Path;
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
-import java.util.function.Supplier;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit

@@ -68,6 +68,8 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      - name: Setup Unity Catalog for testing
+        run: dev/setup-unitycatalog.sh
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -77,8 +79,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
+      # Unity Catalog requires JDK 17+ to build
+      - name: Install Java 17 for Unity Catalog build
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Setup Unity Catalog for testing
+        run: dev/setup-unitycatalog.sh
       # Run integration tests with JDK 11, as they have no Spark dependency
-      - name: install java
+      - name: Install Java 11 for integration tests
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
