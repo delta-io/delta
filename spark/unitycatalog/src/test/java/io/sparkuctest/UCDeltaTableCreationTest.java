@@ -648,7 +648,23 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "id INT, name STRING",
           tableType,
           tableName -> {
-            // CREATE TABLE is sufficient; writes are out of scope for this iteration.
+            // 1. Verify the table is registered in Unity Catalog
+            UnityCatalogInfo uc = unityCatalogInfo();
+            TablesApi tablesApi = new TablesApi(uc.createApiClient());
+            TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
+            assertThat(tableInfo.getDataSourceFormat().name())
+                .isEqualTo(DataSourceFormat.DELTA.name());
+            assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
+
+            // 2. Verify the Delta log was written with kernel engineInfo by reading
+            //    the commit JSON directly (DESCRIBE HISTORY is unavailable because
+            //    loadTable returns a V1Table in this iteration).
+            String location = tableInfo.getStorageLocation();
+            String commitPath = location + "/_delta_log/00000000000000000000.json";
+            List<List<String>> commitLines = sql("SELECT value FROM text.`%s`", commitPath);
+            String commitJson =
+                commitLines.stream().map(row -> row.get(0)).collect(Collectors.joining("\n"));
+            assertThat(commitJson).contains("kernel-spark-dsv2");
           });
     } finally {
       spark().conf().set("spark.databricks.delta.v2.enableMode", "AUTO");
