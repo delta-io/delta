@@ -32,6 +32,7 @@ import io.delta.kernel.internal.files.ParsedLogData;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.lang.ListUtils;
 import io.delta.kernel.internal.util.FileNames;
+import io.delta.kernel.internal.util.FileNames.DeltaLogFileType;
 import io.delta.kernel.utils.FileStatus;
 import java.util.Collections;
 import java.util.List;
@@ -81,6 +82,19 @@ class CommitRangeFactory {
     List<ParsedDeltaData> deltas =
         getDeltasForVersionRangeWithCatalogPriority(
             engine, startVersion, endVersionOpt, ratifiedCommits);
+
+    // Gracefully handle empty ranges for streaming-style polling:
+    // If no end boundary is provided (meaning "startVersion -> latest") and the caller
+    // requests startVersion = latestVersion + 1, return an empty CommitRange instead of
+    // throwing.
+    if (deltas.isEmpty() && !endVersionOpt.isPresent()) {
+      final long latestVersion = resolveLatestVersion(engine, ratifiedCommits);
+      if (startVersion == latestVersion + 1) {
+        return new CommitRangeImpl(
+            tablePath, ctx.startBoundary, ctx.endBoundaryOpt, startVersion, latestVersion, deltas);
+      }
+      throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersionOpt);
+    }
     // Once we have a list of deltas, we can resolve endVersion=latestVersion for the default case
     long endVersion = endVersionOpt.orElseGet(() -> extractLatestVersion(deltas));
     if (!endVersionOpt.isPresent()) {
@@ -88,6 +102,29 @@ class CommitRangeFactory {
     }
     return new CommitRangeImpl(
         tablePath, ctx.startBoundary, ctx.endBoundaryOpt, startVersion, endVersion, deltas);
+  }
+
+  private long resolveLatestVersion(Engine engine, List<ParsedCatalogCommitData> ratifiedCommits) {
+    if (ctx.maxCatalogVersion.isPresent()) {
+      return ctx.maxCatalogVersion.get();
+    }
+    if (!ratifiedCommits.isEmpty()) {
+      // ratifiedCommits are sorted/contiguous via CommitRangeBuilder logData validation.
+      return ListUtils.getLast(ratifiedCommits).getVersion();
+    }
+    final List<FileStatus> allCommitFiles =
+        listDeltaLogFilesAsIter(
+                engine,
+                Collections.singleton(DeltaLogFileType.COMMIT),
+                tablePath,
+                0L,
+                Optional.empty(),
+                false /* mustBeRecreatable */)
+            .toInMemoryList();
+    if (allCommitFiles.isEmpty()) {
+      throw noCommitFilesFoundForVersionRange(tablePath.toString(), 0L, Optional.empty());
+    }
+    return FileNames.getFileVersion(new Path(ListUtils.getLast(allCommitFiles).getPath()));
   }
 
   private long resolveStartVersion(Engine engine, List<ParsedCatalogCommitData> catalogCommits) {
@@ -276,6 +313,11 @@ class CommitRangeFactory {
       List<ParsedDeltaData> deltas, long startVersion, Optional<Long> endVersionOpt) {
     // This can only happen if publishedDeltas.isEmpty && ratifiedDeltas.isEmpty
     if (deltas.isEmpty()) {
+      // If the caller didn't specify an end version (meaning "start -> latest"), allow an empty
+      // delta list and let the caller decide whether an empty range is acceptable.
+      if (!endVersionOpt.isPresent()) {
+        return;
+      }
       throw noCommitFilesFoundForVersionRange(tablePath.toString(), startVersion, endVersionOpt);
     }
 
