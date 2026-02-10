@@ -69,25 +69,30 @@ public final class UCUtils {
     }
     String catalogName = catalogOption.get();
 
-    // Get UC endpoint and token from Spark configs
+    UCCatalogConfig config = resolveCatalogConfig(catalogName, spark);
+    return Optional.of(
+        new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig())));
+  }
+
+  /**
+   * Resolves the Unity Catalog configuration for the given catalog name from Spark session configs.
+   *
+   * @param catalogName the Spark catalog name (e.g., "unity")
+   * @param spark SparkSession containing the catalog configurations
+   * @return the UC catalog configuration (URI + auth config)
+   * @throws IllegalArgumentException if no UC configuration is found for the catalog name
+   */
+  public static UCCatalogConfig resolveCatalogConfig(String catalogName, SparkSession spark) {
+    requireNonNull(catalogName, "catalogName is null");
+    requireNonNull(spark, "spark is null");
     scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
         UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
-
     scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
-
     if (configOpt.isEmpty()) {
       throw new IllegalArgumentException(
-          "Cannot create UC client for table "
-              + catalogTable.identifier()
-              + ": Unity Catalog configuration not found for catalog '"
-              + catalogName
-              + "'.");
+          "Unity Catalog configuration not found for catalog '" + catalogName + "'.");
     }
-
-    UCCatalogConfig config = configOpt.get();
-    String ucUri = config.uri();
-
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
+    return configOpt.get();
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {

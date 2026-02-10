@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import static scala.jdk.javaapi.CollectionConverters.asJava;
+
 import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -23,25 +25,31 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
+import io.unitycatalog.client.auth.TokenProvider;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
 import org.apache.spark.sql.types.StructType;
-import scala.Option;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -111,10 +119,12 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       return super.createTable(ident, schema, partitions, properties);
     }
 
-    // --- STRICT mode kernel-based immediate create path ---
-
-    // Determine table location from properties, falling back to the default warehouse path.
-    String location = resolveTableLocation(ident, properties);
+    // UC always supplies the location in properties (either user-specified for EXTERNAL,
+    // or UC-assigned staging path for MANAGED). No fallback needed.
+    String location = properties.get(TableCatalog.PROP_LOCATION);
+    if (location == null) {
+      location = properties.get("location");
+    }
 
     // Filter out DSv2-specific keys that are not Delta table properties. This mirrors the
     // filtering in AbstractDeltaCatalog.createDeltaTable (lines 117-126).
@@ -124,11 +134,29 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     io.delta.kernel.types.StructType kernelSchema =
         SchemaUtils.convertSparkSchemaToKernelSchema(schema);
 
-    // Build kernel create-table transaction
     Configuration hadoopConf = spark().sessionState().newHadoopConf();
     Engine engine = DefaultEngine.create(hadoopConf);
-    CreateTableTransactionBuilder builder =
-        TableManager.buildCreateTableTransaction(location, kernelSchema, ENGINE_INFO);
+
+    // For UC managed tables, use the CCv2 path: UCCatalogManagedClient wires in the
+    // UCCatalogManagedCommitter and sets catalogManaged + ucTableId properties.
+    // For external tables, use TableManager directly (no catalog-managed commit needed).
+    CreateTableTransactionBuilder builder;
+    if (CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)) {
+      String ucTableId = properties.get(UCCatalogManagedClient.UC_TABLE_ID_KEY);
+      UCCatalogConfig ucConfig = UCUtils.resolveCatalogConfig(name(), spark());
+      UCTableInfo tableInfo =
+          new UCTableInfo(ucTableId, location, ucConfig.uri(), asJava(ucConfig.authConfig()));
+
+      // Same pattern as SnapshotManagerFactory.createUCManagedSnapshotManager
+      TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
+      UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tokenProvider);
+      UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
+      builder =
+          ucCatalogClient.buildCreateTableTransaction(
+              tableInfo.getTableId(), tableInfo.getTablePath(), kernelSchema, ENGINE_INFO);
+    } else {
+      builder = TableManager.buildCreateTableTransaction(location, kernelSchema, ENGINE_INFO);
+    }
 
     if (!tableProperties.isEmpty()) {
       builder = builder.withTableProperties(tableProperties);
@@ -144,13 +172,15 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     Transaction txn = builder.build(engine);
     txn.commit(engine, CloseableIterable.emptyIterable());
 
-    // Register the table with Unity Catalog via DeltaCatalog's UCProxy delegate
+    // Register with UC and return the delegate catalog's table. For managed tables, we cannot
+    // use loadTable(ident) because SparkTable -> UCManagedTableSnapshotManager would query UC
+    // for the latest ratified version, but version 0 was written directly to the filesystem
+    // (createImpl), not through UC's commit RPC. Returning the delegate's table avoids this.
+    // For external (path-based) tables, return a path-based SparkTable directly.
     if (!isPathIdentifier(ident)) {
-      createCatalogTable(ident, schema, partitions, properties);
+      return createCatalogTable(ident, schema, partitions, properties);
     }
-
-    // Load and return the table; in STRICT mode loadTable returns SparkTable.
-    return loadTable(ident);
+    return new SparkTable(ident, location);
   }
 
   /**
@@ -216,26 +246,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   }
 
   /**
-   * Resolves the table location from properties. Falls back to the session catalog's default
-   * warehouse path when no explicit location is provided (managed table case).
-   */
-  private String resolveTableLocation(Identifier ident, Map<String, String> properties) {
-    String location = properties.get(TableCatalog.PROP_LOCATION);
-    if (location == null) {
-      location = properties.get("location");
-    }
-    if (location != null) {
-      return location;
-    }
-    // Managed table: compute the default warehouse location
-    String dbName =
-        ident.namespace().length > 0 ? ident.namespace()[ident.namespace().length - 1] : null;
-    Option<String> dbOption = dbName != null ? Option.apply(dbName) : Option.<String>empty();
-    TableIdentifier tableId = new TableIdentifier(ident.name(), dbOption);
-    return spark().sessionState().catalog().defaultTablePath(tableId).toString();
-  }
-
-  /**
    * Filters out DSv2-specific keys that are not actual Delta table properties. This mirrors the
    * filtering in {@code AbstractDeltaCatalog.createDeltaTable}.
    */
@@ -250,6 +260,9 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     filtered.remove("option.path");
     // is_managed_location is a DSv2 coordination property, not a Delta table property
     filtered.remove(TableCatalog.PROP_IS_MANAGED_LOCATION);
+    // Remove legacy ucTableId key; the new key (io.unitycatalog.tableId) is set by
+    // UCCatalogManagedClient for managed tables.
+    filtered.remove("ucTableId");
     return filtered;
   }
 

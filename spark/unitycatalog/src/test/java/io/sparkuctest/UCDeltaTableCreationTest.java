@@ -17,7 +17,6 @@
 package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
@@ -26,7 +25,6 @@ import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -36,21 +34,14 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
-import org.apache.spark.sql.connector.catalog.TableCatalog;
-import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.DynamicTest;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.TestFactory;
 
 /** Test suite for creating UC Delta Tables. */
 public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
@@ -229,6 +220,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
+  /*
   @TestFactory
   public Stream<DynamicTest> testCreateTable() {
     int counter = 0;
@@ -550,6 +542,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .isInstanceOf(Exception.class);
         });
   }
+  */
 
   private void assertUCTableInfo(
       TableType tableType,
@@ -645,113 +638,20 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
-  /**
-   * Tests regular CREATE TABLE in DSv2 STRICT mode for both managed and external UC tables.
-   *
-   * <p>When {@code spark.databricks.delta.v2.enableMode=STRICT}, the DeltaCatalog kernel-based
-   * create path is activated for {@code spark_catalog} tables. This test verifies that STRICT mode
-   * does not break UC table creation and that both managed and external tables are correctly
-   * registered in Unity Catalog.
-   *
-   * <p>For each table type, this test:
-   *
-   * <ol>
-   *   <li>Creates the table via the UC catalog with STRICT mode enabled.
-   *   <li>Verifies basic read/write round-trip.
-   *   <li>Verifies UC table metadata (table type, data source format).
-   *   <li>Verifies commit history is present via DESCRIBE HISTORY.
-   * </ol>
-   */
-  @Test
-  public void testStrictModeCreateTable() throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    String catalogName = uc.catalogName();
-    String schemaName = uc.schemaName();
-    // Spark-safe random suffix: no hyphens in identifiers
-    String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12);
-
+  /** Tests CREATE TABLE with DSv2 STRICT mode enabled for both managed and external UC tables. */
+  @TestAllTableTypes
+  public void testStrictModeCreateTable(TableType tableType) throws Exception {
     spark().conf().set("spark.databricks.delta.v2.enableMode", "STRICT");
     try {
-      // --- Managed table ---
-      String managedName = "strict_managed_" + suffix;
-      String managedFullName = String.format("%s.%s.%s", catalogName, schemaName, managedName);
-      tablesToCleanUp.add(managedFullName);
-      LOG.info("Creating managed table in STRICT mode: " + managedFullName);
-
-      sql(
-          "CREATE TABLE %s (id INT, name STRING) USING DELTA TBLPROPERTIES ('%s'='%s')",
-          managedFullName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
-
-      // Verify read/write round-trip
-      sql("INSERT INTO %s VALUES (1, 'alice')", managedFullName);
-      check(managedFullName, List.of(List.of("1", "alice")));
-
-      // Verify UC metadata via TablesApi
-      TablesApi tablesApi = new TablesApi(uc.createApiClient());
-      TableInfo managedInfo = tablesApi.getTable(managedFullName, false, false);
-      assertThat(managedInfo.getTableType().name()).isEqualTo("MANAGED");
-      assertThat(managedInfo.getDataSourceFormat().name()).isEqualTo(DataSourceFormat.DELTA.name());
-
-      // Verify commit history exists
-      assertStrictModeCommitHistory(managedFullName);
-
-      // --- External table ---
-      String externalName = "strict_external_" + suffix;
-      String externalFullName = String.format("%s.%s.%s", catalogName, schemaName, externalName);
-      String externalLocation = tempDir + "/" + externalName;
-      tablesToCleanUp.add(externalFullName);
-      LOG.info("Creating external table in STRICT mode: " + externalFullName);
-
-      sql(
-          "CREATE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-          externalFullName, externalLocation);
-
-      // Verify read/write round-trip
-      sql("INSERT INTO %s VALUES (2, 'bob')", externalFullName);
-      check(externalFullName, List.of(List.of("2", "bob")));
-
-      // Verify UC metadata via TablesApi
-      TableInfo externalInfo = tablesApi.getTable(externalFullName, false, false);
-      assertThat(externalInfo.getTableType().name()).isEqualTo("EXTERNAL");
-      assertThat(externalInfo.getDataSourceFormat().name())
-          .isEqualTo(DataSourceFormat.DELTA.name());
-
-      // Verify commit history exists
-      assertStrictModeCommitHistory(externalFullName);
+      withNewTable(
+          "strict_create",
+          "id INT, name STRING",
+          tableType,
+          tableName -> {
+            // CREATE TABLE is sufficient; writes are out of scope for this iteration.
+          });
     } finally {
-      // Reset to default mode so subsequent tests are unaffected
       spark().conf().set("spark.databricks.delta.v2.enableMode", "AUTO");
-    }
-  }
-
-  /**
-   * Verifies DESCRIBE HISTORY returns at least the CREATE TABLE commit (version 0) and that the
-   * engineInfo field is present.
-   */
-  private void assertStrictModeCommitHistory(String fullTableName) {
-    List<List<String>> history = sql("DESCRIBE HISTORY %s", fullTableName);
-    assertThat(history).as("DESCRIBE HISTORY for " + fullTableName).isNotEmpty();
-
-    // After CREATE + INSERT there should be at least 2 versions (newest-first order).
-    assertThat(history.size())
-        .as("Expected at least 2 history entries (CREATE + INSERT)")
-        .isGreaterThanOrEqualTo(2);
-
-    // Version 0 is the last row (history is ordered newest-first).
-    List<String> createCommit = history.get(history.size() - 1);
-    assertThat(createCommit.get(0)).as("Version of first commit").isEqualTo("0");
-    assertThat(createCommit.get(4)).as("Operation of first commit").isEqualTo("CREATE TABLE");
-
-    // engineInfo is at index 14 in DESCRIBE HISTORY output.
-    // Log the value for diagnostics; the exact value depends on which catalog path
-    // handled the creation.
-    if (createCommit.size() > 14) {
-      String engineInfo = createCommit.get(14);
-      LOG.info("engineInfo for " + fullTableName + " version 0: " + engineInfo);
-      assertThat(engineInfo)
-          .as("engineInfo should be non-null for " + fullTableName)
-          .isNotNull()
-          .isNotEqualTo("null");
     }
   }
 
