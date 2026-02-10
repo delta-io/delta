@@ -65,7 +65,7 @@ import java.util.*;
  * <p>Usage example:
  * <pre>{@code
  * TokenProvider tokenProvider = ... // Create or configure TokenProvider
- * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, tokenProvider,...)) {
+ * try (UCTokenBasedRestClient client = new UCTokenBasedRestClient(baseUri, tokenProvider, Map.of())) {
  *     String metastoreId = client.getMetastoreId();
  *     // Perform operations with the client...
  * }
@@ -89,42 +89,30 @@ public class UCTokenBasedRestClient implements UCClient {
 
   /**
    * Constructs a new UCTokenBasedRestClient with the specified base URI, TokenProvider,
-   * and version information for telemetry.
+   * and application version information for telemetry.
    *
    * @param baseUri The base URI of the Unity Catalog server
    * @param tokenProvider The TokenProvider to use for authentication
-   * @param deltaVersion The Delta version string (can be null)
-   * @param sparkVersion The Spark version string (can be null)
-   * @param scalaVersion The Scala version string (can be null)
+   * @param appVersions A map of application name to version string (e.g. "Delta" -> "4.0.0").
+   *                    Each entry is registered for User-Agent telemetry. May be empty.
    */
   public UCTokenBasedRestClient(
       String baseUri,
       TokenProvider tokenProvider,
-      String deltaVersion,
-      String sparkVersion,
-      String scalaVersion) {
+      Map<String, String> appVersions) {
     Objects.requireNonNull(baseUri, "baseUri must not be null");
     Objects.requireNonNull(tokenProvider, "tokenProvider must not be null");
+    Objects.requireNonNull(appVersions, "appVersions must not be null");
 
     ApiClientBuilder builder = ApiClientBuilder.create()
         .uri(baseUri)
         .tokenProvider(tokenProvider);
 
-    // Add version information for telemetry
-    if (deltaVersion != null) {
-      builder.addAppVersion("Delta", deltaVersion);
-    }
-    if (sparkVersion != null) {
-      builder.addAppVersion("Spark", sparkVersion);
-    }
-    if (scalaVersion != null) {
-      builder.addAppVersion("Scala", scalaVersion);
-    }
-    // Add the Java version
-    String javaVersion = System.getProperty("java.version");
-    if(javaVersion != null && !javaVersion.isEmpty()) {
-      builder.addAppVersion("Java", javaVersion);
-    }
+    appVersions.forEach((name, version) -> {
+      if (version != null) {
+        builder.addAppVersion(name, version);
+      }
+    });
 
     ApiClient apiClient = builder.build();
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
@@ -163,7 +151,7 @@ public class UCTokenBasedRestClient implements UCClient {
         .tableUri(tableUri.toString());
 
     // Add commit info if present
-    commit.ifPresent(c -> deltaCommit.commitInfo(toDeltaCommitInfo(c, disown)));
+    commit.ifPresent(c -> deltaCommit.commitInfo(toDeltaCommitInfo(c)));
 
     // Add latest backfilled version if present
     lastKnownBackfilledVersion.ifPresent(deltaCommit::latestBackfilledVersion);
@@ -230,11 +218,10 @@ public class UCTokenBasedRestClient implements UCClient {
   /**
    * Converts a Delta {@link Commit} to a Unity Catalog SDK {@link DeltaCommitInfo}.
    *
-   * @param commit         The Delta commit to convert
-   * @param isDisownCommit Whether this is a disown commit
+   * @param commit The Delta commit to convert
    * @return The converted DeltaCommitInfo
    */
-  private DeltaCommitInfo toDeltaCommitInfo(Commit commit, boolean isDisownCommit) {
+  private DeltaCommitInfo toDeltaCommitInfo(Commit commit) {
     if (commit == null) {
       throw new IllegalArgumentException("commit cannot be null");
     }
@@ -248,7 +235,6 @@ public class UCTokenBasedRestClient implements UCClient {
         .fileName(commit.getFileStatus().getPath().getName())
         .fileSize(commit.getFileStatus().getLen())
         .fileModificationTimestamp(commit.getFileStatus().getModificationTime());
-    // Note: isDisownCommit is not directly supported in the SDK's DeltaCommitInfo model
   }
 
   /**

@@ -94,7 +94,7 @@ class UCTokenBasedRestClientSuite
   }
 
   private def createClient(): UCTokenBasedRestClient =
-    new UCTokenBasedRestClient(serverUri, createTokenProvider(), "4.0.0", "4.0.0", "2.13")
+    new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap())
 
   private def withClient(fn: UCTokenBasedRestClient => Unit): Unit = {
     val client = createClient()
@@ -126,14 +126,14 @@ class UCTokenBasedRestClientSuite
   // Constructor tests
   test("constructor validates required parameters") {
     intercept[NullPointerException] {
-      new UCTokenBasedRestClient(null, createTokenProvider(), null, null, null)
+      new UCTokenBasedRestClient(null, createTokenProvider(), Collections.emptyMap())
     }
     intercept[NullPointerException] {
-      new UCTokenBasedRestClient(serverUri, null, null, null, null)
+      new UCTokenBasedRestClient(serverUri, null, Collections.emptyMap())
     }
-    // null versions are allowed
-    val client = new UCTokenBasedRestClient(serverUri, createTokenProvider(), null, null, null)
-    client.close()
+    intercept[NullPointerException] {
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), null)
+    }
   }
 
   // getMetastoreId tests
