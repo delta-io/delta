@@ -22,18 +22,17 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.apache.spark.sql.*;
 import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.delta.DeltaLog;
-import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.stats.StatisticsCollection;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
-import scala.Function1;
 import scala.Option;
 import scala.collection.JavaConverters;
-import scala.runtime.AbstractFunction1;
 
 /** Tests for V2 streaming read operations. */
 public class V2StreamingReadTest extends V2TestBase {
@@ -121,33 +120,28 @@ public class V2StreamingReadTest extends V2TestBase {
     String tablePath = deltaTablePath.getAbsolutePath();
 
     // Write data with stats collection disabled - files will have no stats
-    spark.conf().set("spark.databricks.delta.stats.collect", "false");
-    try {
-      spark
-          .range(10)
-          .selectExpr("id", "cast(id as string) as value")
-          .write()
-          .format("delta")
-          .save(tablePath);
-    } finally {
-      spark.conf().set("spark.databricks.delta.stats.collect", "true");
-    }
+    withSQLConf(
+        "spark.databricks.delta.stats.collect",
+        "false",
+        () ->
+            spark
+                .range(10)
+                .selectExpr("id", "cast(id as string) as value")
+                .write()
+                .format("delta")
+                .save(tablePath));
 
     // Recompute statistics - this re-adds files with updated stats (dataChange=false),
     // creating duplicate AddFile entries in the log that must be filtered by selection vector
     DeltaLog deltaLog = DeltaLog.forTable(spark, tablePath);
-    scala.collection.immutable.Seq<Expression> predicates =
+    StatisticsCollection.recompute(
+        spark,
+        deltaLog,
+        Option.empty(),
         JavaConverters.<Expression>asScalaBuffer(
                 new ArrayList<>(List.of((Expression) Literal$.MODULE$.apply(true))))
-            .toList();
-    Function1<AddFile, Object> fileFilter =
-        new AbstractFunction1<AddFile, Object>() {
-          @Override
-          public Object apply(AddFile af) {
-            return (Object) Boolean.TRUE;
-          }
-        };
-    StatisticsCollection.recompute(spark, deltaLog, Option.empty(), predicates, fileFilter);
+            .toList(),
+        af -> (Object) Boolean.TRUE);
 
     // Stream via V2 - should see each row exactly once, not duplicated
     String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
@@ -155,10 +149,12 @@ public class V2StreamingReadTest extends V2TestBase {
 
     List<Row> actualRows = processStreamingQuery(streamingDF, "test_stats_recompute");
 
-    assertEquals(
-        10,
-        actualRows.size(),
-        "Stats recompute should not cause duplicate rows in streaming read. Got: " + actualRows);
+    List<Row> expectedRows =
+        LongStream.range(0, 10)
+            .mapToObj(i -> RowFactory.create(i, String.valueOf(i)))
+            .collect(Collectors.toList());
+
+    assertDataEquals(actualRows, expectedRows);
   }
 
   /**

@@ -148,6 +148,24 @@ public abstract class V2TestBase {
   }
 
   /**
+   * Runs the given action with a Spark SQL configuration temporarily set, then restores the
+   * original value afterwards (similar to Scala's {@code withSQLConf}).
+   */
+  protected void withSQLConf(String key, String value, Runnable action) {
+    scala.Option<String> original = spark.conf().getOption(key);
+    spark.conf().set(key, value);
+    try {
+      action.run();
+    } finally {
+      if (original.isDefined()) {
+        spark.conf().set(key, original.get());
+      } else {
+        spark.conf().unset(key);
+      }
+    }
+  }
+
+  /**
    * Asserts that rows equal the expected rows (order-independent).
    *
    * @param actualRows the actual rows
