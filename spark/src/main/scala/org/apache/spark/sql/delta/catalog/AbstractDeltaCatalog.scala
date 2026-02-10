@@ -83,7 +83,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
-  private lazy val isUnityCatalog: Boolean = {
+  protected lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
@@ -362,7 +362,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]
   ): Table = {
-      super.createTable(ident, schema, partitions, properties)
+      // Use the Column[]-based API; the StructType overload is deprecated in Spark 4.0.
+      val columns =
+        org.apache.spark.sql.connector.catalog.CatalogV2Util.structTypeToV2Columns(schema)
+      super.createTable(ident, columns, partitions, properties)
   }
 
 

@@ -27,21 +27,16 @@ import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
-import org.apache.spark.sql.connector.catalog.TableCapability;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaV2Mode;
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
@@ -155,42 +150,13 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     // Finalize the catalog entry via the delegate catalog (e.g., Unity Catalog).
     // Without this step, UC-managed tables would remain in a staged state and
     // TablesApi.getTable() would 404.
-    createCatalogTable(ident, schema, partitions, properties);
+    // Skip for path-based tables (delta.`/path/to/table`) which are not catalog-managed.
+    if (!isPathIdentifier(ident)) {
+      createCatalogTable(ident, schema, partitions, properties);
+    }
 
     // Load and return the table; in STRICT mode loadTable returns SparkTable.
     return loadTable(ident);
-  }
-
-  /**
-   * Stages a Delta table for later commit (Iceberg-style separation).
-   *
-   * <p>Routing logic based on {@link DeltaV2Mode}:
-   *
-   * <ul>
-   *   <li>STRICT + Delta provider: Returns a thin staged wrapper whose {@code
-   *       commitStagedChanges()} delegates to {@link #createTable}.
-   *   <li>Otherwise: Delegates to the V1 staged path in {@link AbstractDeltaCatalog}.
-   * </ul>
-   *
-   * <p>The staged table does not implement SupportsWrite; CTAS/RTAS support is deferred to a future
-   * iteration.
-   *
-   * @param ident The identifier of the table to stage.
-   * @param schema The schema for the new table.
-   * @param partitions Partition transforms for the table.
-   * @param properties Table properties including location, provider, etc.
-   * @return A StagedTable that commits via the kernel path on commitStagedChanges().
-   */
-  @Override
-  public StagedTable stageCreate(
-      Identifier ident,
-      StructType schema,
-      Transform[] partitions,
-      Map<String, String> properties) {
-    if (!isStrictDeltaCreate(properties)) {
-      return super.stageCreate(ident, schema, partitions, properties);
-    }
-    return new StrictStagedTable(ident, schema, partitions, properties);
   }
 
   /**
@@ -241,13 +207,20 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   // ---------------------------------------------------------------------------
 
   /**
-   * Returns true when STRICT mode is active and the provider is Delta. Both conditions must hold
-   * for the kernel-based create path to be used.
+   * Returns true when all conditions for the kernel-based create path are met:
+   *
+   * <ol>
+   *   <li>STRICT mode is active
+   *   <li>The provider is Delta
+   *   <li>The delegate catalog is Unity Catalog (the kernel path requires a delegate that supports
+   *       direct table registration; Spark's V2SessionCatalog does not)
+   * </ol>
    */
   private boolean isStrictDeltaCreate(Map<String, String> properties) {
     DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
     return mode.shouldCatalogReturnV2Tables()
-        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties));
+        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+        && isUnityCatalog();
   }
 
   /**
@@ -330,63 +303,4 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Inner class: thin staged-table wrapper for STRICT mode
-  // ---------------------------------------------------------------------------
-
-  /**
-   * A thin StagedTable that delegates to {@link DeltaCatalog#createTable} on commit. This provides
-   * Iceberg-style separation: stageCreate returns a lightweight object; the actual table creation
-   * (kernel commit + catalog finalization) happens in commitStagedChanges.
-   *
-   * <p>This class does NOT implement SupportsWrite because CTAS/RTAS is out of scope for this
-   * iteration.
-   */
-  private class StrictStagedTable implements StagedTable {
-    private final Identifier ident;
-    private final StructType schema;
-    private final Transform[] partitions;
-    private final Map<String, String> properties;
-
-    StrictStagedTable(
-        Identifier ident,
-        StructType schema,
-        Transform[] partitions,
-        Map<String, String> properties) {
-      this.ident = ident;
-      this.schema = schema;
-      this.partitions = partitions;
-      this.properties = properties;
-    }
-
-    @Override
-    public void commitStagedChanges() {
-      DeltaCatalog.this.createTable(ident, schema, partitions, properties);
-    }
-
-    @Override
-    public void abortStagedChanges() {
-      // No-op: nothing to clean up since the table has not been created yet.
-    }
-
-    @Override
-    public String name() {
-      return ident.toString();
-    }
-
-    @Override
-    public StructType schema() {
-      return schema;
-    }
-
-    @Override
-    public Map<String, String> properties() {
-      return properties;
-    }
-
-    @Override
-    public Set<TableCapability> capabilities() {
-      return Collections.emptySet();
-    }
-  }
 }

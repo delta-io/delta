@@ -49,7 +49,7 @@ import org.junit.jupiter.api.TestFactory;
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
   public static final List<TableType> ALL_TABLE_TYPES =
-      List.of(/* TableType.EXTERNAL, */ TableType.MANAGED);
+      List.of(TableType.EXTERNAL, TableType.MANAGED);
 
   /**
    * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
