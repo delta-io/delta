@@ -20,9 +20,11 @@ import java.net.{InetSocketAddress, URI}
 import java.nio.charset.StandardCharsets
 import java.util.{Collections, Optional}
 
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException}
 import io.delta.storage.commit.actions.AbstractMetadata
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
 
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -43,6 +45,7 @@ class UCTokenBasedRestClientSuite
   private var serverUri: String = _
   private var metastoreHandler: HttpExchange => Unit = _
   private var commitsHandler: HttpExchange => Unit = _
+  private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
     server = HttpServer.create(new InetSocketAddress("localhost", 0), 0)
@@ -69,6 +72,11 @@ class UCTokenBasedRestClientSuite
   override def beforeEach(): Unit = {
     metastoreHandler = null
     commitsHandler = null
+  }
+
+  private def readRequestBody(exchange: HttpExchange): String = {
+    val is = exchange.getRequestBody
+    try new String(is.readAllBytes(), StandardCharsets.UTF_8) finally is.close()
   }
 
   private def sendJson(exchange: HttpExchange, status: Int, body: String): Unit = {
@@ -110,6 +118,10 @@ class UCTokenBasedRestClientSuite
     override def getConfiguration: java.util.Map[String, String] = Collections.emptyMap()
     override def getCreatedTime: java.lang.Long = 0L
   }
+
+  private def createUniformMetadata(): UniformMetadata =
+    new UniformMetadata(
+      new IcebergMetadata("s3://bucket/metadata/v1.json", 42L, "2025-01-04T03:13:11.423Z"))
 
   // Constructor tests
   test("constructor validates required parameters") {
@@ -227,5 +239,63 @@ class UCTokenBasedRestClientSuite
         client.getCommits(testTableId, testTableUri, Optional.empty(), Optional.empty())
       }
     }
+  }
+
+  // uniform tests
+  test("commit with uniform.iceberg sends correct snake_case JSON per all.yaml") {
+    var capturedBody: String = null
+    commitsHandler = exchange => {
+      capturedBody = readRequestBody(exchange)
+      sendJson(exchange, HttpStatus.SC_OK, "{}")
+    }
+
+    withClient { client =>
+      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
+        Optional.empty(), false, Optional.empty(), Optional.empty(),
+        Optional.of(createUniformMetadata()))
+    }
+
+    val json: JsonNode = objectMapper.readTree(capturedBody)
+    assert(json.get("table_id").asText() === testTableId)
+
+    val iceberg = json.get("uniform").get("iceberg")
+    assert(iceberg.get("metadata_location").asText() === "s3://bucket/metadata/v1.json")
+    assert(iceberg.get("converted_delta_version").asLong() === 42L)
+    assert(iceberg.get("converted_delta_timestamp").asText() === "2025-01-04T03:13:11.423Z")
+
+    assert(!json.has("protocol"), "protocol is not in the OpenAPI spec and must not be sent")
+  }
+
+  test("commit without uniform does not include uniform field in JSON") {
+    var capturedBody: String = null
+    commitsHandler = exchange => {
+      capturedBody = readRequestBody(exchange)
+      sendJson(exchange, HttpStatus.SC_OK, "{}")
+    }
+
+    withClient { client =>
+      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
+        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
+    }
+
+    val json = objectMapper.readTree(capturedBody)
+    assert(!json.has("uniform") || json.get("uniform").isNull)
+  }
+
+  test("commit with uniform but no iceberg metadata does not include uniform field") {
+    var capturedBody: String = null
+    commitsHandler = exchange => {
+      capturedBody = readRequestBody(exchange)
+      sendJson(exchange, HttpStatus.SC_OK, "{}")
+    }
+
+    withClient { client =>
+      client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
+        Optional.empty(), false, Optional.empty(), Optional.empty(),
+        Optional.of(new UniformMetadata(null)))
+    }
+
+    val json = objectMapper.readTree(capturedBody)
+    assert(!json.has("uniform") || json.get("uniform").isNull)
   }
 }

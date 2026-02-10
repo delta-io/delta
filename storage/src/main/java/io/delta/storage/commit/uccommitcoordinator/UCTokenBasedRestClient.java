@@ -22,6 +22,7 @@ import io.delta.storage.commit.CoordinatedCommitsUtils;
 import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.IcebergMetadata;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
@@ -35,6 +36,8 @@ import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
 import io.unitycatalog.client.model.DeltaGetCommits;
 import io.unitycatalog.client.model.DeltaGetCommitsResponse;
 import io.unitycatalog.client.model.DeltaMetadata;
+import io.unitycatalog.client.model.DeltaUniform;
+import io.unitycatalog.client.model.DeltaUniformIceberg;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
@@ -168,8 +171,12 @@ public class UCTokenBasedRestClient implements UCClient {
     // Add metadata if present
     newMetadata.ifPresent(m -> deltaCommit.metadata(toDeltaMetadata(m)));
 
-    // Note: Protocol is not currently supported in the Unity Catalog SDK's DeltaCommit model.
-    // If protocol support is needed, consider extending the SDK or using a custom implementation.
+    // Add uniform metadata if present
+    uniform.flatMap(u -> u.getIcebergMetadata().map(this::toDeltaUniformIceberg))
+        .ifPresent(iceberg -> deltaCommit.uniform(new DeltaUniform().iceberg(iceberg)));
+
+    // Note: protocol and disown are not part of the DeltaCommit schema in the Unity Catalog
+    // OpenAPI spec. They are intentionally not sent.
 
     try {
       deltaCommitsApi.commit(deltaCommit);
@@ -242,6 +249,24 @@ public class UCTokenBasedRestClient implements UCClient {
         .fileSize(commit.getFileStatus().getLen())
         .fileModificationTimestamp(commit.getFileStatus().getModificationTime());
     // Note: isDisownCommit is not directly supported in the SDK's DeltaCommitInfo model
+  }
+
+  /**
+   * Converts a Delta {@link IcebergMetadata} to a Unity Catalog SDK
+   * {@link DeltaUniformIceberg}.
+   *
+   * <p>Field mapping (Delta internal -> OpenAPI snake_case):
+   * <ul>
+   *   <li>metadataLocation -> metadata_location</li>
+   *   <li>convertedDeltaVersion -> converted_delta_version</li>
+   *   <li>convertedDeltaTimestamp -> converted_delta_timestamp</li>
+   * </ul>
+   */
+  private DeltaUniformIceberg toDeltaUniformIceberg(IcebergMetadata iceberg) {
+    return new DeltaUniformIceberg()
+        .metadataLocation(URI.create(iceberg.getMetadataLocation()))
+        .convertedDeltaVersion(iceberg.getConvertedDeltaVersion())
+        .convertedDeltaTimestamp(iceberg.getConvertedDeltaTimestamp());
   }
 
   /**
