@@ -200,6 +200,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
+    buildConf("nullPartitionCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions with " +
+        "null partition values for columns that have NOT NULL constraints. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
     buildConf("checkLatestSchemaOnRead")
       .doc("In Delta, we always try to give users the latest version of their data without " +

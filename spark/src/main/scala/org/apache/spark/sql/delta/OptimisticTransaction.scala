@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
@@ -1243,6 +1244,63 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Validates that partition columns that have NOT NULL
+   * constraints are not null in the AddFile action.
+   *
+   * @param addFile The AddFile action to validate
+   * @param notNullPartitionCols Partition columns with NOT NULL constraints
+   */
+  protected def validateAddFileForNullPartitions(
+      addFile: AddFile,
+      notNullPartitionCols: Set[String]): Unit = {
+    notNullPartitionCols.foreach { col =>
+      addFile.partitionValues.get(col) match {
+        case None | Some(null) =>
+          recordDeltaEvent(
+            deltaLog,
+            "delta.constraints.nullPartitionViolation",
+            data = Map(
+              "addFile" -> addFile.json,
+              "notNullPartitionCols" -> notNullPartitionCols.toSeq.mkString(","),
+              "stackTrace" -> Thread.currentThread().getStackTrace.take(20).mkString("\n")
+            ))
+          if (spark.conf.get(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED)) {
+            throw new IllegalStateException(
+              s"AddFile ${addFile.path} has null partition value for NOT NULL column '$col'")
+          }
+        case Some(_) => // Valid non-null partition value
+      }
+    }
+  }
+
+  /**
+   * Returns all the partition columns that have NOT NULL constraints.
+   */
+  protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
+    val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
+      .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
+      .toSet
+    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+  }
+
+  /**
+   * For any partition columns that have NOT NULL constraints,
+   * validate that the partition values in the AddFile actions are not null.
+   */
+  protected def validateActionsForNullPartitions(
+      actions: Seq[Action],
+      metadata: Metadata): Unit = {
+    val notNullPartitionCols = getNotNullPartitionCols(metadata)
+    if (notNullPartitionCols.nonEmpty) {
+      actions.foreach {
+        case a: AddFile =>
+          validateAddFileForNullPartitions(a, notNullPartitionCols)
+        case _ =>
+      }
+    }
+  }
+
+  /**
    * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
    * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
    */
@@ -1467,6 +1525,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         executionObserver.preparingCommit {
           prepareCommit(finalActions, op)
         }
+
+      validateActionsForNullPartitions(preparedActions, metadata)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1718,6 +1778,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       updateMetadataWithCoordinatedCommitsConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
+      // Precompute NOT NULL partition columns for validation during action processing
+      val notNullPartitionCols = getNotNullPartitionCols(metadata)
       var allActions =
         Iterator(commitInfo, metadata) ++
           nonProtocolMetadataActions ++
@@ -1726,6 +1788,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         action match {
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
+            validateAddFileForNullPartitions(a, notNullPartitionCols)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",
