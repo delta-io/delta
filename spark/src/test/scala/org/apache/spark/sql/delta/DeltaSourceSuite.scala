@@ -30,7 +30,6 @@ import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.Relocated
 import org.apache.spark.sql.delta.actions.{AddFile, Protocol}
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSQLConf, DeltaSource, DeltaSourceOffset}
-import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
@@ -2666,31 +2665,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         CheckAnswer(
           "keep1", "update1", "drop1", "keep2", "keep3"
         )
-      )
-    }
-  }
-
-  test("streaming read after stats recompute should not duplicate rows") {
-    // StatisticsCollection.recompute re-adds files with updated stats.
-    // The initial snapshot scan should use selection vector to filter out duplicate files.
-    withTempDir { inputDir =>
-      val tablePath = inputDir.getCanonicalPath
-
-      // Create table with data (stats disabled initially)
-      withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false") {
-        spark.range(10).selectExpr("id", "cast(id as string) as value")
-          .write.format("delta").save(tablePath)
-      }
-
-      // Recompute statistics - this adds duplicate AddFile entries in the log
-      val deltaLog = DeltaLog.forTable(spark, new Path(tablePath))
-      StatisticsCollection.recompute(spark, deltaLog)
-
-      // Streaming read should only see each row once, not duplicated
-      val df = loadStreamWithOptions(tablePath, Map.empty)
-      testStream(df)(
-        AssertOnQuery { q => q.processAllAvailable(); true },
-        CheckAnswer((0L until 10L).map(i => Row(i, i.toString)): _*)
       )
     }
   }

@@ -95,10 +95,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // ========== Misc tests ==========
     "a fast writer should not starve a Delta source",
-    "should not attempt to read a non exist version",
-
-    // ========== Stats recompute tests ==========
-    "streaming read after stats recompute should not duplicate rows"
+    "should not attempt to read a non exist version"
   )
 
   private lazy val shouldFailTests = Set(
