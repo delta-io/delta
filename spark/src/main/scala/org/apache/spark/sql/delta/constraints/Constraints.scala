@@ -18,15 +18,18 @@ package org.apache.spark.sql.delta.constraints
 
 import java.util.Locale
 
+import scala.concurrent.duration
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{AllowedUserProvidedExpressions, DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.ValidateCheckConstraintsMode
 
 import org.apache.spark.SparkThrowable
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, GetArrayItem, GetMapValue, GetStructField, IsNotNull, UserDefinedExpression}
@@ -140,7 +143,14 @@ object Constraints extends DeltaLogging {
     if (constraints.isEmpty) return
 
     try {
+      val startTime = System.nanoTime()
       validateCheckConstraintsInternal(spark, constraints, schema)
+      val durationMs = duration.NANOSECONDS.toMillis(System.nanoTime() - startTime)
+      logInfo(
+        log"Validated CHECK constraints on table ${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)} " +
+        log"in ${MDC(DeltaLogKeys.TIME_MS, durationMs)} ms and processed " +
+        log"${MDC(DeltaLogKeys.NUM_PREDICATES, constraints.size)} constraints"
+      )
     } catch {
       case NonFatal(e) =>
         val errorClassName = e match {
