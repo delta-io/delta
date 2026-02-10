@@ -142,7 +142,7 @@ class UCTokenBasedRestClientSuite
   test("commit succeeds with valid parameters") {
     withClient { client =>
       client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-        Optional.empty(), false, Optional.empty(), Optional.empty())
+        Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
     }
   }
 
@@ -155,6 +155,7 @@ class UCTokenBasedRestClientSuite
         Optional.of(java.lang.Long.valueOf(0L)),
         true,
         Optional.of(createMetadata()),
+        Optional.empty(),
         Optional.empty())
     }
   }
@@ -163,11 +164,11 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       intercept[NullPointerException] {
         client.commit(null, testTableUri, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty())
+          false, Optional.empty(), Optional.empty(), Optional.empty())
       }
       intercept[NullPointerException] {
         client.commit(testTableId, null, Optional.empty(), Optional.empty(),
-          false, Optional.empty(), Optional.empty())
+          false, Optional.empty(), Optional.empty(), Optional.empty())
       }
     }
   }
@@ -178,7 +179,7 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       intercept[InvalidTargetTableException] {
         client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty())
+          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
       }
     }
 
@@ -187,7 +188,7 @@ class UCTokenBasedRestClientSuite
     withClient { client =>
       val ex = intercept[CommitFailedException] {
         client.commit(testTableId, testTableUri, Optional.of(createCommit(1L)),
-          Optional.empty(), false, Optional.empty(), Optional.empty())
+          Optional.empty(), false, Optional.empty(), Optional.empty(), Optional.empty())
       }
       assert(ex.getConflict)
     }
