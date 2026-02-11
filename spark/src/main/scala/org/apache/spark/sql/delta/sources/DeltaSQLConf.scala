@@ -20,6 +20,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -45,6 +46,28 @@ trait DeltaSQLConfUtils {
  * [[SQLConf]] entries for Delta features.
  */
 trait DeltaSQLConfBase extends DeltaSQLConfUtils {
+
+  object DeltaBreakingChangeEnum {
+    val OFF = "OFF"
+    val LOG_ONLY = "LOG_ONLY"
+    val ASSERT = "ASSERT"
+    val validValues: Set[String] = Set(OFF, LOG_ONLY, ASSERT)
+  }
+
+  abstract class DeltaBreakingChangeEnum(configEntry: ConfigEntry[String])
+    extends Enumeration {
+    val OFF = Value("OFF")
+    val LOG_ONLY = Value("LOG_ONLY")
+    val ASSERT = Value("ASSERT")
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(configEntry))
+
+    def default: Value =
+      withName(configEntry.defaultValueString)
+
+    def confName: String = configEntry.key
+  }
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -199,6 +222,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Whether to perform validation checks before commit or not.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
+    buildConf("nullPartitionCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions with " +
+        "null partition values for columns that have NOT NULL constraints. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
     buildConf("checkLatestSchemaOnRead")
@@ -2946,6 +2978,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         |""".stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  /////////////////////////////////////
+  // NORMALIZE PARTITION VALUES ON READ
+  ////////////////////////////////////
+
+  val DELTA_NORMALIZE_PARTITION_VALUES_ON_READ =
+    buildConf("normalizePartitionValuesOnRead")
+      .internal()
+      .doc(
+        "When true, we will normalize partition values on read by parsing them " +
+        "to their actual types for comparison instead of using raw strings. This helps prevent " +
+        "issues with inconsistently formatted partition values. " +
+        "UTC_TIMESTAMP_PARTITION_VALUES normalized timestamp partition values on write. However, " +
+        "data written before this flag existed may not be normalized and needs to be normalized " +
+        "on read."
+      )
+      .booleanConf
+      .createWithDefault(true)
 
   //////////////////
   // CORRECTNESS

@@ -178,7 +178,7 @@ private[delta] object PartitionUtils {
       validatePartitionColumns: Boolean,
       timeZone: TimeZone): PartitionSpec = {
     val userSpecifiedDataTypes = if (userSpecifiedSchema.isDefined) {
-      val nameToDataType = userSpecifiedSchema.get.fields.map(f => f.name -> f.dataType).toMap
+      val nameToDataType = mapNameToDataType(userSpecifiedSchema.get)
       if (!caseSensitive) {
         CaseInsensitiveMap(nameToDataType)
       } else {
@@ -360,44 +360,37 @@ private[delta] object PartitionUtils {
       val rawColumnValue = columnSpec.drop(equalSignIndex + 1)
       assert(rawColumnValue.nonEmpty, s"Empty partition column value in '$columnSpec'")
 
-      val literal = if (userSpecifiedDataTypes.contains(columnName)) {
-        // SPARK-26188: if user provides corresponding column schema, get the column value without
-        //              inference, and then cast it as user specified data type.
-        val dataType = userSpecifiedDataTypes(columnName)
-        val columnValueLiteral = inferPartitionColumnValue(
-          rawColumnValue,
-          false,
-          timeZone,
-          dateFormatter,
-          timestampFormatter)
-        val columnValue = columnValueLiteral.eval()
-        if (dataType == DataTypes.TimestampType) {
-          if (useUtcNormalizedTimestamp) {
-            Try {
-              Literal.create(
-                utcFormatter.format(
-                  timestampFormatter.parse(columnValue.asInstanceOf[UTF8String].toString)),
-                StringType)
-            }.getOrElse(columnValueLiteral)
-          } else {
-            columnValueLiteral
-          }
-        } else {
-          val castedValue = Cast(columnValueLiteral, dataType, Option(timeZone.getID)).eval()
-          if (validatePartitionColumns && columnValue != null && castedValue == null) {
-            throw DeltaErrors.partitionColumnCastFailed(
-              columnValue.toString, dataType.toString, columnName)
-          }
-          Literal.create(castedValue, dataType)
-        }
+      val unescapedColumnValue = unescapePathName(rawColumnValue)
+      val columnValue = if (unescapedColumnValue == DEFAULT_PARTITION_NAME) {
+        null
       } else {
-        inferPartitionColumnValue(
-          rawColumnValue,
-          typeInference,
-          timeZone,
-          dateFormatter,
-          timestampFormatter)
+        unescapedColumnValue
       }
+
+      // Workaround to maintain backward compatibility when UTC timestamp normalization is disabled.
+      // The UTC timestamp partition values feature (enabled by default via
+      // [[DeltaSQLConf.UTC_TIMESTAMP_PARTITION_VALUES]]) normalizes timestamp partition values to
+      // UTC ISO 8601 format. When this feature is disabled, [[useUtcNormalizedTimestamp = false]],
+      // we treat TimestampType partition columns as StringType to avoid timestamp parsing and
+      // formatting operations that could change the original string representation.
+      // This exists solely to sustain the existing behavior for legacy code paths that have
+      // UTC normalization disabled. The partition value will be parsed as a string literal and
+      // preserved exactly as provided, rather than being parsed as a timestamp and potentially
+      // reformatted.
+      val dataType = userSpecifiedDataTypes.get(columnName).map {
+        case TimestampType if !useUtcNormalizedTimestamp => StringType
+        case dt => dt
+      }
+
+      val literal = parsePartitionValue(
+        columnName,
+        columnValue,
+        dataType,
+        typeInference,
+        timeZone,
+        dateFormatter,
+        timestampFormatter,
+        validatePartitionColumns)
       Some(columnName -> literal)
     }
   }
@@ -544,17 +537,19 @@ private[delta] object PartitionUtils {
    * Note that, for DecimalType(38,0)*, the table above intentionally does not cover all other
    * combinations of scales and precisions because currently we only infer decimal type like
    * `BigInteger`/`BigInt`. For example, 1.1 is inferred as double type.
+   * Note: [[columnValue]] is expected to be an column value unescaped from path escaping,
+   * and [[DEFAULT_PARTITION_NAME]] should be replaced by null.
    */
   // scalastyle:on line.size.limit
   def inferPartitionColumnValue(
-      raw: String,
+      columnValue: String,
       typeInference: Boolean,
       timeZone: TimeZone,
       dateFormatter: DateFormatter,
       timestampFormatter: TimestampFormatter): Literal = {
     def decimalTry = Try {
       // `BigDecimal` conversion can fail when the `field` is not a form of number.
-      val bigDecimal = new JBigDecimal(raw)
+      val bigDecimal = new JBigDecimal(columnValue)
       // It reduces the cases for decimals by disallowing values having scale (eg. `1.1`).
       require(bigDecimal.scale <= 0)
       // `DecimalType` conversion can fail when
@@ -566,55 +561,46 @@ private[delta] object PartitionUtils {
     def dateTry = Try {
       // try and parse the date, if no exception occurs this is a candidate to be resolved as
       // DateType
-      dateFormatter.parse(raw)
+      dateFormatter.parse(columnValue)
       // SPARK-23436: Casting the string to date may still return null if a bad Date is provided.
       // This can happen since DateFormat.parse  may not use the entire text of the given string:
       // so if there are extra-characters after the date, it returns correctly.
       // We need to check that we can cast the raw string since we later can use Cast to get
       // the partition values with the right DataType (see
       // org.apache.spark.sql.execution.datasources.PartitioningAwareFileIndex.inferPartitioning)
-      val dateValue = Cast(Literal(raw), DateType).eval()
+      val dateValue = Cast(Literal(columnValue), DateType).eval()
       // Disallow DateType if the cast returned null
       require(dateValue != null)
       Literal.create(dateValue, DateType)
     }
 
     def timestampTry = Try {
-      val unescapedRaw = unescapePathName(raw)
       // try and parse the date, if no exception occurs this is a candidate to be resolved as
       // TimestampType
-      timestampFormatter.parse(unescapedRaw)
+      timestampFormatter.parse(columnValue)
       // SPARK-23436: see comment for date
-      val timestampValue = Cast(Literal(unescapedRaw), TimestampType, Some(timeZone.getID)).eval()
+      val timestampValue = Cast(Literal(columnValue), TimestampType, Some(timeZone.getID)).eval()
       // Disallow TimestampType if the cast returned null
       require(timestampValue != null)
       Literal.create(timestampValue, TimestampType)
     }
 
-    if (typeInference) {
+    if (columnValue == null) {
+      Literal.default(NullType)
+    } else if (typeInference) {
       // First tries integral types
-      Try(Literal.create(Integer.parseInt(raw), IntegerType))
-        .orElse(Try(Literal.create(JLong.parseLong(raw), LongType)))
+      Try(Literal.create(Integer.parseInt(columnValue), IntegerType))
+        .orElse(Try(Literal.create(JLong.parseLong(columnValue), LongType)))
         .orElse(decimalTry)
         // Then falls back to fractional types
-        .orElse(Try(Literal.create(JDouble.parseDouble(raw), DoubleType)))
+        .orElse(Try(Literal.create(JDouble.parseDouble(columnValue), DoubleType)))
         // Then falls back to date/timestamp types
         .orElse(timestampTry)
         .orElse(dateTry)
         // Then falls back to string
-        .getOrElse {
-          if (raw == DEFAULT_PARTITION_NAME) {
-            Literal.default(NullType)
-          } else {
-            Literal.create(unescapePathName(raw), StringType)
-          }
-        }
+        .getOrElse(Literal.create(columnValue, StringType))
     } else {
-      if (raw == DEFAULT_PARTITION_NAME) {
-        Literal.default(NullType)
-      } else {
-        Literal.create(unescapePathName(raw), StringType)
-      }
+      Literal.create(columnValue, StringType)
     }
   }
 
@@ -766,5 +752,177 @@ private[delta] object PartitionUtils {
       sys.error("A resolver to check if two identifiers are equal must be " +
         "`caseSensitiveResolution` or `caseInsensitiveResolution` in o.a.s.sql.catalyst.")
     }
+  }
+
+  /**
+   * Converts a typed literal to a normalized string representation for correct comparisons.
+   * @param literal The Literal to convert to a string. Must have the correct type set.
+   * @param timeZoneId Optional timezone ID for timestamp types.
+   * @param useUtcNormalizedTimestamp If true, formats timestamp types into UTC ISO 8601 format.
+   * @return The string representation of the literal, or null if the literal is null.
+   */
+  def literalToNormalizedString(
+      literal: Literal,
+      timeZoneId: Option[String] = None,
+      useUtcNormalizedTimestamp: Boolean = false): String = {
+    if (literal == null || literal.value == null) {
+      return null
+    }
+
+    literal.dataType match {
+      case TimestampType if useUtcNormalizedTimestamp =>
+        // Format timestamp in UTC ISO 8601 format: "2000-01-01T12:00:00.000000Z"
+        utcFormatter.format(literal.value.asInstanceOf[Long])
+
+      case _ =>
+        // All other types can safely be converted to a string.
+        val castedValue = Cast(literal, StringType, timeZoneId, ansiEnabled = false).eval()
+        Option(castedValue).map(_.toString).orNull
+    }
+  }
+
+  /**
+   * Parses partition values (strings) to their corresponding Literal with the appropiate type
+   * as defined in the partition schema.
+   *
+   * @param partValuesMap Map of partition column names to their string values.
+   * @param partitionSchema Schema defining the data types for each partition column.
+   * @param timeZoneId Time zone ID used for casting timestamp values.
+   * @param validatePartitionColumns Throw an error when casting fails.
+   * @return Map of partition column names to their parsed Literal values.
+   */
+  def parsePartitionValues(
+      partValuesMap: Map[String, String],
+      partitionSchema: StructType,
+      timeZoneId: String,
+      validatePartitionColumns: Boolean = false): Map[String, Literal] = {
+    val partSchemaNames = partitionSchema.names.toSet
+    val partValuesMapKeys = partValuesMap.keySet
+    if (partSchemaNames != partValuesMapKeys) {
+      val errorMsg = s"Partition values map keys $partValuesMapKeys should match " +
+        s"partition schema names $partSchemaNames."
+      if (partSchemaNames.map(_.toLowerCase(Locale.ROOT)) ==
+        partValuesMapKeys.map(_.toLowerCase(Locale.ROOT))) {
+        throw new IllegalStateException(s"CASE_MISMATCH: $errorMsg")
+      } else if (partValuesMapKeys.isEmpty) {
+        throw new IllegalStateException(s"PARTITION_VALUES_EMPTY: $errorMsg")
+      } else {
+        throw new IllegalStateException(errorMsg)
+      }
+    }
+
+    val timeZone = DateTimeUtils.getTimeZone(timeZoneId)
+    val dateFormatter = DateFormatter()
+    val timestampFormatter = TimestampFormatter(timestampPartitionPattern, timeZone)
+    val partColNameToDataType = mapNameToDataType(partitionSchema)
+
+    partValuesMap.map {
+      case (partColName, partValueStr) =>
+        val dataType = partColNameToDataType(partColName)
+        val literal = parsePartitionValue(
+          partColName,
+          partValueStr,
+          Some(dataType),
+          typeInference = false,
+          timeZone,
+          dateFormatter,
+          timestampFormatter,
+          validatePartitionColumns)
+        (partColName, literal)
+    }
+  }
+
+  /**
+   * Parses a single partition value string and returns a Literal with the appropriate type.
+   *
+   * @param columnName The name of the partition column (used for error messages).
+   * @param rawValue The raw string value of the partition.
+   * @param dataType Optional data type from the schema. If None, type inference is used.
+   * @param typeInference Whether to infer the type when dataType is None.
+   * @param timeZone Time zone for timestamp parsing.
+   * @param dateFormatter Formatter for date parsing.
+   * @param timestampFormatter Formatter for timestamp parsing.
+   * @param validatePartitionColumns Throw an error when casting fails.
+   * @return A Literal containing the parsed value.
+   */
+  private def parsePartitionValue(
+      columnName: String,
+      columnValue: String,
+      dataType: Option[DataType],
+      typeInference: Boolean,
+      timeZone: TimeZone,
+      dateFormatter: DateFormatter,
+      timestampFormatter: TimestampFormatter,
+      validatePartitionColumns: Boolean = false): Literal = {
+    dataType match {
+      case Some(dt) =>
+        // If columnValue is null, return a null literal with the appropriate type.
+        if (columnValue == null) {
+          return Literal.create(null, dt)
+        }
+
+        // Fall back string literal
+        val columnValueStringLiteral = Literal.create(columnValue, StringType)
+
+        dt match {
+          case TimestampType =>
+            Try {
+              Literal.create(
+                timestampFormatter.parse(columnValue),
+                TimestampType)
+            }.getOrElse {
+              // If the timestamp is not in the expected format, cast it manually.
+              val castedValue = Cast(
+                columnValueStringLiteral,
+                TimestampType,
+                Option(timeZone.getID),
+                ansiEnabled = false).eval()
+              if (castedValue != null) {
+                Literal.create(castedValue, TimestampType)
+              } else if (validatePartitionColumns) {
+                throw DeltaErrors.partitionColumnCastFailed(
+                  Option(columnValue).map(_.toString).getOrElse("null"),
+                  TimestampType.toString,
+                  columnName)
+              } else {
+                columnValueStringLiteral
+              }
+            }
+
+          case _ =>
+            val castedValue = Cast(
+              columnValueStringLiteral, dt, Option(timeZone.getID), ansiEnabled = false).eval()
+            if (castedValue == null) {
+              if (validatePartitionColumns) {
+                throw DeltaErrors.partitionColumnCastFailed(
+                  Option(columnValue).map(_.toString).getOrElse("null"), dt.toString, columnName)
+              }
+              columnValueStringLiteral
+            } else {
+              Literal.create(castedValue, dt)
+            }
+        }
+
+      case None =>
+        // No schema provided - use type inference
+        inferPartitionColumnValue(
+          columnValue,
+          typeInference,
+          timeZone,
+          dateFormatter,
+          timestampFormatter)
+    }
+  }
+
+  // TODO: Use helpers from Spark when https://github.com/apache/spark/pull/54117 is available.
+  private def mapNameToDataType(schema: StructType): Map[String, DataType] =
+    schema.fields.map(f => f.name -> f.dataType).toMap
+
+  def classifyPartitionValueParsingError(e: Throwable): String = e match {
+    case ex if ex.getMessage.contains("CASE_MISMATCH") =>
+      ".caseMismatch"
+    case ex if ex.getMessage.contains("PARTITION_VALUES_EMPTY") =>
+      ".partitionValuesEmpty"
+    case _ => ""
   }
 }

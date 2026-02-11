@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
@@ -333,6 +334,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected var commitEndNano = -1L;
 
   protected var commitInfo: CommitInfo = _
+  def getCommitInfo: CommitInfo = commitInfo
 
   /** Whether the txn should trigger a checkpoint after the commit */
   private[delta] var needsCheckpoint = false
@@ -1242,6 +1244,63 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Validates that partition columns that have NOT NULL
+   * constraints are not null in the AddFile action.
+   *
+   * @param addFile The AddFile action to validate
+   * @param notNullPartitionCols Partition columns with NOT NULL constraints
+   */
+  protected def validateAddFileForNullPartitions(
+      addFile: AddFile,
+      notNullPartitionCols: Set[String]): Unit = {
+    notNullPartitionCols.foreach { col =>
+      addFile.partitionValues.get(col) match {
+        case None | Some(null) =>
+          recordDeltaEvent(
+            deltaLog,
+            "delta.constraints.nullPartitionViolation",
+            data = Map(
+              "addFile" -> addFile.json,
+              "notNullPartitionCols" -> notNullPartitionCols.toSeq.mkString(","),
+              "stackTrace" -> Thread.currentThread().getStackTrace.take(20).mkString("\n")
+            ))
+          if (spark.conf.get(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED)) {
+            throw new IllegalStateException(
+              s"AddFile ${addFile.path} has null partition value for NOT NULL column '$col'")
+          }
+        case Some(_) => // Valid non-null partition value
+      }
+    }
+  }
+
+  /**
+   * Returns all the partition columns that have NOT NULL constraints.
+   */
+  protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
+    val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
+      .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
+      .toSet
+    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+  }
+
+  /**
+   * For any partition columns that have NOT NULL constraints,
+   * validate that the partition values in the AddFile actions are not null.
+   */
+  protected def validateActionsForNullPartitions(
+      actions: Seq[Action],
+      metadata: Metadata): Unit = {
+    val notNullPartitionCols = getNotNullPartitionCols(metadata)
+    if (notNullPartitionCols.nonEmpty) {
+      actions.foreach {
+        case a: AddFile =>
+          validateAddFileForNullPartitions(a, notNullPartitionCols)
+        case _ =>
+      }
+    }
+  }
+
+  /**
    * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
    * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
    */
@@ -1414,6 +1473,29 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
   }
 
+  /**
+   * Records a delta event for a commit conflict exception, including the operation type
+   * of the winning/conflicting transaction for observability purposes.
+   */
+  protected def recordConflictEvent(e: DeltaConcurrentModificationException): Unit = {
+    // Extract the operation of the winning/conflicting transaction from the exception message.
+    // This is for visibility/observability purpose to track which type of transaction
+    // (e.g., OPTIMIZE/VACUUM) is causing the conflict.
+    // Handle two message formats:
+    // 1. New structured errors: "A concurrent <operation> added/modified/deleted data..."
+    // 2. Old JSON format in conflicting commit: "operation":"<operation>"
+    val newFormatPattern = """[Aa] concurrent (.+?) (?:added|modified|deleted)""".r
+    val oldFormatPattern = """"operation"\s*:\s*"([^"]+)"""".r
+    val winningTxnOperation = newFormatPattern
+      .findFirstMatchIn(e.getMessage).map(_.group(1))
+      .orElse(oldFormatPattern.findFirstMatchIn(e.getMessage).map(_.group(1)))
+      .getOrElse("Unknown Operation")
+    recordDeltaEvent(
+      deltaLog,
+      opType = "delta.commit.conflict." + e.conflictType,
+      data = Map("winningTxnOperation" -> winningTxnOperation))
+  }
+
   @throws(classOf[ConcurrentModificationException])
   protected def commitImpl(
       actions: Seq[Action],
@@ -1443,6 +1525,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         executionObserver.preparingCommit {
           prepareCommit(finalActions, op)
         }
+
+      validateActionsForNullPartitions(preparedActions, metadata)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1534,7 +1618,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       commitVersion
     } catch {
       case e: DeltaConcurrentModificationException =>
-        recordDeltaEvent(deltaLog, "delta.commit.conflict." + e.conflictType)
+        recordConflictEvent(e)
         executionObserver.transactionAborted()
         throw e
       case NonFatal(e) =>
@@ -1694,6 +1778,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       updateMetadataWithCoordinatedCommitsConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
+      // Precompute NOT NULL partition columns for validation during action processing
+      val notNullPartitionCols = getNotNullPartitionCols(metadata)
       var allActions =
         Iterator(commitInfo, metadata) ++
           nonProtocolMetadataActions ++
@@ -1702,6 +1788,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         action match {
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
+            validateAddFileForNullPartitions(a, notNullPartitionCols)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",
@@ -2147,64 +2234,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
   // Returns the isolation level to use for committing the transaction
   protected def getIsolationLevelToUse(
       preparedActions: Seq[Action], op: DeltaOperations.Operation): IsolationLevel = {
-    val isolationLevelToUse = if (canDowngradeToSnapshotIsolation(preparedActions, op)) {
-      SnapshotIsolation
-    } else {
-      getDefaultIsolationLevel()
-    }
+    val isolationLevelToUse =
+      if (canDowngradeToSnapshotIsolation(preparedActions, op.changesData)) {
+        SnapshotIsolation
+      } else {
+        getDefaultIsolationLevel()
+      }
     isolationLevelToUse
-  }
-
-  protected def canDowngradeToSnapshotIsolation(
-      preparedActions: Seq[Action], op: DeltaOperations.Operation): Boolean = {
-
-    var dataChanged = false
-    var hasIncompatibleActions = false
-    preparedActions.foreach {
-      case f: FileAction =>
-        if (f.dataChange) {
-          dataChanged = true
-        }
-      // Row tracking is able to resolve write conflicts regardless of isolation level.
-      case d: DomainMetadata if RowTrackingMetadataDomain.isSameDomain(d) =>
-        // Do nothing
-      case _ =>
-        hasIncompatibleActions = true
-    }
-    val noDataChanged = !dataChanged
-
-    if (hasIncompatibleActions) {
-      // if incompatible actions are present (e.g. METADATA etc.), then don't downgrade the
-      // isolation level to SnapshotIsolation.
-      return false
-    }
-
-    val defaultIsolationLevel = getDefaultIsolationLevel()
-    // Note-1: For no-data-change transactions such as OPTIMIZE/Auto Compaction/ZorderBY, we can
-    // change the isolation level to SnapshotIsolation. SnapshotIsolation allows reduced conflict
-    // detection by skipping the
-    // [[ConflictChecker.checkForAddedFilesThatShouldHaveBeenReadByCurrentTxn]] check i.e.
-    // don't worry about concurrent appends.
-    // Note-2:
-    // We can also use SnapshotIsolation for empty transactions. e.g. consider a commit:
-    // t0 - Initial state of table
-    // t1 - Q1, Q2 starts
-    // t2 - Q1 commits
-    // t3 - Q2 is empty and wants to commit.
-    // In this scenario, we can always allow Q2 to commit without worrying about new files
-    // generated by Q1.
-    // The final order which satisfies both Serializability and WriteSerializability is: Q2, Q1
-    // Note that Metadata only update transactions shouldn't be considered empty. If Q2 above has
-    // a Metadata update (say schema change/identity column high watermark update), then Q2 can't
-    // be moved above Q1 in the final SERIALIZABLE order. This is because if Q2 is moved above Q1,
-    // then Q1 should see the updates from Q2 - which actually didn't happen.
-
-    val allowFallbackToSnapshotIsolation = defaultIsolationLevel match {
-      case Serializable => noDataChanged
-      case WriteSerializable => noDataChanged && !op.changesData
-      case _ => false // This case should never happen
-    }
-    allowFallbackToSnapshotIsolation
   }
 
   /** Log protocol change events. */
