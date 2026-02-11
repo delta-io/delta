@@ -51,8 +51,6 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
-      - name: Setup Unity Catalog for testing
-        run: dev/setup-unitycatalog.sh
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test

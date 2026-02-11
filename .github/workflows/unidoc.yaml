@@ -15,7 +15,5 @@
             distribution: "zulu"
             java-version: "17"
         - uses: actions/checkout@v3
-        - name: Setup Unity Catalog for testing
-          run: dev/setup-unitycatalog.sh
         - name: generate unidoc
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
