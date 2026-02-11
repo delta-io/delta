@@ -25,9 +25,9 @@ import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
 import com.databricks.spark.util.UsageRecord
-import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CommitCoordinatorGetCommitsFailedException, CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaIllegalArgumentException, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
+import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
@@ -372,7 +372,12 @@ class CatalogOwnedSuite
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use CatalogOwned table feature by default.
-    super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+    // Disable QoL features to avoid unexpected side effects in tests.
+    super.sparkConf
+      .set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+      .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
+      .set(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey, CheckpointPolicy.Classic.name)
+      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
   }
 }
 

@@ -76,8 +76,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       List.of(
           "delta.feature.appendOnly",
           DELTA_CATALOG_MANAGED_KEY,
+          "delta.feature.deletionVectors",
+          "delta.feature.domainMetadata",
           "delta.feature.inCommitTimestamp",
           "delta.feature.invariants",
+          "delta.feature.rowTracking",
+          "delta.feature.v2Checkpoint",
           "delta.feature.vacuumProtocolCheck");
   private static final Map<String, String> EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES =
       EXPECTED_MANAGED_TABLE_FEATURES.stream()
@@ -327,14 +331,117 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       check(fullTableName, List.of(List.of("2", "b")));
     }
 
-    // Verify that table information maintained at the uc server side are expected.
-    assertUCTableInfo(
-        tableType,
-        fullTableName,
-        List.of("i", "s"),
-        Map.of("Foo", "Bar"),
-        comment,
-        options.getExternalTableLocation());
+    // Verify that properties are set on server. This can not be done by DESC EXTENDED.
+    TablesApi tablesApi = new TablesApi(uc.createApiClient());
+    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+    assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
+    assertThat(tableInfo.getName()).isEqualTo(tableName);
+    assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);
+    assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
+    assertThat(tableInfo.getDataSourceFormat().name()).isEqualTo(DataSourceFormat.DELTA.name());
+    assertThat(tableInfo.getComment()).isEqualTo(comment);
+    if (tableType == TableType.EXTERNAL) {
+      assertThat(tableInfo.getStorageLocation()).isEqualTo(options.getExternalTableLocation());
+    }
+
+    // At this point table schema can not be sent to server yet because it won't be
+    // updated
+    // later and that would cause problem.
+    List<ColumnInfo> columns = tableInfo.getColumns();
+    assertThat(columns).isNotNull();
+    assertThat(columns).isEmpty();
+
+    if (tableType == TableType.MANAGED) {
+      // Delta sent properties of managed tables to server
+      Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
+      tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
+
+      // CLUSTER BY has two extra properties
+      final Map<String, String> expectedClusteringProperties =
+          withCluster
+              ? ImmutableMap.<String, String>builder()
+                  .put("clusteringColumns", "[[\"" + options.getClusterColumn().get() + "\"]]")
+                  .put("delta.feature.clustering", SUPPORTED)
+                  .build()
+              : ImmutableMap.of();
+      final Map<String, String> expectedOtherProperties =
+          ImmutableMap.<String, String>builder()
+              .put("delta.checkpointPolicy", "v2")
+              .put("delta.enableDeletionVectors", "true")
+              .put("delta.enableInCommitTimestamps", "true")
+              .put("delta.enableRowTracking", "true")
+              .put("delta.lastUpdateVersion", "0")
+              .put("delta.minReaderVersion", "3")
+              .put("delta.minWriterVersion", "7")
+              .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
+              // User specified custom table property is also sent.
+              .put("Foo", "Bar")
+              .putAll(expectedClusteringProperties)
+              .build();
+      // The value of these properties aren't predictable. But at least we confirm their existence.
+      final Set<String> expectedPropertiesWithVariableValue =
+          Set.of(
+              "delta.lastCommitTimestamp",
+              "delta.rowTracking.materializedRowCommitVersionColumnName",
+              "delta.rowTracking.materializedRowIdColumnName");
+
+      // This is combination of expectedOtherProperties and
+      //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
+      Map<String, String> expectedProperties =
+          Stream.concat(
+                  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.entrySet().stream(),
+                  expectedOtherProperties.entrySet().stream())
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+      // Server has all the expected table properties
+      expectedProperties.forEach(
+          (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
+      expectedPropertiesWithVariableValue.forEach(
+          key -> assertThat(tablePropertiesFromServer).containsKey(key));
+
+      // Server doesn't have any unexpected table properties. If anyone introduces a new table
+      // property and this fails, update the list of expected properties.
+      Map<String, String> unexpectedTablePropertiesFromServer =
+          tablePropertiesFromServer.entrySet().stream()
+              .filter(
+                  entry ->
+                      !expectedProperties.containsKey(entry.getKey())
+                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+      assertThat(unexpectedTablePropertiesFromServer).isEmpty();
+    }
+
+    // Also verify table using DESC EXTENDED
+    List<List<String>> rows = sql("DESC EXTENDED " + fullTableName);
+    Map<String, String> describeResult = new HashMap<>();
+    for (List<String> row : rows) {
+      String key = row.get(0);
+      // Skip duplicate column names that appear in partition info
+      if (!List.of("i", "s").contains(key)) {
+        describeResult.put(key, row.get(1));
+      }
+    }
+
+    // Verify basic table properties
+    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
+    assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
+    assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
+    assertThat(describeResult.get("Is_managed_location"))
+        .isEqualTo(tableType == TableType.MANAGED ? "true" : null);
+    assertThat(describeResult).containsKey("Table Properties");
+    String tableProperties = describeResult.get("Table Properties");
+    if (tableType == TableType.MANAGED) {
+      // Check for UC table ID
+      assertThat(tableProperties).contains(UC_TABLE_ID_KEY);
+      // Check for catalogManaged feature
+      assertThat(tableProperties)
+          .contains(String.format("%s=%s", DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
+    } else {
+      // Check for UC table ID
+      assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
+      // Check for catalogManaged feature
+      assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
+    }
   }
 
   @Test

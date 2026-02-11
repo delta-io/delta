@@ -110,7 +110,15 @@ trait CatalogOwnedTestBaseSuite
 
   override protected def sparkConf: SparkConf = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+      // Disable QoL features by default in tests to avoid unexpected side effects.
+      // When row tracking is enabled, RowId.extractHighWatermark accesses snapshot.domainMetadata
+      // which triggers computedState, causing setTransactions to be populated in CRC.
+      // Additionally, v2 checkpoints and other QoL features affect metadata expectations in tests.
+      super.sparkConf
+        .set(defaultCatalogOwnedFeatureEnabledKey, "supported")
+        .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
+        .set(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey, CheckpointPolicy.Classic.name)
+        .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
     } else {
       super.sparkConf
     }
@@ -254,7 +262,13 @@ trait CatalogOwnedTestBaseSuite
       spark: SparkSession,
       metadata: Metadata): Map[String, String] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+      // When QoL features are disabled via configs, they get written as explicit properties
+      Map(
+        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false",
+        DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
+        DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name,
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"
+      )
     } else {
       Map.empty
     }
@@ -267,7 +281,12 @@ trait CatalogOwnedTestBaseSuite
   def extractCatalogOwnedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      Option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
+      // When QoL features are disabled via configs, they get written as explicit properties
+      Map(
+        DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
+        DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name,
+        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"
+      )
     } else {
       Seq.empty
     }
