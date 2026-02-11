@@ -206,6 +206,7 @@ case class SparkVersionSpec(
   targetJvm: String,
   additionalSourceDir: Option[String] = None,
   supportIceberg: Boolean,
+  supportServerSidePlanning: Boolean = false,  // For Spark 4.1+ where iceberg-spark-runtime doesn't exist yet
   supportHudi: Boolean = true,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
@@ -267,6 +268,7 @@ object SparkVersionSpec {
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.1"),
     supportIceberg = false,
+    supportServerSidePlanning = true,  // Only build serverSidePlanning (uses shaded iceberg-core)
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
@@ -278,6 +280,7 @@ object SparkVersionSpec {
     targetJvm = "17",
     additionalSourceDir = Some("scala-shims/spark-4.2"),
     supportIceberg = false,
+    supportServerSidePlanning = true,  // Only build serverSidePlanning (uses shaded iceberg-core)
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,

@@ -38,8 +38,8 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-hudi{suffix}_2.13-{version}.jar",
 ]
 
-# Iceberg-related modules - only built for Spark versions with supportIceberg=true
-# See CrossSparkVersions.scala for which versions support iceberg
+# Iceberg-related modules - built when supportIceberg=true OR supportServerSidePlanning=true
+# See CrossSparkVersions.scala for which versions support iceberg/serverSidePlanning
 DELTA_ICEBERG_JAR_TEMPLATES = [
     "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
@@ -63,7 +63,8 @@ class SparkVersionSpec:
     Mirrors the SparkVersionSpec in CrossSparkVersions.scala.
     """
     suffix: str  # e.g., "" for default, "_X.Y" for other versions
-    support_iceberg: bool = False  # Whether this Spark version supports iceberg integration
+    support_iceberg: bool = False  # Whether this Spark version supports full iceberg integration
+    support_server_side_planning: bool = False  # Whether serverSidePlanning is built (Spark 4.1+)
 
     def __post_init__(self):
         """Generate JAR templates with the suffix applied."""
@@ -73,8 +74,9 @@ class SparkVersionSpec:
             for jar in SPARK_RELATED_JAR_TEMPLATES
         ]
 
-        # Generate iceberg JAR templates with the suffix (only if this version supports iceberg)
-        if self.support_iceberg:
+        # Generate iceberg JAR templates with the suffix
+        # Published when either supportIceberg OR supportServerSidePlanning is true
+        if self.support_iceberg or self.support_server_side_planning:
             self.iceberg_jars = [
                 jar.format(suffix=self.suffix, version="{version}")
                 for jar in DELTA_ICEBERG_JAR_TEMPLATES
@@ -94,8 +96,8 @@ class SparkVersionSpec:
 # Spark versions to test (key = full version string, value = spec with suffix)
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),   # Spark 4.0.1 supports iceberg
-    "4.1.0": SparkVersionSpec(suffix="", support_iceberg=False)       # Default Spark version, no iceberg support
+    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),   # Spark 4.0.1 supports full iceberg
+    "4.1.0": SparkVersionSpec(suffix="", support_iceberg=False, support_server_side_planning=True)  # Default, serverSidePlanning only
 }
 
 # The default Spark version (no suffix in artifact names)
