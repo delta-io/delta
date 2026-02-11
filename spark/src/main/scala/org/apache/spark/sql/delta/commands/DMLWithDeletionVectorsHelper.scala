@@ -192,7 +192,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   def processUnmodifiedData(
       spark: SparkSession,
       touchedFiles: Seq[TouchedFileWithDV],
-      snapshot: Snapshot): (Seq[FileAction], Map[String, Long]) = {
+      snapshot: Snapshot,
+      stringTruncateLength: Int): (Seq[FileAction], Map[String, Long]) = {
     val numModifiedRows = touchedFiles.map(_.numberOfModifiedRows).sum.toLong
     val numRemovedFiles = touchedFiles.count(_.isFullyReplaced()).toLong
 
@@ -207,7 +208,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
         updateStats = false
       )}
     val (dvAddFiles, dvRemoveFiles) = dvUpdates.unzip
-    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot)
+    val dvAddFilesWithStats = getActionsWithStats(spark, dvAddFiles, snapshot, stringTruncateLength)
 
     var (numDeletionVectorsAdded, numDeletionVectorsRemoved, numDeletionVectorsUpdated) =
       dvUpdates.foldLeft((0L, 0L, 0L)) { case ((added, removed, updated), (addFile, removeFile)) =>
@@ -232,7 +233,8 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
   private def getActionsWithStats(
       spark: SparkSession,
       addFilesWithNewDvs: Seq[AddFile],
-      snapshot: Snapshot): Seq[AddFile] = {
+      snapshot: Snapshot,
+      stringTruncateLength: Int): Seq[AddFile] = {
     import org.apache.spark.sql.delta.implicits._
 
     if (addFilesWithNewDvs.isEmpty) return Seq.empty
@@ -277,6 +279,7 @@ object DMLWithDeletionVectorsHelper extends DeltaCommand {
           snapshot = snapshot,
           addFiles = filesWithNoStats.toDS(spark),
           numFilesOpt = Some(filesWithNoStats.size),
+          stringTruncateLength = stringTruncateLength,
           setBoundsToWide = true)
           .collect()
           .toSeq

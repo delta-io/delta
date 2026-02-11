@@ -46,6 +46,13 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
   // Domain metadata will load from checkpoint as well.
   protected def getExpectedCheckpointReadSize(size: Seq[Long]): Seq[Long] = size
 
+  // When loading from a CRC at an earlier version, domain metadata and P&M use different
+  // replay strategies. P&M replay checks the CRC eagerly at (crcVersion + 1) and returns
+  // without opening files at or below the CRC version. Domain metadata replay instead scans
+  // all files in reverse and breaks when version < minLogVersion, which requires reading one
+  // batch from the file just below minLogVersion to discover its version.
+  protected def isDomainMetadataReplay: Boolean = false
+
   ///////////
   // Tests //
   ///////////
@@ -93,7 +100,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
       loadPandMCheckMetrics(
         tablePath,
         engine,
-        expJsonVersionsRead = Seq(8),
+        expJsonVersionsRead =
+          if (isDomainMetadataReplay) Seq(8, 7) else Seq(8),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(7),
@@ -151,7 +159,8 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
         engine,
         // We find the checksum from crc at version 4, but still read commit files 5 and 6
         // to find the P&M which could have been updated in version 5 and 6.
-        expJsonVersionsRead = Seq(6, 5),
+        expJsonVersionsRead =
+          if (isDomainMetadataReplay) Seq(6, 5, 4) else Seq(6, 5),
         expParquetVersionsRead = Nil,
         expParquetReadSetSizes = Nil,
         expChecksumReadSet = Seq(4),
@@ -178,14 +187,16 @@ trait ChecksumLogReplayMetricsTestBase extends LogReplayBaseSuite { self: Abstra
       val readVersion = checkpointVersion + 1
       deleteChecksumFileForTable(tablePath, Seq(checkpointVersion + 1))
 
-      // 11.crc, missing, 10.crc and 10.checkpoint.parquet exist.
+      // 11.crc missing, 10.crc and 10.checkpoint.parquet exist.
       // read 10.crc and 11.json.
       loadPandMCheckMetrics(
         tablePath,
         engine,
         expJsonVersionsRead = Seq(readVersion),
-        expParquetVersionsRead = Nil,
-        expParquetReadSetSizes = Nil,
+        expParquetVersionsRead =
+          if (isDomainMetadataReplay) Seq(checkpointVersion.toLong) else Nil,
+        expParquetReadSetSizes =
+          if (isDomainMetadataReplay) Seq(1L) else Nil,
         expChecksumReadSet = Seq(checkpointVersion),
         version = readVersion)
     }

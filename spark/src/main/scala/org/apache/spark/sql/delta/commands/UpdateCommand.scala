@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile, FileActi
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC, CDC_TYPE_UPDATE_POSTIMAGE, CDC_TYPE_UPDATE_PREIMAGE}
 import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeFileIndex}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
 
@@ -216,10 +217,13 @@ case class UpdateCommand(
         } else {
           // When there is data predicate, we generate (remove, add) pairs.
           val filesToRewriteWithDV = filesToRewrite.filter(_.newDeletionVector != null)
+          val stringTruncateLength = StatsCollectionUtils.getDataSkippingStringPrefixLength(
+            sparkSession, txn.metadata)
           val (dvActions, metricMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
             sparkSession,
             filesToRewriteWithDV,
-            txn.snapshot)
+            txn.snapshot,
+            stringTruncateLength)
           metrics("numUpdatedRows").set(metricMap("numModifiedRows"))
           numDeletionVectorsAdded = metricMap("numDeletionVectorsAdded")
           numDeletionVectorsRemoved = metricMap("numDeletionVectorsRemoved")

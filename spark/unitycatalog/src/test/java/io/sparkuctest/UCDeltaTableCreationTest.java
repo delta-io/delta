@@ -309,6 +309,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
       tablesToCleanUp.add(fullTableName);
     }
+
+    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
+    if (replaceTable) {
+      assertThatThrownBy(() -> sql(options.createTableSql()));
+      return;
+    }
+
     // Create table
     sql(options.createTableSql());
     tablesToCleanUp.add(fullTableName);
@@ -386,23 +393,31 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     withTempDir(
         (Path dir) -> {
           try {
+            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
+            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
             // CREATE OR REPLACE with new schema
             if (tableType == TableType.MANAGED) {
-              sql(
-                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
-                  tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+              assertThatThrownBy(
+                  () ->
+                      sql(
+                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
+                          tableName, MANAGED_TBLPROPERTIES_CLAUSE));
             } else {
-              sql(
-                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-                  tableName, dir.toString());
+              assertThatThrownBy(
+                  () ->
+                      sql(
+                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+                          tableName, dir.toString()));
             }
 
+            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
+
             // Assert the unity catalog table information.
-            assertUCTableInfo(tableType, tableName, List.of("id", "name"), Map.of(), null, null);
+            // assertUCTableInfo(tableType, tableName, List.of("id", "name"), Map.of(), null, null);
 
             // Insert data to verify new schema
-            sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            check(tableName, List.of(List.of("1", "Alice")));
+            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+            // check(tableName, List.of(List.of("1", "Alice")));
           } finally {
             sql("DROP TABLE IF EXISTS %s", tableName);
           }
