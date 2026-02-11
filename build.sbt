@@ -1488,7 +1488,7 @@ lazy val sparkGroup = {
       // crossScalaVersions must be set to Nil on the aggregating project
       crossScalaVersions := Nil,
       publishArtifact := false,
-      publish / skip := false,
+      publish / skip := true,
     )
 }
 
@@ -1505,7 +1505,7 @@ lazy val icebergGroup = {
       // crossScalaVersions must be set to Nil on the aggregating project
       crossScalaVersions := Nil,
       publishArtifact := false,
-      publish / skip := false,
+      publish / skip := true,
     )
 }
 
@@ -1515,7 +1515,7 @@ lazy val kernelGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false,
+    publish / skip := true,
     unidocSourceFilePatterns := {
       (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
@@ -1528,7 +1528,7 @@ lazy val flinkGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false,
+    publish / skip := true,
   )
 
 /*
@@ -1576,10 +1576,17 @@ lazy val releaseSettings = Seq(
     sys.env.getOrElse("SONATYPE_USERNAME", ""),
     sys.env.getOrElse("SONATYPE_PASSWORD", "")
   ),
+  credentials += Credentials(
+    "Sonatype Nexus Repository Manager",
+    "central.sonatype.com",
+    sys.env.getOrElse("SONATYPE_USERNAME", ""),
+    sys.env.getOrElse("SONATYPE_PASSWORD", "")
+  ),
   publishTo := {
     val ossrhBase = "https://ossrh-staging-api.central.sonatype.com/"
+    val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
     if (isSnapshot.value) {
-      Some("snapshots" at ossrhBase + "content/repositories/snapshots")
+      Some("snapshots" at centralSnapshots)
     } else {
       Some("releases"  at ossrhBase + "service/local/staging/deploy/maven2")
     }
@@ -1643,7 +1650,7 @@ lazy val releaseSettings = Seq(
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
 publish / skip := true
-publishTo := Some("snapshots" at "https://ossrh-staging-api.central.sonatype.com/content/repositories/snapshots")
+publishTo := Some("snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
 releaseCrossBuild := false  // Don't use sbt-release's cross facility
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
@@ -1652,7 +1659,7 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease
-) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq[ReleaseStep](
+) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
 
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.
