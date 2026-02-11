@@ -1309,6 +1309,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
+  val FORCED_CHECKSUM_VALIDATION_INTERVAL =
+    buildConf("versionChecksum.forcedValidationInterval")
+      .internal()
+      .doc("The number of commits since the last checkpoint at which we " +
+        "should force validation of the version checksum. This is done before " +
+        "a commit to block further writes in case of checksum mismatch." +
+        "Set to -1 to disable, set to 0 to validate on every commit. " +
+        "The validation will be skipped if the checkpoint was created " +
+        "within the time gap specified by versionChecksum.forcedValidationMinTimeIntevalMinutes.")
+      .intConf
+      .createWithDefault(FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT)
+
+  val FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES =
+    buildConf("versionChecksum.forcedValidationMinTimeIntevalMinutes")
+      .internal()
+      .doc("The minimum time gap in minutes between the checkpoint creation time and " +
+        "current time for forced checksum validation. If the checkpoint was created " +
+        "within this time gap, forced validation is skipped even if the number of " +
+        "commits since the checkpoint exceeds the forcedValidationInterval threshold. " +
+        "For fast moving tables, the checkpoint can lag much behind " +
+        "versionChecksum.forcedValidationInterval. This helps us avoid slowing " +
+        "them down. Set to 0 to disable this optimization.")
+      .intConf
+      .checkValue(_ >= 0,
+        "'versionChecksum.forcedValidationMinTimeIntevalMinutes' must be non-negative.")
+      .createWithDefault(12*60) // 12 hours
+
   val INCREMENTAL_COMMIT_ENABLED =
     buildConf("incremental.commit.enabled")
       .internal()
