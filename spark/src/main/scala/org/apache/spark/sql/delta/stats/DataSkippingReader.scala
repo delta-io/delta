@@ -1360,7 +1360,7 @@ trait DataSkippingReaderBase
         val forceCollectRowCount =
           spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
         val shouldCollectStats = keepNumRecords || forceCollectRowCount
-        val files = getAllFiles(shouldCollectStats)
+        lazy val files = getAllFiles(shouldCollectStats)
         // Compute row count if forceCollectRowCount is enabled
         val rowCount = if (forceCollectRowCount) {
           sumRowCounts(files)
