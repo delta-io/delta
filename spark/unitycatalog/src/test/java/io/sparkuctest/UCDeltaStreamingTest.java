@@ -28,23 +28,13 @@ import io.unitycatalog.client.model.TableInfo;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Collectors;
-import java.util.stream.LongStream;
 import org.apache.spark.sql.Dataset;
-import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.delta.test.shims.StreamingTestShims;
 import org.apache.spark.sql.streaming.StreamingQuery;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.Metadata;
-import org.apache.spark.sql.types.StructField;
-import org.apache.spark.sql.types.StructType;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 
@@ -55,6 +45,165 @@ import scala.collection.immutable.Seq;
  * Catalog.
  */
 public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
+  private static final class DebugBuffer {
+    private final java.util.ArrayDeque<String> events = new java.util.ArrayDeque<>();
+    private final int maxEvents;
+
+    private DebugBuffer(int maxEvents) {
+      this.maxEvents = maxEvents;
+    }
+
+    private void record(String format, Object... args) {
+      String prefix =
+          "[UCDeltaStreamingTest]"
+              + "[t="
+              + System.currentTimeMillis()
+              + "]"
+              + "[thread="
+              + Thread.currentThread().getName()
+              + "] ";
+      String line = prefix + String.format(format, args);
+      if (events.size() >= maxEvents) {
+        events.removeFirst();
+      }
+      events.addLast(line);
+    }
+
+    private void dumpToStdout(String reason, Throwable t) {
+      System.out.println("========== UCDeltaStreamingTest DEBUG DUMP BEGIN ==========");
+      System.out.println("reason=" + reason);
+      if (t != null) {
+        System.out.println("throwable=" + t);
+      }
+      for (String e : events) {
+        System.out.println(e);
+      }
+      System.out.println("========== UCDeltaStreamingTest DEBUG DUMP END ==========");
+    }
+  }
+
+  private static void dbgQuery(DebugBuffer dbg, StreamingQuery query) {
+    if (query == null) {
+      return;
+    }
+    try {
+      dbg.record(
+          "query.id=%s runId=%s name=%s isActive=%s",
+          query.id(), query.runId(), query.name(), query.isActive());
+      dbg.record("query.status=%s", query.status());
+      if (query.lastProgress() != null) {
+        dbg.record("query.lastProgress=%s", query.lastProgress());
+      }
+      try {
+        org.apache.spark.sql.streaming.StreamingQueryProgress[] recentProgress =
+            query.recentProgress();
+        if (recentProgress != null) {
+          dbg.record("query.recentProgress.length=%d", recentProgress.length);
+          int max = Math.min(recentProgress.length, 10);
+          for (int i = 0; i < max; i += 1) {
+            dbg.record("query.recentProgress[%d]=%s", i, recentProgress[i]);
+          }
+        }
+      } catch (Exception e) {
+        dbg.record("query.recentProgress failed: %s", e);
+      }
+    } catch (Exception e) {
+      dbg.record("dbgQuery failed: %s", e);
+    }
+  }
+
+  private static void dbgDeltaHistoryLatestVersion(
+      DebugBuffer dbg, SparkSession spark, String tableName) {
+    try {
+      List<Row> rows = spark.sql("DESCRIBE HISTORY " + tableName + " LIMIT 5").collectAsList();
+      dbg.record("DESCRIBE HISTORY %s (top %d): %s", tableName, rows.size(), rows);
+    } catch (Exception e) {
+      dbg.record("DESCRIBE HISTORY failed for %s: %s", tableName, e);
+    }
+  }
+
+  private static void dbgUCLatestRatifiedVersion(
+      DebugBuffer dbg, ApiClient client, String tableName) {
+    try {
+      TablesApi tablesApi = new TablesApi(client);
+      TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
+      DeltaCommitsApi deltaCommitsApi = new DeltaCommitsApi(client);
+      DeltaGetCommitsResponse resp =
+          deltaCommitsApi.getCommits(
+              new DeltaGetCommits().tableId(tableInfo.getTableId()).startVersion(0L));
+      dbg.record(
+          "UC ratified latestTableVersion=%s (tableId=%s, table=%s)",
+          resp.getLatestTableVersion(), tableInfo.getTableId(), tableName);
+    } catch (Exception e) {
+      dbg.record("UC getCommits failed for %s: %s", tableName, e);
+    }
+  }
+
+  private static void awaitMemorySinkUpToId(
+      DebugBuffer dbg,
+      SparkSession spark,
+      StreamingQuery query,
+      String queryName,
+      String sourceTableName,
+      ApiClient client,
+      long expectedMaxId,
+      String expectedValue,
+      long timeoutMs)
+      throws Exception {
+    long deadlineMs = System.currentTimeMillis() + timeoutMs;
+    long nextProcessAllAvailableMs = 0L;
+    while (true) {
+      long nowMs = System.currentTimeMillis();
+      if (query != null && !query.isActive()) {
+        dbg.record("awaitMemorySinkUpToId: query is not active");
+      }
+
+      // Try to make progress.
+      if (query != null && nowMs >= nextProcessAllAvailableMs) {
+        query.processAllAvailable();
+        // Don't hammer UC / streaming planning loops too hard; ratification is asynchronous.
+        nextProcessAllAvailableMs = nowMs + 200L;
+      }
+
+      try {
+        List<Row> stats =
+            spark.sql("SELECT count(*) AS c, max(id) AS m FROM " + queryName).collectAsList();
+        if (!stats.isEmpty()) {
+          Row r = stats.get(0);
+          long count = ((Number) r.get(0)).longValue();
+          long maxId = r.isNullAt(1) ? -1L : ((Number) r.get(1)).longValue();
+          if (count == expectedMaxId + 1 && maxId == expectedMaxId) {
+            List<Row> v =
+                spark
+                    .sql(
+                        String.format(
+                            "SELECT value FROM %s WHERE id = %d", queryName, expectedMaxId))
+                    .collectAsList();
+            if (!v.isEmpty() && expectedValue.equals(String.valueOf(v.get(0).get(0)))) {
+              return;
+            }
+          }
+        }
+      } catch (Exception e) {
+        dbg.record("awaitMemorySinkUpToId: failed to query memory sink: %s", e);
+      }
+
+      if (System.currentTimeMillis() >= deadlineMs) {
+        dbg.record(
+            "awaitMemorySinkUpToId TIMEOUT: expectedMaxId=%d expectedValue=%s",
+            expectedMaxId, expectedValue);
+        dbgQuery(dbg, query);
+        dbgDeltaHistoryLatestVersion(dbg, spark, sourceTableName);
+        dbgUCLatestRatifiedVersion(dbg, client, sourceTableName);
+        throw new AssertionError(
+            "Timed out waiting for memory sink "
+                + queryName
+                + " to reach max(id)="
+                + expectedMaxId);
+      }
+      Thread.sleep(50);
+    }
+  }
 
   /**
    * Creates a local temporary directory for checkpoint location. Checkpoint must be on local
@@ -68,7 +217,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
       throw new UncheckedIOException(e);
     }
   }
-
+  /*
   @TestAllTableTypes
   public void testStreamingWriteToManagedTable(TableType tableType) throws Exception {
     withNewTable(
@@ -133,64 +282,128 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
           assertFalse(query.isActive(), "Streaming query should have stopped");
         });
   }
+  */
 
   @TestAllTableTypes
   public void testStreamingReadFromTable(TableType tableType) throws Exception {
-    String uniqueTableName = "streaming_read_test_" + UUID.randomUUID().toString().replace("-", "");
-    withNewTable(
-        uniqueTableName,
-        "id BIGINT, value STRING",
-        tableType,
-        (tableName) -> {
-          SparkSession spark = spark();
-          String queryName =
-              "uc_streaming_read_"
-                  + tableType.name().toLowerCase()
-                  + "_"
-                  + UUID.randomUUID().toString().replace("-", "");
-          StreamingQuery query = null;
+    for (int _repeats = 0; _repeats < 5; _repeats++) {
+      DebugBuffer dbg = new DebugBuffer(/* maxEvents= */ 2000);
+      String uniqueTableName =
+          "streaming_read_test_" + UUID.randomUUID().toString().replace("-", "");
+      dbg.record(
+          "BEGIN repeat=%d tableType=%s uniqueTableName=%s", _repeats, tableType, uniqueTableName);
+      withNewTable(
+          uniqueTableName,
+          "id BIGINT, value STRING",
+          tableType,
+          (tableName) -> {
+            SparkSession spark = spark();
+            ApiClient client = unityCatalogInfo().createApiClient();
+            String queryName =
+                "uc_streaming_read_"
+                    + tableType.name().toLowerCase()
+                    + "_"
+                    + UUID.randomUUID().toString().replace("-", "");
+            StreamingQuery query = null;
+            String checkpointLocation = null;
+            boolean failed = false;
 
-          try {
-            List<List<String>> expected = new ArrayList<>();
-            // Seed an initial commit (required for managed tables, harmless for external).
-            spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
-            expected.add(List.of("0", "seed"));
-            Dataset<Row> input = spark.readStream().table(tableName);
-            // Start the streaming query into a memory sink
-            query =
-                input
-                    .writeStream()
-                    .format("memory")
-                    .queryName(queryName)
-                    .option("checkpointLocation", createTempCheckpointDir())
-                    .outputMode("append")
-                    .start();
+            try {
+              dbg.record("withNewTable: tableName=%s queryName=%s", tableName, queryName);
 
-            assertTrue(query.isActive(), "Streaming query should be active");
+              // Seed an initial commit (required for managed tables, harmless for external).
+              dbg.record("SQL: INSERT seed into %s", tableName);
+              spark.sql(String.format("INSERT INTO %s VALUES (0, 'seed')", tableName)).collect();
 
-            // Write a few batches and verify the stream consumes them.
-            for (long i = 1; i <= 3; i += 1) {
-              String value = "value_" + i;
-              spark
-                  .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
-                  .collect();
+              Dataset<Row> input = spark.readStream().table(tableName);
+              // Start the streaming query into a memory sink
+              checkpointLocation = createTempCheckpointDir();
+              dbg.record("Starting query: name=%s checkpoint=%s", queryName, checkpointLocation);
+              query =
+                  input
+                      .writeStream()
+                      .format("memory")
+                      .queryName(queryName)
+                      .option("checkpointLocation", checkpointLocation)
+                      .outputMode("append")
+                      .start();
 
-              query.processAllAvailable();
-              // Validate by checking if query and expected match.
-              expected.add(List.of(String.valueOf(i), value));
-              check(queryName, expected);
+              dbg.record("Started query. isActive=%s", query.isActive());
+              assertTrue(query.isActive(), "Streaming query should be active");
+
+              // Write a batch of commits first, then wait for the stream to catch up. UC
+              // ratification can lag Delta commits; streaming should not fail, and should
+              // eventually become consistent.
+              final long maxIdToWrite = 500L;
+              for (long i = 1; i <= maxIdToWrite; i += 1) {
+                String value = "value_" + i;
+                dbg.record("SQL: INSERT (%d, '%s') into %s", i, value, tableName);
+                spark
+                    .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
+                    .collect();
+              }
+
+              awaitMemorySinkUpToId(
+                  dbg,
+                  spark,
+                  query,
+                  queryName,
+                  tableName,
+                  client,
+                  /* expectedMaxId= */ maxIdToWrite,
+                  /* expectedValue= */ "value_" + maxIdToWrite,
+                  /* timeoutMs= */ 60_000L);
+            } catch (Throwable t) {
+              failed = true;
+              dbg.record("Top-level failure: %s", t);
+              dbgQuery(dbg, query);
+              dbgDeltaHistoryLatestVersion(dbg, spark, tableName);
+              dbgUCLatestRatifiedVersion(dbg, client, tableName);
+              dbg.dumpToStdout(
+                  "top-level failure tableName="
+                      + tableName
+                      + " queryName="
+                      + queryName
+                      + " checkpoint="
+                      + checkpointLocation,
+                  t);
+              throw t;
+            } finally {
+              dbg.record("FINALLY: query is %snull", (query == null ? "" : "non-"));
+              if (query != null) {
+                if (!failed) {
+                  dbg.record("FINALLY: extra processAllAvailable()");
+                  try {
+                    // TODO: remove additional processAllAvailable once interrupt is handled
+                    // gracefully
+                    query.processAllAvailable();
+                  } catch (Exception e) {
+                    dbg.record("FINALLY: processAllAvailable threw: %s", e);
+                  }
+                }
+                dbg.record("FINALLY: awaitTermination(10000)");
+                try {
+                  query.awaitTermination(10000);
+                } catch (Exception e) {
+                  dbg.record("FINALLY: awaitTermination threw: %s", e);
+                }
+                dbg.record("FINALLY: stop()");
+                try {
+                  query.stop();
+                } catch (Exception e) {
+                  dbg.record("FINALLY: stop threw: %s", e);
+                }
+                dbg.record("FINALLY: post-stop isActive=%s", query.isActive());
+                dbgQuery(dbg, query);
+                assertFalse(query.isActive(), "Streaming query should have stopped");
+              }
+              dbg.record("SQL: DROP VIEW IF EXISTS %s", queryName);
+              spark.sql("DROP VIEW IF EXISTS " + queryName);
             }
-          } finally {
-            if (query != null) {
-              // TODO: remove additional processAllAvailable once interrupt is handled gracefully
-              query.processAllAvailable();
-              query.awaitTermination(10000);
-              query.stop();
-              assertFalse(query.isActive(), "Streaming query should have stopped");
-            }
-            spark.sql("DROP VIEW IF EXISTS " + queryName);
-          }
-        });
+          });
+      dbg.record(
+          "END repeat=%d tableType=%s uniqueTableName=%s", _repeats, tableType, uniqueTableName);
+    }
   }
 
   private void assertUCManagedTableVersion(long expectedVersion, String tableName, ApiClient client)

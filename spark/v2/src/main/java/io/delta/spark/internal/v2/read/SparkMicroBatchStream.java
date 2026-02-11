@@ -82,6 +82,45 @@ public class SparkMicroBatchStream
 
   private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
 
+  private static final Object DEBUG_LOCK = new Object();
+  private static final int DEBUG_MAX_EVENTS = 2000;
+  private static final ArrayDeque<String> DEBUG_EVENTS = new ArrayDeque<>();
+
+  private void dbgRecord(String format, Object... args) {
+    String prefix =
+        "[SparkMicroBatchStream]"
+            + "[t="
+            + System.currentTimeMillis()
+            + "]"
+            + "[thread="
+            + Thread.currentThread().getName()
+            + "]"
+            + "[tableId="
+            + tableId
+            + "] ";
+    String line = prefix + String.format(format, args);
+    synchronized (DEBUG_LOCK) {
+      if (DEBUG_EVENTS.size() >= DEBUG_MAX_EVENTS) {
+        DEBUG_EVENTS.removeFirst();
+      }
+      DEBUG_EVENTS.addLast(line);
+    }
+  }
+
+  private void dbgDump(String reason, Throwable t) {
+    System.out.println("========== SparkMicroBatchStream DEBUG DUMP BEGIN ==========");
+    System.out.println("reason=" + reason);
+    if (t != null) {
+      System.out.println("throwable=" + t);
+    }
+    synchronized (DEBUG_LOCK) {
+      for (String e : DEBUG_EVENTS) {
+        System.out.println(e);
+      }
+    }
+    System.out.println("========== SparkMicroBatchStream DEBUG DUMP END ==========");
+  }
+
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
@@ -593,12 +632,18 @@ public class SparkMicroBatchStream
     CloseableIterator<IndexedFile> result;
 
     if (isInitialSnapshot) {
+      dbgRecord(
+          "getFileChanges initialSnapshot=true fromVersion=%d fromIndex=%d endOffsetPresent=%s",
+          fromVersion, fromIndex, endOffset.isPresent());
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
       CloseableIterator<IndexedFile> snapshotFiles = getSnapshotFiles(fromVersion);
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
+      dbgRecord(
+          "getFileChanges initialSnapshot=false fromVersion=%d fromIndex=%d endOffsetPresent=%s",
+          fromVersion, fromIndex, endOffset.isPresent());
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
@@ -619,6 +664,9 @@ public class SparkMicroBatchStream
     // Check end boundary (inclusive)
     if (lastOffsetForThisScan.isPresent()) {
       DeltaSourceOffset bound = lastOffsetForThisScan.get();
+      dbgRecord(
+          "getFileChanges endBoundary present reservoirVersion=%d index=%d",
+          bound.reservoirVersion(), bound.index());
       result =
           result.takeWhile(
               file ->
@@ -634,49 +682,73 @@ public class SparkMicroBatchStream
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
+    dbgRecord(
+        "filterDeltaLogs startVersion=%d endOffsetPresent=%s endVersionOpt=%s snapshotAtInitVersion=%d",
+        startVersion,
+        endOffset.isPresent(),
+        endVersionOpt.map(String::valueOf).orElse(""),
+        snapshotAtSourceInit.getVersion());
 
     if (endVersionOpt.isPresent()) {
+      dbgRecord("filterDeltaLogs endVersionOpt present endVersion=%d", endVersionOpt.get());
       // Cap endVersion to the latest available version. The Kernel's getTableChanges requires
       // endVersion to be an actual existing version or empty.
       long latestVersion = snapshotAtSourceInit.getVersion();
       if (endVersionOpt.get() > latestVersion) {
+        dbgRecord(
+            "filterDeltaLogs endVersion>%d(latestAtInit). Capping by loading latest snapshot.",
+            latestVersion);
         // This could happen because:
         // 1. data could be added after snapshotAtSourceInit was captured.
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
         endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+        dbgRecord("filterDeltaLogs capped endVersion=%d", endVersionOpt.get());
       }
 
       // After capping, check if startVersion is beyond the endVersion.
       // This can happen when all files in the batch come from the initial snapshot
       // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
       if (startVersion > endVersionOpt.get()) {
+        dbgRecord(
+            "filterDeltaLogs returning empty: startVersion=%d > endVersion=%d",
+            startVersion, endVersionOpt.get());
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
     } else {
+      dbgRecord("filterDeltaLogs endVersionOpt empty (offset discovery)");
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
       long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      dbgRecord("filterDeltaLogs currentLatestVersion=%d", currentLatestVersion);
       if (startVersion > currentLatestVersion) {
+        dbgRecord(
+            "filterDeltaLogs returning empty: startVersion=%d > currentLatestVersion=%d",
+            startVersion, currentLatestVersion);
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
     }
 
     CommitRange commitRange;
     try {
+      dbgRecord(
+          "Calling snapshotManager.getTableChanges(startVersion=%d, endVersionOpt=%s)",
+          startVersion, endVersionOpt.map(String::valueOf).orElse(""));
       commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
-    } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
-      // If the requested version range doesn't exist (e.g., we're asking for version 6 when
-      // the table only has versions 0-5).
-      return Utils.toCloseableIterator(Collections.emptyIterator());
-    } catch (IllegalArgumentException e) {
-      // For catalog-managed tables, the requested version may not have been ratified by
-      // the catalog server yet (e.g., the filesystem shows version 2 but catalog only ratified
-      // version 1). Treat this the same as CommitRangeNotFoundException - no new data
-      // is available yet, and the stream should retry on the next micro-batch cycle.
-      return Utils.toCloseableIterator(Collections.emptyIterator());
+      dbgRecord("snapshotManager.getTableChanges succeeded");
+    } catch (RuntimeException e) {
+      dbgRecord(
+          "snapshotManager.getTableChanges RuntimeException: %s (startVersion=%d endVersionOpt=%s)",
+          e, startVersion, endVersionOpt.map(String::valueOf).orElse(""));
+      dbgDump(
+          "snapshotManager.getTableChanges failed startVersion="
+              + startVersion
+              + " endVersionOpt="
+              + endVersionOpt.map(String::valueOf).orElse(""),
+          e);
+      throw e;
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:

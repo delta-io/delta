@@ -58,6 +58,46 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedClient {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedClient.class);
 
+  private static final Object DEBUG_LOCK = new Object();
+  private static final int DEBUG_MAX_EVENTS = 2000;
+  private static final ArrayDeque<String> DEBUG_EVENTS = new ArrayDeque<>();
+
+  private static void dbgRecord(String ucTableId, String format, Object... args) {
+    String prefix =
+        "[UCCatalogManagedClient]"
+            + "[t="
+            + System.currentTimeMillis()
+            + "]"
+            + "[thread="
+            + Thread.currentThread().getName()
+            + "]"
+            + "[ucTableId="
+            + ucTableId
+            + "] ";
+    String line = prefix + String.format(format, args);
+    synchronized (DEBUG_LOCK) {
+      if (DEBUG_EVENTS.size() >= DEBUG_MAX_EVENTS) {
+        DEBUG_EVENTS.removeFirst();
+      }
+      DEBUG_EVENTS.addLast(line);
+    }
+  }
+
+  private static void dbgDump(String reason, String ucTableId, Throwable t) {
+    System.out.println("========== UCCatalogManagedClient DEBUG DUMP BEGIN ==========");
+    System.out.println("reason=" + reason);
+    System.out.println("ucTableId=" + ucTableId);
+    if (t != null) {
+      System.out.println("throwable=" + t);
+    }
+    synchronized (DEBUG_LOCK) {
+      for (String e : DEBUG_EVENTS) {
+        System.out.println(e);
+      }
+    }
+    System.out.println("========== UCCatalogManagedClient DEBUG DUMP END ==========");
+  }
+
   public static final String UC_PROPERTY_NAMESPACE_PREFIX = "io.unitycatalog.";
 
   /** Key for identifying Unity Catalog table ID. */
@@ -276,6 +316,15 @@ public class UCCatalogManagedClient {
         ucTableId,
         getCommitRangeBoundariesString(
             startVersionOpt, startTimestampOpt, endVersionOpt, endTimestampOpt));
+    dbgRecord(
+        ucTableId,
+        "Loading CommitRange for %s (startVersion=%s startTs=%s endVersion=%s endTs=%s)",
+        getCommitRangeBoundariesString(
+            startVersionOpt, startTimestampOpt, endVersionOpt, endTimestampOpt),
+        startVersionOpt.map(String::valueOf).orElse(""),
+        startTimestampOpt.map(String::valueOf).orElse(""),
+        endVersionOpt.map(String::valueOf).orElse(""),
+        endTimestampOpt.map(String::valueOf).orElse(""));
     // If we have a timestamp-based boundary we need to build the latest snapshot, don't provide
     // an endVersion
     Optional<Long> endVersionOptForCommitQuery =
@@ -283,6 +332,12 @@ public class UCCatalogManagedClient {
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
     final long ucTableVersion = response.getLatestTableVersion();
+    dbgRecord(
+        ucTableId,
+        "CommitRange ratified latestTableVersion=%d (requested startVersion=%s endVersion=%s)",
+        ucTableVersion,
+        startVersionOpt.map(String::valueOf).orElse(""),
+        endVersionOpt.map(String::valueOf).orElse(""));
     validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
@@ -391,6 +446,11 @@ public class UCCatalogManagedClient {
         "[{}] Invoking the UCClient to get ratified commits at version {}",
         ucTableId,
         getVersionString(versionOpt));
+    dbgRecord(
+        ucTableId,
+        "UCClient.getCommits(tablePath=%s, endVersion=%s)",
+        tablePath,
+        getVersionString(versionOpt));
 
     // TODO: We can remove timeUncheckedOperation when the commitRange code integrates with metrics
     final GetCommitsResponse response =
@@ -417,6 +477,16 @@ public class UCCatalogManagedClient {
         ucTableId,
         response.getCommits().size(),
         response.getLatestTableVersion());
+    System.out.println("================================================");
+    System.out.println(
+        "UCClient.getCommits -> commits="
+            + response.getCommits().stream()
+                .map(Commit::getCommitTimestamp)
+                .collect(Collectors.toList()));
+    System.out.println(System.currentTimeMillis());
+    System.out.println(
+        "UCClient.getCommits -> latestTableVersion=" + response.getLatestTableVersion());
+    System.out.println("================================================");
 
     return response;
   }
@@ -424,6 +494,11 @@ public class UCCatalogManagedClient {
   private void validateTimeTravelVersionNotPastMax(
       String ucTableId, long tableVersionToLoad, long maxRatifiedVersion) {
     if (tableVersionToLoad > maxRatifiedVersion) {
+      dbgRecord(
+          ucTableId,
+          "validateTimeTravelVersionNotPastMax FAIL: requested=%d maxRatified=%d",
+          tableVersionToLoad,
+          maxRatifiedVersion);
       throw new IllegalArgumentException(
           String.format(
               "[%s] Cannot load table version %s as the latest version ratified by UC is %s",
@@ -439,6 +514,12 @@ public class UCCatalogManagedClient {
     BiConsumer<Long, String> validateVersion =
         (version, type) -> {
           if (version > maxRatifiedVersion) {
+            dbgRecord(
+                ucTableId,
+                "validateVersionBoundariesExist FAIL: %sVersion=%d maxRatified=%d",
+                type,
+                version,
+                maxRatifiedVersion);
             throw new IllegalArgumentException(
                 String.format(
                     "[%s] Cannot load commit range with %s version %d as the latest version "

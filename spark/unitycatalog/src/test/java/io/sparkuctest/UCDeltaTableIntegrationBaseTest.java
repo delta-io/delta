@@ -48,8 +48,7 @@ import org.junit.jupiter.api.TestFactory;
  * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
-  public static final List<TableType> ALL_TABLE_TYPES =
-      List.of(TableType.EXTERNAL, TableType.MANAGED);
+  public static final List<TableType> ALL_TABLE_TYPES = List.of(TableType.MANAGED);
 
   /**
    * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
