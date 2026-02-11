@@ -78,8 +78,8 @@ import java.util.*;
  */
 public class UCTokenBasedRestClient implements UCClient {
 
-  private final DeltaCommitsApi deltaCommitsApi;
-  private final MetastoresApi metastoresApi;
+  private DeltaCommitsApi deltaCommitsApi;
+  private MetastoresApi metastoresApi;
 
   // HTTP status codes for error handling
   private static final int HTTP_BAD_REQUEST = 400;
@@ -119,8 +119,18 @@ public class UCTokenBasedRestClient implements UCClient {
     this.metastoresApi = new MetastoresApi(apiClient);
   }
 
+  /**
+   * Ensures the client has not been closed. Must be called before any API operation.
+   */
+  private void ensureOpen() {
+    if (deltaCommitsApi == null || metastoresApi == null) {
+      throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
+    }
+  }
+
   @Override
   public String getMetastoreId() throws IOException {
+    ensureOpen();
     try {
       GetMetastoreSummaryResponse response = metastoresApi.summary();
       return response.getMetastoreId();
@@ -141,7 +151,7 @@ public class UCTokenBasedRestClient implements UCClient {
       Optional<AbstractProtocol> newProtocol,
       Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException {
-    // Validate required parameters
+    ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null.");
     Objects.requireNonNull(tableUri, "tableUri must not be null.");
 
@@ -179,7 +189,7 @@ public class UCTokenBasedRestClient implements UCClient {
       URI tableUri,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException {
-    // Validate required parameters
+    ensureOpen();
     Objects.requireNonNull(tableId, "tableId must not be null.");
     Objects.requireNonNull(tableUri, "tableUri must not be null.");
 
@@ -211,8 +221,10 @@ public class UCTokenBasedRestClient implements UCClient {
 
   @Override
   public void close() throws IOException {
-    // The Unity Catalog SDK's ApiClient doesn't require explicit closing
-    // as it manages HTTP connections internally
+    // Nulling out the API instances makes them eligible for GC. Once garbage collected,
+    // the underlying connection pool is freed and destroyed.
+    this.deltaCommitsApi = null;
+    this.metastoresApi = null;
   }
 
   /**
