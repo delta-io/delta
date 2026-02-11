@@ -35,5 +35,12 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
 
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/openinx/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout staging-table-catalog
+          ./build/sbt clean package publishM2
+
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py
