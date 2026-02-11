@@ -432,13 +432,23 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
 def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_version,
                                        extra_maven_repo, spark_specs, use_local):
     print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
-    # Keep hudi/assembly since it builds a local JAR (not a publishM2 artifact)
+    # Build hudi assembly for the Spark version that supports hudi.
+    # Must use the correct -DsparkVersion since hudi is a Spark-dependent module.
     if use_local:
-        run_cmd(["build/sbt", "hudi/assembly"])
+        # Find the first hudi-supporting Spark version from specs
+        hudi_spark_ver = None
+        if spark_specs:
+            for spec in spark_specs:
+                if spec.get("supportHudi", "false") == "true":
+                    hudi_spark_ver = spec["fullVersion"]
+                    break
+        if hudi_spark_ver:
+            run_cmd(["build/sbt", "-DsparkVersion=%s" % hudi_spark_ver, "hudi/assembly"])
+        else:
+            run_cmd(["build/sbt", "hudi/assembly"])
 
     test_dir = path.join(root_dir, path.join("hudi", "integration_tests"))
 
-    print("attn " + root_dir)
     # Add more tests here if needed ...
     test_files_names = ["write_uniform_hudi.py"]
     test_files = [path.join(test_dir, f) for f in test_files_names]
@@ -465,9 +475,15 @@ def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_ve
     for variant in variants:
         suffix = variant["suffix"]
         label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+        # Use the variant's Spark version for the Hudi bundle when available
+        hudi_spark_ver = spark_version
+        if variant["spark_version"]:
+            parts = variant["spark_version"].split(".")
+            if len(parts) >= 2:
+                hudi_spark_ver = "%s.%s" % (parts[0], parts[1])
         package = ','.join([
             "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version),
-            "org.apache.hudi:hudi-spark%s-bundle_2.13:%s" % (spark_version, hudi_version)
+            "org.apache.hudi:hudi-spark%s-bundle_2.13:%s" % (hudi_spark_ver, hudi_version)
         ])
 
         print("\n\n--- Hudi variant%s ---" % label)
@@ -489,7 +505,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_ve
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
-    clear_artifact_cache()
+    # Note: no clear_artifact_cache() here. Pip tests install from PyPI, not local M2.
     delta_pip_name = "delta-spark"
     # uninstall packages if they exist
     run_cmd(["pip", "uninstall", "--yes", delta_pip_name, "pyspark"], stream_output=True)
@@ -575,10 +591,10 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
     ivy_caches_to_clear = [filepath for filepath in os.listdir(os.path.expanduser("~")) if filepath.startswith(".ivy")]
-    print(f"Clearing Ivy caches in: {ivy_caches_to_clear}")
+    print("Clearing Ivy caches in: %s" % ivy_caches_to_clear)
     for filepath in ivy_caches_to_clear:
-        delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
-        delete_if_exists(os.path.expanduser(f"~/{filepath}/local/io.delta"))
+        delete_if_exists(os.path.expanduser("~/%s/cache/io.delta" % filepath))
+        delete_if_exists(os.path.expanduser("~/%s/local/io.delta" % filepath))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
 
 
@@ -742,8 +758,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iceberg-spark-version",
         required=False,
-        default="3.5",
-        help="Spark version for the Iceberg library")
+        default="4.0",
+        help="Spark version for the Iceberg library (used in non-local mode)")
     parser.add_argument(
         "--iceberg-lib-version",
         required=False,
@@ -752,8 +768,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hudi-spark-version",
         required=False,
-        default="3.5",
-        help="Spark version for the Hudi library")
+        default="4.0",
+        help="Spark version for the Hudi library (used in non-local mode)")
     parser.add_argument(
         "--hudi-version",
         required=False,
