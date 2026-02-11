@@ -305,9 +305,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     if (replaceTable) {
       // First, create a different table to replace.
       sql(
-          "CREATE TABLE %s (col1 DOUBLE) USING DELTA %s",
+          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
-      sql("INSERT INTO %s (col1) VALUES (0.1)", fullTableName);
       tablesToCleanUp.add(fullTableName);
     }
 
