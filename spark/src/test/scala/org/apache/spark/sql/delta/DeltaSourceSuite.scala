@@ -2483,44 +2483,91 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   }
 
   test("restarting a query should pick up latest table schema and recover") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val queryName = "schemaRecoveryTest"
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 2).foreach { i =>
+        val v = Seq(i.toString).toDF("id")
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      def startQuery(): StreamingQuery = {
+        loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+      }
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+      var q = df.writeStream
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .option("mergeSchema", "true")
+        .format("delta")
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+
+        // Clear delta log cache
+        DeltaLog.clearCache()
+        // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
+        // table schema change happens on a different cluster
+        withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+        Seq(("2", "a")).toDF("id", "newcol")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+        // The streaming query should fail when detecting a schema change
+        val e = intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }
+        assert(e.getMessage.contains("Detected schema change"))
+
+        // Restarting the query should recover from the schema change error
+        q = df.writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath).orderBy("id"),
+          Seq(("0", null), ("1", null), ("2", "a")).toDF("id", "newcol"))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+
+  test("new query always pick up the latest schema") {
     withTempDir { inputDir =>
       withTempDir { checkpointDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-        (0 until 10).foreach { i =>
+        (0 until 2).foreach { i =>
           val v = Seq(i.toString).toDF("id")
           v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
         }
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
 
-        def startQuery(): StreamingQuery = {
-          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
-            .writeStream
-            .option("checkpointLocation", checkpointDir.getCanonicalPath)
-            .format("noop")
-            .start()
-        }
-
-        var q = startQuery()
-        try {
-          q.processAllAvailable()
-
-          // Clear delta log cache
-          DeltaLog.clearCache()
-          // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
-          // table schema change happens on a different cluster
-          withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
-
-          // The streaming query should fail when detecting a schema change
-          val e = intercept[StreamingQueryException] {
-            q.processAllAvailable()
-          }
-          assert(e.getMessage.contains("Detected schema change"))
-
-          // Restarting the query should recover from the schema change error
-          q = startQuery()
-          q.processAllAvailable()
-        } finally {
-          q.stop()
-        }
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer("0", "1"),
+          Execute { _ =>
+            withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+            Seq(("2", "a")).toDF("id", "newcol")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          },
+          ExpectFailure[DeltaIllegalStateException](t =>
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          },
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer(("0", null), ("1", null), ("2", "a"))
+        )
       }
     }
   }
