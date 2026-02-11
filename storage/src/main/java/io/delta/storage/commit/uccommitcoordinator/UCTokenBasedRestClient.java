@@ -93,8 +93,9 @@ public class UCTokenBasedRestClient implements UCClient {
    *
    * @param baseUri The base URI of the Unity Catalog server
    * @param tokenProvider The TokenProvider to use for authentication
-   * @param appVersions A map of application name to version string (e.g. "Delta" -> "4.0.0").
-   *                    Each entry is registered for User-Agent telemetry. May be empty.
+   * @param appVersions A map of application name to version string
+   *                    (e.g. {@code "Delta" -> "4.0.0"}). Each entry is
+   *                    registered for User-Agent telemetry. May be empty.
    */
   public UCTokenBasedRestClient(
       String baseUri,
