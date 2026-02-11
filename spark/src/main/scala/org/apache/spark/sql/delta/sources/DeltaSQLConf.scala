@@ -1309,7 +1309,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
+  private val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
   val FORCED_CHECKSUM_VALIDATION_INTERVAL =
     buildConf("versionChecksum.forcedValidationInterval")
       .internal()
