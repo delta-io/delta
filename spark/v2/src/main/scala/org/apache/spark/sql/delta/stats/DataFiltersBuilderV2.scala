@@ -26,13 +26,10 @@ import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, MAX, NULL_COUNT, N
 import org.apache.spark.sql.types.StructType
 
 /**
- * Internal Scala bridge for [[io.delta.spark.internal.v2.read.DeltaScanPredicateBuilder]]
- * (Component 2: PredicateBuilder).
+ * Internal Scala bridge for V2 data skipping.
  *
- * This object exists because the predicate rewriting pipeline requires Scala
- * features (pattern matching, `transformUp`, Catalyst `Expression` manipulation)
- * that are impractical to express in pure Java. The public Java component
- * [[io.delta.spark.internal.v2.read.DeltaScanPredicateBuilder]] delegates here.
+ * This object bridges V2-specific concerns to the shared
+ * [[DefaultScanPredicateBuilder]] and [[DefaultScanPlanner]].
  *
  * V2-specific logic:
  *  1. [[createGetStatColumnFn]] - maps stat paths using simple column paths
@@ -41,72 +38,13 @@ import org.apache.spark.sql.types.StructType
  *     AttributeReference.
  *  3. Kernel Snapshot to Spark schema conversion.
  *  4. Unwrap/re-wrap the `{add: struct}` nesting from distributed log replay.
+ *  5. Stats JSON parse / serialize.
  *
  * Everything else (partition pruning, data skipping, constructDataFilters,
- * verifyStatsForFilter) is shared with V1 via [[DataFiltersBuilderUtils]].
+ * verifyStatsForFilter) is shared with V1 via [[DefaultScanPredicateBuilder]]
+ * and [[DataFiltersBuilderUtils]].
  */
 object DataFiltersBuilderV2 {
-
-  /**
-   * Apply both partition pruning and data skipping to a wrapped AddFile DataFrame.
-   *
-   * V2-specific steps: unwrap {add: struct}, convert Filter[] to resolved Catalyst
-   * expressions, then delegate to shared [[DataFiltersBuilderUtils.applyAllFilters]],
-   * then re-wrap.
-   *
-   * Called from ScanPredicateBuilder (Java).
-   *
-   * @param wrappedDF        DataFrame with {add: {path, partitionValues, stats, ...}}
-   * @param allFilters       All pushable Spark filters (partition + data)
-   * @param partitionSchema  Partition schema for partition filter rewriting
-   * @param snapshot         Kernel snapshot (provides table schema)
-   * @param spark            SparkSession
-   * @return Filtered DataFrame with same wrapped schema {add: {...}}
-   */
-  def applyAllFilters(
-      wrappedDF: DataFrame,
-      allFilters: Array[Filter],
-      partitionSchema: StructType,
-      snapshot: Snapshot,
-      spark: SparkSession): DataFrame = {
-    if (allFilters.isEmpty) return wrappedDF
-
-    // V2-specific: unwrap the "add" struct
-    val addFiles = wrappedDF.selectExpr("add.*")
-
-    val tableSchema = getSparkTableSchema(snapshot)
-    val getStatColumn = createGetStatColumnFn(snapshot, spark)
-    val statsProvider = new StatsProvider(getStatColumn)
-    val partitionColumns = partitionSchema.fieldNames.toSeq
-
-    // V2-specific: convert Filter[] to Catalyst and resolve attributes
-    val filterExprs = allFilters.map(f => DeltaSourceUtils.translateFilters(Array(f)))
-    val resolvedExprs = filterExprs.map(resolveFilterExpressions(_, tableSchema))
-
-    // Shared: split filters
-    val (partitionFilterExprs, dataFilterExprs) =
-      DataFiltersBuilderUtils.splitFilters(resolvedExprs.toSeq, partitionColumns, spark)
-
-    // Shared: build data skipping predicate using V1's constructDataFilters
-    val dataSkippingPredicate = {
-      val builder = new SharedDataFiltersBuilder(spark, statsProvider)
-      val predicates = dataFilterExprs.flatMap(builder(_))
-      if (predicates.isEmpty) None
-      else Some(predicates.reduce { (a, b) =>
-        DataSkippingPredicate(a.expr && b.expr, a.referencedStats ++ b.referencedStats)
-      })
-    }
-
-    val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
-
-    // Shared: partition pruning + data skipping pipeline
-    val filtered = DataFiltersBuilderUtils.applyAllFilters(
-      addFiles, partitionFilterExprs, dataSkippingPredicate,
-      partitionSchema, statsSchema, getStatColumn)
-
-    // V2-specific: re-wrap as "add" struct
-    filtered.select(struct(col("*")).as("add"))
-  }
 
   // ==================== V2-SPECIFIC: StatsProvider creation ======================================
 
@@ -157,8 +95,122 @@ object DataFiltersBuilderV2 {
     }
   }
 
-  private def getSparkTableSchema(snapshot: Snapshot): StructType = {
+  def getSparkTableSchema(snapshot: Snapshot): StructType = {
     io.delta.spark.internal.v2.utils.SchemaUtils
       .convertKernelSchemaToSparkSchema(snapshot.getSchema())
+  }
+
+  // ==================== Factory: PredicateBuilder + Planner ======================================
+
+  /**
+   * Creates a shared [[DefaultScanPredicateBuilder]] for V2.
+   *
+   * This bridges the V2-specific context (Kernel Snapshot, simple stat column paths)
+   * to the shared [[DefaultScanPredicateBuilder]] interface. The returned builder
+   * accepts flat AddFile DataFrames with parsed stats and resolved Expressions.
+   *
+   * @param snapshot        Kernel snapshot (provides table schema)
+   * @param spark           SparkSession
+   * @param partitionSchema Partition schema for partition filter rewriting
+   * @return A [[DefaultScanPredicateBuilder]] backed by shared pipeline logic
+   */
+  def createPredicateBuilder(
+      snapshot: Snapshot,
+      spark: SparkSession,
+      partitionSchema: StructType): DefaultScanPredicateBuilder = {
+    val getStatColumn = createGetStatColumnFn(snapshot, spark)
+    val numRecordsCol = col(s"stats.$NUM_RECORDS")
+    val statsProvider = new StatsProvider(getStatColumn)
+    val builder = new SharedDataFiltersBuilder(spark, statsProvider)
+
+    new DefaultScanPredicateBuilder(
+      spark = spark,
+      getStatColumn = getStatColumn,
+      numRecordsCol = numRecordsCol,
+      partitionSchema = partitionSchema,
+      buildDataFilters = builder(_)
+      // V2 uses defaults: useStats=true, no partition-like (for now)
+    )
+  }
+
+  /**
+   * Creates a [[DefaultScanPlanner]] for V2.
+   *
+   * The planner composes a V2-specific data source with the shared
+   * [[DefaultScanPredicateBuilder]].
+   *
+   * @param dataSource       Supplier for the AddFile DataFrame
+   *                         (with parsed stats, from log replay)
+   * @param predicateBuilder The predicate builder created by
+   *                         [[createPredicateBuilder]]
+   * @return A [[DefaultScanPlanner]] ready for V2 use
+   */
+  def createPlanner(
+      dataSource: () => DataFrame,
+      predicateBuilder: DefaultScanPredicateBuilder): DefaultScanPlanner = {
+    new DefaultScanPlanner(
+      dataSource = dataSource,
+      predicateBuilder = predicateBuilder
+    )
+  }
+
+  // ==================== V2 Helpers (called from Java) ============================================
+
+  /**
+   * Creates a V2 data source function: distributed log replay -> unwrap
+   * `{add: struct}` -> parse stats JSON to struct.
+   *
+   * The returned function is suitable as the `dataSource` parameter for
+   * [[DefaultScanPlanner]].
+   *
+   * @param wrappedDFSupplier Supplier for the wrapped DataFrame
+   *                          (e.g., distributed log replay)
+   * @param snapshot          Kernel snapshot (provides table schema for stats)
+   * @return Function that returns flat AddFile DF with parsed stats
+   */
+  def prepareV2DataSource(
+      wrappedDFSupplier: () => DataFrame,
+      snapshot: Snapshot): () => DataFrame = {
+    val tableSchema = getSparkTableSchema(snapshot)
+    val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
+    () => {
+      val wrappedDF = wrappedDFSupplier()
+      val addFiles = wrappedDF.selectExpr("add.*")
+      DataFiltersBuilderUtils.withParsedStats(addFiles, statsSchema)
+    }
+  }
+
+  /**
+   * V2-specific post-processing: serialize stats back to JSON and
+   * re-wrap as `{add: struct}`.
+   *
+   * @param flatFilteredDF Flat AddFile DF with parsed stats (from pipeline)
+   * @return DataFrame with schema `{add: {path, partitionValues, stats, ...}}`
+   */
+  def postProcessV2(flatFilteredDF: DataFrame): DataFrame = {
+    DataFiltersBuilderUtils.withSerializedStats(flatFilteredDF)
+      .select(struct(col("*")).as("add"))
+  }
+
+  /**
+   * V2-specific helper: convert Spark [[Filter]]s to resolved Catalyst
+   * Expressions.
+   *
+   * Steps:
+   *  1. [[DeltaSourceUtils.translateFilters]] to get Catalyst expressions
+   *  2. [[resolveFilterExpressions]] to resolve UnresolvedAttribute ->
+   *     AttributeReference
+   *
+   * @param filters     Spark Filter array
+   * @param tableSchema Table schema for attribute resolution
+   * @return Resolved Catalyst Expressions
+   */
+  def filtersToResolvedExpressions(
+      filters: Array[Filter],
+      tableSchema: StructType): Seq[Expression] = {
+    filters.map { f =>
+      val expr = DeltaSourceUtils.translateFilters(Array(f))
+      resolveFilterExpressions(expr, tableSchema)
+    }.toSeq
   }
 }

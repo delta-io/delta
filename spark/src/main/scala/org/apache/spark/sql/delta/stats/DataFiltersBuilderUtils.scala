@@ -17,18 +17,20 @@ package org.apache.spark.sql.delta.stats
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
+import org.apache.spark.sql.catalyst.encoders.ExpressionEncoder
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
-import org.apache.spark.sql.functions.{col, from_json, lit, substring, to_json}
+import org.apache.spark.sql.expressions.SparkUserDefinedFunction
+import org.apache.spark.sql.functions.{coalesce, col, from_json, lit, struct, substring, to_json}
 import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.DeltaTableUtils.isPredicatePartitionColumnsOnly
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, MAX, NULL_COUNT, NUM_RECORDS}
-import org.apache.spark.sql.types.{DataType, LongType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{BooleanType, DataType, LongType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 // scalastyle:on import.ordering.noEmptyLine
 
@@ -240,7 +242,7 @@ object DataFiltersBuilderUtils {
           Seq(stat,
             StatsColumn(NULL_COUNT, stat.pathToColumn, LongType),
             StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType))
-        case _ =>
+      case _ =>
           Seq(stat)
       }
     }
@@ -476,6 +478,160 @@ object DataFiltersBuilderUtils {
       partitionColumns: Seq[String],
       spark: SparkSession): (Seq[Expression], Seq[Expression]) = {
     filterExprs.partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+  }
+
+  // ==================== Size Collector (shared V1/V2) ==============
+
+  /**
+   * Input encoders for the size collector UDF.
+   * Moved from DataSkippingReader companion object to be shared.
+   */
+  lazy val sizeCollectorInputEncoders
+    : Seq[Option[ExpressionEncoder[_]]] = Seq(
+    Option(ExpressionEncoder[Boolean]()),
+    Option(ExpressionEncoder[java.lang.Long]()),
+    Option(ExpressionEncoder[java.lang.Long]()),
+    Option(ExpressionEncoder[java.lang.Long]()))
+
+  /**
+   * Build a UDF-based filter that counts bytes/rows/files via an
+   * [[ArrayAccumulator]]. The UDF is a pass-through boolean filter
+   * with the side-effect of accumulating size statistics.
+   *
+   * Moved from V1 DataSkippingReader.buildSizeCollectorFilter to be
+   * shared between V1 and V2.
+   *
+   * Accumulator slots:
+   *  0 - bytes compressed (from `size` column)
+   *  1 - physical row count (from numRecords stat, -1 if unknown)
+   *  2 - file count (1 per file)
+   *  3 - logical row count (physical - DV cardinality, -1 if unknown)
+   *
+   * @param spark          SparkSession (for accumulator registration)
+   * @param numRecordsCol  Column for stats.numRecords (V1 may use
+   *                       column-mapping; V2 uses col("stats.numRecords"))
+   * @return (accumulator, filterFn) where filterFn wraps a boolean
+   *         Column with the size-collecting UDF
+   */
+  def buildSizeCollectorFilter(
+      spark: SparkSession,
+      numRecordsCol: Column
+  ): (ArrayAccumulator, Column => Column) = {
+    val bytesCompressed = col("size")
+    val dvCardinality =
+      coalesce(col("deletionVector.cardinality"), lit(0L))
+    val logicalRows =
+      (numRecordsCol - dvCardinality).as("logicalRows")
+
+    val accumulator = new ArrayAccumulator(4)
+    spark.sparkContext.register(accumulator)
+
+    val collector = (
+        include: Boolean,
+        bytesCompressed: java.lang.Long,
+        logicalRows: java.lang.Long,
+        rows: java.lang.Long) => {
+      if (include) {
+        accumulator.add((0, bytesCompressed))
+        accumulator.add(
+          (1, Option(rows).map(_.toLong).getOrElse(-1L)))
+        accumulator.add((2, 1))
+        accumulator.add(
+          (3, Option(logicalRows)
+            .map(_.toLong).getOrElse(-1L)))
+      }
+      include
+    }
+    val collectorUdf = SparkUserDefinedFunction(
+      f = collector,
+      dataType = BooleanType,
+      inputEncoders = sizeCollectorInputEncoders,
+      deterministic = false)
+
+    (accumulator,
+      collectorUdf(
+        _: Column, bytesCompressed, logicalRows, numRecordsCol))
+  }
+
+  // ==================== Scan Pipeline ==============================
+
+  /**
+   * Result of the shared scan pipeline.
+   *
+   * Accumulators are populated as a side-effect when
+   * [[filteredDF]] is materialized (collected / iterated).
+   * Call [[totalSize]] / [[partitionSize]] / [[scanSize]]
+   * ONLY after the DataFrame has been fully consumed.
+   */
+  case class ScanPipelineResult(
+      filteredDF: DataFrame,
+      totalAccumulator: ArrayAccumulator,
+      partitionAccumulator: ArrayAccumulator,
+      scanAccumulator: ArrayAccumulator) {
+    def totalSize: DataSize = DataSize(totalAccumulator)
+    def partitionSize: DataSize = DataSize(partitionAccumulator)
+    def scanSize: DataSize = DataSize(scanAccumulator)
+  }
+
+  /**
+   * Execute the shared scan pipeline: partition pruning + data
+   * skipping + size collection in ONE DataFrame pass.
+   *
+   * Both V1 and V2 delegate here. Three accumulator-instrumented
+   * UDF filters are applied together:
+   *  1. totalFilter(TRUE) - counts ALL files
+   *  2. partFilter(partitionFilters) - counts partition-matched
+   *  3. scanFilter(safeDataFilter) - counts data-skipped
+   *
+   * @param withStatsDF      DataFrame with parsed stats column
+   * @param partitionFilters Partition filter as a Column expression
+   *                         (already rewritten to partitionValues.*)
+   * @param dataSkippingPred Data skipping predicate
+   * @param getStatColumn    Resolves StatsColumn to Column
+   * @param numRecordsCol    Column for stats.numRecords
+   * @param spark            SparkSession
+   * @return ScanPipelineResult (DF + accumulators)
+   */
+  def executeScanPipeline(
+      withStatsDF: DataFrame,
+      partitionFilters: Column,
+      dataSkippingPred: DataSkippingPredicate,
+      getStatColumn: StatsColumn => Option[Column],
+      numRecordsCol: Column,
+      spark: SparkSession): ScanPipelineResult = {
+    val trueLit: Column = Column(TrueLiteral)
+
+    val (totalAcc, totalFilter) =
+      buildSizeCollectorFilter(spark, numRecordsCol)
+    val (partAcc, partFilter) =
+      buildSizeCollectorFilter(spark, numRecordsCol)
+    val (scanAcc, scanFilter) =
+      buildSizeCollectorFilter(spark, numRecordsCol)
+
+    val safeFilter =
+      buildSafeSkippingFilter(dataSkippingPred, getStatColumn)
+
+    val filteredDF = withStatsDF.where(
+      totalFilter(trueLit) &&
+        partFilter(partitionFilters) &&
+        scanFilter(safeFilter))
+
+    ScanPipelineResult(filteredDF, totalAcc, partAcc, scanAcc)
+  }
+
+  /**
+   * Build a partition filter Column from rewritten partition
+   * expressions. Convenience for callers that have already split
+   * and rewritten their partition filters.
+   *
+   * @return Column that is TRUE when no partition filters exist
+   */
+  def buildPartitionFilterColumn(
+      partitionFilterExprs: Seq[Expression]): Column = {
+    partitionFilterExprs
+      .reduceLeftOption(And)
+      .map(e => Column(e))
+      .getOrElse(Column(TrueLiteral))
   }
 }
 

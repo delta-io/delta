@@ -27,26 +27,30 @@ import io.delta.kernel.types.StructType;
 import java.util.Optional;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.delta.stats.DataFiltersBuilderUtils;
+import org.apache.spark.sql.delta.stats.DataFiltersBuilderV2;
+import org.apache.spark.sql.delta.stats.DefaultScanPlanner;
+import org.apache.spark.sql.delta.stats.DefaultScanPredicateBuilder;
 import org.apache.spark.sql.sources.Filter;
+import scala.Function0;
 
 /**
- * Kernel-compatible {@link ScanBuilder} for batch reads, orchestrating the 3-component architecture
- * via interfaces.
+ * Kernel-compatible {@link ScanBuilder} for batch reads.
  *
  * <p>Follows the Builder pattern (Effective Java Item 2): collects configuration incrementally via
- * fluent setters, then delegates to the three components at {@link #build()} time:
+ * fluent setters, then orchestrates the scan at {@link #build()} time using the shared {@link
+ * DefaultScanPlanner} and {@link DefaultScanPredicateBuilder} (shared with V1).
  *
- * <ol>
- *   <li>{@link ScanPlanner} (Component 1) — reads log segments, builds DataFrame, applies
- *       predicates.
- *   <li>{@link ScanPredicateBuilder} (Component 2) — rewrites pushdown filters into partition
- *       pruning and data skipping expressions. Used internally by the Planner.
- *   <li>{@link ScanExecutor} (Component 3) — executes the planned DataFrame and returns Kernel
- *       rows.
- * </ol>
+ * <p>V2-specific concerns handled at build time:
  *
- * <p>For streaming, use {@link DistributedScan} directly with a pre-built DataFrame — the Planner
- * and PredicateBuilder are not needed since streaming constructs its own sorted DataFrame.
+ * <ul>
+ *   <li>Data source: distributed log replay via {@link DistributedLogReplayHelper}
+ *   <li>Envelope: unwrap/re-wrap {@code {add: struct}}, stats JSON parse/serialize
+ *   <li>Filter conversion: Spark {@code Filter[]} to resolved Catalyst Expressions
+ * </ul>
+ *
+ * <p>For streaming, use {@link DistributedScan} directly with a pre-built DataFrame.
  */
 public class DistributedScanBuilder implements ScanBuilder {
 
@@ -54,15 +58,12 @@ public class DistributedScanBuilder implements ScanBuilder {
   private final Snapshot snapshot;
   private final int numPartitions;
 
-  // Mutable builder state — set via fluent methods before build()
+  // Mutable builder state -- set via fluent methods before build()
   private StructType readSchema;
   private Filter[] pushdownFilters;
   private org.apache.spark.sql.types.StructType partitionSchema;
 
-  /**
-   * Creates a ScanBuilder for batch reads. The {@link ScanPlanner} will read log segments and build
-   * the DataFrame at {@link #build()} time.
-   */
+  /** Creates a ScanBuilder for batch reads. */
   public DistributedScanBuilder(SparkSession spark, Snapshot snapshot, int numPartitions) {
     this.spark = requireNonNull(spark, "spark");
     this.snapshot = requireNonNull(snapshot, "snapshot");
@@ -73,7 +74,7 @@ public class DistributedScanBuilder implements ScanBuilder {
   }
 
   /**
-   * Set pushdown filters (partition + data) for the Planner to apply.
+   * Set pushdown filters (partition + data) for the scan to apply.
    *
    * @param filters all pushable Spark filters (non-null)
    * @param partitionSchema partition schema for rewriting (non-null)
@@ -89,7 +90,7 @@ public class DistributedScanBuilder implements ScanBuilder {
   @Override
   public ScanBuilder withFilter(Predicate predicate) {
     // Phase 1: Kernel Predicates not used for data skipping.
-    // Filtering is done via Planner + PredicateBuilder through withPushdownFilters().
+    // Filtering is done via DefaultScanPlanner through withPushdownFilters().
     return this;
   }
 
@@ -100,20 +101,47 @@ public class DistributedScanBuilder implements ScanBuilder {
   }
 
   /**
-   * Builds the scan by orchestrating the 3 components:
+   * Builds the scan using the shared {@link DefaultScanPlanner}:
    *
    * <ol>
-   *   <li>Planner reads log segments and applies predicates (via PredicateBuilder internally)
-   *   <li>DistributedScan wraps ScanExecutor for Kernel consumption
+   *   <li>Create V2 data source: log replay -> unwrap {add: struct} -> parse stats
+   *   <li>Create shared {@link DefaultScanPredicateBuilder} with V2-specific stat column paths
+   *   <li>Create shared {@link DefaultScanPlanner} composing the above
+   *   <li>Convert Spark {@code Filter[]} to resolved Catalyst Expressions
+   *   <li>Call {@code planner.plan(expressions)} -- shared pipeline
+   *   <li>V2 post-processing: serialize stats JSON + re-wrap as {add: struct}
    * </ol>
    */
   @Override
   public Scan build() {
-    // Component 1: Planner (via interface) — log replay + predicate application
-    ScanPlanner planner = DistributedScanPlanner.create(spark, snapshot, numPartitions);
-    Dataset<org.apache.spark.sql.Row> plannedDF = planner.plan(pushdownFilters, partitionSchema);
+    // Step 1: V2 data source (log replay -> unwrap -> parse stats)
+    Function0<Dataset<org.apache.spark.sql.Row>> rawDataSource =
+        () -> DistributedLogReplayHelper.stateReconstructionV2(spark, snapshot, numPartitions);
+    scala.Function0<Dataset<org.apache.spark.sql.Row>> v2DataSource =
+        DataFiltersBuilderV2.prepareV2DataSource(rawDataSource, snapshot);
 
-    // DistributedScan wraps ScanExecutor (Component 3) + Kernel delegate
+    // Step 2: Shared predicate builder (V2-specific stat column paths injected)
+    DefaultScanPredicateBuilder predicateBuilder =
+        DataFiltersBuilderV2.createPredicateBuilder(snapshot, spark, partitionSchema);
+
+    // Step 3: Shared planner (same class as V1, different data source)
+    DefaultScanPlanner planner = DataFiltersBuilderV2.createPlanner(v2DataSource, predicateBuilder);
+
+    // Step 4: Convert Filter[] -> resolved Catalyst Expressions
+    org.apache.spark.sql.types.StructType tableSchema =
+        DataFiltersBuilderV2.getSparkTableSchema(snapshot);
+    scala.collection.immutable.Seq<Expression> filterExprs =
+        DataFiltersBuilderV2.filtersToResolvedExpressions(pushdownFilters, tableSchema).toList();
+
+    // Step 5: Execute shared pipeline (partition pruning + data skipping + accumulators)
+    DataFiltersBuilderUtils.ScanPipelineResult result =
+        planner.plan(filterExprs, scala.Option.empty());
+
+    // Step 6: V2 post-processing (serialize stats + re-wrap as {add: struct})
+    Dataset<org.apache.spark.sql.Row> plannedDF =
+        DataFiltersBuilderV2.postProcessV2(result.filteredDF());
+
+    // DistributedScan wraps ScanExecutor + Kernel delegate
     return new DistributedScan(plannedDF, snapshot, readSchema);
   }
 

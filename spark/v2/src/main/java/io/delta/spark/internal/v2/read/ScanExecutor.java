@@ -27,8 +27,6 @@ import io.delta.kernel.utils.CloseableIterator;
  * <p>Effective Java Item 64: refer to objects by their interfaces.
  *
  * @see SparkRowScanExecutor default implementation
- * @see ScanPlanner Component 1: Planner
- * @see ScanPredicateBuilder Component 2: PredicateBuilder
  */
 public interface ScanExecutor {
 

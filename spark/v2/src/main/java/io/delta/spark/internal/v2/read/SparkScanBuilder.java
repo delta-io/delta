@@ -42,8 +42,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * <p>Controlled by {@code spark.databricks.delta.v2.distributedScan.enabled} (default: true):
  *
  * <ul>
- *   <li><b>true</b> (distributed): DistributedScanBuilder -> DistributedScanPlanner ->
- *       DeltaScanPredicateBuilder -> DataFiltersBuilderUtils -> DistributedScan (wraps
+ *   <li><b>true</b> (distributed): DistributedScanBuilder -> DefaultScanPlanner ->
+ *       DefaultScanPredicateBuilder -> DataFiltersBuilderUtils -> DistributedScan (wraps
  *       SparkRowScanExecutor)
  *   <li><b>false</b> (local): Kernel-native ScanBuilder -> Kernel Scan (single-driver log replay)
  * </ul>

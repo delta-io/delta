@@ -43,8 +43,6 @@ import org.apache.spark.sql.Dataset;
  *   <li>{@code final} class (Item 19).
  * </ul>
  *
- * @see ScanPlanner Component 1: Planner (interface)
- * @see ScanPredicateBuilder Component 2: PredicateBuilder (interface)
  * @see ScanExecutor Component 3: Executor (interface, wrapped here)
  */
 public final class DistributedScan implements Scan {
