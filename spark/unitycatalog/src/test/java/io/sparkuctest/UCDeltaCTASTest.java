@@ -24,9 +24,10 @@ import org.apache.hadoop.fs.Path;
 public class UCDeltaCTASTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
-  public void testBasicCTAS(TableType tableType) {
+  public void testBasicCTAS(TableType tableType) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = "ctas_basic" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+    String tableName =
+        "ctas_basic_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
 
     String ctasSql;
