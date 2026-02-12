@@ -30,6 +30,16 @@ import org.apache.spark.sql.types._
 class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCommandTest
     with QueryErrorsBase {
 
+  private def withJvmTimeZone[T](tzId: String)(block: => T): T = {
+    val originalTz = java.util.TimeZone.getDefault
+    try {
+      java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(tzId))
+      block
+    } finally {
+      java.util.TimeZone.setDefault(originalTz)
+    }
+  }
+
   private def createAddFileWithPartitionValue(partitionValues: Map[String, String]): AddFile = {
     AddFile(
       path = "test.parquet",
@@ -102,31 +112,33 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
   for (enableNormalization <- BOOLEAN_DOMAIN) {
     test("normalizedPartitionValues for UTC timestamps partitions with different string formats, " +
       s"enableNormalization=$enableNormalization") {
-      withSQLConf(
-        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
-          enableNormalization.toString,
-        "spark.sql.session.timeZone" -> "UTC") {
-        withTempDir { tempDir =>
-          // Create empty Delta table with tsCol as partition column
-          spark.createDataFrame(
-            spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
-            StructType(Seq(
-              StructField("data", StringType),
-              StructField("tsCol", TimestampType)
-            ))
-          ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
-          val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
+      withJvmTimeZone("UTC") {
+        withSQLConf(
+          DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
+            enableNormalization.toString,
+          "spark.sql.session.timeZone" -> "UTC") {
+          withTempDir { tempDir =>
+            // Create empty Delta table with tsCol as partition column
+            spark.createDataFrame(
+              spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+              StructType(Seq(
+                StructField("data", StringType),
+                StructField("tsCol", TimestampType)
+              ))
+            ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
+            val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-          val fileNonUtc = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01 12:00:00"))
-          val fileUtc =
-            createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01T12:00:00.000000Z"))
-          val normalizedNonUtc = fileNonUtc.normalizedPartitionValues(spark, deltaTxn)
-          val normalizedUtc = fileUtc.normalizedPartitionValues(spark, deltaTxn)
+            val fileNonUtc = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01 12:00:00"))
+            val fileUtc =
+              createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01T12:00:00.000000Z"))
+            val normalizedNonUtc = fileNonUtc.normalizedPartitionValues(spark, deltaTxn)
+            val normalizedUtc = fileUtc.normalizedPartitionValues(spark, deltaTxn)
 
-          if (enableNormalization) {
-            assert(normalizedNonUtc == normalizedUtc)
-          } else {
-            assert(normalizedNonUtc != normalizedUtc)
+            if (enableNormalization) {
+              assert(normalizedNonUtc == normalizedUtc)
+            } else {
+              assert(normalizedNonUtc != normalizedUtc)
+            }
           }
         }
       }
@@ -189,44 +201,46 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
   for (enableNormalization <- BOOLEAN_DOMAIN) {
     test("normalizedPartitionValues with mixed timestamp and non-timestamp partitions, " +
       s"enableNormalization=$enableNormalization") {
-      withSQLConf(
-        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
-          enableNormalization.toString,
-        "spark.sql.session.timeZone" -> "UTC"
-      ) {
-        withTempDir { tempDir =>
-          spark.createDataFrame(
-            spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
-            StructType(Seq(
-              StructField("data", StringType),
-              StructField("tsCol", TimestampType),
-              StructField("strCol", StringType),
-              StructField("intCol", IntegerType)
-            ))
-          ).write.format("delta")
-            .partitionBy("tsCol", "strCol", "intCol")
-            .save(tempDir.getCanonicalPath)
-          val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
+      withJvmTimeZone("UTC") {
+        withSQLConf(
+          DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key ->
+            enableNormalization.toString,
+          "spark.sql.session.timeZone" -> "UTC"
+        ) {
+          withTempDir { tempDir =>
+            spark.createDataFrame(
+              spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+              StructType(Seq(
+                StructField("data", StringType),
+                StructField("tsCol", TimestampType),
+                StructField("strCol", StringType),
+                StructField("intCol", IntegerType)
+              ))
+            ).write.format("delta")
+              .partitionBy("tsCol", "strCol", "intCol")
+              .save(tempDir.getCanonicalPath)
+            val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-          val file1 = createAddFileWithPartitionValue(
-            Map("tsCol" -> "2000-01-01 12:00:00", "strCol" -> "value", "intCol" -> "42"))
-          val file2 = createAddFileWithPartitionValue(
-            Map("tsCol" -> "2000-01-01T12:00:00.000000Z", "strCol" -> "value", "intCol" -> "42"))
-          val normalized1 = file1.normalizedPartitionValues(spark, deltaTxn)
-          val normalized2 = file2.normalizedPartitionValues(spark, deltaTxn)
+            val file1 = createAddFileWithPartitionValue(
+              Map("tsCol" -> "2000-01-01 12:00:00", "strCol" -> "value", "intCol" -> "42"))
+            val file2 = createAddFileWithPartitionValue(
+              Map("tsCol" -> "2000-01-01T12:00:00.000000Z", "strCol" -> "value", "intCol" -> "42"))
+            val normalized1 = file1.normalizedPartitionValues(spark, deltaTxn)
+            val normalized2 = file2.normalizedPartitionValues(spark, deltaTxn)
 
-          if (enableNormalization) {
-            // Timestamp columns should normalize to same value (same microseconds)
-            assert(normalized1("tsCol") == normalized2("tsCol"))
-            // Non-timestamp columns should be typed literals
-            assert(normalized1("strCol") == Literal("value"))
-            assert(normalized1("intCol") == Literal.create(42, IntegerType))
-          } else {
-            // Without normalization the partition values are different string literals
-            assert(normalized1 != normalized2)
-            // Normalized partition values should be string literals of original values
-            assert(normalized1("tsCol") == Literal("2000-01-01 12:00:00"))
-            assert(normalized2("tsCol") == Literal("2000-01-01T12:00:00.000000Z"))
+            if (enableNormalization) {
+              // Timestamp columns should normalize to same value (same microseconds)
+              assert(normalized1("tsCol") == normalized2("tsCol"))
+              // Non-timestamp columns should be typed literals
+              assert(normalized1("strCol") == Literal("value"))
+              assert(normalized1("intCol") == Literal.create(42, IntegerType))
+            } else {
+              // Without normalization the partition values are different string literals
+              assert(normalized1 != normalized2)
+              // Normalized partition values should be string literals of original values
+              assert(normalized1("tsCol") == Literal("2000-01-01 12:00:00"))
+              assert(normalized2("tsCol") == Literal("2000-01-01T12:00:00.000000Z"))
+            }
           }
         }
       }
@@ -412,27 +426,29 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
   }
 
   test("normalizedPartitionValues with a non UTC session time zone gets converted to UTC") {
-    withSQLConf(
-      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
-      "spark.sql.session.timeZone" -> "Europe/Berlin" // UTC + 1 in winter time
-    ) {
-      withTempDir { tempDir =>
-        spark.createDataFrame(
-          spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
-          StructType(Seq(
-            StructField("data", StringType),
-            StructField("tsCol", TimestampType)
-          ))
-        ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
-        val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
+    withJvmTimeZone("Europe/Berlin") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        "spark.sql.session.timeZone" -> "Europe/Berlin" // UTC + 1 in winter time
+      ) {
+        withTempDir { tempDir =>
+          spark.createDataFrame(
+            spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+            StructType(Seq(
+              StructField("data", StringType),
+              StructField("tsCol", TimestampType)
+            ))
+          ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
+          val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-        val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01 12:00:00"))
-        // The normalized timestamp should be 11:00 UTC
-        // Parsed in Europe/Berlin (UTC+1), so 12:00 Berlin = 11:00 UTC
-        val normalizedTimestamp = file.normalizedPartitionValues(spark, deltaTxn)("tsCol")
+          val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01 12:00:00"))
+          // The normalized timestamp should be 11:00 UTC
+          // Parsed in Europe/Berlin (UTC+1), so 12:00 Berlin = 11:00 UTC
+          val normalizedTimestamp = file.normalizedPartitionValues(spark, deltaTxn)("tsCol")
 
-        assert(normalizedTimestamp == timestampLiteral("2000-01-01 12:00:00", "Europe/Berlin"))
-        assert(normalizedTimestamp == timestampLiteral("2000-01-01 11:00:00", "UTC"))
+          assert(normalizedTimestamp == timestampLiteral("2000-01-01 12:00:00", "Europe/Berlin"))
+          assert(normalizedTimestamp == timestampLiteral("2000-01-01 11:00:00", "UTC"))
+        }
       }
     }
   }
@@ -474,75 +490,109 @@ class AddFileSuite extends SparkFunSuite with SharedSparkSession with DeltaSQLCo
   }
 
   test("normalizedPartitionValues with missing leading zeroes in timestamp are accepted") {
-    withSQLConf(
-      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
-      "spark.sql.session.timeZone" -> "UTC"
-    ) {
-      withTempDir { tempDir =>
-        spark.createDataFrame(
-          spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
-          StructType(Seq(
-            StructField("data", StringType),
-            StructField("tsCol", TimestampType)
-          ))
-        ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
-        val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
+    withJvmTimeZone("UTC") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        "spark.sql.session.timeZone" -> "UTC"
+      ) {
+        withTempDir { tempDir =>
+          spark.createDataFrame(
+            spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+            StructType(Seq(
+              StructField("data", StringType),
+              StructField("tsCol", TimestampType)
+            ))
+          ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
+          val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-        def getNormalizedTimestamp(tsValue: String): Literal =
-          createAddFileWithPartitionValue(Map("tsCol" -> tsValue))
-            .normalizedPartitionValues(spark, deltaTxn)("tsCol")
+          def getNormalizedTimestamp(tsValue: String): Literal =
+            createAddFileWithPartitionValue(Map("tsCol" -> tsValue))
+              .normalizedPartitionValues(spark, deltaTxn)("tsCol")
 
-        // Missing leading zero in hours: "1:00:00" vs "01:00:00"
-        val hoursWithout = getNormalizedTimestamp("2000-01-01 1:00:00")
-        val hoursWith = getNormalizedTimestamp("2000-01-01 01:00:00")
-        val expectedHours = timestampLiteral("2000-01-01 01:00:00", "UTC")
-        assert(hoursWithout == hoursWith)
-        assert(hoursWith == expectedHours)
+          // Missing leading zero in hours: "1:00:00" vs "01:00:00"
+          val hoursWithout = getNormalizedTimestamp("2000-01-01 1:00:00")
+          val hoursWith = getNormalizedTimestamp("2000-01-01 01:00:00")
+          val expectedHours = timestampLiteral("2000-01-01 01:00:00", "UTC")
+          assert(hoursWithout == hoursWith)
+          assert(hoursWith == expectedHours)
 
-        // Missing leading zero in minutes: "01:2:00" vs "01:02:00"
-        val minutesWithout = getNormalizedTimestamp("2000-01-01 01:2:00")
-        val minutesWith = getNormalizedTimestamp("2000-01-01 01:02:00")
-        val expectedMinutes = timestampLiteral("2000-01-01 01:02:00", "UTC")
-        assert(minutesWithout == minutesWith)
-        assert(minutesWith == expectedMinutes)
+          // Missing leading zero in minutes: "01:2:00" vs "01:02:00"
+          val minutesWithout = getNormalizedTimestamp("2000-01-01 01:2:00")
+          val minutesWith = getNormalizedTimestamp("2000-01-01 01:02:00")
+          val expectedMinutes = timestampLiteral("2000-01-01 01:02:00", "UTC")
+          assert(minutesWithout == minutesWith)
+          assert(minutesWith == expectedMinutes)
 
-        // Missing leading zero in seconds: "01:02:3" vs "01:02:03"
-        val secondsWithout = getNormalizedTimestamp("2000-01-01 01:02:3")
-        val secondsWith = getNormalizedTimestamp("2000-01-01 01:02:03")
-        val expectedSeconds = timestampLiteral("2000-01-01 01:02:03", "UTC")
-        assert(secondsWithout == secondsWith)
-        assert(secondsWith == expectedSeconds)
+          // Missing leading zero in seconds: "01:02:3" vs "01:02:03"
+          val secondsWithout = getNormalizedTimestamp("2000-01-01 01:02:3")
+          val secondsWith = getNormalizedTimestamp("2000-01-01 01:02:03")
+          val expectedSeconds = timestampLiteral("2000-01-01 01:02:03", "UTC")
+          assert(secondsWithout == secondsWith)
+          assert(secondsWith == expectedSeconds)
 
-        // All missing leading zeroes: "1:2:3" vs "01:02:03"
-        val allWithout = getNormalizedTimestamp("2000-01-01 1:2:3")
-        val allWith = getNormalizedTimestamp("2000-01-01 01:02:03")
-        val expectedAll = timestampLiteral("2000-01-01 01:02:03", "UTC")
-        assert(allWithout == allWith)
-        assert(allWith == expectedAll)
+          // All missing leading zeroes: "1:2:3" vs "01:02:03"
+          val allWithout = getNormalizedTimestamp("2000-01-01 1:2:3")
+          val allWith = getNormalizedTimestamp("2000-01-01 01:02:03")
+          val expectedAll = timestampLiteral("2000-01-01 01:02:03", "UTC")
+          assert(allWithout == allWith)
+          assert(allWith == expectedAll)
+        }
       }
     }
   }
 
   test("normalizedPartitionValues with ISO 8601 format with T separator but no time zone") {
-    withSQLConf(
-      DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
-      "spark.sql.session.timeZone" -> "Europe/Berlin" // UTC + 1 in winter time
-    ) {
-      withTempDir { tempDir =>
-        spark.createDataFrame(
-          spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
-          StructType(Seq(
-            StructField("data", StringType),
-            StructField("tsCol", TimestampType)
-          ))
-        ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
-        val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
+    withJvmTimeZone("Europe/Berlin") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        "spark.sql.session.timeZone" -> "Europe/Berlin" // UTC + 1 in winter time
+      ) {
+        withTempDir { tempDir =>
+          spark.createDataFrame(
+            spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+            StructType(Seq(
+              StructField("data", StringType),
+              StructField("tsCol", TimestampType)
+            ))
+          ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
+          val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
 
-        // ISO 8601 format with 'T' separator but no time zone should use the session time zone
-        val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01T12:00:00"))
-        // The normalized timestamp should be 11:00 UTC (12:00 Berlin = 11:00 UTC)
-        val normalized = file.normalizedPartitionValues(spark, deltaTxn)
-        assert(normalized("tsCol") == timestampLiteral("2000-01-01 12:00:00", "Europe/Berlin"))
+          // ISO 8601 format with 'T' separator but no time zone should use the JVM time zone.
+          val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01T12:00:00"))
+          // The normalized timestamp should be 11:00 UTC (12:00 Berlin = 11:00 UTC)
+          val normalized = file.normalizedPartitionValues(spark, deltaTxn)
+          assert(normalized("tsCol") == timestampLiteral("2000-01-01 12:00:00", "Europe/Berlin"))
+        }
+      }
+    }
+  }
+
+  test("normalizedPartitionValues should also use the JVM timezone on read") {
+    withJvmTimeZone("America/Los_Angeles") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ.key -> "true",
+        "spark.sql.session.timeZone" -> "UTC"
+      ) {
+        withTempDir { tempDir =>
+          spark.createDataFrame(
+            spark.sparkContext.emptyRDD[org.apache.spark.sql.Row],
+            StructType(Seq(
+              StructField("data", StringType),
+              StructField("tsCol", TimestampType)
+            ))
+          ).write.format("delta").partitionBy("tsCol").save(tempDir.getCanonicalPath)
+          val deltaTxn = DeltaLog.forTable(spark, tempDir.getCanonicalPath).startTransaction()
+
+          // ON WRITE we use the JVM timezone, parsing this as an America/Los_Angeles timestamp.
+          val file = createAddFileWithPartitionValue(Map("tsCol" -> "2000-01-01 12:00:00"))
+          val normalized = file.normalizedPartitionValues(spark, deltaTxn)
+
+          // ON READ we also need to use the JVM timezone again, reading it again as an
+          // America/Los_Angeles timestamp.
+          assert(
+            normalized("tsCol") == timestampLiteral("2000-01-01 12:00:00", "America/Los_Angeles"))
+          assert(normalized("tsCol") != timestampLiteral("2000-01-01 12:00:00", "UTC"))
+        }
       }
     }
   }
