@@ -36,6 +36,7 @@ import org.apache.spark.util.Utils
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import shadedForDelta.org.apache.iceberg.PartitionSpec
+import shadedForDelta.org.apache.iceberg.expressions.Expressions
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
 
@@ -330,6 +331,16 @@ class IcebergRESTCatalogPlanningClient(
     val files = response.fileScanTasks().asScala.map { task =>
       require(task != null, "FileScanTask cannot be null")
       require(task.file() != null, "DataFile cannot be null")
+
+      // Validate that the server does not expect the application of a residual. The application of
+      // a residual filter is currently not supported, and its ignorance leads to wrong results.
+      val residual = task.residual()
+      if (residual != null && !residual.isEquivalentTo(Expressions.alwaysTrue)) {
+        throw new UnsupportedOperationException(
+          s"Found FileScanTask with residual: ${residual}. " +
+            s"Only FileScanTasks with no or trivial residual are currently supported.")
+      }
+
       val file = task.file()
 
       // Validate that table is unpartitioned. Partitioned tables are not supported yet.
