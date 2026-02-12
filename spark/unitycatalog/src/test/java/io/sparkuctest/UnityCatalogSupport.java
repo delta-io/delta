@@ -118,7 +118,7 @@ public abstract class UnityCatalogSupport {
   public static final String UC_STATIC_TOKEN = "static-token";
 
   /** The fake S3 bucket name used for local integration tests. */
-  static final String FAKE_S3_BUCKET = "test-bucket0";
+  static final String FAKE_S3_BUCKET = "fakeS3Bucket";
 
   // Environment variables for configuring access to remote unity catalog server.
   public static final String UC_REMOTE = "UC_REMOTE";
@@ -252,9 +252,9 @@ public abstract class UnityCatalogSupport {
 
     // Configure S3 credentials for the fake bucket (mirrors UC OSS BaseSparkIntegrationTest).
     serverProps.setProperty("s3.bucketPath.0", "s3://" + FAKE_S3_BUCKET);
-    serverProps.setProperty("s3.accessKey.0", "accessKey0");
-    serverProps.setProperty("s3.secretKey.0", "secretKey0");
-    serverProps.setProperty("s3.sessionToken.0", "sessionToken0");
+    serverProps.setProperty("s3.accessKey.0", "fakeAccessKey");
+    serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
+    serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
 
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);

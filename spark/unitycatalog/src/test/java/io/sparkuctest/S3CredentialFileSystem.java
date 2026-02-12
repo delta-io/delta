@@ -137,13 +137,13 @@ public class S3CredentialFileSystem extends RawLocalFileSystem {
     AwsCredentialsProvider p = resolveProvider(conf);
     if (p != null) {
       AwsSessionCredentials creds = (AwsSessionCredentials) p.resolveCredentials();
-      assertThat(creds.accessKeyId()).isEqualTo("accessKey0");
-      assertThat(creds.secretAccessKey()).isEqualTo("secretKey0");
-      assertThat(creds.sessionToken()).isEqualTo("sessionToken0");
+      assertThat(creds.accessKeyId()).isEqualTo("fakeAccessKey");
+      assertThat(creds.secretAccessKey()).isEqualTo("fakeSecretKey");
+      assertThat(creds.sessionToken()).isEqualTo("fakeSessionToken");
     } else {
-      assertThat(conf.get("fs.s3a.access.key")).isEqualTo("accessKey0");
-      assertThat(conf.get("fs.s3a.secret.key")).isEqualTo("secretKey0");
-      assertThat(conf.get("fs.s3a.session.token")).isEqualTo("sessionToken0");
+      assertThat(conf.get("fs.s3a.access.key")).isEqualTo("fakeAccessKey");
+      assertThat(conf.get("fs.s3a.secret.key")).isEqualTo("fakeSecretKey");
+      assertThat(conf.get("fs.s3a.session.token")).isEqualTo("fakeSessionToken");
     }
   }
 
