@@ -112,12 +112,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
-    // scalastyle:off println
-    println(s"[DEBUG-CTAS] createDeltaTable called: ident=$ident, " +
-      s"operation=$operation, isCTAS=${sourceQuery.isDefined}")
-    println(s"[DEBUG-CTAS] allTableProperties=${allTableProperties}")
-    println(s"[DEBUG-CTAS] writeOptions=${writeOptions}")
-    // scalastyle:on println
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
@@ -205,11 +199,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         maybeClusterBySpec
       )
 
-    // scalastyle:off println
-    println(s"[DEBUG-CTAS] location=$location, loc=$loc, tableType=$tableType, " +
-      s"isByPath=$isByPath, isManagedLocation=$isManagedLocation, " +
-      s"isUnityCatalog=$isUnityCatalog")
-    // scalastyle:on println
     val writer = sourceQuery.map { df =>
       WriteIntoDelta(
         DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt, new Path(loc), writeOptions),
