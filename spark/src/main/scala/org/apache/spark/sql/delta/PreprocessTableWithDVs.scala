@@ -147,7 +147,12 @@ object ScanWithDeletionVectors {
           case o => o
         }
       } else {
-        inputScan.output :+ fileFormat.createFileMetadataCol()
+        val metadataAttr = fileFormat.createFileMetadataCol()
+        val rowIndexOnlyDataType =
+          metadataAttr.dataType.asInstanceOf[StructType].apply(Set(ParquetFileFormat.ROW_INDEX))
+        inputScan.output :+ metadataAttr.copy(
+          dataType = rowIndexOnlyDataType)(
+            exprId = metadataAttr.exprId, qualifier = metadataAttr.qualifier)
       }
     } else {
       inputScan.output
