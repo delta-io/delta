@@ -32,8 +32,8 @@ import org.apache.spark.sql.delta.stats.DataFiltersBuilderUtils;
 import org.apache.spark.sql.delta.stats.DataFiltersBuilderV2;
 import org.apache.spark.sql.delta.stats.DefaultScanPlanner;
 import org.apache.spark.sql.delta.stats.DefaultScanPredicateBuilder;
+import org.apache.spark.sql.delta.stats.ScanDataSource;
 import org.apache.spark.sql.sources.Filter;
-import scala.Function0;
 
 /**
  * Kernel-compatible {@link ScanBuilder} for batch reads.
@@ -104,28 +104,30 @@ public class DistributedScanBuilder implements ScanBuilder {
    * Builds the scan using the shared {@link DefaultScanPlanner}:
    *
    * <ol>
-   *   <li>Create V2 data source: log replay -> unwrap {add: struct} -> parse stats
+   *   <li>Create V2 {@link ScanDataSource}: loadActions -> state reconstruction -> extract add ->
+   *       parse stats (full pipeline, same class as V1)
+   *   <li>Create shared {@link DefaultScanPlanner} backed by the data source
    *   <li>Create shared {@link DefaultScanPredicateBuilder} with V2-specific stat column paths
-   *   <li>Create shared {@link DefaultScanPlanner} composing the above
    *   <li>Convert Spark {@code Filter[]} to resolved Catalyst Expressions
-   *   <li>Call {@code planner.plan(expressions)} -- shared pipeline
+   *   <li>Call {@code planner.plan(expressions, predicateBuilder)} -- shared pipeline
    *   <li>V2 post-processing: serialize stats JSON + re-wrap as {add: struct}
    * </ol>
    */
   @Override
   public Scan build() {
-    // Step 1: V2 data source (log replay -> unwrap -> parse stats)
-    Function0<Dataset<org.apache.spark.sql.Row>> rawDataSource =
-        () -> DistributedLogReplayHelper.stateReconstructionV2(spark, snapshot, numPartitions);
-    scala.Function0<Dataset<org.apache.spark.sql.Row>> v2DataSource =
-        DataFiltersBuilderV2.prepareV2DataSource(rawDataSource, snapshot);
+    // Step 1: V2 data source (full pipeline: loadActions -> reconstruct -> extract -> parse stats)
+    ScanDataSource v2DataSource =
+        DataFiltersBuilderV2.createDataSource(
+            () -> DistributedLogReplayHelper.loadActionsV2(spark, snapshot),
+            numPartitions,
+            snapshot);
 
-    // Step 2: Shared predicate builder (V2-specific stat column paths injected)
+    // Step 2: Shared planner backed by the data source
+    DefaultScanPlanner planner = DataFiltersBuilderV2.createPlanner(v2DataSource);
+
+    // Step 3: Shared predicate builder (V2-specific stat column paths injected)
     DefaultScanPredicateBuilder predicateBuilder =
         DataFiltersBuilderV2.createPredicateBuilder(snapshot, spark, partitionSchema);
-
-    // Step 3: Shared planner (same class as V1, different data source)
-    DefaultScanPlanner planner = DataFiltersBuilderV2.createPlanner(v2DataSource, predicateBuilder);
 
     // Step 4: Convert Filter[] -> resolved Catalyst Expressions
     org.apache.spark.sql.types.StructType tableSchema =
@@ -135,7 +137,7 @@ public class DistributedScanBuilder implements ScanBuilder {
 
     // Step 5: Execute shared pipeline (partition pruning + data skipping + accumulators)
     DataFiltersBuilderUtils.ScanPipelineResult result =
-        planner.plan(filterExprs, scala.Option.empty());
+        planner.plan(filterExprs, predicateBuilder, scala.Option.empty());
 
     // Step 6: V2 post-processing (serialize stats + re-wrap as {add: struct})
     Dataset<org.apache.spark.sql.Row> plannedDF =

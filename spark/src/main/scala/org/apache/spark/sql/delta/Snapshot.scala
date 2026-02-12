@@ -30,6 +30,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
+import org.apache.spark.sql.delta.stats.DefaultDataSource
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -227,12 +228,28 @@ class Snapshot(
   }
 
   /**
-   * Use [[stateReconstruction]] to create a representation of the actions in this table.
-   * Cache the resultant output.
+   * The [[DefaultDataSource]] that owns the full state reconstruction pipeline:
+   *   loadActions -> canonicalize -> repartition -> replay -> cache state
+   *   -> extract add files -> parse stats -> cache stats
+   *
+   * V1's `stateDS`, `stateDF`, `allFiles`, and `withStats` all delegate here.
+   * This replaces the previous `stateReconstruction` + `cachedState` chain.
    */
-  private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
-    stateReconstructionTriggered = true
-    cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+  private[delta] lazy val dataSource: DefaultDataSource = {
+    new DefaultDataSource(
+      loadActions = () => loadActions,
+      numPartitions = getNumPartitions,
+      canonicalizeUdf = c => deltaLog.getCanonicalPathUdf()(c),
+      statsSchema = statsSchema,
+      minFileRetentionTimestamp = Some(minFileRetentionTimestamp),
+      minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
+      stateCacheFactory = Some(ds => {
+        stateReconstructionTriggered = true
+        cacheDS(ds, s"Delta Table State #$version - $redactedPath").getDS
+      }),
+      statsParseCacheFactory = Some(df =>
+        cacheDS(df, s"Delta Table State with Stats #$version - $redactedPath").getDS)
+    )
   }
 
   /**
@@ -357,12 +374,12 @@ class Snapshot(
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
   def stateDF: DataFrame = recordFrameProfile("Delta", "stateDF") {
-    cachedState.getDF
+    dataSource.stateDF
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
   def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
-    cachedState.getDS
+    dataSource.stateDS
   }
 
   private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
@@ -461,38 +478,9 @@ class Snapshot(
       }
   }
 
-  // Reconstruct the state by applying deltas in order to the checkpoint.
-  // We partition by path as it is likely the bulk of the data is add/remove.
-  // Non-path based actions will be collocated to a single partition.
-  protected def stateReconstruction: Dataset[SingleAction] = {
-    recordFrameProfile("Delta", "snapshot.stateReconstruction") {
-      // for serializability
-      val localMinFileRetentionTimestamp = minFileRetentionTimestamp
-      val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
-
-      val canonicalPath = deltaLog.getCanonicalPathUdf()
-
-      // Steps 2-4 (canonicalize paths, repartition+sort, reconstruct structs) are shared
-      // between V1 and V2 via StateReconstructionUtils.
-      //
-      // NOTE: We sort by [[COMMIT_VERSION_COLUMN]] (provided by [[loadActions]]), to ensure that
-      // actions are presented to InMemoryLogReplay in the ascending version order it expects.
-      val reconstructed = StateReconstructionUtils.canonicalizeRepartitionAndReconstruct(
-        loadActions,
-        getNumPartitions,
-        canonicalizeUdf = c => canonicalPath(c),
-        commitVersionCol = COMMIT_VERSION_COLUMN,
-        addStatsColName = ADD_STATS_TO_USE_COL_NAME)
-
-      // Step 5: Apply InMemoryLogReplay per partition for deduplication.
-      // Shared with V2 via StateReconstructionUtils.replayPerPartition.
-      // Handles add/remove reconciliation, DV-aware dedup, tombstone expiry, and txn dedup.
-      StateReconstructionUtils.replayPerPartition(
-        reconstructed,
-        Some(localMinFileRetentionTimestamp),
-        localMinSetTransactionRetentionTimestamp)
-    }
-  }
+  // NOTE: stateReconstruction logic has been moved into DefaultDataSource.
+  // See [[dataSource]] which owns the full pipeline:
+  //   loadActions -> canonicalize -> repartition -> replay -> cache
 
   /**
    * Loads the file indices into a DataFrame that can be used for LogReplay.

@@ -16,14 +16,145 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.{Column, DataFrame, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
-import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.{DeltaLogFileIndex, Snapshot, StateReconstructionUtils}
+import org.apache.spark.sql.delta.actions.{AddFile, Protocol, SingleAction}
+import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataFiltersBuilderUtils.ScanPipelineResult
-import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
+
+// ===================== Data Source Interface + Default =====================
+
+/**
+ * Provides raw and parsed AddFile DataFrames for scan planning.
+ *
+ * Implementations own the full pipeline:
+ *   raw source -> state reconstruction -> extract add files -> parse stats -> cache
+ *
+ * [[DefaultDataSource]] is the shared implementation used by both V1 and V2.
+ */
+private[delta] trait ScanDataSource {
+
+  /** Flat AddFile rows with stats as a JSON string. */
+  def allAddFiles(): DataFrame
+
+  /**
+   * AddFile rows with parsed stats columns, optionally cached.
+   * This is the primary API consumed by [[DefaultScanPlanner]].
+   */
+  def withParsedStats: DataFrame
+}
+
+/**
+ * Shared [[ScanDataSource]] implementation used by both V1 and V2.
+ *
+ * Owns the full pipeline from raw log actions to cached AddFile
+ * DataFrames with parsed statistics:
+ *
+ *  1. State reconstruction: loadActions -> canonicalize -> repartition -> replay
+ *  2. Cache full state (optional, V1 only)
+ *  3. Extract AddFile rows
+ *  4. Parse stats JSON into struct columns
+ *  5. Cache parsed stats DF (optional, V1 only)
+ *
+ * V1/V2 differences are captured through constructor parameters:
+ *
+ *  - V1: passes `Snapshot.loadActions`, `getCanonicalPathUdf`,
+ *    retention timestamps, and cache factories from [[StateCache]].
+ *  - V2: passes `DistributedLogReplayHelper.loadActions`,
+ *    `callUDF("canonicalizePath", _)`, no retention, no caching.
+ *
+ * V1's `Snapshot` owns a `DefaultDataSource` instance and delegates
+ * `stateDS`, `stateDF`, `allFiles` to it. This eliminates the
+ * separate `stateReconstruction` / `cachedState` chain in `Snapshot`.
+ *
+ * @param loadActions            Supplier for the union of checkpoint + delta
+ *                               log files as a DataFrame. Must include
+ *                               `commitVersion` and `add_stats_to_use` columns.
+ * @param numPartitions          Number of Spark partitions for state
+ *                               reconstruction (V1: config, V2: passed in)
+ * @param canonicalizeUdf        UDF to canonicalize file paths
+ *                               (V1: deltaLog.getCanonicalPathUdf,
+ *                                V2: callUDF("canonicalizePath", _))
+ * @param statsSchema            Schema for parsing the stats JSON column
+ * @param minFileRetentionTimestamp
+ *                               Tombstone expiry threshold (V1: from config,
+ *                               V2: None -- keep all)
+ * @param minSetTransactionRetentionTimestamp
+ *                               Transaction expiry threshold (V1: from config,
+ *                               V2: None)
+ * @param stateCacheFactory      Optional factory to cache the full state
+ *                               Dataset[SingleAction]. V1 passes
+ *                               `ds => cacheDS(ds, name).getDS`;
+ *                               V2 passes None.
+ * @param statsParseCacheFactory Optional factory to cache the parsed stats
+ *                               DataFrame. V1 passes
+ *                               `df => cacheDS(df, name).getDS`;
+ *                               V2 passes None.
+ */
+private[delta] class DefaultDataSource(
+    loadActions: () => DataFrame,
+    numPartitions: Int,
+    canonicalizeUdf: Column => Column,
+    statsSchema: StructType,
+    minFileRetentionTimestamp: Option[Long] = None,
+    minSetTransactionRetentionTimestamp: Option[Long] = None,
+    stateCacheFactory: Option[Dataset[SingleAction] => Dataset[SingleAction]] = None,
+    statsParseCacheFactory: Option[DataFrame => DataFrame] = None
+) extends ScanDataSource {
+
+  /**
+   * Full state after log replay, optionally cached.
+   *
+   * Pipeline: loadActions() -> canonicalize paths -> repartition by path
+   *   -> sort by version -> InMemoryLogReplay per partition -> optional cache
+   *
+   * For V1 this replaces `Snapshot.stateReconstruction` + `cachedState`.
+   * For V2 this replaces `DistributedLogReplayHelper.stateReconstructionV2`.
+   */
+  lazy val stateDS: Dataset[SingleAction] = {
+    val reconstructed = StateReconstructionUtils.canonicalizeRepartitionAndReconstruct(
+      loadActions(),
+      numPartitions,
+      canonicalizeUdf,
+      DeltaLogFileIndex.COMMIT_VERSION_COLUMN,
+      Snapshot.ADD_STATS_TO_USE_COL_NAME)
+    val replayed = StateReconstructionUtils.replayPerPartition(
+      reconstructed,
+      minFileRetentionTimestamp,
+      minSetTransactionRetentionTimestamp)
+    stateCacheFactory.map(_(replayed)).getOrElse(replayed)
+  }
+
+  /** DataFrame view of the full state. */
+  lazy val stateDF: DataFrame = stateDS.toDF()
+
+  /**
+   * Extract flat AddFile rows from the reconstructed state.
+   * Equivalent to V1's `Snapshot.allFilesViaStateReconstruction`.
+   */
+  override lazy val allAddFiles: DataFrame =
+    stateDS.where("add IS NOT NULL")
+      .select(col("add").as[AddFile])
+      .toDF
+
+  /**
+   * AddFile rows with parsed statistics, optionally cached.
+   *
+   * Pipeline: allAddFiles -> from_json(stats, statsSchema) -> optional cache
+   *
+   * For V1 this replaces the old `withStatsInternal0` + `withStatsCache` chain.
+   * For V2 this replaces `prepareV2DataSource` + inline stats parsing.
+   */
+  override lazy val withParsedStats: DataFrame = {
+    val parsed = DataFiltersBuilderUtils.withParsedStats(allAddFiles, statsSchema)
+    statsParseCacheFactory.map(_(parsed)).getOrElse(parsed)
+  }
+}
 
 // ===================== Result Types =====================
 
@@ -76,25 +207,28 @@ private[delta] trait DeltaScanPredicateBuilder {
  * Shared interface for orchestrating a complete scan pipeline.
  *
  * Responsibilities:
- *  1. Obtain AddFile DataFrame (Planner owns the data source)
- *  2. Ensure stats are parsed
- *  3. Delegate to [[DeltaScanPredicateBuilder]] for filtering
- *  4. Optional limit pushdown
+ *  1. Expose the parsed + cached AddFile DF via [[withParsedStats]]
+ *  2. Delegate to [[DeltaScanPredicateBuilder]] for filtering
  */
 private[delta] trait DeltaScanPlanner {
 
-  /** Obtain the AddFile DataFrame. Planner owns this step. */
-  protected def obtainAddFileDF(): DataFrame
+  /**
+   * Returns the AddFile DataFrame with parsed stats (and optionally cached).
+   * Delegates to the underlying [[ScanDataSource]].
+   */
+  def withParsedStats: DataFrame
 
   /**
-   * Plan a scan: obtain AddFile DF, call PredicateBuilder, optional limit.
+   * Plan a scan: use [[withParsedStats]] DF, call PredicateBuilder, optional limit.
    *
-   * @param filters  Resolved, eligible filter Expressions
-   * @param limit    Optional row limit for LIMIT pushdown
+   * @param filters            Resolved, eligible filter Expressions
+   * @param predicateBuilder   The predicate builder for this scan
+   * @param limit              Optional row limit for LIMIT pushdown
    * @return ScanPipelineResult (filtered DF + accumulators)
    */
   def plan(
       filters: Seq[Expression],
+      predicateBuilder: DefaultScanPredicateBuilder,
       limit: Option[Long] = None
   ): ScanPipelineResult
 }
@@ -245,43 +379,40 @@ private[delta] class DefaultScanPredicateBuilder(
 /**
  * Default shared implementation of [[DeltaScanPlanner]].
  *
- * Works for both V1 and V2 connectors. V1/V2 differences are captured
- * as constructor parameters -- no subclasses needed.
+ * Works for both V1 and V2 connectors. Delegates to [[ScanDataSource]]
+ * for the data pipeline (state reconstruction, stats parsing, caching).
  *
- * '''Injected adapter:'''
- *  - `dataSource`: V1 passes `() => withStats` (cached snapshot DF),
- *    V2 passes `() => distributedLogReplay(...)`.
- *
- * '''Composed:'''
- *  - `predicateBuilder`: [[DefaultScanPredicateBuilder]] for filtering.
- *
- * @param dataSource         Supplier for the AddFile DataFrame (with parsed stats)
- * @param predicateBuilder   The predicate builder to use for filtering
+ * @param dataSource  Provides parsed + cached AddFile DataFrames
  */
 private[delta] class DefaultScanPlanner(
-    dataSource: () => DataFrame,
-    val predicateBuilder: DefaultScanPredicateBuilder
+    dataSource: ScanDataSource
 ) extends DeltaScanPlanner {
 
-  override protected def obtainAddFileDF(): DataFrame = dataSource()
+  /**
+   * Parsed (and optionally cached) AddFile DataFrame.
+   * Delegates to [[ScanDataSource.withParsedStats]].
+   */
+  override def withParsedStats: DataFrame = dataSource.withParsedStats
 
   override def plan(
       filters: Seq[Expression],
+      predicateBuilder: DefaultScanPredicateBuilder,
       limit: Option[Long] = None
   ): ScanPipelineResult = {
-    planWithMetadata(filters).pipelineResult
+    planWithMetadata(filters, predicateBuilder).pipelineResult
   }
 
   /**
    * Plan with full metadata, returning [[PredicateBuilderResult]].
    *
-   * @param filters  Resolved, eligible filter Expressions
+   * @param filters            Resolved, eligible filter Expressions
+   * @param predicateBuilder   The predicate builder for this scan
    * @return PredicateBuilderResult with pipeline result + filter metadata
    */
   def planWithMetadata(
-      filters: Seq[Expression]
+      filters: Seq[Expression],
+      predicateBuilder: DefaultScanPredicateBuilder
   ): PredicateBuilderResult = {
-    val withStatsDF = obtainAddFileDF()
-    predicateBuilder.applyWithMetadata(withStatsDF, filters)
+    predicateBuilder.applyWithMetadata(withParsedStats, filters)
   }
 }

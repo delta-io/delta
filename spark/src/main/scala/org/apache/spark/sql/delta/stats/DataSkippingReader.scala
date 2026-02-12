@@ -21,10 +21,9 @@ import java.io.Closeable
 
 import scala.collection.mutable.ArrayBuffer
 
-import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -44,7 +43,7 @@ import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
-import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
+import org.apache.spark.unsafe.types.CalendarInterval
 
 /**
  * Used to hold the list of files and scan stats after pruning files using the limit.
@@ -253,27 +252,37 @@ trait DataSkippingReaderBase
         DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
       .toSet.flatMap((exprs: String) => exprs.split(","))
 
-  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
-  private def withStatsInternal0: DataFrame = {
-    DataFiltersBuilderUtils.withParsedStats(allFiles.toDF, statsSchema)
+  // ===================== Snapshot-level Planner =====================
+
+  /**
+   * Snapshot-level [[DefaultScanPlanner]]: owns "allFiles.toDF -> parse stats -> Spark cache".
+   *
+   * Created once per Snapshot (lazy val). Individual scans create a per-scan
+   * [[DefaultScanPredicateBuilder]] and pass it to `planner.planWithMetadata`.
+   */
+  private[delta] lazy val planner: DefaultScanPlanner = createPlanner()
+
+  /**
+   * Creates the Snapshot-level [[DefaultScanPlanner]] backed by
+   * [[Snapshot.dataSource]] which owns the full pipeline:
+   *   loadActions -> state reconstruction -> extract add -> parse stats -> cache
+   */
+  private[delta] def createPlanner(): DefaultScanPlanner = {
+    new DefaultScanPlanner(dataSource = snapshotToScan.dataSource)
   }
-
-  private lazy val withStatsCache =
-    cacheDS(withStatsInternal0, s"Delta Table State with Stats #$version - $redactedPath")
-
-  protected def withStatsInternal: DataFrame = withStatsCache.getDS
 
   /** All files with the statistics column dropped completely. */
   def withNoStats: DataFrame = allFiles.drop("stats")
 
   /**
    * Returns a parsed and cached representation of files with statistics.
-   *
+   * Delegates to the Snapshot-level [[planner]], which owns the
+   * "raw -> parse -> cache" pipeline.
    *
    * @return [[DataFrame]]
    */
   final def withStats: DataFrame = {
-    withStatsInternal
+    planner.withParsedStats
   }
 
   def withStatsDeduplicated: DataFrame = withStats
@@ -553,14 +562,14 @@ trait DataSkippingReaderBase
 
   }
 
-  // ===================== Shared Component Creation =====================
+  // ===================== Per-Scan PredicateBuilder =====================
 
   /**
    * Creates a [[DefaultScanPredicateBuilder]] parameterized with V1-specific
    * context (column mapping, partition-like rewrite, etc.).
    *
-   * Both the predicate builder and planner are shared classes from
-   * [[ScanInterfaces]] -- no V1-specific subclasses needed.
+   * Created per-scan (depends on `dataSkippingType` which varies per call).
+   * The Snapshot-level [[planner]] is reused across scans.
    */
   private[delta] def createPredicateBuilder(
       dataSkippingType: DeltaDataSkippingType
@@ -577,21 +586,6 @@ trait DataSkippingReaderBase
       numOfFilesIfKnown = snapshotToScan.numOfFilesIfKnown,
       clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan),
       rewriteAsPartitionLike = Some(constructDataFilters.rewriteDataFiltersAsPartitionLike)
-    )
-  }
-
-  /**
-   * Creates a [[DefaultScanPlanner]] that composes a [[DefaultScanPredicateBuilder]]
-   * with V1's cached `withStats` DataFrame.
-   *
-   * The planner owns the data source step (obtainAddFileDF).
-   */
-  private[delta] def createPlanner(
-      predicateBuilder: DefaultScanPredicateBuilder
-  ): DefaultScanPlanner = {
-    new DefaultScanPlanner(
-      dataSource = () => withStats,
-      predicateBuilder = predicateBuilder
     )
   }
 
@@ -866,10 +860,9 @@ trait DataSkippingReaderBase
         DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
       }
 
-      // Delegate to shared Planner + PredicateBuilder (parameterized for V1)
+      // Delegate to Snapshot-level planner + per-scan predicate builder
       val predicateBuilder = createPredicateBuilder(dataSkippingType)
-      val planner = createPlanner(predicateBuilder)
-      val result = planner.planWithMetadata(eligibleFilters)
+      val result = planner.planWithMetadata(eligibleFilters, predicateBuilder)
 
       // Convert pipeline result to files
       val statsColumn = if (keepNumRecords) {

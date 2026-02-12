@@ -43,16 +43,55 @@ import org.apache.spark.sql.types.*;
  */
 public class DistributedLogReplayHelper {
 
-  private static final String COMMIT_VERSION_COLUMN = "commitVersion";
-  private static final String ADD_STATS_TO_USE_COL = "add_stats_to_use";
+  // Use the same column names as V1 (DeltaLogFileIndex.COMMIT_VERSION_COLUMN,
+  // Snapshot.ADD_STATS_TO_USE_COL_NAME) so DefaultDataSource works identically.
+  private static final String COMMIT_VERSION_COLUMN =
+      org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN();
+  private static final String ADD_STATS_TO_USE_COL =
+      org.apache.spark.sql.delta.Snapshot.ADD_STATS_TO_USE_COL_NAME();
+
+  /**
+   * Load raw log actions (checkpoint + delta files) as a DataFrame suitable for state
+   * reconstruction. The returned DataFrame has the SingleAction schema plus {@code version} and
+   * {@code add_stats_to_use} columns (same names as V1).
+   *
+   * <p>This is the V2 equivalent of V1's {@code Snapshot.loadActions}. It is consumed by {@link
+   * org.apache.spark.sql.delta.stats.DefaultDataSource} which handles the full state reconstruction
+   * pipeline.
+   *
+   * @param spark SparkSession
+   * @param snapshot Kernel snapshot (must be SnapshotImpl)
+   * @return DataFrame of raw log actions ready for state reconstruction
+   */
+  public static Dataset<Row> loadActionsV2(SparkSession spark, Snapshot snapshot) {
+    if (!(snapshot instanceof SnapshotImpl)) {
+      throw new IllegalArgumentException("Snapshot must be SnapshotImpl to access LogSegment");
+    }
+    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    LogSegment logSegment = snapshotImpl.getLogSegment();
+
+    // Register canonicalizePath UDF (V2's path normalization)
+    spark
+        .udf()
+        .register(
+            "canonicalizePath",
+            (UDF1<String, String>) DistributedLogReplayHelper::canonicalizePath,
+            StringType);
+
+    return loadActions(spark, logSegment);
+  }
 
   /**
    * Performs distributed log replay following V1's Snapshot.stateReconstruction algorithm.
    *
+   * <p><b>Note:</b> For batch scans, prefer {@link #loadActionsV2} + {@link
+   * org.apache.spark.sql.delta.stats.DefaultDataSource} which shares the full pipeline with V1.
+   * This method is retained for streaming use cases.
+   *
    * @param spark SparkSession
    * @param snapshot Kernel snapshot (must be SnapshotImpl)
    * @param numPartitions Number of partitions (default 50, same as V1)
-   * @return Dataset of AddFile rows (final state after log replay)
+   * @return Dataset of SingleAction rows (final state after log replay)
    */
   public static Dataset<Row> stateReconstructionV2(
       SparkSession spark, Snapshot snapshot, int numPartitions) {
@@ -66,10 +105,10 @@ public class DistributedLogReplayHelper {
     LogSegment logSegment = snapshotImpl.getLogSegment();
 
     // Step 1: Load checkpoint and delta files as DataFrame (equivalent to V1's loadActions)
-    Dataset<Row> loadActions = loadActions(spark, logSegment);
+    Dataset<Row> rawActions = loadActions(spark, logSegment);
 
     // Step 2-5: Apply state reconstruction algorithm using shared utils
-    return applyStateReconstructionAlgorithm(spark, loadActions, numPartitions);
+    return applyStateReconstructionAlgorithm(spark, rawActions, numPartitions);
   }
 
   /**
@@ -130,8 +169,7 @@ public class DistributedLogReplayHelper {
     Dataset<org.apache.spark.sql.delta.actions.SingleAction> replayed =
         StateReconstructionUtils.replayPerPartition(reconstructed, noRetention, noRetention);
 
-    // Extract only AddFile actions
-    return replayed.toDF().filter(col("add").isNotNull()).select(col("add"));
+    return replayed.toDF();
   }
 
   /**

@@ -19,7 +19,7 @@ import io.delta.kernel.Snapshot
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
-import org.apache.spark.sql.functions.{col, struct}
+import org.apache.spark.sql.functions.{callUDF, col, struct}
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, MAX, NULL_COUNT, NUM_RECORDS}
@@ -134,50 +134,40 @@ object DataFiltersBuilderV2 {
   }
 
   /**
-   * Creates a [[DefaultScanPlanner]] for V2.
+   * Creates a [[DefaultDataSource]] for V2.
    *
-   * The planner composes a V2-specific data source with the shared
-   * [[DefaultScanPredicateBuilder]].
+   * The data source owns the full pipeline:
+   *   loadActions -> state reconstruction -> extract add -> parse stats
+   * V2 does not cache (one-shot distributed scan).
    *
-   * @param dataSource       Supplier for the AddFile DataFrame
-   *                         (with parsed stats, from log replay)
-   * @param predicateBuilder The predicate builder created by
-   *                         [[createPredicateBuilder]]
-   * @return A [[DefaultScanPlanner]] ready for V2 use
+   * @param loadActions    Supplier for the union of checkpoint + delta files
+   * @param numPartitions  Number of partitions for state reconstruction
+   * @param snapshot       Kernel snapshot (provides table schema for stats)
+   * @return A [[DefaultDataSource]] ready for V2 use
    */
-  def createPlanner(
-      dataSource: () => DataFrame,
-      predicateBuilder: DefaultScanPredicateBuilder): DefaultScanPlanner = {
-    new DefaultScanPlanner(
-      dataSource = dataSource,
-      predicateBuilder = predicateBuilder
+  def createDataSource(
+      loadActions: () => DataFrame,
+      numPartitions: Int,
+      snapshot: Snapshot): DefaultDataSource = {
+    val tableSchema = getSparkTableSchema(snapshot)
+    val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
+    new DefaultDataSource(
+      loadActions = loadActions,
+      numPartitions = numPartitions,
+      canonicalizeUdf = c => callUDF("canonicalizePath", c),
+      statsSchema = statsSchema
+      // V2: no caching, no retention
     )
   }
 
-  // ==================== V2 Helpers (called from Java) ============================================
-
   /**
-   * Creates a V2 data source function: distributed log replay -> unwrap
-   * `{add: struct}` -> parse stats JSON to struct.
+   * Creates a [[DefaultScanPlanner]] for V2.
    *
-   * The returned function is suitable as the `dataSource` parameter for
-   * [[DefaultScanPlanner]].
-   *
-   * @param wrappedDFSupplier Supplier for the wrapped DataFrame
-   *                          (e.g., distributed log replay)
-   * @param snapshot          Kernel snapshot (provides table schema for stats)
-   * @return Function that returns flat AddFile DF with parsed stats
+   * @param dataSource  V2 [[ScanDataSource]] (from [[createDataSource]])
+   * @return A [[DefaultScanPlanner]] ready for V2 use
    */
-  def prepareV2DataSource(
-      wrappedDFSupplier: () => DataFrame,
-      snapshot: Snapshot): () => DataFrame = {
-    val tableSchema = getSparkTableSchema(snapshot)
-    val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
-    () => {
-      val wrappedDF = wrappedDFSupplier()
-      val addFiles = wrappedDF.selectExpr("add.*")
-      DataFiltersBuilderUtils.withParsedStats(addFiles, statsSchema)
-    }
+  def createPlanner(dataSource: ScanDataSource): DefaultScanPlanner = {
+    new DefaultScanPlanner(dataSource = dataSource)
   }
 
   /**
