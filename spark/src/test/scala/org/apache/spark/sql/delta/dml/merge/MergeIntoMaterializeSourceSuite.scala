@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.dml.merge
 
 import scala.collection.mutable
 import scala.concurrent.duration._
@@ -22,6 +22,7 @@ import scala.reflect.ClassTag
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils._
 import org.apache.spark.sql.delta.commands.merge.{MergeIntoMaterializeSourceError, MergeIntoMaterializeSourceErrorType, MergeIntoMaterializeSourceReason, MergeStats}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf

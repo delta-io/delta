@@ -24,6 +24,9 @@ import scala.util.matching.Regex
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.{DELTA_COLLECT_STATS, GENERATED_COLUMN_PARTITION_FILTER_OPTIMIZATION_ENABLED}
 import org.apache.spark.sql.delta.stats.PrepareDeltaScanBase

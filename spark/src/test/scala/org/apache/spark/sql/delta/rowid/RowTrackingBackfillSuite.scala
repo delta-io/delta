@@ -27,6 +27,9 @@ import org.apache.spark.sql.delta.actions.{AddFile, Protocol, TableFeatureProtoc
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableSetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.commands.backfill.{BackfillBatch, BackfillBatchStats, BackfillCommandStats, RowTrackingBackfillBatch, RowTrackingBackfillCommand, RowTrackingBackfillExecutor}
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.util.JsonUtils

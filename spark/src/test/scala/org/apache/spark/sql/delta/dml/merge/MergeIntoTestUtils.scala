@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.dml.merge
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
 import io.delta.tables._
 

@@ -16,9 +16,10 @@
 
 package org.apache.spark.sql.delta.optimize
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.DeltaFileOperations

@@ -19,7 +19,12 @@ package org.apache.spark.sql.delta.cdc
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.columnmapping.DeltaColumnMappingTestUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.deletionvectors.MergePersistentDVDisabled
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -32,16 +37,8 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
 
 
-trait CDCEnabled extends SharedSparkSession {
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set(DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey, "true")
-}
-
-trait MergeCDCMixin extends SharedSparkSession
-  with MergeIntoSQLTestUtils
-  with DeltaColumnMappingTestUtils
-  with DeltaSQLCommandTest
-  with MergePersistentDVDisabled
+// CDCEnabled trait is now in tahoe/cdc/CDCEnabled.scala (shared_test_utilities)
+// MergeCDCMixin trait is now in dml/merge/MergeCDCMixin.scala (dml:shared_test)
 
 /**
  * Tests for MERGE INTO in CDC output mode.

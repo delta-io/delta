@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.columnmapping
 
 import java.io.File
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.{Checkpoints, ColumnMappingTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf

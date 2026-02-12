@@ -20,7 +20,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
-import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestData
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.commons.io.FileUtils
@@ -70,7 +70,7 @@ class DeletionVectorFileSizeSuite extends QueryTest
 
   test("Bin Packing should take the size of existing DVs into account") {
     withTempDir { tempDir =>
-      val source = new File(DeletionVectorsSuite.table1Path)
+      val source = new File(DeletionVectorsTestData.table1Path)
       val target = new File(tempDir, "deleteTest")
 
       // Copy the source table with existing table layout to a temporary directory
