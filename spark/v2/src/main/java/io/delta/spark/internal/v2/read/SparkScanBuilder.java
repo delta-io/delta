@@ -27,7 +27,6 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
-import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -106,8 +105,7 @@ public class SparkScanBuilder
     this.dataFilters = new Filter[0];
 
     // Config: distributed vs local (Kernel-native) scan
-    boolean distributedEnabled =
-        (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.V2_DISTRIBUTED_SCAN_ENABLED());
+    boolean distributedEnabled = true;
 
     if (distributedEnabled) {
       int numPartitions = getNumPartitionsFromOptions(options);
