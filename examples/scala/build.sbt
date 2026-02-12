@@ -18,7 +18,7 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala213 = "2.13.16"
+val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
@@ -43,7 +43,7 @@ def getMajorMinor(version: String): (Int, Int) = {
 }
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
   // TODO: how to run integration tests for multiple Spark versions
-  case (major, minor) if major >= 4 && minor >= 1 => "4.0.1"
+  case (major, minor) if major >= 4 && minor >= 1 => "4.1.0"
   // version 4.0.0
   case (major, minor) if major >= 4 => "4.0.0"
   // versions 3.3.x+
@@ -130,6 +130,15 @@ getSupportIceberg := {
   sys.env.getOrElse("SUPPORT_ICEBERG", "false")
 }
 
+val getSparkVersion = settingKey[String](
+  s"get Spark version override from environment variable SPARK_VERSION. " +
+  s"When set, overrides lookupSparkVersion for Spark SQL/Hive dependencies."
+)
+
+getSparkVersion := {
+  sys.env.getOrElse("SPARK_VERSION", "")
+}
+
 getIcebergSparkRuntimeArtifactName := {
   val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
     getMajorMinor(getDeltaVersion.value)))
@@ -153,21 +162,25 @@ def getLibraryDependencies(
     icebergSparkRuntimeArtifactName: String,
     sparkPackageSuffix: String,
     scalaBinVersion: String,
-    supportIceberg: String): Seq[ModuleID] = {
-  
+    supportIceberg: String,
+    sparkVersionOverride: String): Seq[ModuleID] = {
+
   // Package suffix comes from CrossSparkVersions.scala (single source of truth)
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
   val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
   val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
 
+  // Use SPARK_VERSION env var if set, otherwise fall back to lookupSparkVersion
+  val resolvedSparkVersion = if (sparkVersionOverride.nonEmpty) {
+    sparkVersionOverride
+  } else {
+    lookupSparkVersion.apply(getMajorMinor(deltaVersion))
+  }
+
   val baseDeps = Seq(
     deltaCoreDep,
-    "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-      getMajorMinor(deltaVersion)
-    ),
-    "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
-      getMajorMinor(deltaVersion)
-    ),
+    "org.apache.spark" %% "spark-sql" % resolvedSparkVersion,
+    "org.apache.spark" %% "spark-hive" % resolvedSparkVersion,
     "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
   )
 
@@ -201,7 +214,8 @@ lazy val root = (project in file("."))
       getIcebergSparkRuntimeArtifactName.value,
       getSparkPackageSuffix.value,
       scalaBinaryVersion.value,
-      getSupportIceberg.value),
+      getSupportIceberg.value,
+      getSparkVersion.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
