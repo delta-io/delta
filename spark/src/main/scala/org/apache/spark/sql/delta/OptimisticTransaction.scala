@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, Optional, UUID}
-import java.util.concurrent.TimeUnit.NANOSECONDS
+import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -268,6 +268,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
   // and avoid race conditions between committing and dynamic config changes.
   protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
   protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
+  protected val forcedChecksumValidationInterval =
+    spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL)
+  protected val forcedChecksumValidationMinTimeIntervalMinutes =
+    spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES)
 
   def clock: Clock = deltaLog.clock
 
@@ -278,6 +282,37 @@ trait OptimisticTransactionImpl extends TransactionHelper
   // overhead of those checks in prod or benchmark settings.
   if (!incrementalCommitEnabled || shouldVerifyIncrementalCommit) {
     snapshot.validateChecksum(Map("context" -> "transactionInitialization"))
+  } else if (
+      forcedChecksumValidationInterval >= 0 &&
+      snapshot.version - snapshot.checkpointProvider.version >= forcedChecksumValidationInterval) {
+    val fileToUseForFreshnessCheck = snapshot.checkpointProvider.topLevelFiles
+      .headOption
+      .getOrElse(snapshot.logSegment.deltas.head)
+    // If the table is very fast moving, the checkpoint could much longer than
+    // forcedChecksumValidationInterval to land. To avoid slowing down
+    // such tables, we skip validation if the checkpoint is fresh as per
+    // the modification time.
+    val skipValidationForFastMovingTable = {
+      val checkpointModificationTime = fileToUseForFreshnessCheck.getModificationTime
+      val currentTime = System.currentTimeMillis()
+      val timeGapMillis = Math.max(currentTime - checkpointModificationTime, 0L)
+      // Only force validation if checkpoint is older than the minimum time gap
+      timeGapMillis < MINUTES.toMillis(forcedChecksumValidationMinTimeIntervalMinutes)
+    }
+
+    if (
+      !skipValidationForFastMovingTable
+      ) {
+      snapshot.validateChecksum(
+        Map(
+          "context" -> "forceValidateChecksumDueToStaleCheckpoint::transactionInitialization",
+          "currentVersion" -> snapshot.version.toString,
+          "checkpointVersion" -> snapshot.checkpointProvider.version.toString,
+          "forcedValidationInterval" -> forcedChecksumValidationInterval.toString,
+          "forcedValidationMinTimeGap" -> forcedChecksumValidationMinTimeIntervalMinutes.toString
+        )
+      )
+    }
   }
 
   /** Tracks the appIds that have been seen by this transaction. */
