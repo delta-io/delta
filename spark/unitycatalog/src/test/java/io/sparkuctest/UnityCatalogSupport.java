@@ -128,7 +128,6 @@ public abstract class UnityCatalogSupport {
   public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
   public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
 
-  /** Returns true if using a remote UC server (UC_REMOTE=true). */
   protected static boolean isUCRemoteConfigured() {
     String ucRemote = System.getenv(UC_REMOTE);
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
