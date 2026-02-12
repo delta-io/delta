@@ -338,7 +338,7 @@ class IcebergRESTCatalogPlanningClient(
       if (residual != null && !residual.isEquivalentTo(Expressions.alwaysTrue)) {
         throw new UnsupportedOperationException(
           s"Found FileScanTask with residual: ${residual}. " +
-            s"Only FileScanTasks with no or trivial residual are currently supported.")
+            s"Only FileScanTasks with no or alwaysTrue residual are currently supported.")
       }
 
       val file = task.file()
