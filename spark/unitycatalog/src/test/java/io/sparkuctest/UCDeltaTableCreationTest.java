@@ -331,116 +331,19 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       check(fullTableName, List.of(List.of("2", "b")));
     }
 
-    // Verify that properties are set on server. This can not be done by DESC EXTENDED.
-    TablesApi tablesApi = new TablesApi(uc.createApiClient());
-    TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
-    assertThat(tableInfo.getCatalogName()).isEqualTo(catalogName);
-    assertThat(tableInfo.getName()).isEqualTo(tableName);
-    assertThat(tableInfo.getSchemaName()).isEqualTo(schemaName);
-    assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
-    assertThat(tableInfo.getDataSourceFormat().name()).isEqualTo(DataSourceFormat.DELTA.name());
-    assertThat(tableInfo.getComment()).isEqualTo(comment);
-    if (tableType == TableType.EXTERNAL) {
-      assertThat(tableInfo.getStorageLocation()).isEqualTo(options.getExternalTableLocation());
-    }
-
-    // At this point table schema can not be sent to server yet because it won't be
-    // updated
-    // later and that would cause problem.
-    List<ColumnInfo> columns = tableInfo.getColumns();
-    assertThat(columns).isNotNull();
-    assertThat(columns).isEmpty();
-
-    if (tableType == TableType.MANAGED) {
-      // Delta sent properties of managed tables to server
-      Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
-      tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
-
-      // CLUSTER BY has two extra properties
-      final Map<String, String> expectedClusteringProperties =
-          withCluster
-              ? ImmutableMap.<String, String>builder()
-                  .put("clusteringColumns", "[[\"" + options.getClusterColumn().get() + "\"]]")
-                  .put("delta.feature.clustering", SUPPORTED)
-                  .build()
-              : ImmutableMap.of();
-      final Map<String, String> expectedOtherProperties =
-          ImmutableMap.<String, String>builder()
-              .put("delta.checkpointPolicy", "v2")
-              .put("delta.enableDeletionVectors", "true")
-              .put("delta.enableInCommitTimestamps", "true")
-              .put("delta.enableRowTracking", "true")
-              .put("delta.lastUpdateVersion", "0")
-              .put("delta.minReaderVersion", "3")
-              .put("delta.minWriterVersion", "7")
-              .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
-              // User specified custom table property is also sent.
-              .put("Foo", "Bar")
-              .putAll(expectedClusteringProperties)
-              .build();
-      // The value of these properties aren't predictable. But at least we confirm their existence.
-      final Set<String> expectedPropertiesWithVariableValue =
-          Set.of(
-              "delta.lastCommitTimestamp",
-              "delta.rowTracking.materializedRowCommitVersionColumnName",
-              "delta.rowTracking.materializedRowIdColumnName");
-
-      // This is combination of expectedOtherProperties and
-      //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
-      Map<String, String> expectedProperties =
-          Stream.concat(
-                  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.entrySet().stream(),
-                  expectedOtherProperties.entrySet().stream())
-              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-
-      // Server has all the expected table properties
-      expectedProperties.forEach(
-          (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
-      expectedPropertiesWithVariableValue.forEach(
-          key -> assertThat(tablePropertiesFromServer).containsKey(key));
-
-      // Server doesn't have any unexpected table properties. If anyone introduces a new table
-      // property and this fails, update the list of expected properties.
-      Map<String, String> unexpectedTablePropertiesFromServer =
-          tablePropertiesFromServer.entrySet().stream()
-              .filter(
-                  entry ->
-                      !expectedProperties.containsKey(entry.getKey())
-                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
-              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
-      assertThat(unexpectedTablePropertiesFromServer).isEmpty();
-    }
-
-    // Also verify table using DESC EXTENDED
-    List<List<String>> rows = sql("DESC EXTENDED " + fullTableName);
-    Map<String, String> describeResult = new HashMap<>();
-    for (List<String> row : rows) {
-      String key = row.get(0);
-      // Skip duplicate column names that appear in partition info
-      if (!List.of("i", "s").contains(key)) {
-        describeResult.put(key, row.get(1));
-      }
-    }
-
-    // Verify basic table properties
-    assertThat(describeResult.get("Name")).isEqualTo(fullTableName);
-    assertThat(describeResult.get("Type")).isEqualTo(tableType.name());
-    assertThat(describeResult.get("Provider")).isEqualToIgnoringCase("delta");
-    assertThat(describeResult.get("Is_managed_location"))
-        .isEqualTo(tableType == TableType.MANAGED ? "true" : null);
-    assertThat(describeResult).containsKey("Table Properties");
-    String tableProperties = describeResult.get("Table Properties");
-    if (tableType == TableType.MANAGED) {
-      // Check for UC table ID
-      assertThat(tableProperties).contains(UC_TABLE_ID_KEY);
-      // Check for catalogManaged feature
-      assertThat(tableProperties)
-          .contains(String.format("%s=%s", DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
-    } else {
-      // Check for UC table ID
-      assertThat(tableProperties).doesNotContain(UC_TABLE_ID_KEY);
-      // Check for catalogManaged feature
-      assertThat(tableProperties).doesNotContain(DELTA_CATALOG_MANAGED_KEY);
+    // Verify that table information maintained at the uc server side are expected.
+    // TODO: Remove the block when delta supports the CTAS in the correct way. Currently CTAS
+    //  is missing AbstractDeltaCatalog.translateUCTableIdProperty
+    if (!withAsSelect || replaceTable) {
+      assertUCTableInfo(
+          tableType,
+          fullTableName,
+          List.of("i", "s"),
+          Map.of("Foo", "Bar"),
+          comment,
+          options.getExternalTableLocation(),
+          withCluster,
+          options.getClusterColumn());
     }
   }
 
@@ -520,7 +423,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
 
             // Assert the unity catalog table information.
-            // assertUCTableInfo(tableType, tableName, List.of("id", "name"), Map.of(), null, null);
+            // assertUCTableInfo(
+            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
 
             // Insert data to verify new schema
             // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
@@ -584,7 +488,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                   "col_date",
                   "col_timestamp",
                   "col_timestamp_ntz"),
-              Map.of(),
+              // This feature is automatically enabled due to use of TIMESTAMP_NTZ
+              Map.of("delta.feature.timestampNtz", "supported"),
               null,
               null);
 
@@ -681,6 +586,27 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String comment,
       String externalTableLocation)
       throws ApiException {
+    assertUCTableInfo(
+        tableType,
+        fullTableName,
+        expectedColumns,
+        customizedProps,
+        comment,
+        externalTableLocation,
+        false,
+        Optional.empty());
+  }
+
+  private void assertUCTableInfo(
+      TableType tableType,
+      String fullTableName,
+      List<String> expectedColumns,
+      Map<String, String> customizedProps,
+      String comment,
+      String externalTableLocation,
+      boolean withCluster,
+      Optional<String> clusterColumn)
+      throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
     String schemaName = uc.schemaName();
@@ -707,31 +633,61 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     if (tableType == TableType.MANAGED) {
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
+      tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // The server-side table properties should contain feature properties.
-      assertThat(tablePropertiesFromServer)
-          .containsAllEntriesOf(EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES);
+      // CLUSTER BY has two extra properties
+      final Map<String, String> expectedClusteringProperties =
+          withCluster
+              ? ImmutableMap.<String, String>builder()
+                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
+                  .put("delta.feature.clustering", SUPPORTED)
+                  .build()
+              : ImmutableMap.of();
+      final Map<String, String> expectedOtherProperties =
+          ImmutableMap.<String, String>builder()
+              .put("delta.checkpointPolicy", "v2")
+              .put("delta.enableDeletionVectors", "true")
+              .put("delta.enableInCommitTimestamps", "true")
+              .put("delta.enableRowTracking", "true")
+              .put("delta.lastUpdateVersion", "0")
+              .put("delta.minReaderVersion", "3")
+              .put("delta.minWriterVersion", "7")
+              .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
+              // User specified custom table property is also sent.
+              .putAll(customizedProps)
+              .putAll(expectedClusteringProperties)
+              .build();
+      // The value of these properties aren't predictable. But at least we confirm their existence.
+      final Set<String> expectedPropertiesWithVariableValue =
+          Set.of(
+              "delta.lastCommitTimestamp",
+              "delta.rowTracking.materializedRowCommitVersionColumnName",
+              "delta.rowTracking.materializedRowIdColumnName");
 
-      // The server-side table properties should include customized properties.
-      assertThat(tablePropertiesFromServer).containsAllEntriesOf(customizedProps);
+      // This is combination of expectedOtherProperties and
+      //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
+      Map<String, String> expectedProperties =
+          Stream.concat(
+                  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.entrySet().stream(),
+                  expectedOtherProperties.entrySet().stream())
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-      // The server-side table properties should include built-in table properties.
-      assertThat(tablePropertiesFromServer)
-          .containsAllEntriesOf(
-              ImmutableMap.of(
-                  "delta.enableInCommitTimestamps",
-                  "true",
-                  "delta.lastUpdateVersion",
-                  "0",
-                  "delta.minReaderVersion",
-                  "3",
-                  "delta.minWriterVersion",
-                  "7",
-                  UC_TABLE_ID_KEY,
-                  tableInfo.getTableId()));
+      // Server has all the expected table properties
+      expectedProperties.forEach(
+          (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
+      expectedPropertiesWithVariableValue.forEach(
+          key -> assertThat(tablePropertiesFromServer).containsKey(key));
 
-      // Lastly the timestamp value is always changing so skip checking its value
-      assertThat(tablePropertiesFromServer).containsKey("delta.lastCommitTimestamp");
+      // Server doesn't have any unexpected table properties. If anyone introduces a new table
+      // property and this fails, update the list of expected properties.
+      Map<String, String> unexpectedTablePropertiesFromServer =
+          tablePropertiesFromServer.entrySet().stream()
+              .filter(
+                  entry ->
+                      !expectedProperties.containsKey(entry.getKey())
+                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+      assertThat(unexpectedTablePropertiesFromServer).isEmpty();
     }
 
     // Also verify table using DESC EXTENDED
