@@ -149,6 +149,10 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
                     print("\nSkipping Scala tests in %s\n=====================" % test_class)
                     continue
 
+                if "IcebergCompat" in test_class and support_iceberg != "true":
+                    print("\nSkipping %s (Iceberg not supported for this variant)\n=====================" % test_class)
+                    continue
+
                 try:
                     cmd = ["build/sbt", "runMain example.%s" % test_class]
                     print("\nRunning Scala tests in %s%s\n=====================" % (test_class, label))
