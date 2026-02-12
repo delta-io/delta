@@ -16,7 +16,6 @@
 package io.delta.spark.internal.v2.read;
 
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
-import static org.apache.spark.sql.functions.*;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
@@ -59,23 +58,29 @@ public class DistributedScan implements Scan {
   private final Snapshot snapshot;
 
   /**
-   * Create a DistributedScan with DataFrame-based data skipping.
+   * Create a DistributedScan with DataFrame-based partition pruning and data skipping.
    *
-   * <p>If data skipping filters are provided, this constructor will:
+   * <p>Like V1's {@code getDataSkippedFiles}, this applies both types of filtering on the
+   * distributed log replay DataFrame:
    *
    * <ol>
-   *   <li>Extract AddFile fields from the "add" struct
-   *   <li>Delegate to shared {@code DataFiltersBuilderUtils.applyDataSkipping} (reuses V1 logic:
-   *       parse stats JSON, verifyStatsForFilter, apply filter)
-   *   <li>Re-wrap the results back into the "add" struct for downstream compatibility
+   *   <li><b>Partition pruning</b>: Rewrites partition column references to {@code
+   *       partitionValues.<colName>} via {@code DeltaLog.filterFileList}
+   *   <li><b>Data skipping</b>: Parses stats JSON, applies V1 rewrite logic, df.filter(Column) via
+   *       shared {@code DataFiltersBuilderUtils}
    * </ol>
+   *
+   * <p>All filter splitting and application is delegated to {@link
+   * DataFiltersBuilderV2#applyAllFilters} (Scala), which handles the Java/Scala interop for {@code
+   * DeltaLog.filterFileList}.
    *
    * @param spark Spark session
    * @param dataFrame DataFrame with distributed log replay results (schema: {add: struct})
    * @param snapshot Delta snapshot
    * @param readSchema Read schema
    * @param maintainOrdering Whether to preserve DataFrame ordering (required for streaming)
-   * @param dataSkippingFilters Raw Spark filters for data skipping (empty array = no skipping)
+   * @param pushdownFilters All pushable Spark filters (partition + data), empty = no filtering
+   * @param partitionSchema Partition schema for partition filter rewriting
    */
   public DistributedScan(
       SparkSession spark,
@@ -83,26 +88,18 @@ public class DistributedScan implements Scan {
       Snapshot snapshot,
       StructType readSchema,
       boolean maintainOrdering,
-      Filter[] dataSkippingFilters) {
+      Filter[] pushdownFilters,
+      org.apache.spark.sql.types.StructType partitionSchema) {
     this.spark = spark;
     this.maintainOrdering = maintainOrdering;
     this.snapshot = snapshot;
 
-    // Apply data skipping using shared V1 logic (via DataFiltersBuilderV2 →
-    // DataFiltersBuilderUtils)
-    if (dataSkippingFilters != null && dataSkippingFilters.length > 0) {
-      // Extract flat AddFile fields: {add: {path, stats, ...}} → {path, stats, ...}
-      Dataset<org.apache.spark.sql.Row> addFiles = dataFrame.selectExpr("add.*");
-
-      // Delegate to shared data skipping pipeline (statsSchema + from_json + verifyStats + filter)
-      Dataset<org.apache.spark.sql.Row> filtered =
-          DataFiltersBuilderV2.applyDataSkipping(addFiles, dataSkippingFilters, snapshot, spark);
-
-      // Re-wrap as "add" struct for downstream compatibility
-      this.dataFrame = filtered.select(struct(col("*")).as("add"));
-    } else {
-      this.dataFrame = dataFrame;
-    }
+    // Delegate ALL filtering (partition pruning + data skipping) to shared Scala code.
+    // DataFiltersBuilderV2.applyAllFilters handles: unwrap add struct, split filters,
+    // apply partition pruning (shared utils), apply data skipping (shared utils), re-wrap.
+    this.dataFrame =
+        DataFiltersBuilderV2.applyAllFilters(
+            dataFrame, pushdownFilters, partitionSchema, snapshot, spark);
 
     // Build the scan using Kernel's standard API for delegation (getScanState, getRemainingFilter)
     this.delegateScan = snapshot.getScanBuilder().withReadSchema(readSchema).build();

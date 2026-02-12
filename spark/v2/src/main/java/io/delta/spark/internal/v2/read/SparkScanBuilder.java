@@ -36,8 +36,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * A Spark ScanBuilder implementation for the V2 Delta connector.
  *
  * <p><b>Phase 1 Architecture (aligned with 1DD):</b> Data skipping is performed entirely via
- * DataFrame operations (df.filter), reusing V1's DataFiltersBuilder logic through {@link
- * V2DataSkippingAdapter}. No OpaquePredicate or Kernel-level callbacks are used.
+ * DataFrame operations (df.filter), reusing V1's DataFiltersBuilder logic through shared {@code
+ * DataFiltersBuilderUtils}. No OpaquePredicate or Kernel-level callbacks are used.
  *
  * <p>Flow: pushFilters() → raw Filter[] → DistributedScanBuilder → DistributedScan →
  * DataFiltersBuilderV2 → shared DataFiltersBuilderUtils → df.filter()
@@ -147,11 +147,29 @@ public class SparkScanBuilder
     this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
     this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
 
-    // Phase 1: Pass raw data filters to DistributedScanBuilder.
-    // The full data skipping pipeline (statsSchema + from_json + verifyStatsForFilter + filter)
-    // is handled by shared DataFiltersBuilderUtils, invoked via DataFiltersBuilderV2.
-    if (dataFilterList.size() > 0) {
-      this.distributedScanBuilder.withDataSkippingFilters(dataFilterList.toArray(new Filter[0]));
+    // Phase 1: Pass ALL pushable filters (partition + data) to DistributedScanBuilder.
+    // Like V1's getDataSkippedFiles, both partition pruning and data skipping are applied
+    // on the distributed log replay DataFrame:
+    //   - Partition filters → DeltaLog.filterFileList (rewrite to partitionValues metadata)
+    //   - Data filters → DataFiltersBuilderUtils (statsSchema + from_json + verifyStats + filter)
+    List<Filter> allPushableFilters = new ArrayList<>();
+    allPushableFilters.addAll(dataFilterList);
+    // Also include pure partition filters for partition pruning on the DataFrame
+    for (Filter filter : filters) {
+      String[] refs = filter.references();
+      boolean isPurePartitionFilter =
+          refs != null
+              && refs.length > 0
+              && Arrays.stream(refs)
+                  .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)));
+      if (isPurePartitionFilter && !dataFilterList.contains(filter)) {
+        allPushableFilters.add(filter);
+      }
+    }
+
+    if (allPushableFilters.size() > 0) {
+      this.distributedScanBuilder.withPushdownFilters(
+          allPushableFilters.toArray(new Filter[0]), partitionSchema);
     }
 
     this.dataFilters = dataFilterList.toArray(new Filter[0]);

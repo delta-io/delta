@@ -19,94 +19,91 @@ import io.delta.kernel.Snapshot
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.{AttributeReference, Expression}
+import org.apache.spark.sql.functions.{col, struct}
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, MAX, NULL_COUNT, NUM_RECORDS}
-import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.StructType
 
 /**
- * Thin V2 adapter that creates a Kernel-Snapshot-based StatsProvider, then delegates
- * ALL data skipping logic to the shared [[SharedDataFiltersBuilder]].
+ * Thin V2 adapter. V2-specific logic is limited to:
+ *  1. [[createGetStatColumnFn]] - maps stat paths using simple column paths (no column mapping).
+ *  2. [[resolveFilterExpressions]] - resolves UnresolvedAttribute to AttributeReference.
+ *  3. Kernel Snapshot to Spark schema conversion.
+ *  4. Unwrap/re-wrap the `{add: struct}` nesting from distributed log replay.
  *
- * The only V2-specific code here is:
- *  1. [[createGetStatColumnFn]] - maps StatsColumn paths to DataFrame column references
- *     using simple column paths (no V1 column mapping / physical names).
- *  2. [[resolveFilterExpressions]] - resolves UnresolvedAttribute from translateFilters
- *     to AttributeReference using the table schema, so V1's extractors can match them.
- *
- * Everything else - constructDataFilters, predicate building, stats schema,
- * verifyStatsForFilter, applyDataSkipping - is shared with V1 via
- * [[SharedDataFiltersBuilder]] and [[DataFiltersBuilderUtils]].
+ * Everything else (partition pruning, data skipping, constructDataFilters, verifyStatsForFilter)
+ * is shared with V1 via [[DataFiltersBuilderUtils]].
  */
 object DataFiltersBuilderV2 {
 
   /**
-   * Apply data skipping to a flat AddFile DataFrame (the main entry point).
+   * Apply both partition pruning and data skipping to a wrapped AddFile DataFrame.
    *
-   * Delegates to [[DataFiltersBuilderUtils.applyDataSkipping]] with predicates
-   * built by [[SharedDataFiltersBuilder]] (same constructDataFilters as V1).
+   * V2-specific steps: unwrap {add: struct}, convert Filter[] to resolved Catalyst
+   * expressions, then delegate to shared [[DataFiltersBuilderUtils.applyAllFilters]],
+   * then re-wrap.
    *
-   * @param addFilesDF  Flat AddFile DataFrame with {path, stats (string), ...}
-   * @param filters     Spark V2 filters for data skipping
-   * @param snapshot    Kernel snapshot (provides schema)
-   * @param spark       SparkSession
-   * @return Filtered DataFrame with same schema as input
+   * Called from DistributedScan (Java).
+   *
+   * @param wrappedDF        DataFrame with {add: {path, partitionValues, stats, ...}}
+   * @param allFilters       All pushable Spark filters (partition + data)
+   * @param partitionSchema  Partition schema for partition filter rewriting
+   * @param snapshot         Kernel snapshot (provides table schema)
+   * @param spark            SparkSession
+   * @return Filtered DataFrame with same wrapped schema {add: {...}}
    */
-  def applyDataSkipping(
-      addFilesDF: DataFrame,
-      filters: Array[Filter],
+  def applyAllFilters(
+      wrappedDF: DataFrame,
+      allFilters: Array[Filter],
+      partitionSchema: StructType,
       snapshot: Snapshot,
       spark: SparkSession): DataFrame = {
-    if (filters.isEmpty) return addFilesDF
+    if (allFilters.isEmpty) return wrappedDF
+
+    // V2-specific: unwrap the "add" struct
+    val addFiles = wrappedDF.selectExpr("add.*")
 
     val tableSchema = getSparkTableSchema(snapshot)
     val getStatColumn = createGetStatColumnFn(snapshot, spark)
     val statsProvider = new StatsProvider(getStatColumn)
+    val partitionColumns = partitionSchema.fieldNames.toSeq
 
-    // Convert filters to DataSkippingPredicate using shared V1 constructDataFilters
-    val predicateOpt = convertFiltersInternal(filters, statsProvider, tableSchema, spark)
-    predicateOpt match {
-      case None => addFilesDF
-      case Some(predicate) =>
-        val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
-        DataFiltersBuilderUtils.applyDataSkipping(
-          addFilesDF, predicate, statsSchema, getStatColumn)
+    // V2-specific: convert Filter[] to Catalyst and resolve attributes
+    val filterExprs = allFilters.map(f => DeltaSourceUtils.translateFilters(Array(f)))
+    val resolvedExprs = filterExprs.map(resolveFilterExpressions(_, tableSchema))
+
+    // Shared: split filters
+    val (partitionFilterExprs, dataFilterExprs) =
+      DataFiltersBuilderUtils.splitFilters(resolvedExprs.toSeq, partitionColumns, spark)
+
+    // Shared: build data skipping predicate using V1's constructDataFilters
+    val dataSkippingPredicate = {
+      val builder = new SharedDataFiltersBuilder(spark, statsProvider)
+      val predicates = dataFilterExprs.flatMap(builder(_))
+      if (predicates.isEmpty) None
+      else Some(predicates.reduce { (a, b) =>
+        DataSkippingPredicate(a.expr && b.expr, a.referencedStats ++ b.referencedStats)
+      })
     }
-  }
 
-  /**
-   * Converts Spark V2 Filters to a DataSkippingPredicate.
-   */
-  def convertFiltersToDataSkippingPredicate(
-      filters: Array[Filter],
-      snapshot: Snapshot,
-      spark: SparkSession): Option[DataSkippingPredicate] = {
-    if (filters.isEmpty) return None
-    val tableSchema = getSparkTableSchema(snapshot)
-    val statsProvider = new StatsProvider(createGetStatColumnFn(snapshot, spark))
-    convertFiltersInternal(filters, statsProvider, tableSchema, spark)
-  }
+    val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
 
-  /**
-   * Converts Spark V2 Filters to a Column expression (just the expr part).
-   */
-  def convertFiltersToColumn(
-      filters: Array[Filter],
-      snapshot: Snapshot,
-      spark: SparkSession): Option[Column] = {
-    convertFiltersToDataSkippingPredicate(filters, snapshot, spark).map(_.expr)
+    // Shared: partition pruning + data skipping pipeline
+    val filtered = DataFiltersBuilderUtils.applyAllFilters(
+      addFiles, partitionFilterExprs, dataSkippingPredicate,
+      partitionSchema, statsSchema, getStatColumn)
+
+    // V2-specific: re-wrap as "add" struct
+    filtered.select(struct(col("*")).as("add"))
   }
 
   // ==================== V2-SPECIFIC: StatsProvider creation ======================================
 
   /**
    * Creates the V2-specific getStatColumn function.
-   *
-   * This is the ONLY V2-specific code: it maps StatsColumn paths to DataFrame column
-   * references using simple "stats.{statType}.{columnName}" paths.
-   *
-   * V1 equivalent: DataSkippingReader.getStatsColumnOpt (which handles column mapping).
+   * Maps StatsColumn paths to DataFrame column references using simple paths
+   * (no V1 column mapping / physical names).
    */
   private[stats] def createGetStatColumnFn(
       snapshot: Snapshot,
@@ -130,44 +127,12 @@ object DataFiltersBuilderV2 {
     }
   }
 
-  // ==================== INTERNAL ================================================================
+  // ==================== V2-SPECIFIC: Attribute Resolution ========================================
 
   /**
-   * Convert Spark V2 filters using the shared [[SharedDataFiltersBuilder]] (same as V1).
-   *
-   * Key step: we resolve UnresolvedAttribute to AttributeReference against the table
-   * schema so that V1's SkippingEligibleColumn/SkippingEligibleExpression extractors
-   * can match them. Without resolution, translateFilters produces UnresolvedAttribute
-   * which V1's extractors skip (they check arg.resolved).
-   */
-  private def convertFiltersInternal(
-      filters: Array[Filter],
-      statsProvider: StatsProvider,
-      tableSchema: StructType,
-      spark: SparkSession): Option[DataSkippingPredicate] = {
-    // Step 1: Convert Spark Filters to Catalyst Expressions
-    val expressions = filters.map(f => DeltaSourceUtils.translateFilters(Array(f)))
-
-    // Step 2: Resolve UnresolvedAttribute to AttributeReference using table schema
-    val resolved = expressions.map(resolveFilterExpressions(_, tableSchema))
-
-    // Step 3: Use SharedDataFiltersBuilder (identical to V1's constructDataFilters)
-    val builder = new SharedDataFiltersBuilder(spark, statsProvider)
-    val predicates = resolved.flatMap(builder(_))
-
-    if (predicates.isEmpty) None
-    else Some(predicates.reduce { (a, b) =>
-      DataSkippingPredicate(a.expr && b.expr, a.referencedStats ++ b.referencedStats)
-    })
-  }
-
-  /**
-   * Resolve UnresolvedAttribute references in a Catalyst expression against the table schema.
-   *
-   * DeltaSourceUtils.translateFilters creates UnresolvedAttribute for column references,
-   * but V1's SkippingEligibleColumn extractor requires resolved AttributeReference
-   * (it checks arg.resolved). This method resolves flat column references by looking up
-   * the column name in the table schema.
+   * Resolve UnresolvedAttribute references against the table schema.
+   * DeltaSourceUtils.translateFilters creates UnresolvedAttribute, but V1's
+   * SkippingEligibleColumn requires resolved AttributeReference.
    */
   private def resolveFilterExpressions(
       expr: Expression, tableSchema: StructType): Expression = {
@@ -177,7 +142,7 @@ object DataFiltersBuilderV2 {
         tableSchema.find(_.name.equalsIgnoreCase(name)) match {
           case Some(field) =>
             AttributeReference(field.name, field.dataType, field.nullable)()
-          case None => u // leave unresolved if not found
+          case None => u
         }
     }
   }

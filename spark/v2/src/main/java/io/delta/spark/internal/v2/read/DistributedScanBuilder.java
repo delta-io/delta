@@ -36,14 +36,14 @@ import org.apache.spark.sql.sources.Filter;
  *   <li><b>Log Reading</b>: Spark DataFrames read from _delta_log/ with Kernel providing LogSegment
  *   <li><b>Log Replay</b>: Distributed dedup via repartition + sortWithinPartitions + window (V1
  *       pattern)
- *   <li><b>Data Skipping</b>: V1 DataFiltersBuilderUtils rewrites filters → df.filter() on parsed
- *       stats
+ *   <li><b>Partition Pruning + Data Skipping</b>: V1 shared logic rewrites filters, df.filter() on
+ *       partition values and parsed stats
  *   <li><b>Output</b>: Kernel ColumnarBatch via SparkRow wrapper at collection boundary
  * </ul>
  *
  * <p>Data skipping is purely DataFrame-based — no OpaquePredicate, no row-level callback. Filters
  * are passed as raw Spark {@link Filter} objects and applied by {@link
- * DataFiltersBuilderV2.applyDataSkipping} (which delegates to shared {@code
+ * DataFiltersBuilderV2#applyAllFilters} (which delegates to shared {@code
  * DataFiltersBuilderUtils}).
  */
 public class DistributedScanBuilder implements ScanBuilder {
@@ -54,8 +54,11 @@ public class DistributedScanBuilder implements ScanBuilder {
   private StructType readSchema;
   private boolean maintainOrdering;
 
-  // Phase 1: Raw Spark filters for data skipping — converted to predicates by shared utils
-  private Filter[] dataSkippingFilters;
+  // Phase 1: All pushdown filters (partition + data), applied on the distributed log replay
+  // DataFrame — like V1's getDataSkippedFiles which applies both partition pruning and data
+  // skipping.
+  private Filter[] pushdownFilters;
+  private org.apache.spark.sql.types.StructType partitionSchema;
 
   /**
    * Create a new DistributedScanBuilder.
@@ -72,7 +75,8 @@ public class DistributedScanBuilder implements ScanBuilder {
         DistributedLogReplayHelper.stateReconstructionV2(spark, snapshot, numPartitions);
     this.readSchema = snapshot.getSchema();
     this.maintainOrdering = false;
-    this.dataSkippingFilters = new Filter[0];
+    this.pushdownFilters = new Filter[0];
+    this.partitionSchema = new org.apache.spark.sql.types.StructType();
   }
 
   /**
@@ -95,7 +99,8 @@ public class DistributedScanBuilder implements ScanBuilder {
     this.dataFrame = customDataFrame;
     this.readSchema = snapshot.getSchema();
     this.maintainOrdering = false;
-    this.dataSkippingFilters = new Filter[0];
+    this.pushdownFilters = new Filter[0];
+    this.partitionSchema = new org.apache.spark.sql.types.StructType();
   }
 
   /**
@@ -111,25 +116,32 @@ public class DistributedScanBuilder implements ScanBuilder {
   }
 
   /**
-   * Set data skipping filters to be applied on the log replay DataFrame.
+   * Set pushdown filters (partition + data) to be applied on the log replay DataFrame.
    *
-   * <p>The raw Spark Filters will be converted to data skipping predicates by the shared {@code
-   * DataFiltersBuilderUtils} pipeline (stats schema construction, JSON parsing,
-   * verifyStatsForFilter — all reused from V1).
+   * <p>Like V1's {@code getDataSkippedFiles}, this applies both:
    *
-   * @param filters Spark data filters for data skipping
+   * <ul>
+   *   <li><b>Partition pruning</b>: rewrites partition column refs to {@code
+   *       partitionValues.<colName>} via {@code DeltaLog.filterFileList}
+   *   <li><b>Data skipping</b>: converts data filters to stats-based predicates via the shared
+   *       {@code DataFiltersBuilderUtils} pipeline
+   * </ul>
+   *
+   * @param filters All pushable Spark filters (partition + data)
+   * @param partitionSchema Partition schema for partition filter rewriting
    * @return this builder for chaining
    */
-  public DistributedScanBuilder withDataSkippingFilters(Filter[] filters) {
-    // TODO: how to get rid of Predicate predicate constraint
-    this.dataSkippingFilters = filters;
+  public DistributedScanBuilder withPushdownFilters(
+      Filter[] filters, org.apache.spark.sql.types.StructType partitionSchema) {
+    this.pushdownFilters = filters;
+    this.partitionSchema = partitionSchema;
     return this;
   }
 
   @Override
   public ScanBuilder withFilter(Predicate predicate) {
     // Phase 1: Kernel Predicates are not used for data skipping.
-    // Data skipping is done via df.filter() through withDataSkippingFilters().
+    // Filtering is done via df.filter() through withPushdownFilters().
     return this;
   }
 
@@ -142,7 +154,7 @@ public class DistributedScanBuilder implements ScanBuilder {
   @Override
   public Scan build() {
     return new DistributedScan(
-        spark, dataFrame, snapshot, readSchema, maintainOrdering, dataSkippingFilters);
+        spark, dataFrame, snapshot, readSchema, maintainOrdering, pushdownFilters, partitionSchema);
   }
 
   @Override

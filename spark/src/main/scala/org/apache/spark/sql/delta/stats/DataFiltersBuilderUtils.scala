@@ -22,7 +22,10 @@ import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLite
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
 import org.apache.spark.sql.functions.{col, from_json, lit, substring, to_json}
+import org.apache.spark.sql.catalyst.analysis.{Resolver, UnresolvedAttribute}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaColumnMapping
+import org.apache.spark.sql.delta.DeltaTableUtils.isPredicatePartitionColumnsOnly
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, MAX, NULL_COUNT, NUM_RECORDS}
 import org.apache.spark.sql.types.{DataType, LongType, StringType, StructField, StructType}
@@ -298,7 +301,7 @@ object DataFiltersBuilderUtils {
   def withSerializedStats(df: DataFrame): DataFrame =
     df.withColumn("stats", to_json(col("stats")))
 
-  // ==================== Convenience: Full Pipeline (Steps 1+2+3) ================================
+  // ==================== Convenience: Full Pipeline ===============================================
 
   /**
    * Apply data skipping to a flat AddFile DataFrame (Steps 1+2+3 combined).
@@ -321,6 +324,158 @@ object DataFiltersBuilderUtils {
     val withStats = withParsedStats(addFilesDF, statsSchema)
     val filtered = withStats.where(buildSafeSkippingFilter(predicate, getStatColumn))
     withSerializedStats(filtered)
+  }
+
+  // ==================== Partition Pruning ========================================
+
+  /**
+   * Filters the given [[DataFrame]] by the given `partitionFilters`,
+   * returning those that match.
+   *
+   * This is the canonical implementation, shared by V1 and V2.
+   * `DeltaLog.filterFileList` delegates here.
+   *
+   * @param partitionSchema The partition schema
+   * @param files The active files, with partition value information
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes Path to `partitionValues`, if nested
+   * @param shouldRewritePartitionFilters Whether to rewrite filters
+   *        to be over the AddFile schema
+   * @return Filtered DataFrame
+   */
+  def filterFileList(
+      partitionSchema: StructType,
+      files: DataFrame,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil,
+      shouldRewritePartitionFilters: Boolean = true
+  ): DataFrame = {
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
+    val expr = rewrittenFilters
+      .reduceLeftOption(And)
+      .getOrElse(Literal.TrueLiteral)
+    files.filter(Column(expr))
+  }
+
+  /**
+   * Rewrite the given `partitionFilters` to be used for filtering
+   * partition values.
+   *
+   * Partition columns are stored as keys of a Map type instead of
+   * attributes in the AddFile schema, so we need to explicitly
+   * resolve them here.
+   *
+   * This is the canonical implementation, shared by V1 and V2.
+   * `DeltaLog.rewritePartitionFilters` delegates here.
+   *
+   * @param partitionFilters Filters on the partition columns
+   * @param partitionColumnPrefixes Path to `partitionValues` column
+   */
+  def rewritePartitionFilters(
+      partitionSchema: StructType,
+      resolver: Resolver,
+      partitionFilters: Seq[Expression],
+      partitionColumnPrefixes: Seq[String] = Nil
+  ): Seq[Expression] = {
+    partitionFilters.map(_.transformUp {
+      case a: Attribute =>
+        // Strip backticks for special column names like `a.a`
+        val unquoted = a.name
+          .stripPrefix("`").stripSuffix("`")
+        val partCol = partitionSchema
+          .find(f => resolver(f.name, unquoted))
+        partCol match {
+          case Some(f: StructField) =>
+            val name = DeltaColumnMapping.getPhysicalName(f)
+            Cast(
+              UnresolvedAttribute(
+                partitionColumnPrefixes ++
+                  Seq("partitionValues", name)),
+              f.dataType)
+          case None =>
+            UnresolvedAttribute(
+              partitionColumnPrefixes ++
+                Seq("partitionValues", a.name))
+        }
+    })
+  }
+
+  /**
+   * Apply partition pruning to a flat AddFile DataFrame.
+   *
+   * Convenience wrapper over [[filterFileList]].
+   *
+   * @param addFilesDF           Flat AddFile DataFrame
+   * @param partitionSchema      Partition schema
+   * @param partitionFilterExprs Catalyst expressions for partitions
+   * @return Filtered DataFrame
+   */
+  def applyPartitionPruning(
+      addFilesDF: DataFrame,
+      partitionSchema: StructType,
+      partitionFilterExprs: Seq[Expression]): DataFrame = {
+    if (partitionFilterExprs.isEmpty) addFilesDF
+    else filterFileList(
+      partitionSchema, addFilesDF, partitionFilterExprs)
+  }
+
+  // ==================== Full Pipeline: Partition + Data Skipping =================
+
+  /**
+   * Apply both partition pruning and data skipping to a flat
+   * AddFile DataFrame. Combines:
+   *  1. Partition pruning via [[filterFileList]]
+   *  2. Data skipping via stats-based filtering
+   *
+   * Shared between V1 and V2.
+   *
+   * @param addFilesDF              Flat AddFile DataFrame
+   * @param partitionFilterExprs    Catalyst expressions for partition columns
+   * @param dataSkippingPredicate   DataSkippingPredicate for data columns (None = no data skipping)
+   * @param partitionSchema         Partition schema for partition filter rewriting
+   * @param statsSchema             Schema for parsing JSON stats
+   * @param getStatColumn           Function to resolve StatsColumn to Column
+   * @return Filtered DataFrame with same schema as input
+   */
+  def applyAllFilters(
+      addFilesDF: DataFrame,
+      partitionFilterExprs: Seq[Expression],
+      dataSkippingPredicate: Option[DataSkippingPredicate],
+      partitionSchema: StructType,
+      statsSchema: StructType,
+      getStatColumn: StatsColumn => Option[Column]): DataFrame = {
+    // Step 1: Partition pruning
+    var result = applyPartitionPruning(addFilesDF, partitionSchema, partitionFilterExprs)
+
+    // Step 2: Data skipping
+    dataSkippingPredicate.foreach { predicate =>
+      result = applyDataSkipping(result, predicate, statsSchema, getStatColumn)
+    }
+
+    result
+  }
+
+  /**
+   * Split filter expressions into partition-only and data filters.
+   *
+   * Partition-only: all referenced columns are partition columns.
+   * Data filters: at least one referenced column is NOT a partition column.
+   *
+   * Shared between V1 and V2.
+   */
+  def splitFilters(
+      filterExprs: Seq[Expression],
+      partitionColumns: Seq[String],
+      spark: SparkSession): (Seq[Expression], Seq[Expression]) = {
+    filterExprs.partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
   }
 }
 
@@ -426,7 +581,7 @@ private[stats] class SharedDataFiltersBuilder(
    * Key rules:
    * 1. constructDataFilters(e) must return TRUE unless we can prove e won't return TRUE
    *    for any row the file might contain.
-   * 2. It is unsafe to apply skipping to operators that can return NULL or error for non-NULL inputs.
+   * 2. Unsafe to skip on ops that return NULL or error for non-NULL inputs.
    * 3. NOT is dangerous: Not(constructDataFilters(e)) != constructDataFilters(Not(e)) in general.
    */
   private[stats] def constructDataFilters(

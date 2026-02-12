@@ -1127,12 +1127,8 @@ object DeltaLog extends DeltaLogging {
 
   /**
    * Filters the given [[Dataset]] by the given `partitionFilters`, returning those that match.
-   * @param files The active files in the DeltaLog state, which contains the partition value
-   *              information
-   * @param partitionFilters Filters on the partition columns
-   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
-   * @param shouldRewritePartitionFilters Whether to rewrite `partitionFilters` to be over the
-   *                                      [[AddFile]] schema
+   *
+   * Delegates to [[org.apache.spark.sql.delta.stats.DataFiltersBuilderUtils.filterFileList]].
    */
   def filterFileList(
       partitionSchema: StructType,
@@ -1140,55 +1136,24 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-
-    val rewrittenFilters = if (shouldRewritePartitionFilters) {
-      rewritePartitionFilters(
-        partitionSchema,
-        files.sparkSession.sessionState.conf.resolver,
-        partitionFilters,
-        partitionColumnPrefixes)
-    } else {
-      partitionFilters
-    }
-    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = Column(expr)
-    files.filter(columnFilter)
+    stats.DataFiltersBuilderUtils.filterFileList(
+      partitionSchema, files, partitionFilters,
+      partitionColumnPrefixes, shouldRewritePartitionFilters)
   }
 
   /**
    * Rewrite the given `partitionFilters` to be used for filtering partition values.
-   * We need to explicitly resolve the partitioning columns here because the partition columns
-   * are stored as keys of a Map type instead of attributes in the AddFile schema (below) and thus
-   * cannot be resolved automatically.
    *
-   * @param partitionFilters Filters on the partition columns
-   * @param partitionColumnPrefixes The path to the `partitionValues` column, if it's nested
+   * Delegates to [[stats.DataFiltersBuilderUtils.rewritePartitionFilters]].
    */
   def rewritePartitionFilters(
       partitionSchema: StructType,
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters
-      .map(_.transformUp {
-      case a: Attribute =>
-        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
-        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
-        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
-        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
-        partitionCol match {
-          case Some(f: StructField) =>
-            val name = DeltaColumnMapping.getPhysicalName(f)
-            Cast(
-              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              f.dataType)
-          case None =>
-            // This should not be able to happen, but the case was present in the original code so
-            // we kept it to be safe.
-            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
-            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
-        }
-    })
+    stats.DataFiltersBuilderUtils.rewritePartitionFilters(
+      partitionSchema, resolver, partitionFilters,
+      partitionColumnPrefixes)
   }
 
 
