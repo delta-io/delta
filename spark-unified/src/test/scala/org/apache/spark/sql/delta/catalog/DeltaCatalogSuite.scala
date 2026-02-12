@@ -21,12 +21,13 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import java.io.File
+import java.nio.file.Files
 import java.util.Locale
 
 /**
  * Unit tests for DeltaCatalog's V2 connector routing logic.
  *
- * Verifies that DeltaCatalog correctly routes table loading based on
+ * Verifies that DeltaCatalog correctly routes table loading and creation based on
  * DeltaSQLConf.V2_ENABLE_MODE:
  * - STRICT mode: Kernel's SparkTable (V2 connector)
  * - NONE mode (default): DeltaTableV2 (V1 connector)
@@ -77,6 +78,25 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
           assert(table.getClass == expectedClass,
             s"Mode $mode should return ${expectedClass.getSimpleName} for path-based table")
         }
+      }
+    }
+  }
+
+  test("path-based table with mode=STRICT creates via kernel") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(s"CREATE TABLE delta.`$path` (id INT, name STRING) USING delta")
+
+        // Read the commit JSON and verify it was written by the kernel engine
+        val commitFile = new File(path, "_delta_log/00000000000000000000.json")
+        assert(commitFile.exists(), "Delta log commit file should exist")
+
+        val commitJson = new String(Files.readAllBytes(commitFile.toPath))
+        assert(commitJson.contains(DeltaCatalog.ENGINE_INFO),
+          s"Commit should contain engineInfo '${DeltaCatalog.ENGINE_INFO}' " +
+            s"but was: $commitJson")
       }
     }
   }
