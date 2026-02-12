@@ -69,8 +69,51 @@ def publish_all_variants(root_dir, spark_specs):
             stream_output=True)
 
 
+def get_spark_variants(spark_specs):
+    """
+    Returns a list of test variant dicts from the Spark specs.
+
+    Each variant has: suffix, spark_version, support_iceberg, support_hudi.
+
+    The unsuffixed variant (backward compat) uses DEFAULT's metadata.
+    Each suffixed variant comes directly from the spec.
+    """
+    variants = []
+
+    # Find the default spec for the unsuffixed backward-compat variant
+    default_spec = None
+    for spec in spark_specs:
+        if spec.get("isDefault", False):
+            default_spec = spec
+            break
+    if default_spec is None and spark_specs:
+        default_spec = spark_specs[-1]  # fallback to last spec
+
+    # Unsuffixed variant (backward compat) - uses default's metadata
+    if default_spec:
+        variants.append({
+            "suffix": "",
+            "spark_version": default_spec["fullVersion"],
+            "support_iceberg": default_spec.get("supportIceberg", "false"),
+            "support_hudi": default_spec.get("supportHudi", "false"),
+        })
+
+    # Suffixed variants for each non-master spec
+    for spec in spark_specs:
+        if spec.get("isMaster", False):
+            continue
+        variants.append({
+            "suffix": spec["packageSuffix"],
+            "spark_version": spec["fullVersion"],
+            "support_iceberg": spec.get("supportIceberg", "false"),
+            "support_hudi": spec.get("supportHudi", "false"),
+        })
+
+    return variants
+
+
 def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, scala_version,
-                                use_local):
+                                spark_specs):
     print("\n\n##### Running Scala tests on delta version %s and scala version %s #####"
           % (str(version), scala_version))
 
@@ -78,23 +121,42 @@ def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, 
     test_src_dir = path.join(test_dir, "src", "main", "scala", "example")
     test_classes = [f.replace(".scala", "") for f in os.listdir(test_src_dir)
                     if f.endswith(".scala") and not f.startswith("_")]
-    env = {"DELTA_VERSION": str(version), "SCALA_VERSION": scala_version}
-    if extra_maven_repo:
-        env["EXTRA_MAVEN_REPO"] = extra_maven_repo
-    with WorkingDirectory(test_dir):
-        for test_class in test_classes:
-            if test_name is not None and test_name not in test_class:
-                print("\nSkipping Scala tests in %s\n=====================" % test_class)
-                continue
 
-            try:
-                cmd = ["build/sbt", "runMain example.%s" % test_class]
-                print("\nRunning Scala tests in %s\n=====================" % test_class)
-                print("Command: %s" % " ".join(cmd))
-                run_cmd(cmd, stream_output=True, env=env)
-            except:
-                print("Failed Scala tests in %s" % (test_class))
-                raise
+    variants = get_spark_variants(spark_specs) if spark_specs else [
+        {"suffix": "", "spark_version": "", "support_iceberg": "false", "support_hudi": "false"}
+    ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        spark_version = variant["spark_version"]
+        support_iceberg = variant["support_iceberg"]
+        label = " (suffix=%s, spark=%s)" % (suffix or "none", spark_version) if spark_specs else ""
+        print("\n\n--- Scala variant%s ---" % label)
+
+        env = {"DELTA_VERSION": str(version), "SCALA_VERSION": scala_version}
+        if suffix:
+            env["SPARK_PACKAGE_SUFFIX"] = suffix
+        if spark_version:
+            env["SPARK_VERSION"] = spark_version
+        if support_iceberg == "true":
+            env["SUPPORT_ICEBERG"] = "true"
+        if extra_maven_repo:
+            env["EXTRA_MAVEN_REPO"] = extra_maven_repo
+
+        with WorkingDirectory(test_dir):
+            for test_class in test_classes:
+                if test_name is not None and test_name not in test_class:
+                    print("\nSkipping Scala tests in %s\n=====================" % test_class)
+                    continue
+
+                try:
+                    cmd = ["build/sbt", "runMain example.%s" % test_class]
+                    print("\nRunning Scala tests in %s%s\n=====================" % (test_class, label))
+                    print("Command: %s" % " ".join(cmd))
+                    run_cmd(cmd, stream_output=True, env=env)
+                except:
+                    print("Failed Scala tests in %s%s" % (test_class, label))
+                    raise
 
 
 def get_artifact_name(version):
@@ -105,7 +167,7 @@ def get_artifact_name(version):
     return "spark" if int(version[0]) >= 3 else "core"
 
 
-def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, use_local):
+def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, spark_specs):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
 
     test_dir = path.join(root_dir, path.join("examples", "python"))
@@ -118,25 +180,35 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
-
     repo = extra_maven_repo if extra_maven_repo else ""
 
-    for test_file in test_files:
-        if test_name is not None and test_name not in test_file:
-            print("\nSkipping Python tests in %s\n=====================" % test_file)
-            continue
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--repositories", repo, test_file]
-            print("\nRunning Python tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed Python tests in %s" % (test_file))
-            raise
+    artifact_name = get_artifact_name(version)
+    variants = get_spark_variants(spark_specs) if spark_specs else [
+        {"suffix": "", "spark_version": "", "support_iceberg": "false", "support_hudi": "false"}
+    ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+        package = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
+        print("\n\n--- Python variant%s ---" % label)
+        print("Package: %s" % package)
+
+        for test_file in test_files:
+            if test_name is not None and test_name not in test_file:
+                print("\nSkipping Python tests in %s\n=====================" % test_file)
+                continue
+            try:
+                cmd = ["spark-submit",
+                       "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                       "--packages", package,
+                       "--repositories", repo, test_file]
+                print("\nRunning Python tests in %s%s\n=============" % (test_file, label))
+                print("Command: %s" % " ".join(cmd))
+                run_cmd(cmd, stream_output=True)
+            except:
+                print("Failed Python tests in %s%s" % (test_file, label))
+                raise
 
 
 def test_missing_delta_storage_jar(root_dir, version, use_local):
@@ -159,6 +231,7 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     test_file = path.join(root_dir, path.join("examples", "python", "missing_delta_storage_jar.py"))
     artifact_name = get_artifact_name(version)
+    # Uses unsuffixed artifact name (published via -DskipSparkSuffix=true)
     jar = path.join(
         os.path.expanduser("~/.m2/repository/io/delta/"),
         "delta-%s_2.13" % artifact_name,
@@ -178,7 +251,7 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
 
 
 def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_maven_repo,
-                                            extra_packages, conf, use_local):
+                                            extra_packages, conf, spark_specs):
     print(
         "\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version)
     )
@@ -190,10 +263,6 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
-    packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
-    if extra_packages:
-        packages += "," + extra_packages
 
     conf_args = []
     if conf:
@@ -202,23 +271,39 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
 
     repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
 
-    for test_file in test_files:
-        if test_name is not None and test_name not in test_file:
-            print("\nSkipping DynamoDB logstore integration tests in %s\n============" % test_file)
-            continue
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages] + repo_args + conf_args + [test_file]
-            print("\nRunning DynamoDB logstore integration tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed DynamoDB logstore integration tests tests in %s" % (test_file))
-            raise
+    artifact_name = get_artifact_name(version)
+    variants = get_spark_variants(spark_specs) if spark_specs else [
+        {"suffix": "", "spark_version": "", "support_iceberg": "false", "support_hudi": "false"}
+    ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+        # delta-storage-s3-dynamodb is Spark-independent, no suffix needed
+        packages = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
+        packages += "," + "io.delta:delta-storage-s3-dynamodb:" + version
+        if extra_packages:
+            packages += "," + extra_packages
+
+        print("\n\n--- DynamoDB logstore variant%s ---" % label)
+
+        for test_file in test_files:
+            if test_name is not None and test_name not in test_file:
+                print("\nSkipping DynamoDB logstore integration tests in %s\n============" % test_file)
+                continue
+            try:
+                cmd = ["spark-submit",
+                       "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                       "--packages", packages] + repo_args + conf_args + [test_file]
+                print("\nRunning DynamoDB logstore integration tests in %s%s\n=============" % (test_file, label))
+                print("Command: %s" % " ".join(cmd))
+                run_cmd(cmd, stream_output=True)
+            except:
+                print("Failed DynamoDB logstore integration tests tests in %s%s" % (test_file, label))
+                raise
 
 def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_name, extra_maven_repo,
-                                                extra_packages, conf, use_local):
+                                                extra_packages, conf, spark_specs):
     print(
         "\n\n##### Running DynamoDB Commit Coordinator integration tests on version %s #####" % str(version)
     )
@@ -231,9 +316,6 @@ def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_na
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
-    if extra_packages:
-        packages += "," + extra_packages
 
     conf_args = []
     if conf:
@@ -242,20 +324,34 @@ def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_na
 
     repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
 
-    for test_file in test_files:
-        if test_name is not None and test_name not in test_file:
-            print("\nSkipping DynamoDB Commit Coordinator integration tests in %s\n============" % test_file)
-            continue
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages] + repo_args + conf_args + [test_file]
-            print("\nRunning DynamoDB Commit Coordinator integration tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed DynamoDB Commit Coordinator integration tests in %s" % (test_file))
-            raise
+    artifact_name = get_artifact_name(version)
+    variants = get_spark_variants(spark_specs) if spark_specs else [
+        {"suffix": "", "spark_version": "", "support_iceberg": "false", "support_hudi": "false"}
+    ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+        packages = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
+        if extra_packages:
+            packages += "," + extra_packages
+
+        print("\n\n--- DynamoDB Commit Coordinator variant%s ---" % label)
+
+        for test_file in test_files:
+            if test_name is not None and test_name not in test_file:
+                print("\nSkipping DynamoDB Commit Coordinator integration tests in %s\n============" % test_file)
+                continue
+            try:
+                cmd = ["spark-submit",
+                       "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                       "--packages", packages] + repo_args + conf_args + [test_file]
+                print("\nRunning DynamoDB Commit Coordinator integration tests in %s%s\n=============" % (test_file, label))
+                print("Command: %s" % " ".join(cmd))
+                run_cmd(cmd, stream_output=True)
+            except:
+                print("Failed DynamoDB Commit Coordinator integration tests in %s%s" % (test_file, label))
+                raise
 
 def run_s3_log_store_util_integration_tests():
     print("\n\n##### Running S3LogStoreUtil tests #####")
@@ -274,7 +370,8 @@ def run_s3_log_store_util_integration_tests():
         raise
 
 
-def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, extra_maven_repo, use_local):
+def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version,
+                                  extra_maven_repo, spark_specs):
     print("\n\n##### Running Iceberg tests on version %s #####" % str(version))
 
     test_dir = path.join(root_dir, path.join("iceberg", "integration_tests"))
@@ -285,30 +382,70 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = ','.join([
-        "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version),
-        "io.delta:delta-iceberg_2.13:" + version,
-        "org.apache.iceberg:iceberg-spark-runtime-{}_2.13:{}".format(spark_version, iceberg_version)])
-
     repo = extra_maven_repo if extra_maven_repo else ""
 
-    for test_file in test_files:
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--repositories", repo, test_file]
-            print("\nRunning Iceberg tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed Iceberg tests in %s" % (test_file))
-            raise
+    artifact_name = get_artifact_name(version)
 
-def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_version, extra_maven_repo, use_local):
+    if spark_specs:
+        # Loop over variants where support_iceberg == "true"
+        variants = [v for v in get_spark_variants(spark_specs) if v["support_iceberg"] == "true"]
+        if not variants:
+            print("No Spark variants support Iceberg - skipping Iceberg integration tests")
+            return
+    else:
+        variants = [
+            {"suffix": "", "spark_version": "", "support_iceberg": "true", "support_hudi": "false"}
+        ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+
+        # Use the variant's spark version for iceberg-spark-runtime if available
+        iceberg_spark_ver = spark_version
+        if variant["spark_version"]:
+            parts = variant["spark_version"].split(".")
+            if len(parts) >= 2:
+                iceberg_spark_ver = "%s.%s" % (parts[0], parts[1])
+
+        package = ','.join([
+            "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version),
+            "io.delta:delta-iceberg%s_2.13:%s" % (suffix, version),
+            "org.apache.iceberg:iceberg-spark-runtime-{}_2.13:{}".format(iceberg_spark_ver, iceberg_version)])
+
+        print("\n\n--- Iceberg variant%s ---" % label)
+        print("Package: %s" % package)
+
+        for test_file in test_files:
+            try:
+                cmd = ["spark-submit",
+                       "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                       "--packages", package,
+                       "--repositories", repo, test_file]
+                print("\nRunning Iceberg tests in %s%s\n=============" % (test_file, label))
+                print("Command: %s" % " ".join(cmd))
+                run_cmd(cmd, stream_output=True)
+            except:
+                print("Failed Iceberg tests in %s%s" % (test_file, label))
+                raise
+
+def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_version,
+                                       extra_maven_repo, spark_specs, use_local):
     print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
+    # Build hudi assembly for the Spark version that supports hudi.
+    # Must use the correct -DsparkVersion since hudi is a Spark-dependent module.
     if use_local:
-        run_cmd(["build/sbt", "hudi/assembly"])
+        # Find the first hudi-supporting Spark version from specs
+        hudi_spark_ver = None
+        if spark_specs:
+            for spec in spark_specs:
+                if spec.get("supportHudi", "false") == "true":
+                    hudi_spark_ver = spec["fullVersion"]
+                    break
+        if hudi_spark_ver:
+            run_cmd(["build/sbt", "-DsparkVersion=%s" % hudi_spark_ver, "hudi/assembly"])
+        else:
+            run_cmd(["build/sbt", "hudi/assembly"])
 
     test_dir = path.join(root_dir, path.join("hudi", "integration_tests"))
 
@@ -318,27 +455,53 @@ def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_ve
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    package = ','.join([
-        "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version),
-        "org.apache.hudi:hudi-spark%s-bundle_2.13:%s" % (spark_version, hudi_version)
-    ])
+    # The hudi assembly JAR path uses name.value (no suffix), not moduleName
     jars = path.join(root_dir, "hudi/target/scala-2.13/delta-hudi-assembly_2.13-%s.jar" % (version))
-
     repo = extra_maven_repo if extra_maven_repo else ""
 
-    for test_file in test_files:
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--jars", jars,
-                   "--repositories", repo, test_file]
-            print("\nRunning Uniform Hudi tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed Uniform Hudi tests in %s" % (test_file))
-            raise
+    artifact_name = get_artifact_name(version)
+
+    if spark_specs:
+        # Loop over variants where support_hudi == "true"
+        variants = [v for v in get_spark_variants(spark_specs) if v["support_hudi"] == "true"]
+        if not variants:
+            print("No Spark variants support Hudi - skipping Hudi integration tests")
+            return
+    else:
+        variants = [
+            {"suffix": "", "spark_version": "", "support_iceberg": "false", "support_hudi": "true"}
+        ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+        # Use the variant's Spark version for the Hudi bundle when available
+        hudi_spark_ver = spark_version
+        if variant["spark_version"]:
+            parts = variant["spark_version"].split(".")
+            if len(parts) >= 2:
+                hudi_spark_ver = "%s.%s" % (parts[0], parts[1])
+        package = ','.join([
+            "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version),
+            "org.apache.hudi:hudi-spark%s-bundle_2.13:%s" % (hudi_spark_ver, hudi_version)
+        ])
+
+        print("\n\n--- Hudi variant%s ---" % label)
+        print("Package: %s" % package)
+
+        for test_file in test_files:
+            try:
+                cmd = ["spark-submit",
+                       "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                       "--packages", package,
+                       "--jars", jars,
+                       "--repositories", repo, test_file]
+                print("\nRunning Uniform Hudi tests in %s%s\n=============" % (test_file, label))
+                print("Command: %s" % " ".join(cmd))
+                run_cmd(cmd, stream_output=True)
+            except:
+                print("Failed Uniform Hudi tests in %s%s" % (test_file, label))
+                raise
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
@@ -379,7 +542,8 @@ def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, e
             print("Failed pip installation tests in %s" % (test_file))
             raise
 
-def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, test_name, use_local, extra_packages):
+def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, test_name,
+                                                           spark_specs, extra_packages):
     print(
         "\n\n##### Running Unity Catalog commit coordinator integration tests on version %s #####" % str(version)
     )
@@ -394,24 +558,35 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    packages = "io.delta:delta-%s_2.13:%s" % (get_artifact_name(version), version)
-    if extra_packages:
-        packages += "," + extra_packages
 
-    for test_file in test_files:
-        if test_name is not None and test_name not in test_file:
-            print("\nSkipping Unity Catalog commit coordinator integration tests in %s\n============" % test_file)
-            continue
-        try:
-            cmd = ["spark-submit",
-                   "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", packages] + [test_file]
-            print("\nRunning External uc managed tables integration tests in %s\n=============" % test_file)
-            print("Command: %s" % " ".join(cmd))
-            run_cmd(cmd, stream_output=True)
-        except:
-            print("Failed Unity Catalog commit coordinator integration tests in %s" % (test_file))
-            raise
+    artifact_name = get_artifact_name(version)
+    variants = get_spark_variants(spark_specs) if spark_specs else [
+        {"suffix": "", "spark_version": "", "support_iceberg": "false", "support_hudi": "false"}
+    ]
+
+    for variant in variants:
+        suffix = variant["suffix"]
+        label = " (suffix=%s)" % (suffix or "none") if spark_specs else ""
+        packages = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
+        if extra_packages:
+            packages += "," + extra_packages
+
+        print("\n\n--- Unity Catalog CC variant%s ---" % label)
+
+        for test_file in test_files:
+            if test_name is not None and test_name not in test_file:
+                print("\nSkipping Unity Catalog commit coordinator integration tests in %s\n============" % test_file)
+                continue
+            try:
+                cmd = ["spark-submit",
+                       "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
+                       "--packages", packages] + [test_file]
+                print("\nRunning External uc managed tables integration tests in %s%s\n=============" % (test_file, label))
+                print("Command: %s" % " ".join(cmd))
+                run_cmd(cmd, stream_output=True)
+            except:
+                print("Failed Unity Catalog commit coordinator integration tests in %s%s" % (test_file, label))
+                raise
 
 def clear_artifact_cache():
     print("Clearing Delta artifacts from ivy2 and mvn cache")
@@ -621,6 +796,7 @@ if __name__ == "__main__":
         raise Exception("Cannot specify --use-local with a --version different than in version.sbt")
 
     # When --use-local, publish all artifact variants once upfront
+    spark_specs = None
     if args.use_local:
         spark_specs = load_spark_version_specs(root_dir)
         clear_artifact_cache()
@@ -633,22 +809,23 @@ if __name__ == "__main__":
     if args.run_iceberg_integration_tests:
         run_iceberg_integration_tests(
             root_dir, args.version,
-            args.iceberg_spark_version, args.iceberg_lib_version, args.maven_repo, args.use_local)
+            args.iceberg_spark_version, args.iceberg_lib_version, args.maven_repo, spark_specs)
         quit()
 
     if args.run_uniform_hudi_integration_tests:
         run_uniform_hudi_integration_tests(
-            root_dir, args.version, args.hudi_spark_version, args.hudi_version, args.maven_repo, args.use_local)
+            root_dir, args.version, args.hudi_spark_version, args.hudi_version,
+            args.maven_repo, spark_specs, args.use_local)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
         run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test, args.maven_repo,
-                                                args.packages, args.dbb_conf, args.use_local)
+                                                args.packages, args.dbb_conf, spark_specs)
         quit()
 
     if args.run_dynamodb_commit_coordinator_integration_tests:
         run_dynamodb_commit_coordinator_integration_tests(root_dir, args.version, args.test, args.maven_repo,
-                                                    args.packages, args.dbb_conf, args.use_local)
+                                                    args.packages, args.dbb_conf, spark_specs)
         quit()
 
     if args.s3_log_store_util_only:
@@ -656,17 +833,17 @@ if __name__ == "__main__":
         quit()
 
     if args.unity_catalog_commit_coordinator_integration_tests:
-        run_unity_catalog_commit_coordinator_integration_tests(root_dir, args.version, args.test, args.use_local,
-                                                                args.packages)
+        run_unity_catalog_commit_coordinator_integration_tests(root_dir, args.version, args.test,
+                                                                spark_specs, args.packages)
         quit()
 
     if run_scala:
         run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo,
-                                    args.scala_version, args.use_local)
+                                    args.scala_version, spark_specs)
 
     if run_python:
         run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo,
-                                     args.use_local)
+                                     spark_specs)
 
         test_missing_delta_storage_jar(root_dir, args.version, args.use_local)
 
