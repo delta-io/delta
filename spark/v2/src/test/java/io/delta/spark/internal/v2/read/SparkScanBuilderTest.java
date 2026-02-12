@@ -29,7 +29,6 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.HashSet;
-import java.util.Optional;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.sources.*;
@@ -143,9 +142,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {new Predicate("=", new Column("id"), Literal.ofInt(100))},
         // expected data filters
-        new Filter[] {new EqualTo("id", 100)},
-        // expected kernelScanBuilder.predicate
-        Optional.of(new Predicate("=", new Column("id"), Literal.ofInt(100))));
+        new Filter[] {new EqualTo("id", 100)});
   }
 
   @Test
@@ -158,8 +155,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         new Filter[] {new StringStartsWith("name", "test")}, // expected post-scan filters
         new Filter[] {}, // expected pushed filters
         new Predicate[] {}, // expected pushed kernel predicates
-        new Filter[] {new StringStartsWith("name", "test")}, // expected data filters
-        Optional.empty() // expected kernelScanBuilder.predicate
+        new Filter[] {new StringStartsWith("name", "test")} // expected data filters
         );
   }
 
@@ -181,14 +177,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
           new Predicate(">", new Column("id"), Literal.ofInt(50))
         },
         // expected data filters
-        new Filter[] {new EqualTo("id", 100), new GreaterThan("id", 50)},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "AND",
-                Arrays.asList(
-                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                    new Predicate(">", new Column("id"), Literal.ofInt(50))))));
+        new Filter[] {new EqualTo("id", 100), new GreaterThan("id", 50)});
   }
 
   @Test
@@ -210,9 +199,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {new Predicate("=", new Column("id"), Literal.ofInt(100))},
         // expected data filters
-        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
-        // expected kernelScanBuilder.predicate
-        Optional.of(new Predicate("=", new Column("id"), Literal.ofInt(100))));
+        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")});
   }
 
   @Test
@@ -231,9 +218,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {new Predicate("=", new Column("dep_id"), Literal.ofInt(1))},
         // expected data filters
-        new Filter[] {},
-        // expected kernelScanBuilder.predicate
-        Optional.of(new Predicate("=", new Column("dep_id"), Literal.ofInt(1))));
+        new Filter[] {});
   }
 
   @Test
@@ -247,8 +232,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         new Filter[] {new StringStartsWith("dep_id", "1")}, // expected
         new Filter[] {}, // expected pushed filters
         new Predicate[] {}, // expected pushed kernel predicates
-        new Filter[] {}, // expected data filters
-        Optional.empty() // expected kernelScanBuilder.predicate
+        new Filter[] {} // expected data filters
         );
   }
 
@@ -271,14 +255,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
           new Predicate(">", new Column("dep_id"), Literal.ofInt(1))
         },
         // expected data filters
-        new Filter[] {},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "AND",
-                Arrays.asList(
-                    new Predicate("=", new Column("dep_id"), Literal.ofInt(2)),
-                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+        new Filter[] {});
   }
 
   @Test
@@ -300,9 +277,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {new Predicate("=", new Column("dep_id"), Literal.ofInt(1))},
         // expected data filters
-        new Filter[] {},
-        // expected kernelScanBuilder.predicate
-        Optional.of(new Predicate("=", new Column("dep_id"), Literal.ofInt(1))));
+        new Filter[] {});
   }
 
   @Test
@@ -338,14 +313,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         new Filter[] {
           new EqualTo("id", 100), // data filter, supported
           new StringStartsWith("name", "foo") // data filter, unsupported
-        },
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "AND",
-                Arrays.asList(
-                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+        });
   }
 
   @Test
@@ -369,14 +337,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
                   new Predicate(">", new Column("id"), Literal.ofInt(50))))
         },
         // expected data filters
-        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("id", 50))},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "OR",
-                Arrays.asList(
-                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                    new Predicate(">", new Column("id"), Literal.ofInt(50))))));
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("id", 50))});
   }
 
   @Test
@@ -395,9 +356,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {},
         // expected data filters
-        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
-        // expected kernelScanBuilder.predicate
-        Optional.empty());
+        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))});
   }
 
   @Test
@@ -424,14 +383,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
                   new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))
         },
         // expected data filters
-        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1))},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "OR",
-                Arrays.asList(
-                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+        new Filter[] {new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1))});
   }
 
   /*
@@ -442,7 +394,6 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
    * Expected pushed filters: none (TODO: should be sparkFilterA OR sparkFilterC)
    * Expected pushed kernel predicates: predicateA OR predicateC
    * Expected data filters: none
-   * Expected kernelScanBuilder.predicate: predicateA OR predicateC
    */
   @Test
   public void testPushFilters_mixedORandAND(@TempDir File tempDir) throws Exception {
@@ -475,14 +426,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
                   new Predicate(">", new Column("dep_id"), Literal.ofInt(2))))
         },
         // expected data filters
-        new Filter[] {},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "OR",
-                Arrays.asList(
-                    new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
-                    new Predicate(">", new Column("dep_id"), Literal.ofInt(2))))));
+        new Filter[] {});
   }
 
   @Test
@@ -502,10 +446,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
           new Predicate("NOT", new Predicate("=", new Column("id"), Literal.ofInt(100)))
         },
         // expected data filters
-        new Filter[] {new Not(new EqualTo("id", 100))},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate("NOT", new Predicate("=", new Column("id"), Literal.ofInt(100)))));
+        new Filter[] {new Not(new EqualTo("id", 100))});
   }
 
   @Test
@@ -540,16 +481,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected data filters
         new Filter[] {
           new Not(new And(new EqualTo("id", 100), new GreaterThan("dep_id", 1))),
-        },
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "NOT",
-                new Predicate(
-                    "AND",
-                    Arrays.asList(
-                        new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                        new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))));
+        });
   }
 
   @Test
@@ -568,9 +500,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {},
         // expected data filters
-        new Filter[] {new Not(new And(new EqualTo("id", 100), new StringEndsWith("name", "bar")))},
-        // expected kernelScanBuilder.predicate
-        Optional.empty());
+        new Filter[] {new Not(new And(new EqualTo("id", 100), new StringEndsWith("name", "bar")))});
   }
 
   @Test
@@ -599,16 +529,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
                       new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))
         },
         // expected data filters
-        new Filter[] {new Not(new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1)))},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "NOT",
-                new Predicate(
-                    "OR",
-                    Arrays.asList(
-                        new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                        new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))))));
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new GreaterThan("dep_id", 1)))});
   }
 
   @Test
@@ -629,9 +550,9 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
         // expected pushed kernel predicates
         new Predicate[] {},
         // expected data filters
-        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
-        // expected kernelScanBuilder.predicate
-        Optional.empty());
+        new Filter[] {
+          new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))
+        });
   }
 
   private void checkSupportsPushDownFilters(
@@ -640,8 +561,7 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
       Filter[] expectedPostScanFilters,
       Filter[] expectedPushedFilters,
       Predicate[] expectedPushedKernelPredicates,
-      Filter[] expectedDataFilters,
-      Optional<Predicate> expectedKernelScanBuilderPredicate)
+      Filter[] expectedDataFilters)
       throws Exception {
     Filter[] postScanFilters = builder.pushFilters(inputFilters);
 
@@ -662,9 +582,6 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     assertEquals(
         new HashSet<>(Arrays.asList(expectedDataFilters)),
         new HashSet<>(Arrays.asList(dataFilters)));
-
-    Optional<Predicate> predicateOpt = getKernelScanBuilderPredicate(builder);
-    assertEquals(expectedKernelScanBuilderPredicate, predicateOpt);
   }
 
   private SparkScanBuilder createTestScanBuilder(File tempDir) {
@@ -711,20 +628,6 @@ public class SparkScanBuilderTest extends SparkDsv2TestBase {
     return (Filter[]) field.get(builder);
   }
 
-  private Optional<Predicate> getKernelScanBuilderPredicate(SparkScanBuilder builder)
-      throws Exception {
-    // TODO: replace reflection with other testing manners, possibly Mockito ArgumentCaptor
-    Field field = SparkScanBuilder.class.getDeclaredField("kernelScanBuilder");
-    field.setAccessible(true);
-    Object kernelScanBuilder = field.get(builder);
-
-    Field predicateField = kernelScanBuilder.getClass().getDeclaredField("predicate");
-    predicateField.setAccessible(true);
-    Object raw = predicateField.get(kernelScanBuilder);
-    if (raw == null) {
-      return Optional.empty();
-    }
-    Optional<?> opt = (Optional<?>) raw;
-    return opt.map(Predicate.class::cast);
-  }
+  // Note: getKernelScanBuilderPredicate was removed because Phase 1 design uses df.filter()
+  // for data skipping instead of pushing Kernel Predicates to DistributedScanBuilder.
 }

@@ -16,9 +16,6 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.delta.ClassicColumnConversions._
-import org.apache.spark.sql.delta.stats.DeltaStatistics.{MAX, MIN}
-
 import org.apache.spark.sql.Column
 
 /**
@@ -76,36 +73,45 @@ object DataSkippingPredicateBuilder {
 
 /**
  * Predicate builder for skipping eligible columns.
+ *
+ * NOTE: This class now delegates to DataFiltersBuilderUtils to share code between V1 and V2.
+ * The actual implementation is in DataFiltersBuilderUtils, demonstrating maximum code reuse.
  */
 private [stats] class ColumnPredicateBuilder extends DataSkippingPredicateBuilder {
   def equalTo(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] = {
-    statsProvider.getPredicateWithStatTypesIfExists(colPath, value.expr.dataType, MIN, MAX) {
-      (min, max) => min <= value && value <= max
-    }
+    // Delegate to shared utils (extracted from original V1 implementation)
+    DataFiltersBuilderUtils.equalTo(statsProvider, colPath, value)
   }
 
   def notEqualTo(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
     : Option[DataSkippingPredicate] = {
-    statsProvider.getPredicateWithStatTypesIfExists(colPath, value.expr.dataType, MIN, MAX) {
-      (min, max) => min < value || value < max
-    }
+    // Delegate to shared utils (extracted from original V1 implementation)
+    DataFiltersBuilderUtils.notEqualTo(statsProvider, colPath, value)
   }
 
   def lessThan(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
-    : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatTypeIfExists(colPath, value.expr.dataType, MIN)(_ < value)
+    : Option[DataSkippingPredicate] = {
+    // Delegate to shared utils (extracted from original V1 implementation)
+    DataFiltersBuilderUtils.lessThan(statsProvider, colPath, value)
+  }
 
   def lessThanOrEqual(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
-    : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatTypeIfExists(colPath, value.expr.dataType, MIN)(_ <= value)
+    : Option[DataSkippingPredicate] = {
+    // Delegate to shared utils (extracted from original V1 implementation)
+    DataFiltersBuilderUtils.lessThanOrEqual(statsProvider, colPath, value)
+  }
 
   def greaterThan(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
-    : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatTypeIfExists(colPath, value.expr.dataType, MAX)(_ > value)
+    : Option[DataSkippingPredicate] = {
+    // Delegate to shared utils (extracted from original V1 implementation)
+    DataFiltersBuilderUtils.greaterThan(statsProvider, colPath, value)
+  }
 
   def greaterThanOrEqual(statsProvider: StatsProvider, colPath: Seq[String], value: Column)
-    : Option[DataSkippingPredicate] =
-    statsProvider.getPredicateWithStatTypeIfExists(colPath, value.expr.dataType, MAX)(_ >= value)
+    : Option[DataSkippingPredicate] = {
+    // Delegate to shared utils (extracted from original V1 implementation)
+    DataFiltersBuilderUtils.greaterThanOrEqual(statsProvider, colPath, value)
+  }
 }
 

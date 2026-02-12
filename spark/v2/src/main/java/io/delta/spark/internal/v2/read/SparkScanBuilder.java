@@ -33,8 +33,14 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /**
- * A Spark ScanBuilder implementation that wraps Delta Kernel's ScanBuilder. This allows Spark to
- * use Delta Kernel for reading Delta tables.
+ * A Spark ScanBuilder implementation for the V2 Delta connector.
+ *
+ * <p><b>Phase 1 Architecture (aligned with 1DD):</b> Data skipping is performed entirely via
+ * DataFrame operations (df.filter), reusing V1's DataFiltersBuilder logic through {@link
+ * V2DataSkippingAdapter}. No OpaquePredicate or Kernel-level callbacks are used.
+ *
+ * <p>Flow: pushFilters() → raw Filter[] → DistributedScanBuilder → DistributedScan →
+ * DataFiltersBuilderV2 → shared DataFiltersBuilderUtils → df.filter()
  */
 public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
@@ -89,13 +95,11 @@ public class SparkScanBuilder
     this.pushedKernelPredicates = new Predicate[0];
     this.dataFilters = new Filter[0];
 
-    // POC: Only use DistributedScanBuilder for distributed log replay
     int numPartitions = getNumPartitionsFromOptions(options);
     this.distributedScanBuilder = new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
   }
 
   private int getNumPartitionsFromOptions(CaseInsensitiveStringMap options) {
-    // Default to 50 partitions, can be configured via options
     return Integer.parseInt(options.getOrDefault("numPartitions", "50"));
   }
 
@@ -123,9 +127,6 @@ public class SparkScanBuilder
       if (classification.isKernelSupported) {
         convertedKernelPredicates.add(classification.kernelPredicate.get());
         if (!classification.isPartialConversion) {
-          // Add filter to kernelSupportedFilters if it is fully converted
-          // TODO: add partially converted Spark filter as well
-          // right now we only have the partially converted kernel predicate
           kernelSupportedFilters.add(filter);
         }
       }
@@ -136,16 +137,6 @@ public class SparkScanBuilder
       }
 
       // Collect post-scan filters
-      // Filters with the following characteristics need to be evaluated after delta kernel scan:
-      // 1. filters that are not supported by delta kernel, thus kernel cannot apply them during
-      // scan
-      // 2. filters that are not fully converted to kernel predicates, thus the unconverted part
-      // needs to be evaluated after scan
-      // 3. filters that are data filters, as kernel only evaluate data filter based on min/max
-      // stats, thus need to be evaluated with actual data after scan
-      //
-      // Fully converted partition filters are used to prune partitions during scan. Only the
-      // partitions that satisfy the filters will be scanned, so no need for post-scan evaluation.
       if (!classification.isKernelSupported
           || classification.isPartialConversion
           || classification.isDataFilter) {
@@ -156,16 +147,11 @@ public class SparkScanBuilder
     this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
     this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
 
-    // POC: Push ALL Spark Filters to DistributedScanBuilder via OpaquePredicate
-    // The engine evaluates filters at DataFrame level using V1 connector utilities
-    if (filters.length > 0) {
-      SparkFilterOpaquePredicate sparkOp =
-          new SparkFilterOpaquePredicate(Arrays.asList(filters), partitionColumnSet);
-      // Create OpaquePredicate with empty child expressions
-      // (Spark Filters are self-contained and don't need Kernel expressions)
-      Predicate opaquePredicate = Predicate.opaque(sparkOp, Collections.emptyList());
-      this.distributedScanBuilder =
-          (DistributedScanBuilder) this.distributedScanBuilder.withFilter(opaquePredicate);
+    // Phase 1: Pass raw data filters to DistributedScanBuilder.
+    // The full data skipping pipeline (statsSchema + from_json + verifyStatsForFilter + filter)
+    // is handled by shared DataFiltersBuilderUtils, invoked via DataFiltersBuilderV2.
+    if (dataFilterList.size() > 0) {
+      this.distributedScanBuilder.withDataSkippingFilters(dataFilterList.toArray(new Filter[0]));
     }
 
     this.dataFilters = dataFilterList.toArray(new Filter[0]);
@@ -179,8 +165,7 @@ public class SparkScanBuilder
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    // POC: Only use DistributedScanBuilder with distributed log replay
-    // Apply schema projection to DistributedScanBuilder
+    // Apply schema projection
     distributedScanBuilder =
         (DistributedScanBuilder)
             distributedScanBuilder.withReadSchema(
@@ -210,5 +195,13 @@ public class SparkScanBuilder
 
   StructType getPartitionSchema() {
     return partitionSchema;
+  }
+
+  /** Helper to merge data and partition fields into a single field array. */
+  private StructField[] mergeFields(StructField[] dataFields, StructField[] partitionFields) {
+    StructField[] merged = new StructField[dataFields.length + partitionFields.length];
+    System.arraycopy(dataFields, 0, merged, 0, dataFields.length);
+    System.arraycopy(partitionFields, 0, merged, dataFields.length, partitionFields.length);
+    return merged;
   }
 }

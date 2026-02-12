@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.read;
 
 import static io.delta.kernel.internal.util.Utils.toCloseableIterator;
+import static org.apache.spark.sql.functions.*;
 
 import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
@@ -31,38 +32,50 @@ import java.util.NoSuchElementException;
 import java.util.Optional;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.delta.stats.DataFiltersBuilderV2;
+import org.apache.spark.sql.sources.Filter;
 
 /**
  * Kernel-compatible Scan that uses distributed DataFrame processing.
  *
- * <p><b>Two-Phase Architecture:</b>
+ * <p><b>Phase 1 Architecture (aligned with 1DD):</b>
  *
  * <ol>
- *   <li><b>Log Replay (DataFrame)</b>: Distributed deduplication and sorting of AddFiles
- *   <li><b>Data Skipping (Kernel)</b>: Predicate evaluation in getScanFiles() including
- *       OpaquePredicate callbacks
+ *   <li><b>Log Replay (DataFrame)</b>: Distributed deduplication of AddFiles (already done before
+ *       this class)
+ *   <li><b>Data Skipping (DataFrame)</b>: Parse stats JSON → apply V1 rewrite logic as
+ *       df.filter(Column)
+ *   <li><b>Output</b>: Kernel ColumnarBatch via SparkRow wrapper at collection boundary
  * </ol>
  *
- * <p>This design follows Kernel's OpaquePredicate philosophy: Kernel controls the evaluation flow
- * and calls back to the engine for custom predicate logic.
+ * <p>Data skipping is purely DataFrame-based. No OpaquePredicate, no row-level callback. All
+ * filtering happens via Spark's distributed execution engine (Catalyst optimized).
  */
 public class DistributedScan implements Scan {
   private final Scan delegateScan;
   private final Dataset<org.apache.spark.sql.Row> dataFrame;
   private final SparkSession spark;
   private final boolean maintainOrdering;
-  private final Predicate predicate; // For data skipping
   private final Snapshot snapshot;
 
   /**
-   * Create a DistributedScan.
+   * Create a DistributedScan with DataFrame-based data skipping.
+   *
+   * <p>If data skipping filters are provided, this constructor will:
+   *
+   * <ol>
+   *   <li>Extract AddFile fields from the "add" struct
+   *   <li>Delegate to shared {@code DataFiltersBuilderUtils.applyDataSkipping} (reuses V1 logic:
+   *       parse stats JSON, verifyStatsForFilter, apply filter)
+   *   <li>Re-wrap the results back into the "add" struct for downstream compatibility
+   * </ol>
    *
    * @param spark Spark session
-   * @param dataFrame DataFrame with distributed log replay results (not yet executed - lazy!)
+   * @param dataFrame DataFrame with distributed log replay results (schema: {add: struct})
    * @param snapshot Delta snapshot
    * @param readSchema Read schema
    * @param maintainOrdering Whether to preserve DataFrame ordering (required for streaming)
-   * @param predicate Predicate for data skipping (evaluated per AddFile in getScanFiles)
+   * @param dataSkippingFilters Raw Spark filters for data skipping (empty array = no skipping)
    */
   public DistributedScan(
       SparkSession spark,
@@ -70,79 +83,49 @@ public class DistributedScan implements Scan {
       Snapshot snapshot,
       StructType readSchema,
       boolean maintainOrdering,
-      Predicate predicate) {
+      Filter[] dataSkippingFilters) {
     this.spark = spark;
-    this.dataFrame = dataFrame;
     this.maintainOrdering = maintainOrdering;
-    this.predicate = predicate;
     this.snapshot = snapshot;
-    // Build the scan using Kernel's standard API for delegation
+
+    // Apply data skipping using shared V1 logic (via DataFiltersBuilderV2 →
+    // DataFiltersBuilderUtils)
+    if (dataSkippingFilters != null && dataSkippingFilters.length > 0) {
+      // Extract flat AddFile fields: {add: {path, stats, ...}} → {path, stats, ...}
+      Dataset<org.apache.spark.sql.Row> addFiles = dataFrame.selectExpr("add.*");
+
+      // Delegate to shared data skipping pipeline (statsSchema + from_json + verifyStats + filter)
+      Dataset<org.apache.spark.sql.Row> filtered =
+          DataFiltersBuilderV2.applyDataSkipping(addFiles, dataSkippingFilters, snapshot, spark);
+
+      // Re-wrap as "add" struct for downstream compatibility
+      this.dataFrame = filtered.select(struct(col("*")).as("add"));
+    } else {
+      this.dataFrame = dataFrame;
+    }
+
+    // Build the scan using Kernel's standard API for delegation (getScanState, getRemainingFilter)
     this.delegateScan = snapshot.getScanBuilder().withReadSchema(readSchema).build();
   }
 
   @Override
   public CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine) {
-    // Lazy execution: toLocalIterator() streams data from executors without collecting all
-    // Get the full DataFrame schema (includes "add" struct)
+    // Get the full DataFrame schema
     final io.delta.kernel.types.StructType dataFrameSchema =
         io.delta.spark.internal.v2.utils.SchemaUtils.convertSparkSchemaToKernelSchema(
             dataFrame.schema());
 
+    // Lazy execution: toLocalIterator() streams data from executors without collecting all
     CloseableIterator<org.apache.spark.sql.Row> rowIterator =
         toCloseableIterator(dataFrame.toLocalIterator());
 
-    // If no predicate, return all files
-    if (predicate == null) {
-      return rowIterator.map(
-          sparkRow -> {
-            ColumnarBatch batch = new SparkRowColumnarBatch(sparkRow, dataFrameSchema);
-            return new FilteredColumnarBatch(batch, Optional.empty());
-          });
-    }
-
-    // If predicate exists, evaluate it on each AddFile using evaluateOnAddFile callback
-    return rowIterator
-        .filter(
-            sparkRow -> {
-              // Wrap the Spark row as a Kernel Row
-              Row addFileRow = new SparkRowAsKernelRow(sparkRow, dataFrameSchema);
-
-              // Evaluate the predicate on the AddFile row
-              return evaluatePredicate(predicate, addFileRow);
-            })
-        .map(
-            sparkRow -> {
-              ColumnarBatch batch = new SparkRowColumnarBatch(sparkRow, dataFrameSchema);
-              return new FilteredColumnarBatch(batch, Optional.empty());
-            });
-  }
-
-  /**
-   * Evaluates a predicate on an AddFile row.
-   *
-   * <p>This method handles OpaquePredicate by calling back to the engine's evaluateOnAddFile,
-   * following Kernel's callback pattern for engine-specific predicate evaluation.
-   *
-   * @param predicate the predicate to evaluate
-   * @param addFileRow the AddFile row (wrapped as Kernel Row)
-   * @return true if the file should be included, false otherwise
-   */
-  private boolean evaluatePredicate(Predicate predicate, Row addFileRow) {
-    if (predicate instanceof io.delta.kernel.expressions.OpaquePredicate) {
-      io.delta.kernel.expressions.OpaquePredicate opaque =
-          (io.delta.kernel.expressions.OpaquePredicate) predicate;
-
-      // Kernel calls back to engine for evaluation
-      // Engine evaluates Spark Filters on the AddFile row (partitionValues + stats)
-      Optional<Boolean> result = opaque.getOp().evaluateOnAddFile(addFileRow);
-
-      // If evaluation returns empty, include the file (conservative approach)
-      return result.orElse(true);
-    }
-
-    // TODO: Handle other predicate types
-    // For now, include all files for non-opaque predicates
-    return true;
+    // Simply wrap each Spark Row as Kernel ColumnarBatch — no row-level filtering needed
+    // Data skipping was already applied as df.filter() in the constructor
+    return rowIterator.map(
+        sparkRow -> {
+          ColumnarBatch batch = new SparkRowColumnarBatch(sparkRow, dataFrameSchema);
+          return new FilteredColumnarBatch(batch, Optional.empty());
+        });
   }
 
   @Override
@@ -180,14 +163,11 @@ public class DistributedScan implements Scan {
 
     @Override
     public ColumnVector getColumnVector(int ordinal) {
-      // Return a wrapper that exposes the Spark Row field as a ColumnVector
-      // This is needed for StreamingHelper.getAddFile()
       return new SparkRowFieldAsColumnVector(sparkRow, ordinal, schema);
     }
 
     @Override
     public CloseableIterator<Row> getRows() {
-      // Single row batch - similar to ColumnarBatch.getRows() default implementation
       return new CloseableIterator<Row>() {
         int rowId = 0;
 
@@ -202,7 +182,6 @@ public class DistributedScan implements Scan {
             throw new NoSuchElementException();
           }
           rowId++;
-          // Return full row with "add" struct - StreamingHelper will extract it
           return new SparkRowAsKernelRow(sparkRow, schema);
         }
 
@@ -238,7 +217,7 @@ public class DistributedScan implements Scan {
 
     @Override
     public int getSize() {
-      return 1; // Single row
+      return 1;
     }
 
     @Override
@@ -251,8 +230,6 @@ public class DistributedScan implements Scan {
 
     @Override
     public ColumnVector getChild(int ordinal) {
-      // StructRow.fromStructVector() uses getChild() to access struct fields
-      // Extract the nested struct and return a ColumnVector for the child field
       if (sparkRow.isNullAt(fieldOrdinal)) {
         throw new IllegalStateException("Cannot get child of null struct");
       }
@@ -264,8 +241,6 @@ public class DistributedScan implements Scan {
       return new SparkRowFieldAsColumnVector(nestedStruct, ordinal, nestedSchema);
     }
 
-    // Bridge primitive types to Spark Row
-    // These are needed by ChildVectorBasedRow to access AddFile fields
     @Override
     public boolean getBoolean(int rowId) {
       return sparkRow.getBoolean(fieldOrdinal);
@@ -351,7 +326,6 @@ public class DistributedScan implements Scan {
       return sparkRow.isNullAt(ordinal);
     }
 
-    // Bridge all primitive types to Spark Row
     @Override
     public boolean getBoolean(int ordinal) {
       return sparkRow.getBoolean(ordinal);
@@ -409,14 +383,12 @@ public class DistributedScan implements Scan {
 
     @Override
     public io.delta.kernel.data.MapValue getMap(int ordinal) {
-      // Convert Spark Scala Map to Kernel MapValue
       scala.collection.Map<String, String> scalaMap = sparkRow.getMap(ordinal);
       return new SparkMapAsKernelMapValue(scalaMap);
     }
 
     @Override
     public Row getStruct(int ordinal) {
-      // Get nested struct schema from parent schema
       StructType nestedSchema = null;
       if (schema != null) {
         nestedSchema = (StructType) schema.at(ordinal).getDataType();
@@ -437,7 +409,6 @@ public class DistributedScan implements Scan {
       this.keys = new java.util.ArrayList<>();
       this.values = new java.util.ArrayList<>();
 
-      // Convert Scala Map to Lists
       if (scalaMap != null) {
         scala.collection.Iterator<scala.Tuple2<String, String>> iter = scalaMap.iterator();
         while (iter.hasNext()) {
@@ -464,25 +435,6 @@ public class DistributedScan implements Scan {
     }
   }
 
-  /** Simple ArrayValue implementation for String lists. */
-  private static class StringArrayValue implements io.delta.kernel.data.ArrayValue {
-    private final java.util.List<String> list;
-
-    StringArrayValue(java.util.List<String> list) {
-      this.list = list;
-    }
-
-    @Override
-    public int getSize() {
-      return list.size();
-    }
-
-    @Override
-    public io.delta.kernel.data.ColumnVector getElements() {
-      return new StringColumnVector(list);
-    }
-  }
-
   /** Simple ColumnVector implementation for String lists. */
   private static class StringColumnVector implements io.delta.kernel.data.ColumnVector {
     private final java.util.List<String> list;
@@ -502,9 +454,7 @@ public class DistributedScan implements Scan {
     }
 
     @Override
-    public void close() {
-      // No resources to close
-    }
+    public void close() {}
 
     @Override
     public boolean isNullAt(int rowId) {
@@ -516,7 +466,6 @@ public class DistributedScan implements Scan {
       return list.get(rowId);
     }
 
-    // All other methods throw UnsupportedOperationException
     @Override
     public boolean getBoolean(int rowId) {
       throw new UnsupportedOperationException();

@@ -25,29 +25,26 @@ import io.delta.kernel.types.StructType;
 import java.util.Optional;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.sources.Filter;
 
 /**
  * Kernel-compatible ScanBuilder that uses distributed DataFrame-based log replay.
  *
- * <p><b>Architecture - Separation of Concerns:</b>
+ * <p><b>Phase 1 Architecture (aligned with 1DD):</b>
  *
  * <ul>
- *   <li><b>DataFrame</b>: Responsible for distributed log replay only
- *       <ul>
- *         <li>Deduplication: Resolves AddFile/RemoveFile conflicts
- *         <li>Sorting: Orders files for streaming (when needed)
- *         <li><i>No filtering</i>: All AddFiles are produced
- *       </ul>
- *   <li><b>Kernel Predicate Evaluation</b>: Responsible for data skipping
- *       <ul>
- *         <li>Happens in {@link DistributedScan#getScanFiles()}
- *         <li>Evaluates predicates against AddFile metadata
- *         <li>OpaquePredicate: Kernel calls back to engine for Spark-specific filters
- *       </ul>
+ *   <li><b>Log Reading</b>: Spark DataFrames read from _delta_log/ with Kernel providing LogSegment
+ *   <li><b>Log Replay</b>: Distributed dedup via repartition + sortWithinPartitions + window (V1
+ *       pattern)
+ *   <li><b>Data Skipping</b>: V1 DataFiltersBuilderUtils rewrites filters → df.filter() on parsed
+ *       stats
+ *   <li><b>Output</b>: Kernel ColumnarBatch via SparkRow wrapper at collection boundary
  * </ul>
  *
- * <p>This design aligns with Kernel's philosophy where OpaquePredicate serves as a callback
- * mechanism for engine-specific predicate evaluation, rather than as a data container.
+ * <p>Data skipping is purely DataFrame-based — no OpaquePredicate, no row-level callback. Filters
+ * are passed as raw Spark {@link Filter} objects and applied by {@link
+ * DataFiltersBuilderV2.applyDataSkipping} (which delegates to shared {@code
+ * DataFiltersBuilderUtils}).
  */
 public class DistributedScanBuilder implements ScanBuilder {
   private final SparkSession spark;
@@ -55,8 +52,10 @@ public class DistributedScanBuilder implements ScanBuilder {
   private final int numPartitions;
   private Dataset<org.apache.spark.sql.Row> dataFrame;
   private StructType readSchema;
-  private boolean maintainOrdering; // Whether to preserve DataFrame order
-  private Predicate predicate; // Predicate for data skipping (evaluated in Scan)
+  private boolean maintainOrdering;
+
+  // Phase 1: Raw Spark filters for data skipping — converted to predicates by shared utils
+  private Filter[] dataSkippingFilters;
 
   /**
    * Create a new DistributedScanBuilder.
@@ -69,15 +68,11 @@ public class DistributedScanBuilder implements ScanBuilder {
     this.spark = spark;
     this.snapshot = snapshot;
     this.numPartitions = numPartitions;
-
-    // Initialize DataFrame with distributed log replay (no filtering, only deduplication)
     this.dataFrame =
         DistributedLogReplayHelper.stateReconstructionV2(spark, snapshot, numPartitions);
-
-    // Start with full schema
     this.readSchema = snapshot.getSchema();
-    this.maintainOrdering = false; // Default: no ordering guarantee
-    this.predicate = null; // No predicate by default
+    this.maintainOrdering = false;
+    this.dataSkippingFilters = new Filter[0];
   }
 
   /**
@@ -99,8 +94,8 @@ public class DistributedScanBuilder implements ScanBuilder {
     this.numPartitions = numPartitions;
     this.dataFrame = customDataFrame;
     this.readSchema = snapshot.getSchema();
-    this.maintainOrdering = false; // Default: no ordering guarantee
-    this.predicate = null;
+    this.maintainOrdering = false;
+    this.dataSkippingFilters = new Filter[0];
   }
 
   /**
@@ -115,29 +110,43 @@ public class DistributedScanBuilder implements ScanBuilder {
     return this;
   }
 
+  /**
+   * Set data skipping filters to be applied on the log replay DataFrame.
+   *
+   * <p>The raw Spark Filters will be converted to data skipping predicates by the shared {@code
+   * DataFiltersBuilderUtils} pipeline (stats schema construction, JSON parsing,
+   * verifyStatsForFilter — all reused from V1).
+   *
+   * @param filters Spark data filters for data skipping
+   * @return this builder for chaining
+   */
+  public DistributedScanBuilder withDataSkippingFilters(Filter[] filters) {
+    // TODO: how to get rid of Predicate predicate constraint
+    this.dataSkippingFilters = filters;
+    return this;
+  }
+
   @Override
   public ScanBuilder withFilter(Predicate predicate) {
-    // Store the predicate for evaluation in DistributedScan.getScanFiles()
-    // DataFrame only does log replay (deduplication + sorting), no filtering
-    this.predicate = predicate;
+    // Phase 1: Kernel Predicates are not used for data skipping.
+    // Data skipping is done via df.filter() through withDataSkippingFilters().
     return this;
   }
 
   @Override
   public ScanBuilder withReadSchema(StructType readSchema) {
     this.readSchema = readSchema;
-    // Schema projection will be handled when converting to PartitionedFiles
     return this;
   }
 
   @Override
   public Scan build() {
-    return new DistributedScan(spark, dataFrame, snapshot, readSchema, maintainOrdering, predicate);
+    return new DistributedScan(
+        spark, dataFrame, snapshot, readSchema, maintainOrdering, dataSkippingFilters);
   }
 
   @Override
   public PaginatedScan buildPaginated(long maxFilesPerBatch, Optional<Row> previousPageToken) {
-    // Paginated scan not yet supported in distributed mode
     throw new UnsupportedOperationException(
         "Paginated scan is not yet supported with distributed log replay");
   }

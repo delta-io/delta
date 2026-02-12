@@ -219,32 +219,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   /**
    * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
-   * Uses Kernel API (ScanBuilder/Scan) with distributed log replay.
+   *
+   * <p>Uses the kernelScan that was built in SparkScanBuilder (with data skipping filters already
+   * applied as df.filter). The scan's getScanFiles() returns already-filtered AddFile rows.
    */
   private void planScanFiles() {
-    SparkSession spark = SparkSession.active();
     final String tablePath = getTablePath();
     final Engine engine = DefaultEngine.create(hadoopConf);
 
-    // Get number of partitions from config
-    int numPartitions =
-        spark
-            .conf()
-            .getOption("spark.databricks.delta.v2.distributedLogReplay.numPartitions")
-            .map(Integer::parseInt)
-            .getOrElse(() -> 50);
-
-    // Step 1: Use Kernel API - create ScanBuilder
-    io.delta.kernel.ScanBuilder scanBuilder =
-        new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
-
-    // Step 2: Build scan using Kernel API
-    io.delta.kernel.Scan scan = scanBuilder.build();
-
-    // Step 3: Get scan files using Kernel API (lazy iterator)
-    // Use flatMap to flatten nested iterators - cleaner than nested loops
+    // Use the kernelScan that was built in SparkScanBuilder.build()
+    // This DistributedScan already has data skipping filters applied as df.filter()
     try (io.delta.kernel.utils.CloseableIterator<io.delta.kernel.data.Row> addFileRows =
-        scan.getScanFiles(engine).flatMap(batch -> batch.getRows())) {
+        kernelScan.getScanFiles(engine).flatMap(batch -> batch.getRows())) {
 
       while (addFileRows.hasNext()) {
         io.delta.kernel.data.Row dataFrameRow = addFileRows.next();

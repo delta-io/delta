@@ -30,36 +30,24 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.api.java.UDF1;
+import org.apache.spark.sql.delta.StateReconstructionUtils;
 import org.apache.spark.sql.types.*;
 
 /**
- * Helper class to perform distributed log replay using Spark DataFrame API, **EXACTLY following V1
- * Snapshot.stateReconstruction algorithm**.
+ * Helper class to perform distributed log replay using Spark DataFrame API, following the same
+ * algorithm as V1's Snapshot.stateReconstruction.
  *
- * <p>V1 Algorithm (Snapshot.scala:467-521): ======================================== loadActions //
- * Load checkpoint + deltas .withColumn("add_path_canonical", ...) // Canonicalize paths
- * .withColumn("remove_path_canonical", ...) .repartition(numPartitions, coalesce(add_path,
- * remove_path)) // Partition by path .sortWithinPartitions(commitVersion) // Sort by version within
- * each partition .mapPartitions { iter => // Apply InMemoryLogReplay per partition val replay = new
- * InMemoryLogReplay(...) replay.append(0, iter) replay.checkpoint // Get final state }
- *
- * <p>This implementation replicates the same algorithm for V2 connector.
+ * <p>The core state reconstruction steps (canonicalize paths, repartition+sort, reconstruct
+ * structs) are shared with V1 via {@link StateReconstructionUtils}. V2 uses window-function-based
+ * deduplication instead of V1's InMemoryLogReplay mapPartitions.
  */
 public class DistributedLogReplayHelper {
 
   private static final String COMMIT_VERSION_COLUMN = "commitVersion";
-  private static final String ADD_PATH_CANONICAL_COL = "add_path_canonical";
-  private static final String REMOVE_PATH_CANONICAL_COL = "remove_path_canonical";
   private static final String ADD_STATS_TO_USE_COL = "add_stats_to_use";
 
   /**
-   * Performs distributed log replay **EXACTLY following V1's Snapshot.stateReconstruction**.
-   *
-   * <p>V1 Reference: spark/src/main/scala/org/apache/spark/sql/delta/Snapshot.scala:467-521
-   *
-   * <p>Algorithm: 1. loadActions - Load checkpoint + delta files as DataFrame 2. Add canonical path
-   * columns 3. repartition(numPartitions, coalesce(add_path_canonical, remove_path_canonical)) 4.
-   * sortWithinPartitions(commitVersion) 5. mapPartitions with InMemoryLogReplay
+   * Performs distributed log replay following V1's Snapshot.stateReconstruction algorithm.
    *
    * @param spark SparkSession
    * @param snapshot Kernel snapshot (must be SnapshotImpl)
@@ -80,12 +68,8 @@ public class DistributedLogReplayHelper {
     // Step 1: Load checkpoint and delta files as DataFrame (equivalent to V1's loadActions)
     Dataset<Row> loadActions = loadActions(spark, logSegment);
 
-    // Step 2-5: Apply V1's stateReconstruction algorithm
-    Dataset<Row> stateReconstructed =
-        applyStateReconstructionAlgorithm(
-            spark, loadActions, logSegment.getVersion(), numPartitions, snapshotImpl.getMetadata());
-
-    return stateReconstructed;
+    // Step 2-5: Apply state reconstruction algorithm using shared utils
+    return applyStateReconstructionAlgorithm(spark, loadActions, numPartitions);
   }
 
   /**
@@ -109,24 +93,16 @@ public class DistributedLogReplayHelper {
   }
 
   /**
-   * Apply V1's stateReconstruction algorithm exactly.
+   * Apply state reconstruction using shared StateReconstructionUtils.
    *
-   * <p>V1 Code (Snapshot.scala:467-521): ----------------------------------- loadActions
-   * .withColumn(ADD_PATH_CANONICAL_COL_NAME, when(...)) .withColumn(REMOVE_PATH_CANONICAL_COL_NAME,
-   * when(...)) .repartition(getNumPartitions, coalesce(add_path, remove_path))
-   * .sortWithinPartitions(COMMIT_VERSION_COLUMN) .withColumn("add", when(...)) // Reconstruct add
-   * struct with canonical path .withColumn("remove", when(...)) .as[SingleAction] .mapPartitions {
-   * iter => val replay = new InMemoryLogReplay(...) replay.append(0, iter.map(_.unwrap))
-   * replay.checkpoint.map(_.wrap) }
+   * <p>Steps 2-4 (canonicalize paths, repartition+sort, reconstruct structs) are delegated to the
+   * shared {@link StateReconstructionUtils#canonicalizeRepartitionAndReconstruct}. Step 5
+   * (deduplication) uses InMemoryLogReplay via {@link StateReconstructionUtils#replayPerPartition}.
    */
   private static Dataset<Row> applyStateReconstructionAlgorithm(
-      SparkSession spark,
-      Dataset<Row> loadActions,
-      long version,
-      int numPartitions,
-      io.delta.kernel.internal.actions.Metadata metadata) {
+      SparkSession spark, Dataset<Row> loadActions, int numPartitions) {
 
-    // Register canonicalizePath UDF (same as V1's canonicalPath UDF)
+    // Register canonicalizePath UDF (V2's path normalization)
     spark
         .udf()
         .register(
@@ -134,58 +110,28 @@ public class DistributedLogReplayHelper {
             (UDF1<String, String>) DistributedLogReplayHelper::canonicalizePath,
             StringType);
 
-    // Step 1: Add canonical path columns (V1: lines 485-488)
-    Dataset<Row> withCanonicalPaths =
-        loadActions
-            .withColumn(
-                ADD_PATH_CANONICAL_COL,
-                when(col("add.path").isNotNull(), callUDF("canonicalizePath", col("add.path"))))
-            .withColumn(
-                REMOVE_PATH_CANONICAL_COL,
-                when(
-                    col("remove.path").isNotNull(),
-                    callUDF("canonicalizePath", col("remove.path"))));
-
-    // Step 2: Repartition by path (V1: lines 489-491)
-    Dataset<Row> repartitioned =
-        withCanonicalPaths
-            .repartition(
-                numPartitions,
-                coalesce(col(ADD_PATH_CANONICAL_COL), col(REMOVE_PATH_CANONICAL_COL)))
-            .sortWithinPartitions(COMMIT_VERSION_COLUMN);
-
-    // Step 3: Reconstruct add/remove with canonical paths (V1: lines 493-510)
+    // Steps 2-4: Shared with V1 via StateReconstructionUtils
     Dataset<Row> reconstructed =
-        repartitioned
-            .withColumn(
-                "add",
-                when(
-                    col("add.path").isNotNull(),
-                    struct(
-                        col(ADD_PATH_CANONICAL_COL).as("path"),
-                        col("add.partitionValues"),
-                        col("add.size"),
-                        col("add.modificationTime"),
-                        col("add.dataChange"),
-                        col(ADD_STATS_TO_USE_COL).as("stats"), // V1 uses this for stats selection
-                        col("add.tags"),
-                        col("add.deletionVector"),
-                        col("add.baseRowId"),
-                        col("add.defaultRowCommitVersion"),
-                        col("add.clusteringProvider"))))
-            .withColumn(
-                "remove",
-                when(
-                    col("remove.path").isNotNull(),
-                    col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL))));
+        StateReconstructionUtils.canonicalizeRepartitionAndReconstruct(
+            loadActions,
+            numPartitions,
+            c -> callUDF("canonicalizePath", c),
+            COMMIT_VERSION_COLUMN,
+            ADD_STATS_TO_USE_COL);
 
-    // Step 4: Apply InMemoryLogReplay per partition (V1: lines 511-519)
-    // This is the key distributed processing step!
-    Dataset<Row> replayed = applyInMemoryLogReplayPerPartition(spark, reconstructed, metadata);
+    // Step 5: Apply InMemoryLogReplay per partition (same as V1).
+    // InMemoryLogReplay correctly handles:
+    //   - (path, deletionVector.uniqueId) as primary key (not just path)
+    //   - Add/Remove reconciliation
+    //   - Tombstone expiry
+    //   - SetTransaction / Protocol / Metadata dedup
+    // V2 uses None for retention timestamps (keeps all tombstones).
+    scala.Option<Object> noRetention = scala.Option.empty();
+    Dataset<org.apache.spark.sql.delta.actions.SingleAction> replayed =
+        StateReconstructionUtils.replayPerPartition(reconstructed, noRetention, noRetention);
 
-    // Step 5: Extract only AddFile actions (V1 returns wrapped SingleActions, we extract adds)
-    // V1 Code: stateDS.where("add IS NOT NULL").select(col("add").as[AddFile])
-    return replayed.filter(col("add").isNotNull()).select(col("add"));
+    // Extract only AddFile actions
+    return replayed.toDF().filter(col("add").isNotNull()).select(col("add"));
   }
 
   /**
@@ -207,46 +153,6 @@ public class DistributedLogReplayHelper {
     } catch (URISyntaxException e) {
       return path.trim(); // fallback
     }
-  }
-
-  /**
-   * Apply InMemoryLogReplay per partition (V1's mapPartitions logic).
-   *
-   * <p>V1 Code (Snapshot.scala:512-519): ---------------------------------- .mapPartitions { iter
-   * => val state: LogReplay = new InMemoryLogReplay(...) state.append(0, iter.map(_.unwrap))
-   * state.checkpoint.map(_.wrap) }
-   *
-   * <p>This performs distributed log replay: each partition independently processes its actions
-   * through InMemoryLogReplay.
-   */
-  private static Dataset<Row> applyInMemoryLogReplayPerPartition(
-      SparkSession spark,
-      Dataset<Row> actions,
-      io.delta.kernel.internal.actions.Metadata metadata) {
-
-    // In V1, this uses .mapPartitions with InMemoryLogReplay
-    // For V2, we need to simulate this with groupBy + last (simpler approach)
-    // OR we could use mapPartitions with Kernel's InMemoryLogReplay
-
-    // **Use window function to keep last action per file** (equivalent to InMemoryLogReplay
-    // HashMap)
-    // V1: within each partition, actions are sorted by commitVersion,
-    // and HashMap overwrites earlier versions with later ones
-    //
-    // SQL equivalent: use row_number() OVER (PARTITION BY path ORDER BY commitVersion DESC)
-    // and keep only row_number == 1
-    Dataset<Row> withRowNum =
-        actions.withColumn(
-            "row_num",
-            row_number()
-                .over(
-                    org.apache.spark.sql.expressions.Window.partitionBy(
-                            coalesce(col(ADD_PATH_CANONICAL_COL), col(REMOVE_PATH_CANONICAL_COL)))
-                        .orderBy(col(COMMIT_VERSION_COLUMN).desc())));
-
-    return withRowNum
-        .filter(col("row_num").equalTo(lit(1)))
-        .select("add", "remove", COMMIT_VERSION_COLUMN);
   }
 
   /**
@@ -324,65 +230,6 @@ public class DistributedLogReplayHelper {
         .drop("_input_file");
   }
 
-  /**
-   * Perform distributed log replay using mapPartitions (similar to V1).
-   *
-   * <p>Process: 1. Repartition by file path (canonical) 2. Sort within partitions by commit version
-   * 3. Apply log replay logic in each partition (keep latest action per file)
-   */
-  private static Dataset<Row> performDistributedReplay(
-      SparkSession spark, Dataset<Row> allActions, long snapshotVersion, int numPartitions) {
-
-    // Register canonicalize path UDF (simple version - can be enhanced)
-    spark
-        .udf()
-        .register(
-            "canonicalizePath",
-            (UDF1<String, String>)
-                path -> {
-                  if (path == null) return null;
-                  // Simple canonicalization - can be enhanced with actual path normalization
-                  return path.trim().toLowerCase();
-                },
-            StringType);
-
-    // Add canonical path columns for add and remove actions
-    Dataset<Row> withCanonicalPaths =
-        allActions
-            .withColumn(
-                "add_path_canonical",
-                when(col("add.path").isNotNull(), callUDF("canonicalizePath", col("add.path"))))
-            .withColumn(
-                "remove_path_canonical",
-                when(
-                    col("remove.path").isNotNull(),
-                    callUDF("canonicalizePath", col("remove.path"))));
-
-    // Repartition by path (for distributed deduplication)
-    // Sort within partitions by commit version (older first)
-    Dataset<Row> repartitioned =
-        withCanonicalPaths
-            .repartition(
-                numPartitions, coalesce(col("add_path_canonical"), col("remove_path_canonical")))
-            .sortWithinPartitions("commitVersion");
-
-    // Apply log replay logic: keep only the latest action per file
-    // We can use Spark SQL window functions or groupBy + last
-    Dataset<Row> replayed =
-        repartitioned
-            .groupBy(
-                coalesce(col("add_path_canonical"), col("remove_path_canonical")).as("file_path"))
-            .agg(
-                last("add", true).as("add"),
-                last("remove", true).as("remove"),
-                last("commitVersion").as("commitVersion"));
-
-    // Filter to only keep add files (remove means file is deleted)
-    Dataset<Row> addFiles = replayed.filter(col("add").isNotNull()).select(col("add.*"));
-
-    return addFiles;
-  }
-
   /** Extract delta version from file path (e.g., "00000000000000000123.json" -> 123) */
   private static Long extractDeltaVersion(String filePath) {
     String fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
@@ -396,142 +243,19 @@ public class DistributedLogReplayHelper {
   }
 
   /**
-   * Define Delta's SingleAction schema for reading JSON files. This is a simplified version -
-   * should match Delta's actual schema.
+   * Get Delta's SingleAction schema for reading log files (JSON deltas and Parquet checkpoints).
+   *
+   * <p>Uses V1's {@code Action.logSchema} which is auto-derived from the SingleAction case class,
+   * ensuring the schema stays in sync with the actual action definitions (including all fields like
+   * deletionVector.maxRowIndex, etc.).
    */
   private static StructType getSingleActionSchema() {
-    return new StructType()
-        .add(
-            "add",
-            new StructType()
-                .add("path", StringType, false)
-                .add("partitionValues", createMapType(StringType, StringType, true), true)
-                .add("size", LongType, false)
-                .add("modificationTime", LongType, false)
-                .add("dataChange", BooleanType, false)
-                .add("stats", StringType, true) // JSON string
-                .add("tags", createMapType(StringType, StringType, true), true)
-                .add(
-                    "deletionVector",
-                    new StructType()
-                        .add("storageType", StringType, true)
-                        .add("pathOrInlineDv", StringType, true)
-                        .add("offset", IntegerType, true)
-                        .add("sizeInBytes", IntegerType, true)
-                        .add("cardinality", LongType, true),
-                    true)
-                .add("baseRowId", LongType, true)
-                .add("defaultRowCommitVersion", LongType, true)
-                .add("clusteringProvider", StringType, true))
-        .add(
-            "remove",
-            new StructType()
-                .add("path", StringType, false)
-                .add("deletionTimestamp", LongType, true)
-                .add("dataChange", BooleanType, false)
-                .add("extendedFileMetadata", BooleanType, true)
-                .add("partitionValues", createMapType(StringType, StringType, true), true)
-                .add("size", LongType, true)
-                .add("tags", createMapType(StringType, StringType, true), true))
-        .add(
-            "metaData",
-            new StructType()
-                .add("id", StringType, true)
-                .add("name", StringType, true)
-                .add("description", StringType, true)
-                .add(
-                    "format",
-                    new StructType()
-                        .add("provider", StringType, true)
-                        .add("options", createMapType(StringType, StringType, true), true))
-                .add("schemaString", StringType, true)
-                .add("partitionColumns", createArrayType(StringType, true), true)
-                .add("configuration", createMapType(StringType, StringType, true), true)
-                .add("createdTime", LongType, true))
-        .add(
-            "protocol",
-            new StructType()
-                .add("minReaderVersion", IntegerType, true)
-                .add("minWriterVersion", IntegerType, true)
-                .add("readerFeatures", createArrayType(StringType, true), true)
-                .add("writerFeatures", createArrayType(StringType, true), true));
+    return org.apache.spark.sql.delta.actions.Action.logSchema();
   }
 
-  /** Get stats schema for parsing stats JSON field. */
-  public static StructType getStatsSchema() {
-    return new StructType()
-        .add("numRecords", LongType, true)
-        .add("minValues", new StructType(), true) // Dynamic based on table schema
-        .add("maxValues", new StructType(), true) // Dynamic based on table schema
-        .add("nullCount", new StructType(), true); // Dynamic based on table schema
-  }
-
-  /**
-   * Create withStats DataFrame (V1's DataSkippingReader.withStats).
-   *
-   * <p>V1 Code (DataSkippingReader.scala:266-286): --------------------------------------------
-   * private def withStatsInternal0: DataFrame = { allFiles.withColumn("stats",
-   * from_json(col("stats"), statsSchema)) }
-   *
-   * <p>This parses the JSON stats column into a structured format.
-   */
-  public static Dataset<Row> withStats(Dataset<Row> allFiles, StructType statsSchema) {
-
-    // Parse stats JSON to struct (V1: line 267)
-    return allFiles.withColumn("stats", from_json(col("stats"), statsSchema));
-  }
-
-  /**
-   * Apply data skipping filters **EXACTLY following V1's algorithm**.
-   *
-   * <p>V1 Code (DataSkippingReader.scala:1283-1298): ----------------------------------------------
-   * val filteredFiles = withStats.where( totalFilter(trueLiteral) &&
-   * partitionFilter(partitionFilters) && scanFilter(dataFilters.expr || !verifyStatsForFilter(...))
-   * )
-   *
-   * <p>Key steps: 1. Use withStats (parsed stats) 2. Apply partition filters 3. Apply data skipping
-   * filters on min/max stats 4. Handle missing stats case
-   *
-   * @param withStatsDF DataFrame with parsed stats (from withStats())
-   * @param partitionFilters Spark SQL expressions for partition filtering
-   * @param dataSkippingFilters Spark SQL expressions for data skipping
-   * @return Filtered DataFrame
-   */
-  public static Dataset<Row> applyDataSkippingV1Algorithm(
-      Dataset<Row> withStatsDF, String partitionFilters, String dataSkippingFilters) {
-
-    // V1's algorithm: withStats.where(partitionFilter && dataSkippingFilter)
-    Dataset<Row> filtered = withStatsDF;
-
-    // Step 1: Apply partition filters
-    if (partitionFilters != null && !partitionFilters.isEmpty()) {
-      filtered = filtered.where(partitionFilters);
-    }
-
-    // Step 2: Apply data skipping filters
-    if (dataSkippingFilters != null && !dataSkippingFilters.isEmpty()) {
-      // V1: dataFilters.expr || !verifyStatsForFilter
-      // Simplified: just apply the filter (proper implementation needs stats verification)
-      filtered = filtered.where(dataSkippingFilters);
-    }
-
-    return filtered;
-  }
-
-  /** Get stats schema for parsing stats JSON field. This should match the table's stats schema. */
-  public static StructType getStatsSchemaForTable(StructType tableSchema) {
-    // Build stats schema: {numRecords, minValues: {...}, maxValues: {...}, nullCount: {...}}
-    StructType dataFieldsSchema = new StructType();
-    for (StructField field : tableSchema.fields()) {
-      dataFieldsSchema = dataFieldsSchema.add(field.name(), field.dataType(), true);
-    }
-
-    return new StructType()
-        .add("numRecords", LongType, true)
-        .add("minValues", dataFieldsSchema, true)
-        .add("maxValues", dataFieldsSchema, true)
-        .add("nullCount", dataFieldsSchema, true);
-  }
+  // NOTE: Stats schema construction, stats parsing, verifyStatsForFilter, and data skipping
+  // filter application are now in the shared DataFiltersBuilderUtils (V1 spark module),
+  // accessed via DataFiltersBuilderV2. No data-skipping logic should live here.
 
   // ==================== STREAMING SUPPORT ====================
 
