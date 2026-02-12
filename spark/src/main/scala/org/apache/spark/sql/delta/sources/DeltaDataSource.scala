@@ -85,11 +85,14 @@ class DeltaDataSource
    * If catalogTableOpt is defined, use it to construct the snapshot; otherwise, fall back to use
    * path-based snapshot construction.
    */
-  private def getSnapshotFromTableOrPath(sparkSession: SparkSession, path: Path): Snapshot = {
+  private def getSnapshotFromTableOrPath(
+      sparkSession: SparkSession,
+      path: Path,
+      parameters: Map[String, String]): Snapshot = {
     catalogTableOpt
       .map(catalogTable => DeltaLog.forTableWithSnapshot(
-        sparkSession, catalogTable, options = Map.empty[String, String]))
-      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path))._2
+        sparkSession, catalogTable, options = parameters))
+      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path, options = parameters))._2
   }
 
   def inferSchema: StructType = new StructType() // empty
@@ -133,7 +136,7 @@ class DeltaDataSource
     }
 
     val snapshot =
-      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
+      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path), parameters)
     // This is the analyzed schema for Delta streaming
     val readSchema = {
       // Check if we would like to merge consecutive schema changes, this would allow customers
@@ -179,7 +182,7 @@ class DeltaDataSource
     })
     val options = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
     val snapshot =
-      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path))
+      getSnapshotFromTableOrPath(sqlContext.sparkSession, new Path(path), parameters)
     val schemaTrackingLogOpt =
       DeltaDataSource.getMetadataTrackingLogForDeltaSource(
         sqlContext.sparkSession, snapshot, catalogTableOpt, parameters,
