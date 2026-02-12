@@ -1034,11 +1034,9 @@ public class SparkMicroBatchStream
               version, fileCount, maxInitialSnapshotFiles, tablePath);
     }
 
-    // Convert sorted DataFrame to AddFiles using DistributedScanBuilder
-    // withSortKey() ensures ordering is preserved for streaming
-    io.delta.kernel.ScanBuilder scanBuilder =
-        new DistributedScanBuilder(spark, snapshot, numPartitions, sortedFilesDF).withSortKey();
-    io.delta.kernel.Scan scan = scanBuilder.build();
+    // Streaming uses DistributedScan directly — no Planner/PredicateBuilder needed
+    // since the DataFrame is already built and sorted.
+    io.delta.kernel.Scan scan = new DistributedScan(sortedFilesDF, snapshot, snapshot.getSchema());
 
     List<AddFile> addFiles = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {

@@ -2996,6 +2996,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
       .createWithDefault(50000)
+
+  val V2_DISTRIBUTED_SCAN_ENABLED =
+    buildConf("v2.distributedScan.enabled")
+      .doc(
+        "When true, the V2 connector uses distributed log replay " +
+          "(DistributedScan) for batch reads, which scales state " +
+          "reconstruction across Spark executors. When false, the " +
+          "original Kernel-native Scan is used (single-driver).")
+      .booleanConf
+      .createWithDefault(true)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

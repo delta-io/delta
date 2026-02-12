@@ -26,14 +26,24 @@ import org.apache.spark.sql.delta.stats.DeltaStatistics.{MIN, MAX, NULL_COUNT, N
 import org.apache.spark.sql.types.StructType
 
 /**
- * Thin V2 adapter. V2-specific logic is limited to:
- *  1. [[createGetStatColumnFn]] - maps stat paths using simple column paths (no column mapping).
- *  2. [[resolveFilterExpressions]] - resolves UnresolvedAttribute to AttributeReference.
+ * Internal Scala bridge for [[io.delta.spark.internal.v2.read.DeltaScanPredicateBuilder]]
+ * (Component 2: PredicateBuilder).
+ *
+ * This object exists because the predicate rewriting pipeline requires Scala
+ * features (pattern matching, `transformUp`, Catalyst `Expression` manipulation)
+ * that are impractical to express in pure Java. The public Java component
+ * [[io.delta.spark.internal.v2.read.DeltaScanPredicateBuilder]] delegates here.
+ *
+ * V2-specific logic:
+ *  1. [[createGetStatColumnFn]] - maps stat paths using simple column paths
+ *     (no column mapping).
+ *  2. [[resolveFilterExpressions]] - resolves UnresolvedAttribute to
+ *     AttributeReference.
  *  3. Kernel Snapshot to Spark schema conversion.
  *  4. Unwrap/re-wrap the `{add: struct}` nesting from distributed log replay.
  *
- * Everything else (partition pruning, data skipping, constructDataFilters, verifyStatsForFilter)
- * is shared with V1 via [[DataFiltersBuilderUtils]].
+ * Everything else (partition pruning, data skipping, constructDataFilters,
+ * verifyStatsForFilter) is shared with V1 via [[DataFiltersBuilderUtils]].
  */
 object DataFiltersBuilderV2 {
 
@@ -44,7 +54,7 @@ object DataFiltersBuilderV2 {
    * expressions, then delegate to shared [[DataFiltersBuilderUtils.applyAllFilters]],
    * then re-wrap.
    *
-   * Called from DistributedScan (Java).
+   * Called from ScanPredicateBuilder (Java).
    *
    * @param wrappedDF        DataFrame with {add: {path, partitionValues, stats, ...}}
    * @param allFilters       All pushable Spark filters (partition + data)

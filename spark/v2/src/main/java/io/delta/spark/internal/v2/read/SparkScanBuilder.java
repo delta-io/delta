@@ -27,6 +27,7 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -39,13 +40,22 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * DataFrame operations (df.filter), reusing V1's DataFiltersBuilder logic through shared {@code
  * DataFiltersBuilderUtils}. No OpaquePredicate or Kernel-level callbacks are used.
  *
- * <p>Flow: pushFilters() → raw Filter[] → DistributedScanBuilder → DistributedScan →
- * DataFiltersBuilderV2 → shared DataFiltersBuilderUtils → df.filter()
+ * <p>Controlled by {@code spark.databricks.delta.v2.distributedScan.enabled} (default: true):
+ *
+ * <ul>
+ *   <li><b>true</b> (distributed): DistributedScanBuilder -> DistributedScanPlanner ->
+ *       DeltaScanPredicateBuilder -> DataFiltersBuilderUtils -> DistributedScan (wraps
+ *       SparkRowScanExecutor)
+ *   <li><b>false</b> (local): Kernel-native ScanBuilder -> Kernel Scan (single-driver log replay)
+ * </ul>
  */
 public class SparkScanBuilder
     implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
 
-  private DistributedScanBuilder distributedScanBuilder;
+  // Single ScanBuilder field — either DistributedScanBuilder or Kernel-native.
+  // Use instanceof when distributed-specific API (withPushdownFilters) is needed.
+  private io.delta.kernel.ScanBuilder scanBuilder;
+
   private final Snapshot initialSnapshot;
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
@@ -95,8 +105,16 @@ public class SparkScanBuilder
     this.pushedKernelPredicates = new Predicate[0];
     this.dataFilters = new Filter[0];
 
-    int numPartitions = getNumPartitionsFromOptions(options);
-    this.distributedScanBuilder = new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
+    // Config: distributed vs local (Kernel-native) scan
+    boolean distributedEnabled =
+        (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.V2_DISTRIBUTED_SCAN_ENABLED());
+
+    if (distributedEnabled) {
+      int numPartitions = getNumPartitionsFromOptions(options);
+      this.scanBuilder = new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
+    } else {
+      this.scanBuilder = initialSnapshot.getScanBuilder();
+    }
   }
 
   private int getNumPartitionsFromOptions(CaseInsensitiveStringMap options) {
@@ -147,29 +165,34 @@ public class SparkScanBuilder
     this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
     this.pushedKernelPredicates = convertedKernelPredicates.toArray(new Predicate[0]);
 
-    // Phase 1: Pass ALL pushable filters (partition + data) to DistributedScanBuilder.
-    // Like V1's getDataSkippedFiles, both partition pruning and data skipping are applied
-    // on the distributed log replay DataFrame:
-    //   - Partition filters → DeltaLog.filterFileList (rewrite to partitionValues metadata)
-    //   - Data filters → DataFiltersBuilderUtils (statsSchema + from_json + verifyStats + filter)
-    List<Filter> allPushableFilters = new ArrayList<>();
-    allPushableFilters.addAll(dataFilterList);
-    // Also include pure partition filters for partition pruning on the DataFrame
-    for (Filter filter : filters) {
-      String[] refs = filter.references();
-      boolean isPurePartitionFilter =
-          refs != null
-              && refs.length > 0
-              && Arrays.stream(refs)
-                  .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)));
-      if (isPurePartitionFilter && !dataFilterList.contains(filter)) {
-        allPushableFilters.add(filter);
+    if (scanBuilder instanceof DistributedScanBuilder) {
+      // Distributed path: pass ALL pushable filters (partition + data) to
+      // DistributedScanBuilder. Both partition pruning and data skipping are
+      // applied on the distributed log replay DataFrame.
+      List<Filter> allPushableFilters = new ArrayList<>();
+      allPushableFilters.addAll(dataFilterList);
+      // Also include pure partition filters for partition pruning on the DataFrame
+      for (Filter filter : filters) {
+        String[] refs = filter.references();
+        boolean isPurePartitionFilter =
+            refs != null
+                && refs.length > 0
+                && Arrays.stream(refs)
+                    .allMatch(col -> partitionColumnSet.contains(col.toLowerCase(Locale.ROOT)));
+        if (isPurePartitionFilter && !dataFilterList.contains(filter)) {
+          allPushableFilters.add(filter);
+        }
       }
-    }
 
-    if (allPushableFilters.size() > 0) {
-      this.distributedScanBuilder.withPushdownFilters(
-          allPushableFilters.toArray(new Filter[0]), partitionSchema);
+      if (!allPushableFilters.isEmpty()) {
+        ((DistributedScanBuilder) scanBuilder)
+            .withPushdownFilters(allPushableFilters.toArray(new Filter[0]), partitionSchema);
+      }
+    } else {
+      // Local (Kernel-native) path: push Kernel predicates to the native ScanBuilder
+      for (Predicate p : this.pushedKernelPredicates) {
+        this.scanBuilder = this.scanBuilder.withFilter(p);
+      }
     }
 
     this.dataFilters = dataFilterList.toArray(new Filter[0]);
@@ -183,13 +206,13 @@ public class SparkScanBuilder
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    // Apply schema projection
-    distributedScanBuilder =
-        (DistributedScanBuilder)
-            distributedScanBuilder.withReadSchema(
+    // Apply schema projection and build — works for both distributed and local paths
+    io.delta.kernel.Scan kernelScan =
+        scanBuilder
+            .withReadSchema(
                 io.delta.spark.internal.v2.utils.SchemaUtils.convertSparkSchemaToKernelSchema(
-                    requiredDataSchema));
-    io.delta.kernel.Scan kernelScan = distributedScanBuilder.build();
+                    requiredDataSchema))
+            .build();
 
     return new SparkScan(
         snapshotManager,

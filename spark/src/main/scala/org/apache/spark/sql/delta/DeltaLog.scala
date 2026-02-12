@@ -1136,9 +1136,19 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-    stats.DataFiltersBuilderUtils.filterFileList(
-      partitionSchema, files, partitionFilters,
-      partitionColumnPrefixes, shouldRewritePartitionFilters)
+
+    val rewrittenFilters = if (shouldRewritePartitionFilters) {
+      rewritePartitionFilters(
+        partitionSchema,
+        files.sparkSession.sessionState.conf.resolver,
+        partitionFilters,
+        partitionColumnPrefixes)
+    } else {
+      partitionFilters
+    }
+    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
+    val columnFilter = Column(expr)
+    files.filter(columnFilter)
   }
 
   /**
