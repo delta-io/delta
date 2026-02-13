@@ -30,7 +30,7 @@ import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType}
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
-import shadedForDelta.org.apache.iceberg.expressions.Binder
+import shadedForDelta.org.apache.iceberg.expressions.{Binder, Expressions}
 import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 import shadedForDelta.org.apache.iceberg.types.Types
 
@@ -476,6 +476,35 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         val capturedCaseSensitive = server.getCapturedCaseSensitive()
         assert(capturedCaseSensitive == false,
           s"Expected server to capture caseSensitive=false, got $capturedCaseSensitive")
+      } finally {
+        client.close()
+      }
+    }
+  }
+
+  test("rejects FileScanTask with non-trivial residual") {
+    withTempTable("residualTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.residualTest")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      try {
+        // Verify that a trivial (alwaysTrue) residual is accepted
+        server.setTestResidual(Expressions.alwaysTrue())
+        val scanPlan = client.planScan(defaultNamespace.toString, "residualTest")
+        assert(scanPlan.files.nonEmpty,
+          "Scan with alwaysTrue residual should succeed and return files")
+
+        // Configure server to inject a non-trivial residual expression into the response.
+        // This simulates a server that expects the client to apply a residual filter,
+        // which is currently unsupported.
+        server.setTestResidual(Expressions.greaterThan("longCol", 42L))
+
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "residualTest")
+        }
+
+        assert(exception.getMessage.contains("residual"),
+          s"Error message should mention 'residual'. Got: ${exception.getMessage}")
       } finally {
         client.close()
       }
