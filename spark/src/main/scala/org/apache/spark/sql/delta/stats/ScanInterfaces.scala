@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.stats.DataFiltersBuilderUtils.ScanPipelineResu
 import org.apache.spark.sql.functions.{col, lit}
 import org.apache.spark.sql.types.StructType
 
-// ===================== Data Source Interface + Default =====================
+// ===================== State Provider Interface + Default =====================
 
 /**
  * Provides raw and parsed AddFile DataFrames for scan planning.
@@ -35,9 +35,9 @@ import org.apache.spark.sql.types.StructType
  * Implementations own the full pipeline:
  *   raw source -> state reconstruction -> extract add files -> parse stats -> cache
  *
- * [[DefaultDataSource]] is the shared implementation used by both V1 and V2.
+ * [[DefaultStateProvider]] is the shared implementation used by both V1 and V2.
  */
-private[delta] trait ScanDataSource {
+private[delta] trait DeltaStateProvider {
 
   /** Flat AddFile rows with stats as a JSON string. */
   def allAddFiles(): DataFrame
@@ -50,7 +50,7 @@ private[delta] trait ScanDataSource {
 }
 
 /**
- * Shared [[ScanDataSource]] implementation used by both V1 and V2.
+ * Shared [[DeltaStateProvider]] implementation used by both V1 and V2.
  *
  * Owns the full pipeline from raw log actions to cached AddFile
  * DataFrames with parsed statistics:
@@ -68,7 +68,7 @@ private[delta] trait ScanDataSource {
  *  - V2: passes `DistributedLogReplayHelper.loadActions`,
  *    `callUDF("canonicalizePath", _)`, no retention, no caching.
  *
- * V1's `Snapshot` owns a `DefaultDataSource` instance and delegates
+ * V1's `Snapshot` owns a `DefaultStateProvider` instance and delegates
  * `stateDS`, `stateDF`, `allFiles` to it. This eliminates the
  * separate `stateReconstruction` / `cachedState` chain in `Snapshot`.
  *
@@ -96,7 +96,7 @@ private[delta] trait ScanDataSource {
  *                               `df => cacheDS(df, name).getDS`;
  *                               V2 passes None.
  */
-private[delta] class DefaultDataSource(
+private[delta] class DefaultStateProvider(
     loadActions: () => DataFrame,
     numPartitions: Int,
     canonicalizeUdf: Column => Column,
@@ -105,7 +105,7 @@ private[delta] class DefaultDataSource(
     minSetTransactionRetentionTimestamp: Option[Long] = None,
     stateCacheFactory: Option[Dataset[SingleAction] => Dataset[SingleAction]] = None,
     statsParseCacheFactory: Option[DataFrame => DataFrame] = None
-) extends ScanDataSource {
+) extends DeltaStateProvider {
 
   /**
    * Full state after log replay, optionally cached.
@@ -214,7 +214,7 @@ private[delta] trait DeltaScanPlanner {
 
   /**
    * Returns the AddFile DataFrame with parsed stats (and optionally cached).
-   * Delegates to the underlying [[ScanDataSource]].
+   * Delegates to the underlying [[DeltaStateProvider]].
    */
   def withParsedStats: DataFrame
 
@@ -379,20 +379,20 @@ private[delta] class DefaultScanPredicateBuilder(
 /**
  * Default shared implementation of [[DeltaScanPlanner]].
  *
- * Works for both V1 and V2 connectors. Delegates to [[ScanDataSource]]
+ * Works for both V1 and V2 connectors. Delegates to [[DeltaStateProvider]]
  * for the data pipeline (state reconstruction, stats parsing, caching).
  *
- * @param dataSource  Provides parsed + cached AddFile DataFrames
+ * @param stateProvider  Provides parsed + cached AddFile DataFrames
  */
 private[delta] class DefaultScanPlanner(
-    dataSource: ScanDataSource
+    stateProvider: DeltaStateProvider
 ) extends DeltaScanPlanner {
 
   /**
    * Parsed (and optionally cached) AddFile DataFrame.
-   * Delegates to [[ScanDataSource.withParsedStats]].
+   * Delegates to [[DeltaStateProvider.withParsedStats]].
    */
-  override def withParsedStats: DataFrame = dataSource.withParsedStats
+  override def withParsedStats: DataFrame = stateProvider.withParsedStats
 
   override def plan(
       filters: Seq[Expression],

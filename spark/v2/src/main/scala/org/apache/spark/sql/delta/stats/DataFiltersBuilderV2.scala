@@ -134,7 +134,7 @@ object DataFiltersBuilderV2 {
   }
 
   /**
-   * Creates a [[DefaultDataSource]] for V2.
+   * Creates a [[DefaultStateProvider]] for V2.
    *
    * The data source owns the full pipeline:
    *   loadActions -> state reconstruction -> extract add -> parse stats
@@ -143,15 +143,15 @@ object DataFiltersBuilderV2 {
    * @param loadActions    Supplier for the union of checkpoint + delta files
    * @param numPartitions  Number of partitions for state reconstruction
    * @param snapshot       Kernel snapshot (provides table schema for stats)
-   * @return A [[DefaultDataSource]] ready for V2 use
+   * @return A [[DefaultStateProvider]] ready for V2 use
    */
   def createDataSource(
       loadActions: () => DataFrame,
       numPartitions: Int,
-      snapshot: Snapshot): DefaultDataSource = {
+      snapshot: Snapshot): DefaultStateProvider = {
     val tableSchema = getSparkTableSchema(snapshot)
     val statsSchema = DataFiltersBuilderUtils.buildStatsSchema(tableSchema)
-    new DefaultDataSource(
+    new DefaultStateProvider(
       loadActions = loadActions,
       numPartitions = numPartitions,
       canonicalizeUdf = c => callUDF("canonicalizePath", c),
@@ -163,11 +163,11 @@ object DataFiltersBuilderV2 {
   /**
    * Creates a [[DefaultScanPlanner]] for V2.
    *
-   * @param dataSource  V2 [[ScanDataSource]] (from [[createDataSource]])
+   * @param stateProvider  V2 [[DeltaStateProvider]] (from [[createDataSource]])
    * @return A [[DefaultScanPlanner]] ready for V2 use
    */
-  def createPlanner(dataSource: ScanDataSource): DefaultScanPlanner = {
-    new DefaultScanPlanner(dataSource = dataSource)
+  def createPlanner(stateProvider: DeltaStateProvider): DefaultScanPlanner = {
+    new DefaultScanPlanner(stateProvider = stateProvider)
   }
 
   /**

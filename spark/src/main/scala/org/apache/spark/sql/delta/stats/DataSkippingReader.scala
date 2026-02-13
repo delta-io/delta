@@ -264,11 +264,11 @@ trait DataSkippingReaderBase
 
   /**
    * Creates the Snapshot-level [[DefaultScanPlanner]] backed by
-   * [[Snapshot.dataSource]] which owns the full pipeline:
+   * [[Snapshot.stateProvider]] which owns the full pipeline:
    *   loadActions -> state reconstruction -> extract add -> parse stats -> cache
    */
   private[delta] def createPlanner(): DefaultScanPlanner = {
-    new DefaultScanPlanner(dataSource = snapshotToScan.dataSource)
+    new DefaultScanPlanner(stateProvider = snapshotToScan.stateProvider)
   }
 
   /** All files with the statistics column dropped completely. */

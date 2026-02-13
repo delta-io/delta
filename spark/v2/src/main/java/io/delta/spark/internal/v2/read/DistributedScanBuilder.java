@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.stats.DataFiltersBuilderUtils;
 import org.apache.spark.sql.delta.stats.DataFiltersBuilderV2;
 import org.apache.spark.sql.delta.stats.DefaultScanPlanner;
 import org.apache.spark.sql.delta.stats.DefaultScanPredicateBuilder;
-import org.apache.spark.sql.delta.stats.ScanDataSource;
+import org.apache.spark.sql.delta.stats.DeltaStateProvider;
 import org.apache.spark.sql.sources.Filter;
 
 /**
@@ -104,8 +104,8 @@ public class DistributedScanBuilder implements ScanBuilder {
    * Builds the scan using the shared {@link DefaultScanPlanner}:
    *
    * <ol>
-   *   <li>Create V2 {@link ScanDataSource}: loadActions -> state reconstruction -> extract add ->
-   *       parse stats (full pipeline, same class as V1)
+   *   <li>Create V2 {@link DeltaStateProvider}: loadActions -> state reconstruction -> extract add
+   *       -> parse stats (full pipeline, same class as V1)
    *   <li>Create shared {@link DefaultScanPlanner} backed by the data source
    *   <li>Create shared {@link DefaultScanPredicateBuilder} with V2-specific stat column paths
    *   <li>Convert Spark {@code Filter[]} to resolved Catalyst Expressions
@@ -116,14 +116,14 @@ public class DistributedScanBuilder implements ScanBuilder {
   @Override
   public Scan build() {
     // Step 1: V2 data source (full pipeline: loadActions -> reconstruct -> extract -> parse stats)
-    ScanDataSource v2DataSource =
+    DeltaStateProvider v2StateProvider =
         DataFiltersBuilderV2.createDataSource(
             () -> DistributedLogReplayHelper.loadActionsV2(spark, snapshot),
             numPartitions,
             snapshot);
 
     // Step 2: Shared planner backed by the data source
-    DefaultScanPlanner planner = DataFiltersBuilderV2.createPlanner(v2DataSource);
+    DefaultScanPlanner planner = DataFiltersBuilderV2.createPlanner(v2StateProvider);
 
     // Step 3: Shared predicate builder (V2-specific stat column paths injected)
     DefaultScanPredicateBuilder predicateBuilder =

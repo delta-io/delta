@@ -30,7 +30,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
-import org.apache.spark.sql.delta.stats.DefaultDataSource
+import org.apache.spark.sql.delta.stats.DefaultStateProvider
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -228,15 +228,15 @@ class Snapshot(
   }
 
   /**
-   * The [[DefaultDataSource]] that owns the full state reconstruction pipeline:
+   * The [[DefaultStateProvider]] that owns the full state reconstruction pipeline:
    *   loadActions -> canonicalize -> repartition -> replay -> cache state
    *   -> extract add files -> parse stats -> cache stats
    *
    * V1's `stateDS`, `stateDF`, `allFiles`, and `withStats` all delegate here.
    * This replaces the previous `stateReconstruction` + `cachedState` chain.
    */
-  private[delta] lazy val dataSource: DefaultDataSource = {
-    new DefaultDataSource(
+  private[delta] lazy val stateProvider: DefaultStateProvider = {
+    new DefaultStateProvider(
       loadActions = () => loadActions,
       numPartitions = getNumPartitions,
       canonicalizeUdf = c => deltaLog.getCanonicalPathUdf()(c),
@@ -374,12 +374,12 @@ class Snapshot(
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
   def stateDF: DataFrame = recordFrameProfile("Delta", "stateDF") {
-    dataSource.stateDF
+    stateProvider.stateDF
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
   def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
-    dataSource.stateDS
+    stateProvider.stateDS
   }
 
   private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
@@ -478,8 +478,8 @@ class Snapshot(
       }
   }
 
-  // NOTE: stateReconstruction logic has been moved into DefaultDataSource.
-  // See [[dataSource]] which owns the full pipeline:
+  // NOTE: stateReconstruction logic has been moved into DefaultStateProvider.
+  // See [[stateProvider]] which owns the full pipeline:
   //   loadActions -> canonicalize -> repartition -> replay -> cache
 
   /**

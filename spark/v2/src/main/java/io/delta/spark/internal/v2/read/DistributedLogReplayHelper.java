@@ -44,7 +44,7 @@ import org.apache.spark.sql.types.*;
 public class DistributedLogReplayHelper {
 
   // Use the same column names as V1 (DeltaLogFileIndex.COMMIT_VERSION_COLUMN,
-  // Snapshot.ADD_STATS_TO_USE_COL_NAME) so DefaultDataSource works identically.
+  // Snapshot.ADD_STATS_TO_USE_COL_NAME) so DefaultStateProvider works identically.
   private static final String COMMIT_VERSION_COLUMN =
       org.apache.spark.sql.delta.DeltaLogFileIndex.COMMIT_VERSION_COLUMN();
   private static final String ADD_STATS_TO_USE_COL =
@@ -56,8 +56,8 @@ public class DistributedLogReplayHelper {
    * {@code add_stats_to_use} columns (same names as V1).
    *
    * <p>This is the V2 equivalent of V1's {@code Snapshot.loadActions}. It is consumed by {@link
-   * org.apache.spark.sql.delta.stats.DefaultDataSource} which handles the full state reconstruction
-   * pipeline.
+   * org.apache.spark.sql.delta.stats.DefaultStateProvider} which handles the full state
+   * reconstruction pipeline.
    *
    * @param spark SparkSession
    * @param snapshot Kernel snapshot (must be SnapshotImpl)
@@ -85,7 +85,7 @@ public class DistributedLogReplayHelper {
    * Performs distributed log replay following V1's Snapshot.stateReconstruction algorithm.
    *
    * <p><b>Note:</b> For batch scans, prefer {@link #loadActionsV2} + {@link
-   * org.apache.spark.sql.delta.stats.DefaultDataSource} which shares the full pipeline with V1.
+   * org.apache.spark.sql.delta.stats.DefaultStateProvider} which shares the full pipeline with V1.
    * This method is retained for streaming use cases.
    *
    * @param spark SparkSession
