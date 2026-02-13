@@ -1867,7 +1867,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("When true, a faster version of the bit interleaving algorithm is used.")
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   val INTERNAL_UDF_OPTIMIZATION_ENABLED =
     buildConf("internalUdfOptimization.enabled")
