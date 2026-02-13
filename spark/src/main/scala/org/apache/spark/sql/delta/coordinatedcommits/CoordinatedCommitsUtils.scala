@@ -186,8 +186,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   val QOL_TABLE_FEATURES_AND_PROPERTIES: Seq[(TableFeature, DeltaConfig[_], String)] =
     qolTableFeatureAndProperties
 
-  def qolTableFeatureAndProperties
-      : Seq[(TableFeature, DeltaConfig[_], String)] =
+  def qolTableFeatureAndProperties: Seq[(TableFeature, DeltaConfig[_], String)] =
     Seq(
       (DeletionVectorsTableFeature, DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION, "true"),
       (V2CheckpointTableFeature, DeltaConfigs.CHECKPOINT_POLICY, CheckpointPolicy.V2.name),
