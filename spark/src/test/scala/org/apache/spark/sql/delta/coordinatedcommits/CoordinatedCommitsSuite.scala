@@ -372,12 +372,7 @@ class CatalogOwnedSuite
 
   override def sparkConf: SparkConf = {
     // Make sure all new tables in tests use CatalogOwned table feature by default.
-    // Disable QoL features to avoid unexpected side effects in tests.
-    super.sparkConf
-      .set(defaultCatalogOwnedFeatureEnabledKey, "supported")
-      .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
-      .set(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey, CheckpointPolicy.Classic.name)
-      .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
+    super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
   }
 }
 

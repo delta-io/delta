@@ -20,7 +20,7 @@ import java.util.Optional
 import java.util.concurrent.atomic.AtomicInteger
 import scala.collection.mutable
 import scala.util.control.NonFatal
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, RowTrackingFeature, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
@@ -108,15 +108,7 @@ trait CatalogOwnedTestBaseSuite
 
   override protected def sparkConf: SparkConf = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      // Disable QoL features by default in tests to avoid unexpected side effects.
-      // When row tracking is enabled, RowId.extractHighWatermark accesses snapshot.domainMetadata
-      // which triggers computedState, causing setTransactions to be populated in CRC.
-      // Additionally, v2 checkpoints and other QoL features affect metadata expectations in tests.
-      super.sparkConf
-        .set(defaultCatalogOwnedFeatureEnabledKey, "supported")
-        .set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
-        .set(DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey, CheckpointPolicy.Classic.name)
-        .set(DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.defaultTablePropertyKey, "false")
+      super.sparkConf.set(defaultCatalogOwnedFeatureEnabledKey, "supported")
     } else {
       super.sparkConf
     }
@@ -260,13 +252,26 @@ trait CatalogOwnedTestBaseSuite
       spark: SparkSession,
       metadata: Metadata): Map[String, String] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      // When QoL features are disabled via configs, they get written as explicit properties
-      Map(
-        DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key -> "false",
-        DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
-        DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name,
-        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"
-      )
+      val qolConfs = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+        .collect {
+          case (feature, config, value)
+          => config.key -> value
+        }
+        .toMap
+      // RowTracking specific properties.
+      qolConfs ++ Map(
+        MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP ->
+          metadata.configuration.getOrElse(
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+            fail(s"Failed to get ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP}.")
+          ),
+        MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP ->
+          metadata.configuration.getOrElse(
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
+            fail(s"Failed to get ${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP}.")
+          )
+      ) ++
+      Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
     } else {
       Map.empty
     }
@@ -279,12 +284,7 @@ trait CatalogOwnedTestBaseSuite
   def extractCatalogOwnedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
-      // When QoL features are disabled via configs, they get written as explicit properties
-      Map(
-        DeltaConfigs.ROW_TRACKING_ENABLED.key -> "false",
-        DeltaConfigs.CHECKPOINT_POLICY.key -> CheckpointPolicy.Classic.name,
-        DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true"
-      )
+      Option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
     } else {
       Seq.empty
     }
