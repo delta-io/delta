@@ -197,7 +197,12 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     // know about version 0), this is where it surfaces.
     // For path-based tables (delta.`/path`): no catalog registration needed.
     if (!isPathIdentifier(ident)) {
-      createCatalogTable(ident, schema, partitions, properties);
+      // Strip credentials from properties before passing to the UC delegate. The delegate needs
+      // catalog coordination keys (location, provider, is_managed_location) but NOT transient
+      // credentials (fs.s3a.init.access.key, fs.unitycatalog.auth.token, etc.).
+      // In the V1 path, CatalogTable.properties never contains fs.* keys because
+      // CreateDeltaTableCommand filters them via DeltaTableUtils.validDeltaTableHadoopPrefixes.
+      createCatalogTable(ident, schema, partitions, filterCredentialProperties(properties));
       return loadTable(ident);
     }
     return new SparkTable(ident, location);
@@ -270,8 +275,16 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   /**
    * Filters out DSv2-specific keys and filesystem options that are not actual Delta table
    * properties. This mirrors the filtering in {@code AbstractDeltaCatalog.createDeltaTable}.
-   * Filesystem options (fs.*, dfs.*) are stripped because they are UC-vended credentials
-   * intended for the Hadoop config, not for persisting into the Delta commit log.
+   *
+   * <p>UCSingleCatalog injects two families of transient keys into properties (all keys
+   * originate from {@code UCHadoopConf} constants which carry the {@code fs.} prefix):
+   * <ul>
+   *   <li>{@code fs.*} — Hadoop filesystem credentials (e.g., {@code fs.s3a.init.access.key},
+   *       {@code fs.unitycatalog.auth.token})
+   *   <li>{@code option.fs.*} — same keys with Spark's {@code option.} prefix
+   * </ul>
+   * Both are caught by {@link DeltaTableUtils#validDeltaTableHadoopPrefixes} ({@code "fs."},
+   * {@code "dfs."}) after stripping the {@code option.} prefix.
    */
   private static Map<String, String> filterDsv2Properties(Map<String, String> properties) {
     Map<String, String> filtered = new HashMap<>(properties);
@@ -289,7 +302,28 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     filtered.remove("ucTableId");
     // Remove filesystem options (UC-vended credentials) and their "option." prefixed variants
     // — these belong in the Hadoop config, not in the Delta table metadata persisted in the
-    // commit log. UCSingleCatalog injects both "fs.*" and "option.fs.*" keys.
+    // commit log. All credential keys from UCSingleCatalog carry the "fs." prefix
+    // (e.g., fs.s3a.init.access.key, fs.unitycatalog.auth.token) per UCHadoopConf constants.
+    filtered.entrySet().removeIf(entry -> {
+      String key = entry.getKey();
+      String effectiveKey = key.startsWith("option.") ? key.substring("option.".length()) : key;
+      return DeltaTableUtils.validDeltaTableHadoopPrefixes()
+          .exists(prefix -> effectiveKey.startsWith(prefix));
+    });
+    return filtered;
+  }
+
+  /**
+   * Strips filesystem credential keys ({@code fs.*}, {@code dfs.*}, {@code option.fs.*},
+   * {@code option.dfs.*}) from properties while keeping DSv2 catalog coordination keys
+   * ({@code location}, {@code provider}, {@code is_managed_location}, etc.).
+   *
+   * <p>Used when passing properties to the UC delegate for catalog registration. The delegate
+   * needs catalog keys to register the table, but must NOT receive transient credentials
+   * (e.g., {@code fs.s3a.init.access.key}, {@code fs.unitycatalog.auth.token}).
+   */
+  private static Map<String, String> filterCredentialProperties(Map<String, String> properties) {
+    Map<String, String> filtered = new HashMap<>(properties);
     filtered.entrySet().removeIf(entry -> {
       String key = entry.getKey();
       String effectiveKey = key.startsWith("option.") ? key.substring("option.".length()) : key;
