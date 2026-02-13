@@ -130,15 +130,6 @@ getSupportIceberg := {
   sys.env.getOrElse("SUPPORT_ICEBERG", "false")
 }
 
-val getSparkVersion = settingKey[String](
-  s"get Spark version override from environment variable SPARK_VERSION. " +
-  s"When set, overrides lookupSparkVersion for Spark SQL/Hive dependencies."
-)
-
-getSparkVersion := {
-  sys.env.getOrElse("SPARK_VERSION", "")
-}
-
 getIcebergSparkRuntimeArtifactName := {
   val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
     getMajorMinor(getDeltaVersion.value)))
@@ -156,26 +147,27 @@ lazy val java17Settings = Seq(
   )
 )
 
+// Use SPARK_VERSION env var if set, otherwise fall back to lookupSparkVersion (for local dev)
+def resolveSparkVersion(deltaVersion: String): String = {
+  val envVersion = sys.env.getOrElse("SPARK_VERSION", "")
+  if (envVersion.nonEmpty) envVersion
+  else lookupSparkVersion.apply(getMajorMinor(deltaVersion))
+}
+
 def getLibraryDependencies(
     deltaVersion: String,
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String,
     sparkPackageSuffix: String,
     scalaBinVersion: String,
-    supportIceberg: String,
-    sparkVersionOverride: String): Seq[ModuleID] = {
+    supportIceberg: String): Seq[ModuleID] = {
 
   // Package suffix comes from CrossSparkVersions.scala (single source of truth)
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
   val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
   val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
 
-  // Use SPARK_VERSION env var if set, otherwise fall back to lookupSparkVersion
-  val resolvedSparkVersion = if (sparkVersionOverride.nonEmpty) {
-    sparkVersionOverride
-  } else {
-    lookupSparkVersion.apply(getMajorMinor(deltaVersion))
-  }
+  val resolvedSparkVersion = resolveSparkVersion(deltaVersion)
 
   val baseDeps = Seq(
     deltaCoreDep,
@@ -214,8 +206,7 @@ lazy val root = (project in file("."))
       getIcebergSparkRuntimeArtifactName.value,
       getSparkPackageSuffix.value,
       scalaBinaryVersion.value,
-      getSupportIceberg.value,
-      getSparkVersion.value),
+      getSupportIceberg.value),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
