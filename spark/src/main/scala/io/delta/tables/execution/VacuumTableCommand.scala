@@ -25,7 +25,6 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableIdentifier, DeltaTableUtils, UnresolvedDeltaPathOrIdentifier}
 import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.types.StringType
 
@@ -52,7 +51,7 @@ case class VacuumTableCommand(
     copy(child = newChild)
 
   override def run(sparkSession: SparkSession): Seq[Row] = {
-    val deltaTable = getDeltaTable(child, "VACUUM")
+    val deltaTable = DeltaTableV2.extractFrom(child, "VACUUM")
     // The VACUUM command is only supported on existing delta tables. If the target table doesn't
     // exist or it is based on a partition directory, an exception will be thrown.
     if (!deltaTable.tableExists || deltaTable.hasPartitionFilters) {
@@ -61,7 +60,7 @@ case class VacuumTableCommand(
         DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
     val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
-        .map(p => Some(getDeltaTable(p, "VACUUM").toDf(sparkSession)))
+      .map(p => Some(DeltaTableV2.extractFrom(p, "VACUUM").toDf(sparkSession)))
         .getOrElse(inventoryQuery.map(sparkSession.sql))
     VacuumCommand.gc(sparkSession, deltaTable, dryRun, horizonHours,
       inventory, vacuumType).collect()

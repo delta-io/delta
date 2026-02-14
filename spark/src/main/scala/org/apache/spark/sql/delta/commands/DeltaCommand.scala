@@ -291,16 +291,6 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
   }
 
   /**
-   * Extracts the [[DeltaTableV2]] from a LogicalPlan iff the LogicalPlan is a [[ResolvedTable]]
-   * with either a [[DeltaTableV2]] or a [[V1Table]] that is referencing a Delta table. In all
-   * other cases this method will throw a "Table not found" exception.
-   */
-  def getDeltaTable(target: LogicalPlan, cmd: String): DeltaTableV2 = {
-    // TODO: Remove this wrapper and let former callers invoke DeltaTableV2.extractFrom directly.
-    DeltaTableV2.extractFrom(target, cmd)
-  }
-
-  /**
    * Extracts [[CatalogTable]] metadata from a LogicalPlan if the plan is a [[ResolvedTable]]. The
    * table can be a non delta table.
    */
@@ -323,7 +313,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
   def getDeltaTablePathOrIdentifier(
       target: LogicalPlan,
       cmd: String): (Option[TableIdentifier], Option[String]) = {
-    val table = getDeltaTable(target, cmd)
+    val table = DeltaTableV2.extractFrom(target, cmd)
     table.catalogTable match {
       case Some(catalogTable)
         => (Some(catalogTable.identifier), None)

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, UnresolvedDeltaPathOrIdentifier}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.hooks.GenerateSymlinkManifest
 
 import org.apache.spark.sql.{Row, SparkSession}
@@ -41,7 +42,7 @@ case class DeltaGenerateCommand(override val child: LogicalPlan, modeName: Strin
       throw DeltaErrors.unsupportedGenerateModeException(modeName)
     }
     val generationFunc = modeNameToGenerationFunc(modeName)
-    val table = getDeltaTable(child, COMMAND_NAME)
+    val table = DeltaTableV2.extractFrom(child, COMMAND_NAME)
     generationFunc(sparkSession, table.deltaLog, table.catalogTable)
     Seq.empty
   }
