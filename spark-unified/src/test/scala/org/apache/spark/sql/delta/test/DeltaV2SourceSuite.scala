@@ -55,7 +55,10 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "Delta sources don't write offsets with null json",
 
     // === Schema Evolution ===
-    "restarting a query should pick up latest table schema and recover",
+    "add column: restarting with new DataFrame should recover",
+    "add column: restarting with stale DataFrame should fail",
+    "change partition columns: restarting with stale DataFrame should fail",
+    "change partition columns: unsafe flag allows restart with stale DataFrame",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
 
@@ -90,6 +93,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxBytesPerTrigger: metadata checkpoint",
 
     // ========== Error handling tests ==========
+    "streaming query should fail when table is deleted and recreated with new id",
     "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
@@ -116,7 +120,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === Misc ===
     "no schema should throw an exception",
-    "recreate the reservoir should fail the query",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "Delta sources should verify the protocol reader version",
     "can delete old files of a snapshot without update",

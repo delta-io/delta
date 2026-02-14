@@ -177,7 +177,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     validateStreamingOptions(deltaOptions);
     return new SparkMicroBatchStream(
         snapshotManager,
-        initialSnapshot,
+        // Loads a fresh snapshot as the baseline for schema change detection and table identity
+        // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
+        // start/restart.
+        // Matches V1's DeltaDataSource.createSource() behavior.
+        snapshotManager.loadLatestSnapshot(),
         hadoopConf,
         SparkSession.active(),
         deltaOptions,
