@@ -25,7 +25,7 @@ import argparse
 # Define groups of subprojects that can be tested separately from other groups.
 # As of now, we have only defined project groups in the SBT build, so these must match
 # the group names defined in build.sbt.
-valid_project_groups = ["spark", "iceberg", "kernel", "spark-python"]
+valid_project_groups = ["spark", "iceberg", "kernel", "spark-python", "flink"]
 
 
 def get_args():
@@ -53,10 +53,15 @@ def get_args():
         required=False,
         default=None,
         help="Spark version to use (passed as -DsparkVersion to SBT)")
+    parser.add_argument(
+        "--flink-version",
+        required=False,
+        default=None,
+        help="Flink version to use (passed as -DflinkVersion to SBT)")
     return parser.parse_args()
 
 
-def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None, spark_version=None):
+def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None, spark_version=None, flink_version=None):
     print("##### Running SBT tests #####")
 
     sbt_path = path.join(root_dir, path.join("build", "sbt"))
@@ -65,7 +70,11 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     # Pass Spark version as system property to SBT (must come before commands)
     if spark_version:
         cmd.append(f"-DsparkVersion={spark_version}")
-    
+
+    # Pass Flink version as system property to SBT (must come before commands)
+    if flink_version:
+        cmd.append(f"-DflinkVersion={flink_version}")
+
     cmd.append("clean")
 
     test_cmd = "test"
@@ -288,4 +297,5 @@ if __name__ == "__main__":
     else:
         scala_version = os.getenv("SCALA_VERSION")
         spark_version = args.spark_version or os.getenv("SPARK_VERSION")
-        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard, spark_version)
+        flink_version = args.flink_version or os.getenv("FLINK_VERSION")
+        run_sbt_tests(root_dir, args.group, args.coverage, scala_version, args.shard, spark_version, flink_version)
