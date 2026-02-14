@@ -60,7 +60,7 @@ case class VacuumTableCommand(
         DeltaTableIdentifier(path = Some(deltaTable.path.toString)))
     }
     val inventory = inventoryTable.map(sparkSession.sessionState.analyzer.execute)
-      .map(p => Some(DeltaTableV2.extractFrom(p, "VACUUM").toDf(sparkSession)))
+        .map(p => Some(DeltaTableV2.extractFrom(p, "VACUUM").toDf(sparkSession)))
         .getOrElse(inventoryQuery.map(sparkSession.sql))
     VacuumCommand.gc(sparkSession, deltaTable, dryRun, horizonHours,
       inventory, vacuumType).collect()
