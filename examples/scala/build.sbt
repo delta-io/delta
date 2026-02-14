@@ -44,6 +44,7 @@ def getMajorMinor(version: String): (Int, Int) = {
 // Maps Delta version (major, minor) to the compatible Spark version.
 // Used as a fallback for local dev when SPARK_VERSION env var is not set.
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
+  // TODO: how to run integration tests for multiple Spark versions
   case (major, minor) if major >= 4 && minor >= 1 => "4.1.0"
   // version 4.0.0
   case (major, minor) if major >= 4 => "4.0.0"
