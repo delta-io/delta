@@ -284,6 +284,20 @@ trait CatalogOwnedTestBaseSuite
   def extractCatalogOwnedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
+      val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
+        CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+          .map { case (_, config, _) => config.key }
+          .filterNot(Set(
+            DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
+          )) ++
+          Seq(
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP
+          )
+      CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS.map { key =>
+        key -> metadata.configuration.getOrElse(key,
+          fail( s"Expected $key to be defined in the table properties"))
+      } ++
       Option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
     } else {
       Seq.empty
