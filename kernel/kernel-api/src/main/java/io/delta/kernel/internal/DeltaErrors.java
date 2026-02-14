@@ -536,6 +536,17 @@ public final class DeltaErrors {
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
   }
 
+  public static KernelException cdfMixedAddRemoveNotSupported(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot add and remove data in the same transaction when Change Data Feed is enabled "
+                + "on table %s. This would require writing CDC files for DML operations, which is "
+                + "not yet supported by Delta Kernel. You can perform add-only operations (like "
+                + "INSERT or CREATE TABLE), remove-only operations (like DELETE), or mixed "
+                + "operations with dataChange=false (like OPTIMIZE).",
+            tablePath));
+  }
+
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {
     return new KernelException(
         String.format("Required metadata key %s is not present in scan file %s.", entry, filePath));
