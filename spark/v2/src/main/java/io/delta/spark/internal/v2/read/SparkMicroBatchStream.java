@@ -43,6 +43,7 @@ import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
+import java.nio.channels.ClosedByInterruptException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
@@ -295,7 +296,29 @@ public class SparkMicroBatchStream
     DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
     initForTriggerAvailableNowIfNeeded(deltaStartOffset);
     // Return null when no data is available for this batch.
-    DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
+    DeltaSourceOffset endOffset;
+    try {
+      endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
+    } catch (Exception e) {
+      // When the streaming query is being stopped, Spark's MicroBatchExecution interrupts
+      // the micro-batch thread via Thread.interrupt(). If the thread is in the middle of
+      // file I/O through Kernel's DefaultJsonHandler (e.g., reading delta log JSON files
+      // during snapshot loading), the underlying file channel throws
+      // ClosedByInterruptException (an IOException with null message).
+      //
+      // Unlike InterruptedException, ClosedByInterruptException is not recognized by
+      // Spark's isInterruptedByStop() check, so it gets stored as a stream exception and
+      // causes spurious test failures.
+      //
+      // When thread interruption is detected, return null (no new data) and let the stream's
+      // stop logic handle the shutdown cleanly.
+      if (isInterruptedByStop(e)) {
+        logger.info("latestOffset() interrupted during stream shutdown, returning null");
+        isFirstBatch = false;
+        return null;
+      }
+      throw e;
+    }
     isFirstBatch = false;
     return endOffset;
   }
@@ -450,6 +473,33 @@ public class SparkMicroBatchStream
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
+  }
+
+  /**
+   * Checks if an exception was caused by thread interruption during stream shutdown.
+   *
+   * <p>When Spark stops a streaming query, it calls Thread.interrupt() on the micro-batch thread.
+   * If the thread is performing file I/O through Kernel's DefaultJsonHandler at that moment, the
+   * underlying NIO channel throws {@link ClosedByInterruptException}. This exception propagates
+   * through Kernel's exception wrapping (KernelEngineException -> IOException) and would otherwise
+   * be stored as a stream exception, causing spurious failures.
+   *
+   * <p>This method checks both the exception cause chain (for ClosedByInterruptException or
+   * InterruptedException) and the thread's interrupt status.
+   */
+  private static boolean isInterruptedByStop(Throwable t) {
+    if (Thread.currentThread().isInterrupted()) {
+      return true;
+    }
+    // Walk the cause chain looking for interruption-related exceptions
+    Throwable cause = t;
+    while (cause != null) {
+      if (cause instanceof ClosedByInterruptException || cause instanceof InterruptedException) {
+        return true;
+      }
+      cause = cause.getCause();
+    }
+    return false;
   }
 
   ///////////////////////
