@@ -310,7 +310,6 @@ class CatalogOwnedEnablementSuite
     }
   }
 
-
   test("ALTER TABLE should be blocked if attempts to disable ICT") {
     withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
       val error = interceptWithUnwrapping[DeltaIllegalArgumentException] {

@@ -225,6 +225,16 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       spark.sessionState.conf.contains(config.defaultTablePropertyKey)
   }
 
+  /**
+   * Updates table metadata with appropriate QoL features for CatalogManaged tables.
+   *
+   * Main entry point for QoL feature enablement during table creation.
+   * See [[getQoLConfigsToAdd]] for the logic that determines which features are added.
+   *
+   * @param spark SparkSession for configuration
+   * @param metadata Table metadata to update
+   * @return Updated metadata with QoL features
+   */
   def updateMetadataForQoLFeatures(
       spark: SparkSession,
       metadata: Metadata): Metadata = {

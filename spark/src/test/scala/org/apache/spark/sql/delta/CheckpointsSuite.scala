@@ -252,7 +252,10 @@ class CheckpointsSuite
           "fs.gs.impl" -> classOf[FakeGCSFileSystemValidatingCheckpoint].getName,
           "fs.gs.impl.disable.cache" -> "true") {
         val gsPath = s"gs://${tempDir.getCanonicalPath}"
-        spark.range(1).write.format("delta").save(gsPath)
+        // Setting checkpointPolicy=classic because this test is intended for v1 checkpoint only.
+        spark.range(1).write.format("delta")
+          .option(DeltaConfigs.CHECKPOINT_POLICY.key, "classic")
+          .save(gsPath)
         DeltaLog.clearCache()
         val deltaLog = DeltaLog.forTable(spark, new Path(gsPath))
         deltaLog.checkpoint()
@@ -449,6 +452,15 @@ class CheckpointsSuite
               "metaData",
               "protocol",
               "domainMetadata")
+          // For CCv1.5 table, v2 checkpoints is enabled by default.
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // V2 checkpoint's schema is shared by sidecar files (contains all file actions)
+            // and the main v2 checkpoint file (contains all non-file actions).
+            // So file actions (e.g. `txn`, `add`, `remove`) are not included in the main v2
+            // checkpoint file.
+            expectedCheckpointSchema = Seq(
+              "checkpointMetadata", "domainMetadata", "metaData", "protocol", "sidecar")
+          }
           assert(checkpointSchema.fieldNames.toSeq == expectedCheckpointSchema)
         }
       }
@@ -747,12 +759,16 @@ class CheckpointsSuite
         lastCheckpointInfoOpt.get
       }
 
+      // For CCv1.5 table, row tracking is enabled by default, there will be an extra
+      // DomainMetadata added by RowTracking as a non file action.
+      val domainMetadataAddedByRowTracking = if (catalogOwnedDefaultCreationEnabledInTests) 1 else 0
       // Append 1 AddFile [AddFile-2]
       val lc1 = writeCheckpoint(adds = 1, nonFileActionThreshold = 10, sidecarActionThreshold = 10)
       assert(lc1.v2Checkpoint.nonEmpty)
       // 3 non file actions - protocol/metadata/checkpointMetadata, 1 sidecar
       assert(
         lc1.v2Checkpoint.get.nonFileActions.get.size === 3
+          + domainMetadataAddedByRowTracking
       )
       assert(lc1.v2Checkpoint.get.sidecarFiles.get.size === 1)
 
@@ -763,11 +779,13 @@ class CheckpointsSuite
         adds = 8,
         sidecarActionThreshold = 10,
         nonFileActionThreshold = 4
+          + domainMetadataAddedByRowTracking
       )
       assert(lc2.v2Checkpoint.nonEmpty)
       // 4 non file actions - protocol/metadata/checkpointMetadata/setTxn, 1 sidecar
       assert(
         lc2.v2Checkpoint.get.nonFileActions.get.size === 4
+          + domainMetadataAddedByRowTracking
       )
       assert(lc2.v2Checkpoint.get.sidecarFiles.get.size === 1)
 
@@ -798,6 +816,7 @@ class CheckpointsSuite
         // total 30 file actions, across 15 sidecar files (2 actions per file)
         assert(
           lc5.v2Checkpoint.get.nonFileActions.get.size === 4
+            + domainMetadataAddedByRowTracking
         )
         assert(lc5.v2Checkpoint.get.sidecarFiles.isEmpty)
       }
