@@ -25,7 +25,7 @@ import org.apache.spark.sql.delta.actions.{Action, AddFile, DeletionVectorDescri
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.AlterTableUnsetPropertiesDeltaCommand
 import org.apache.spark.sql.delta.commands.DeltaReorgTableCommand
-import org.apache.spark.sql.delta.deletionvectors.{RoaringBitmapArray, RoaringBitmapArrayFormat}
+import org.apache.spark.sql.delta.deletionvectors.{DeletionVectorsTestUtils, RoaringBitmapArray, RoaringBitmapArrayFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

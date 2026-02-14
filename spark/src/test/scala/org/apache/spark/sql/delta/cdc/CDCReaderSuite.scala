@@ -24,8 +24,12 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaOperations.Delete
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, AddCDCFile, AddFile}
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaColumnMappingTestUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.commands.cdc.CDCReader._
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest

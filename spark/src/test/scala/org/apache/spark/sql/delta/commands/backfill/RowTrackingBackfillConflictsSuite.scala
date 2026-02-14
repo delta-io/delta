@@ -25,6 +25,9 @@ import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
 import org.apache.spark.sql.delta.actions.{Action, AddFile}
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.fuzzer.{OptimisticTransactionPhases, PhaseLockingTransactionExecutionObserver}
 import org.apache.spark.sql.delta.fuzzer.AtomicBarrier.State
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils

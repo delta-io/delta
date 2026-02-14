@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.dml.merge
 
 import scala.language.implicitConversions
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}

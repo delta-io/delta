@@ -26,8 +26,9 @@ import scala.concurrent.duration._
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode}
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
-import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestData
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
@@ -584,7 +585,8 @@ class CheckpointsSuite
   test("checkpoint with DVs") {
     for (v2Checkpoint <- Seq(true, false))
     withTempDir { tempDir =>
-      val source = new File(DeletionVectorsSuite.table1Path) // this table has DVs in two versions
+      // This table has DVs in two versions.
+      val source = new File(DeletionVectorsTestData.table1Path)
       val targetName = s"insertTest_${UUID.randomUUID().toString.replace("-", "")}"
       val target = new File(tempDir, targetName)
 
@@ -619,7 +621,7 @@ class CheckpointsSuite
       import testImplicits._
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`${target.getAbsolutePath}`"),
-        (DeletionVectorsSuite.expectedTable1DataV4 ++ newData).toSeq.toDF())
+        (DeletionVectorsTestData.expectedTable1DataV4 ++ newData).toSeq.toDF())
     }
   }
 

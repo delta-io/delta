@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.dml.merge
 
-import org.apache.spark.sql.delta.cdc.MergeCDCMixin
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWithDeletionVectorsHelper}
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 
 import org.apache.spark.SparkException

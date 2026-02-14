@@ -24,6 +24,11 @@ import java.time.LocalDateTime
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaColumnMapping
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaColumnMappingTestUtils}
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatisticsCollection.{ASCII_MAX_CHARACTER, UTF8_MAX_CHARACTER}

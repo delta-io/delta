@@ -20,6 +20,10 @@ package org.apache.spark.sql.delta.optimize
 import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.commands.optimize.{FileSizeStats, OptimizeMetrics, ZOrderStats}
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

@@ -14,10 +14,11 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.dml.merge
 
 import java.util.Locale
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.SetTransaction
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
@@ -47,6 +48,7 @@ trait MergeIntoScalaMixin extends MergeIntoSuiteBaseMixin
   )
 
   // scalastyle:off argcount
+import org.apache.spark.sql.delta._
   override def testNestedDataSupport(name: String, namePrefix: String = "nested data support")(
       source: String,
       target: String,

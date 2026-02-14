@@ -23,7 +23,7 @@ import java.util.{ConcurrentModificationException, UUID}
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBySpec}
+import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.{AlterTableDropFeatureDeltaCommand, DeltaGenerateCommand}
 import org.apache.spark.sql.delta.constraints.Constraints

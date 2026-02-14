@@ -20,6 +20,7 @@ import java.util.Date
 
 import org.apache.spark.sql.delta.DeltaTestUtils.modifyCommitTimestamp
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.columnmapping.DeltaColumnMappingTestUtils
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTableUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._

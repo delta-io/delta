@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.dml.update
 
+import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.test.{DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
 import org.apache.spark.sql.{functions, Row}

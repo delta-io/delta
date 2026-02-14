@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaColumnMappingTestUtils}
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex

@@ -23,6 +23,7 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.concurrency.{PhaseLockingTestMixin, TransactionExecutionTestMixin}
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.fuzzer.{PhaseLockingTransactionExecutionObserver => TransactionObserver}
 import org.apache.spark.sql.delta.rowid.RowIdTestUtils
 import org.apache.spark.sql.util.ScalaExtensions.OptionExt
