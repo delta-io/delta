@@ -200,8 +200,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       )
 
     val writer = sourceQuery.map { df =>
+      // For safety, only extract the file system options here, to create deltaLog.
+      val fileSystemOptions = writeOptions.filter { case (k, _) =>
+        DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
+      }
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt, new Path(loc), writeOptions),
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+          new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
         withDb.partitionColumnNames,
