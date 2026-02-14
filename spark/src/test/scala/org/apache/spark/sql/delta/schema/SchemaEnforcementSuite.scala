@@ -280,7 +280,7 @@ trait AppendSaveModeTests extends BatchWriterTest {
         val e = intercept[AnalysisException] {
           spark.range(10).withColumn("part", 'id + 1).write.append(dir)
         }
-        assert(e.getMessage.contains("schema mismatch detected"))
+        assert(e.getMessage.contains("schema mismatch was detected"))
         assert(e.getMessage.contains(s"Table ID: ${DeltaLog.forTable(spark, dir).tableId}"))
       }
     }
