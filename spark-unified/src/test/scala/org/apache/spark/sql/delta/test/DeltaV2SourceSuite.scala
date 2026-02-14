@@ -58,6 +58,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "restarting a query should pick up latest table schema and recover",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
+    "new query always pick up the latest schema",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
