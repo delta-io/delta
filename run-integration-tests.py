@@ -21,6 +21,7 @@ import subprocess
 from os import path
 import shutil
 import argparse
+import json
 
 
 def delete_if_exists(path):
@@ -30,13 +31,48 @@ def delete_if_exists(path):
         print("Deleted %s " % path)
 
 
+def load_spark_version_specs(root_dir):
+    """
+    Loads Spark version specs from target/spark-versions.json (single source of truth).
+    Runs `build/sbt exportSparkVersionsJson` if the file doesn't exist yet.
+    Returns a list of dicts with keys: fullVersion, shortVersion, isMaster, isDefault,
+    targetJvm, packageSuffix, supportIceberg, supportHudi.
+    """
+    json_path = path.join(root_dir, "target", "spark-versions.json")
+    if not path.exists(json_path):
+        print("Generating %s via exportSparkVersionsJson..." % json_path)
+        run_cmd(["build/sbt", "exportSparkVersionsJson"], stream_output=True)
+    with open(json_path) as f:
+        return json.load(f)
+
+
+def publish_all_variants(root_dir, spark_specs):
+    """
+    Publishes all artifact variants once upfront (replaces per-function publishM2 calls).
+
+    Step 1: Publish all modules WITHOUT Spark suffix (backward compatibility)
+    Step 2: Publish Spark-dependent modules WITH suffix for each non-master Spark version
+    """
+    # Step 1: unsuffixed (backward compat)
+    print("\n##### Publishing all modules without Spark suffix (backward compat) #####")
+    run_cmd(["build/sbt", "-DskipSparkSuffix=true", "publishM2"], stream_output=True)
+
+    # Step 2: suffixed for each non-master Spark version
+    for spec in spark_specs:
+        if spec.get("isMaster", False):
+            continue
+        spark_version = spec["fullVersion"]
+        print("\n##### Publishing Spark-dependent modules for Spark %s #####" % spark_version)
+        run_cmd(
+            ["build/sbt", "-DsparkVersion=%s" % spark_version,
+             "runOnlyForReleasableSparkModules publishM2"],
+            stream_output=True)
+
+
 def run_scala_integration_tests(root_dir, version, test_name, extra_maven_repo, scala_version,
                                 use_local):
     print("\n\n##### Running Scala tests on delta version %s and scala version %s #####"
           % (str(version), scala_version))
-    clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, "examples", "scala")
     test_src_dir = path.join(test_dir, "src", "main", "scala", "example")
@@ -71,9 +107,6 @@ def get_artifact_name(version):
 
 def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo, use_local):
     print("\n\n##### Running Python tests on version %s #####" % str(version))
-    clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("examples", "python"))
     files_to_skip = {"using_with_pip.py", "missing_delta_storage_jar.py", "image_storage.py", "delta_connect.py"}
@@ -113,10 +146,8 @@ def test_missing_delta_storage_jar(root_dir, version, use_local):
 
     print("\n\n##### Running 'missing_delta_storage_jar' on version %s #####" % str(version))
 
-    clear_artifact_cache()
-
-    run_cmd(["build/sbt", "publishM2"])
-
+    # The unsuffixed artifact was published via publish_all_variants upfront.
+    # Clear only the delta-storage artifact to test the missing JAR scenario.
     print("Clearing delta-storage artifact")
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/delta-storage"))
     delete_if_exists(os.path.expanduser("~/.ivy2/cache/io.delta/delta-storage"))
@@ -151,9 +182,6 @@ def run_dynamodb_logstore_integration_tests(root_dir, version, test_name, extra_
     print(
         "\n\n##### Running DynamoDB logstore integration tests on version %s #####" % str(version)
     )
-    clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("storage-s3-dynamodb", "integration_tests"))
     test_files = [path.join(test_dir, f) for f in os.listdir(test_dir)
@@ -194,9 +222,6 @@ def run_dynamodb_commit_coordinator_integration_tests(root_dir, version, test_na
     print(
         "\n\n##### Running DynamoDB Commit Coordinator integration tests on version %s #####" % str(version)
     )
-    clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, \
         path.join("spark", "src", "main", "java", "io", "delta", "dynamodbcommitcoordinator", "integration_tests"))
@@ -251,9 +276,6 @@ def run_s3_log_store_util_integration_tests():
 
 def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_version, extra_maven_repo, use_local):
     print("\n\n##### Running Iceberg tests on version %s #####" % str(version))
-    clear_artifact_cache()
-    if use_local:
-        run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, path.join("iceberg", "integration_tests"))
 
@@ -285,14 +307,11 @@ def run_iceberg_integration_tests(root_dir, version, spark_version, iceberg_vers
 
 def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_version, extra_maven_repo, use_local):
     print("\n\n##### Running Uniform hudi tests on version %s #####" % str(version))
-    # clear_artifact_cache()
     if use_local:
-        run_cmd(["build/sbt", "publishM2"])
         run_cmd(["build/sbt", "hudi/assembly"])
 
     test_dir = path.join(root_dir, path.join("hudi", "integration_tests"))
 
-    print("attn " + root_dir)
     # Add more tests here if needed ...
     test_files_names = ["write_uniform_hudi.py"]
     test_files = [path.join(test_dir, f) for f in test_files_names]
@@ -323,7 +342,7 @@ def run_uniform_hudi_integration_tests(root_dir, version, spark_version, hudi_ve
 
 def run_pip_installation_tests(root_dir, version, use_testpypi, use_localpypi, extra_maven_repo):
     print("\n\n##### Running pip installation tests on version %s #####" % str(version))
-    clear_artifact_cache()
+    # Note: no clear_artifact_cache() here. Pip tests install from PyPI, not local M2.
     delta_pip_name = "delta-spark"
     # uninstall packages if they exist
     run_cmd(["pip", "uninstall", "--yes", delta_pip_name, "pyspark"], stream_output=True)
@@ -364,10 +383,6 @@ def run_unity_catalog_commit_coordinator_integration_tests(root_dir, version, te
     print(
         "\n\n##### Running Unity Catalog commit coordinator integration tests on version %s #####" % str(version)
     )
-
-    if use_local:
-        clear_artifact_cache()
-        run_cmd(["build/sbt", "publishM2"])
 
     test_dir = path.join(root_dir, \
         path.join("python", "delta", "integration_tests"))
@@ -568,8 +583,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--iceberg-spark-version",
         required=False,
-        default="3.5",
-        help="Spark version for the Iceberg library")
+        default="4.0",
+        help="Spark version for the Iceberg library (used in non-local mode)")
     parser.add_argument(
         "--iceberg-lib-version",
         required=False,
@@ -578,8 +593,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hudi-spark-version",
         required=False,
-        default="3.5",
-        help="Spark version for the Hudi library")
+        default="4.0",
+        help="Spark version for the Hudi library (used in non-local mode)")
     parser.add_argument(
         "--hudi-version",
         required=False,
@@ -604,6 +619,12 @@ if __name__ == "__main__":
 
     if args.use_local and (args.version != default_version):
         raise Exception("Cannot specify --use-local with a --version different than in version.sbt")
+
+    # When --use-local, publish all artifact variants once upfront
+    if args.use_local:
+        spark_specs = load_spark_version_specs(root_dir)
+        clear_artifact_cache()
+        publish_all_variants(root_dir, spark_specs)
 
     run_python = not args.scala_only and not args.pip_only
     run_scala = not args.python_only and not args.pip_only
