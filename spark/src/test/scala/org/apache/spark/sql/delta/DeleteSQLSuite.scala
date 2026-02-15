@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaExcludedTestMixin, DeltaSQLCommandTest}
 
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{AnalysisException, Row}
 
 trait DeleteSQLMixin extends DeleteBaseMixin
   with DeltaDMLTestUtils
@@ -82,6 +82,130 @@ trait DeleteSQLTests extends DeleteSQLMixin {
         sql("SELECT id, _change_type FROM tab").collect().foreach { row =>
           val _change_type = row.getString(1)
           assert(_change_type === "foo", s"Invalid _change_type for id=${row.get(0)}")
+        }
+      }
+    }
+  }
+
+  test("simple correlated IN subquery allowed via temp view") {
+    withTable("target") {
+      withTable("sourceTable") {
+        withTempView("t") {
+          Seq((1, "a"), (2, "b"), (3, "c")).toDF("key", "val")
+            .write.format("delta").saveAsTable("target")
+          Seq(2, 3).toDF("key").write.format("delta").saveAsTable("sourceTable")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+
+          sql("""
+          DELETE FROM t
+          WHERE key IN (SELECT key FROM sourceTable WHERE sourceTable.key = t.key)
+        """)
+
+          checkAnswer(
+            sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(1, "a"))
+          )
+        }
+      }
+    }
+  }
+
+  test("exists subquery with correlation allowed via temp view") {
+    withTable("target") {
+      withTable("sourceTable") {
+        withTempView("t") {
+          Seq((1, 10), (2, 20), (3, 30)).toDF("key", "val")
+            .write.format("delta").saveAsTable("target")
+          Seq(1, 3).toDF("key").write.format("delta").saveAsTable("sourceTable")
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+
+          sql("""
+          DELETE FROM t WHERE EXISTS (
+            SELECT 1 FROM sourceTable WHERE t.key = sourceTable.key
+          )
+        """)
+
+          checkAnswer(
+            sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(2, 20))
+          )
+        }
+      }
+    }
+  }
+
+  test("scalar subquery in condition allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq((1, "a"), (2, "b"))
+            .toDF("key", "val")
+            .write.format("delta")
+            .saveAsTable("target")
+          Seq(2, 3)
+            .toDF("key")
+            .write.format("delta")
+            .saveAsTable("source")
+
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("DELETE FROM t WHERE key < (SELECT min(key) FROM source)")
+
+          checkAnswer(
+            sql("SELECT * FROM target ORDER BY key"),
+            Seq(Row(2, "b"))
+          )
+        }
+      }
+    }
+  }
+
+  test("simple NOT IN subquery allowed via temp view") {
+    withTable("target") {
+      withTable("source") {
+        withTempView("t") {
+          Seq("X", "Y", "Z")
+            .toDF("category")
+            .write.format("delta")
+            .saveAsTable("target")
+          Seq("Y")
+            .toDF("category")
+            .write.format("delta")
+            .saveAsTable("source")
+
+          sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+          sql("DELETE FROM t WHERE category NOT IN (SELECT category FROM source)")
+
+          checkAnswer(
+            sql("SELECT * FROM target ORDER BY category"),
+            Seq(Row("Y"))
+          )
+        }
+      }
+    }
+  }
+
+  test("nested subquery should fail via temp view") {
+    withTable("target") {
+      withTable("source1") {
+        withTable("source2") {
+          withTempView("t") {
+            Seq((1, "a"), (2, "b")).toDF("key", "col")
+              .write.format("delta").saveAsTable("target")
+
+            Seq(2).toDF("key").write.format("delta").saveAsTable("source1")
+            Seq(3).toDF("id").write.format("delta").saveAsTable("source2")
+
+            sql("CREATE TEMP VIEW t AS SELECT * FROM target")
+
+            val e = intercept[AnalysisException] {
+              sql(
+                "DELETE FROM t WHERE key IN (" +
+                  "SELECT key FROM source1 WHERE key IN (SELECT id FROM source2))"
+              )
+            }
+
+            assert(e.getMessage.contains("Subqueries are not supported in the DELETE"))
+          }
         }
       }
     }
