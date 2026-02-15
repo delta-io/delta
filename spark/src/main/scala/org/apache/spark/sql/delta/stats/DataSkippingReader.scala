@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -256,6 +255,7 @@ trait DataSkippingReaderBase
   def schema: StructType
   private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
+  private[delta] def stateProvider: DeltaStateProvider
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
@@ -266,27 +266,6 @@ trait DataSkippingReaderBase
         DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
       .toSet.flatMap((exprs: String) => exprs.split(","))
 
-  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
-  private def withStatsInternal0: DataFrame = {
-    val parsedStats = from_json(col("stats"), statsSchema)
-    // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
-    // This avoids performance overhead for tables without variant columns.
-    // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
-    // expression has no way to decode a VariantVal from an encoded Z85 string.
-    // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
-    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
-      Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
-    } else {
-      parsedStats
-    }
-    allFiles.withColumn("stats", decodedStats)
-  }
-
-  private lazy val withStatsCache =
-    cacheDS(withStatsInternal0, s"Delta Table State with Stats #$version - $redactedPath")
-
-  protected def withStatsInternal: DataFrame = withStatsCache.getDS
-
   /** All files with the statistics column dropped completely. */
   def withNoStats: DataFrame = allFiles.drop("stats")
 
@@ -296,9 +275,7 @@ trait DataSkippingReaderBase
    *
    * @return [[DataFrame]]
    */
-  final def withStats: DataFrame = {
-    withStatsInternal
-  }
+  final def withStats: DataFrame = stateProvider.allAddFilesWithParsedStats
 
   /**
    * Constructs a [[DataSkippingPredicate]] for isNotNull predicates.
