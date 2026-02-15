@@ -32,10 +32,10 @@ public class ColumnVectorWithFilterTest {
       for (int i = 0; i < 5; i++) {
         delegate.putInt(i, (i + 1) * 10); // [10, 20, 30, 40, 50]
       }
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
 
-      assertEquals(20, filtered.getInt(0));
-      assertEquals(40, filtered.getInt(1));
+      assertEquals(20, mappedVector.getInt(0));
+      assertEquals(40, mappedVector.getInt(1));
     }
   }
 
@@ -45,10 +45,10 @@ public class ColumnVectorWithFilterTest {
       for (int i = 0; i < 4; i++) {
         delegate.putLong(i, (i + 1) * 100L);
       }
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      assertEquals(100L, filtered.getLong(0));
-      assertEquals(300L, filtered.getLong(1));
+      assertEquals(100L, mappedVector.getLong(0));
+      assertEquals(300L, mappedVector.getLong(1));
     }
   }
 
@@ -58,10 +58,10 @@ public class ColumnVectorWithFilterTest {
       delegate.putDouble(0, 1.1);
       delegate.putDouble(1, 2.2);
       delegate.putDouble(2, 3.3);
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      assertEquals(1.1, filtered.getDouble(0), 0.001);
-      assertEquals(3.3, filtered.getDouble(1), 0.001);
+      assertEquals(1.1, mappedVector.getDouble(0), 0.001);
+      assertEquals(3.3, mappedVector.getDouble(1), 0.001);
     }
   }
 
@@ -72,10 +72,10 @@ public class ColumnVectorWithFilterTest {
       delegate.putBoolean(1, false);
       delegate.putBoolean(2, true);
       delegate.putBoolean(3, false);
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {1, 2});
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 2});
 
-      assertFalse(filtered.getBoolean(0));
-      assertTrue(filtered.getBoolean(1));
+      assertFalse(mappedVector.getBoolean(0));
+      assertTrue(mappedVector.getBoolean(1));
     }
   }
 
@@ -85,9 +85,9 @@ public class ColumnVectorWithFilterTest {
       delegate.putByteArray(0, "alice".getBytes());
       delegate.putByteArray(1, "bob".getBytes());
       delegate.putByteArray(2, "charlie".getBytes());
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {2});
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {2});
 
-      assertEquals("charlie", filtered.getUTF8String(0).toString());
+      assertEquals("charlie", mappedVector.getUTF8String(0).toString());
     }
   }
 
@@ -105,55 +105,64 @@ public class ColumnVectorWithFilterTest {
       nameChild.putByteArray(1, "b".getBytes());
       nameChild.putByteArray(2, "c".getBytes());
 
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
       // getChild should return ColumnVectorWithFilter with the same rowIdMapping
-      ColumnVector filteredId = filtered.getChild(0);
-      ColumnVector filteredName = filtered.getChild(1);
-      assertTrue(filteredId instanceof ColumnVectorWithFilter);
-      assertTrue(filteredName instanceof ColumnVectorWithFilter);
+      ColumnVector mappedIdColumn = mappedVector.getChild(0);
+      ColumnVector mappedNameColumn = mappedVector.getChild(1);
 
       // filtered: row 0 -> original 0, row 1 -> original 2
-      assertEquals(1, filteredId.getInt(0));
-      assertEquals(3, filteredId.getInt(1));
-      assertEquals("a", filteredName.getUTF8String(0).toString());
-      assertEquals("c", filteredName.getUTF8String(1).toString());
+      assertEquals(1, mappedIdColumn.getInt(0));
+      assertEquals(3, mappedIdColumn.getInt(1));
+      assertEquals("a", mappedNameColumn.getUTF8String(0).toString());
+      assertEquals("c", mappedNameColumn.getUTF8String(1).toString());
     }
   }
 
   @Test
-  void testNullHandling() {
+  void testColumnVectorWithNull() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.IntegerType)) {
+      // original rows: [10, null, 30, null]
       delegate.putInt(0, 10);
       delegate.putNull(1);
       delegate.putInt(2, 30);
       delegate.putNull(3);
-      ColumnVectorWithFilter filtered =
-          new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2, 3});
+      // selected rows (in order): [3, 0, 1] => [null, 10, null]
+      ColumnVectorWithFilter mappedVector =
+          new ColumnVectorWithFilter(delegate, new int[] {3, 0, 1});
 
-      assertFalse(filtered.isNullAt(0));
-      assertTrue(filtered.isNullAt(1));
-      assertFalse(filtered.isNullAt(2));
-      assertTrue(filtered.isNullAt(3));
+      assertTrue(mappedVector.isNullAt(0));
+      assertFalse(mappedVector.isNullAt(1));
+      assertEquals(10, mappedVector.getInt(1));
+      assertTrue(mappedVector.isNullAt(2));
     }
   }
 
   @Test
-  void testEmptyAndIdentityMapping() {
+  void testEmptySelectionMapping() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
       delegate.putInt(0, 10);
       delegate.putInt(1, 20);
       delegate.putInt(2, 30);
 
-      // Empty mapping
-      ColumnVectorWithFilter empty = new ColumnVectorWithFilter(delegate, new int[] {});
-      assertEquals(DataTypes.IntegerType, empty.dataType());
+      ColumnVectorWithFilter noRowsSelected = new ColumnVectorWithFilter(delegate, new int[] {});
+      assertEquals(DataTypes.IntegerType, noRowsSelected.dataType());
+    }
+  }
 
-      // Identity mapping
-      ColumnVectorWithFilter identity = new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2});
-      assertEquals(10, identity.getInt(0));
-      assertEquals(20, identity.getInt(1));
-      assertEquals(30, identity.getInt(2));
+  @Test
+  void testIdentitySelectionMapping() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
+      delegate.putInt(0, 10);
+      delegate.putInt(1, 20);
+      delegate.putInt(2, 30);
+
+      // Identity mapping -> all select
+      ColumnVectorWithFilter allRowsSelected =
+          new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2});
+      assertEquals(10, allRowsSelected.getInt(0));
+      assertEquals(20, allRowsSelected.getInt(1));
+      assertEquals(30, allRowsSelected.getInt(2));
     }
   }
 }
