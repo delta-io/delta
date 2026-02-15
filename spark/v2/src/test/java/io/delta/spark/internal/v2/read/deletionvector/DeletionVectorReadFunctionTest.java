@@ -38,7 +38,7 @@ public class DeletionVectorReadFunctionTest {
   // ===== Row-based tests =====
 
   @Test
-  public void testRowFilterDeletedRowsAndProjectRemovesDvColumn() {
+  public void testFilterDeletedRowsAndProjectRemovesDvColumn() {
     List<InternalRow> inputRows =
         List.of(
             row(1, "alice", (byte) 0), // Not deleted.
@@ -56,7 +56,7 @@ public class DeletionVectorReadFunctionTest {
   }
 
   @Test
-  public void testRowAllRowsDeleted() {
+  public void testAllRowsDeleted() {
     List<InternalRow> inputRows =
         List.of(row(1, "alice", (byte) 1), row(2, "bob", (byte) 1)); // All deleted.
 
@@ -71,7 +71,7 @@ public class DeletionVectorReadFunctionTest {
   }
 
   @Test
-  public void testRowNoRowsDeleted() {
+  public void testNoRowsDeleted() {
     List<InternalRow> inputRows =
         List.of(row(1, "alice", (byte) 0), row(2, "bob", (byte) 0), row(3, "charlie", (byte) 0));
 
