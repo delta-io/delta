@@ -26,6 +26,7 @@ import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 import org.apache.spark.unsafe.types.UTF8String;
 import scala.Function1;
 import scala.collection.Iterator;
@@ -48,11 +49,39 @@ public class InternalRowTestUtils {
     };
   }
 
+  /**
+   * Create a mock reader that returns ColumnarBatch objects through Iterator&lt;InternalRow&gt;.
+   *
+   * <p>Mimics Spark vectorized mode where ColumnarBatch is passed via type erasure.
+   */
+  @SuppressWarnings("unchecked")
+  public static Function1<PartitionedFile, Iterator<InternalRow>> mockBatchReader(
+      List<ColumnarBatch> batches) {
+    return new AbstractFunction1<PartitionedFile, Iterator<InternalRow>>() {
+      @Override
+      public Iterator<InternalRow> apply(PartitionedFile file) {
+        return (Iterator<InternalRow>)
+            (Iterator<?>) CollectionConverters.asScala(batches.iterator());
+      }
+    };
+  }
+
   /** Collect all rows from iterator into a list, copying each row. */
   public static List<InternalRow> collectRows(Iterator<InternalRow> iter) {
     List<InternalRow> result = new ArrayList<>();
     while (iter.hasNext()) {
       result.add(iter.next().copy());
+    }
+    return result;
+  }
+
+  /** Collect all ColumnarBatch objects from an iterator (for vectorized mode testing). */
+  @SuppressWarnings("unchecked")
+  public static List<ColumnarBatch> collectBatches(Iterator<InternalRow> iter) {
+    Iterator<Object> objectIter = (Iterator<Object>) (Iterator<?>) iter;
+    List<ColumnarBatch> result = new ArrayList<>();
+    while (objectIter.hasNext()) {
+      result.add((ColumnarBatch) objectIter.next());
     }
     return result;
   }
