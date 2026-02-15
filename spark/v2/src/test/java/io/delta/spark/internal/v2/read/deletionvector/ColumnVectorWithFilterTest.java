@@ -17,76 +17,113 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
+import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 public class ColumnVectorWithFilterTest {
 
-  @Test
-  void testIntegerFiltering() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(5, DataTypes.IntegerType)) {
-      for (int i = 0; i < 5; i++) {
-        delegate.putInt(i, (i + 1) * 10); // [10, 20, 30, 40, 50]
-      }
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
-
-      assertEquals(20, filtered.getInt(0));
-      assertEquals(40, filtered.getInt(1));
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("dataTypeFilteringCases")
+  void testFilteringByType(
+      String typeName,
+      DataType dataType,
+      int vectorSize,
+      Consumer<WritableColumnVector> populate,
+      int[] filterIndices,
+      Consumer<ColumnVectorWithFilter> verify) {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(vectorSize, dataType)) {
+      populate.accept(delegate);
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, filterIndices);
+      verify.accept(filtered);
     }
   }
 
-  @Test
-  void testLongFiltering() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.LongType)) {
-      for (int i = 0; i < 4; i++) {
-        delegate.putLong(i, (i + 1) * 100L);
-      }
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
-
-      assertEquals(100L, filtered.getLong(0));
-      assertEquals(300L, filtered.getLong(1));
-    }
-  }
-
-  @Test
-  void testDoubleFiltering() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.DoubleType)) {
-      delegate.putDouble(0, 1.1);
-      delegate.putDouble(1, 2.2);
-      delegate.putDouble(2, 3.3);
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
-
-      assertEquals(1.1, filtered.getDouble(0), 0.001);
-      assertEquals(3.3, filtered.getDouble(1), 0.001);
-    }
-  }
-
-  @Test
-  void testBooleanFiltering() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.BooleanType)) {
-      delegate.putBoolean(0, true);
-      delegate.putBoolean(1, false);
-      delegate.putBoolean(2, true);
-      delegate.putBoolean(3, false);
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {1, 2});
-
-      assertFalse(filtered.getBoolean(0));
-      assertTrue(filtered.getBoolean(1));
-    }
-  }
-
-  @Test
-  void testStringFiltering() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.StringType)) {
-      delegate.putByteArray(0, "alice".getBytes());
-      delegate.putByteArray(1, "bob".getBytes());
-      delegate.putByteArray(2, "charlie".getBytes());
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {2});
-
-      assertEquals("charlie", filtered.getUTF8String(0).toString());
-    }
+  static Stream<Arguments> dataTypeFilteringCases() {
+    return Stream.of(
+        Arguments.of(
+            "Integer",
+            DataTypes.IntegerType,
+            5,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  for (int i = 0; i < 5; i++) v.putInt(i, (i + 1) * 10); // [10,20,30,40,50]
+                },
+            new int[] {1, 3},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertEquals(20, f.getInt(0));
+                  assertEquals(40, f.getInt(1));
+                }),
+        Arguments.of(
+            "Long",
+            DataTypes.LongType,
+            4,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  for (int i = 0; i < 4; i++) v.putLong(i, (i + 1) * 100L);
+                },
+            new int[] {0, 2},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertEquals(100L, f.getLong(0));
+                  assertEquals(300L, f.getLong(1));
+                }),
+        Arguments.of(
+            "Double",
+            DataTypes.DoubleType,
+            3,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  v.putDouble(0, 1.1);
+                  v.putDouble(1, 2.2);
+                  v.putDouble(2, 3.3);
+                },
+            new int[] {0, 2},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertEquals(1.1, f.getDouble(0), 0.001);
+                  assertEquals(3.3, f.getDouble(1), 0.001);
+                }),
+        Arguments.of(
+            "Boolean",
+            DataTypes.BooleanType,
+            4,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  v.putBoolean(0, true);
+                  v.putBoolean(1, false);
+                  v.putBoolean(2, true);
+                  v.putBoolean(3, false);
+                },
+            new int[] {1, 2},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertFalse(f.getBoolean(0));
+                  assertTrue(f.getBoolean(1));
+                }),
+        Arguments.of(
+            "String",
+            DataTypes.StringType,
+            3,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  v.putByteArray(0, "alice".getBytes());
+                  v.putByteArray(1, "bob".getBytes());
+                  v.putByteArray(2, "charlie".getBytes());
+                },
+            new int[] {2},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertEquals("charlie", f.getUTF8String(0).toString());
+                }));
   }
 
   @Test
