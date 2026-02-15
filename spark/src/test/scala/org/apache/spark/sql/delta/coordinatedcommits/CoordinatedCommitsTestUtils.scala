@@ -18,23 +18,21 @@ package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.util.Optional
 import java.util.concurrent.atomic.AtomicInteger
-
 import scala.collection.mutable
 import scala.util.control.NonFatal
-
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, Snapshot}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, DeltaColumnMappingMode, DeltaConfig, DeltaConfigs, DeltaLog, DeltaTestUtilsBase, DomainMetadataTableFeature, MaterializedRowCommitVersion, MaterializedRowId, RowTrackingFeature, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.{CommitInfo, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils}
 import io.delta.storage.LogStore
-import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, GetCommitsResponse => JGetCommitsResponse, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.{CommitCoordinatorClient, CommitResponse, TableDescriptor, TableIdentifier, UpdatedActions, GetCommitsResponse => JGetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.{SparkConf, SparkFunSuite}
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{QueryTest, Row, SparkSession}
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.SharedSparkSession
 
 // This trait is built to serve as a base trait for tests built for both CatalogOwned
@@ -254,6 +252,25 @@ trait CatalogOwnedTestBaseSuite
       spark: SparkSession,
       metadata: Metadata): Map[String, String] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
+      val qolConfs = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+        .collect {
+          case (feature, config, value)
+          => config.key -> value
+        }
+        .toMap
+      // RowTracking specific properties.
+      qolConfs ++ Map(
+        MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP ->
+          metadata.configuration.getOrElse(
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+            fail(s"Failed to get ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP}.")
+          ),
+        MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP ->
+          metadata.configuration.getOrElse(
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP,
+            fail(s"Failed to get ${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP}.")
+          )
+      ) ++
       Map(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
     } else {
       Map.empty
@@ -267,6 +284,20 @@ trait CatalogOwnedTestBaseSuite
   def extractCatalogOwnedSpecificPropertiesIfEnabled(
       metadata: Metadata): Iterable[(String, String)] = {
     if (catalogOwnedDefaultCreationEnabledInTests) {
+      val CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS =
+        CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES
+          .map { case (_, config, _) => config.key }
+          .filterNot(Set(
+            DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
+          )) ++
+          Seq(
+            MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+            MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP
+          )
+      CATALOG_OWNED_TABLE_QOL_PROPERTY_KEYS.map { key =>
+        key -> metadata.configuration.getOrElse(key,
+          fail( s"Expected $key to be defined in the table properties"))
+      } ++
       Option(DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key -> "true")
     } else {
       Seq.empty
@@ -293,6 +324,85 @@ trait CatalogOwnedTestBaseSuite
     catalogOwnedCoordinatorBackfillBatchSize.nonEmpty ||
       spark.conf.getOption(
         DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.defaultTablePropertyKey).contains("true")
+  }
+
+  protected def validateTableFeatureAndMetadata(
+      tableName: String,
+      tableFeature: TableFeature,
+      tableFeatureShouldPresent: Boolean,
+      metadataShouldPresent: Boolean,
+      config: DeltaConfig[_],
+      targetValue: String): Unit = {
+    val (_, snapshot) = getDeltaLogWithSnapshot(CatalystTableIdentifier(tableName))
+    assert(snapshot.protocol.readerAndWriterFeatureNames.contains(tableFeature.name)
+      === tableFeatureShouldPresent, s"expected table feature " +
+      s"${tableFeature.name} to be ${if (tableFeatureShouldPresent) "present" else "absent"}")
+    val metadataValue: String = if (config.key == DeltaConfigs.COLUMN_MAPPING_MODE.key) {
+      config.fromMetaData(snapshot.metadata).asInstanceOf[DeltaColumnMappingMode].name
+    } else if (config.key == DeltaConfigs.CHECKPOINT_POLICY.key) {
+      config.fromMetaData(snapshot.metadata).asInstanceOf[CheckpointPolicy.Policy].name
+    } else {
+      config.fromMetaData(snapshot.metadata).toString
+    }
+    assert((metadataValue == targetValue) === metadataShouldPresent,
+      s"expected the metadata configuration of ${tableFeature.name} to be " +
+        s"${if (metadataShouldPresent) "present" else "absent"}")
+  }
+
+  protected def validateOnlySpecifiedQoLTableFeaturesAndMetadataPresent(
+      tableName: String,
+      supportedTableFeatures: Set[TableFeature]): Unit = {
+    CatalogOwnedTableUtils.qolTableFeatureAndProperties.foreach {
+      case (t, config, value) =>
+        val isSpecifiedTableFeature = supportedTableFeatures.contains(t)
+        validateTableFeatureAndMetadata(
+          tableName,
+          tableFeature = t,
+          tableFeatureShouldPresent = isSpecifiedTableFeature,
+          metadataShouldPresent = isSpecifiedTableFeature,
+          config,
+          targetValue = value)
+    }
+    validateRowTrackingEnablement(
+      tableName, expected = supportedTableFeatures.contains(RowTrackingFeature))
+  }
+
+  protected def validateRowTrackingEnablement(tableName: String, expected: Boolean): Unit = {
+    // [[DomainMetadataTableFeature]] is a dependent feature of
+    // [[RowTrackingFeature]] and would be enabled at the same time.
+    // Note: [[DomainMetadataTableFeature]] does not have the corresponding metadata.
+    val (_, snapshot) = getDeltaLogWithSnapshot(CatalystTableIdentifier(tableName))
+    if (expected) {
+      // If row tracking is enabled, we expect domain metadata to be added.
+      // But when row tracking is not enabled, other features
+      // such as Iceberg V2 could still add domain metadata.
+      assert(
+        snapshot.protocol.readerAndWriterFeatureNames.contains(DomainMetadataTableFeature.name))
+    }
+    // All [[AddFiles]] should have `baseRowId` properly propagated if RowTracking is enabled.
+    if (expected) {
+      assert(snapshot.allFiles.where(col("baseRowId").isNull).isEmpty)
+    } else {
+      assert(snapshot.allFiles.where(col("baseRowId").isNotNull).isEmpty)
+    }
+  }
+
+  protected def validateQoLFeaturesEnablement(tableName: String, expected: Boolean): Unit = {
+    CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.foreach { case (t, config, value) =>
+      validateTableFeatureAndMetadata(
+        tableName,
+        tableFeature = t,
+        tableFeatureShouldPresent = expected,
+        metadataShouldPresent = expected,
+        config,
+        targetValue = value)
+    }
+    sql(s"INSERT INTO $tableName VALUES (3), (4), (5), (6)")
+    QueryTest.checkAnswer(sql(s"SELECT * FROM $tableName"),
+      Seq(Row(1), Row(2), Row(3), Row(4), Row(5), Row(6)))
+    validateRowTrackingEnablement(
+      tableName,
+      expected)
   }
 }
 
