@@ -17,13 +17,15 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.Arrays;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
-import org.junit.jupiter.api.Test;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.vectorized.ColumnVector;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -47,6 +49,11 @@ public class ColumnVectorWithFilterTest {
   }
 
   static Stream<Arguments> dataTypeFilteringCases() {
+    StructType structType =
+        new StructType()
+            .add("id", DataTypes.IntegerType)
+            .add("name", DataTypes.StringType);
+
     return Stream.of(
         Arguments.of(
             "Integer",
@@ -123,42 +130,82 @@ public class ColumnVectorWithFilterTest {
             (Consumer<ColumnVectorWithFilter>)
                 f -> {
                   assertEquals("charlie", f.getUTF8String(0).toString());
+                }),
+        Arguments.of(
+            "Struct (getChild propagates mapping)",
+            structType,
+            3,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  // child(0) = id: [1, 2, 3]
+                  WritableColumnVector idChild = (WritableColumnVector) v.getChild(0);
+                  for (int i = 0; i < 3; i++) idChild.putInt(i, i + 1);
+                  // child(1) = name: ["a", "b", "c"]
+                  WritableColumnVector nameChild = (WritableColumnVector) v.getChild(1);
+                  nameChild.putByteArray(0, "a".getBytes());
+                  nameChild.putByteArray(1, "b".getBytes());
+                  nameChild.putByteArray(2, "c".getBytes());
+                },
+            new int[] {0, 2},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  // getChild should return ColumnVectorWithFilter with the same rowIdMapping
+                  ColumnVector idChild = f.getChild(0);
+                  ColumnVector nameChild = f.getChild(1);
+                  assertTrue(idChild instanceof ColumnVectorWithFilter);
+                  assertTrue(nameChild instanceof ColumnVectorWithFilter);
+                  // filtered: row 0 -> original 0, row 1 -> original 2
+                  assertEquals(1, idChild.getInt(0));
+                  assertEquals(3, idChild.getInt(1));
+                  assertEquals("a", nameChild.getUTF8String(0).toString());
+                  assertEquals("c", nameChild.getUTF8String(1).toString());
+                }),
+        Arguments.of(
+            "Null handling",
+            DataTypes.IntegerType,
+            4,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  v.putInt(0, 10);
+                  v.putNull(1);
+                  v.putInt(2, 30);
+                  v.putNull(3);
+                },
+            new int[] {0, 1, 2, 3},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertFalse(f.isNullAt(0));
+                  assertTrue(f.isNullAt(1));
+                  assertFalse(f.isNullAt(2));
+                  assertTrue(f.isNullAt(3));
+                }),
+        Arguments.of(
+            "Empty mapping",
+            DataTypes.IntegerType,
+            3,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  for (int i = 0; i < 3; i++) v.putInt(i, (i + 1) * 10);
+                },
+            new int[] {},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertEquals(DataTypes.IntegerType, f.dataType());
+                }),
+        Arguments.of(
+            "Identity mapping",
+            DataTypes.IntegerType,
+            3,
+            (Consumer<WritableColumnVector>)
+                v -> {
+                  for (int i = 0; i < 3; i++) v.putInt(i, (i + 1) * 10);
+                },
+            new int[] {0, 1, 2},
+            (Consumer<ColumnVectorWithFilter>)
+                f -> {
+                  assertEquals(10, f.getInt(0));
+                  assertEquals(20, f.getInt(1));
+                  assertEquals(30, f.getInt(2));
                 }));
-  }
-
-  @Test
-  void testNullHandling() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.IntegerType)) {
-      delegate.putInt(0, 10);
-      delegate.putNull(1);
-      delegate.putInt(2, 30);
-      delegate.putNull(3);
-      ColumnVectorWithFilter filtered =
-          new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2, 3});
-
-      assertFalse(filtered.isNullAt(0));
-      assertTrue(filtered.isNullAt(1));
-      assertFalse(filtered.isNullAt(2));
-      assertTrue(filtered.isNullAt(3));
-    }
-  }
-
-  @Test
-  void testEmptyAndIdentityMapping() {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
-      delegate.putInt(0, 10);
-      delegate.putInt(1, 20);
-      delegate.putInt(2, 30);
-
-      // Empty mapping
-      ColumnVectorWithFilter empty = new ColumnVectorWithFilter(delegate, new int[] {});
-      assertEquals(DataTypes.IntegerType, empty.dataType());
-
-      // Identity mapping
-      ColumnVectorWithFilter identity = new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2});
-      assertEquals(10, identity.getInt(0));
-      assertEquals(20, identity.getInt(1));
-      assertEquals(30, identity.getInt(2));
-    }
   }
 }
