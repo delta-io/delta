@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DataSkippingReader
 import org.apache.spark.sql.delta.stats.DataSkippingReaderConf
+import org.apache.spark.sql.delta.stats.DefaultStateProvider
 import org.apache.spark.sql.delta.stats.DeltaStatsColumnSpec
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
@@ -234,12 +235,24 @@ class Snapshot(
   }
 
   /**
-   * Use [[stateReconstruction]] to create a representation of the actions in this table.
-   * Cache the resultant output.
+   * The [[DefaultStateProvider]] that owns the full state reconstruction pipeline:
+   *   loadActions -> canonicalize -> repartition -> replay -> cache state
+   *
+   * V1's `stateDS`, `stateDF`, and `allFiles` all delegate here.
+   * This replaces the previous `stateReconstruction` + `cachedState` chain.
    */
-  private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
-    stateReconstructionTriggered = true
-    cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
+  private[delta] lazy val stateProvider: DefaultStateProvider = {
+    new DefaultStateProvider(
+      loadActions = () => loadActions,
+      numPartitions = getNumPartitions,
+      canonicalizeUdf = c => deltaLog.getCanonicalPathUdf()(c),
+      minFileRetentionTimestamp = Some(minFileRetentionTimestamp),
+      minSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp,
+      stateCacheFactory = Some(ds => {
+        stateReconstructionTriggered = true
+        cacheDS(ds, s"Delta Table State #$version - $redactedPath").getDS
+      })
+    )
   }
 
   /**
@@ -364,12 +377,12 @@ class Snapshot(
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
   def stateDF: DataFrame = recordFrameProfile("Delta", "stateDF") {
-    cachedState.getDF
+    stateProvider.stateDF
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
   def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
-    cachedState.getDS
+    stateProvider.stateDS
   }
 
   private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
@@ -468,64 +481,9 @@ class Snapshot(
       }
   }
 
-  // Reconstruct the state by applying deltas in order to the checkpoint.
-  // We partition by path as it is likely the bulk of the data is add/remove.
-  // Non-path based actions will be collocated to a single partition.
-  protected def stateReconstruction: Dataset[SingleAction] = {
-    recordFrameProfile("Delta", "snapshot.stateReconstruction") {
-      // for serializability
-      val localMinFileRetentionTimestamp = minFileRetentionTimestamp
-      val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
-
-      val canonicalPath = deltaLog.getCanonicalPathUdf()
-
-      // Canonicalize the paths so we can repartition the actions correctly, but only rewrite the
-      // add/remove actions themselves after partitioning and sorting are complete. Otherwise, the
-      // optimizer can generate a really bad plan that re-evaluates _EVERY_ field of the rewritten
-      // struct(...)  projection every time we touch _ANY_ field of the rewritten struct.
-      //
-      // NOTE: We sort by [[COMMIT_VERSION_COLUMN]] (provided by [[loadActions]]), to ensure that
-      // actions are presented to InMemoryLogReplay in the ascending version order it expects.
-      val ADD_PATH_CANONICAL_COL_NAME = "add_path_canonical"
-      val REMOVE_PATH_CANONICAL_COL_NAME = "remove_path_canonical"
-      loadActions
-        .withColumn(ADD_PATH_CANONICAL_COL_NAME, when(
-          col("add.path").isNotNull, canonicalPath(col("add.path"))))
-        .withColumn(REMOVE_PATH_CANONICAL_COL_NAME, when(
-          col("remove.path").isNotNull, canonicalPath(col("remove.path"))))
-        .repartition(
-          getNumPartitions,
-          coalesce(col(ADD_PATH_CANONICAL_COL_NAME), col(REMOVE_PATH_CANONICAL_COL_NAME)))
-        .sortWithinPartitions(COMMIT_VERSION_COLUMN)
-        .withColumn("add", when(
-          col("add.path").isNotNull,
-          struct(
-            col(ADD_PATH_CANONICAL_COL_NAME).as("path"),
-            col("add.partitionValues"),
-            col("add.size"),
-            col("add.modificationTime"),
-            col("add.dataChange"),
-            col(ADD_STATS_TO_USE_COL_NAME).as("stats"),
-            col("add.tags"),
-            col("add.deletionVector"),
-            col("add.baseRowId"),
-            col("add.defaultRowCommitVersion"),
-            col("add.clusteringProvider")
-          )))
-        .withColumn("remove", when(
-          col("remove.path").isNotNull,
-          col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
-        .as[SingleAction]
-        .mapPartitions { iter =>
-          val state: LogReplay =
-            new InMemoryLogReplay(
-              Some(localMinFileRetentionTimestamp),
-              localMinSetTransactionRetentionTimestamp)
-          state.append(0, iter.map(_.unwrap))
-          state.checkpoint.map(_.wrap)
-        }
-    }
-  }
+  // NOTE: stateReconstruction logic has been moved into DefaultStateProvider.
+  // See [[stateProvider]] which owns the full pipeline:
+  //   loadActions -> canonicalize -> repartition -> replay -> cache
 
   /**
    * Loads the file indices into a DataFrame that can be used for LogReplay.
