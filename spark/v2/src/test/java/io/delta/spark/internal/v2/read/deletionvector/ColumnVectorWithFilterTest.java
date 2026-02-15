@@ -17,195 +17,143 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import java.util.Arrays;
-import java.util.function.Consumer;
-import java.util.stream.Stream;
 import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
-import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.vectorized.ColumnVector;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.Arguments;
-import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.api.Test;
 
 public class ColumnVectorWithFilterTest {
 
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("dataTypeFilteringCases")
-  void testFilteringByType(
-      String typeName,
-      DataType dataType,
-      int vectorSize,
-      Consumer<WritableColumnVector> populate,
-      int[] filterIndices,
-      Consumer<ColumnVectorWithFilter> verify) {
-    try (WritableColumnVector delegate = new OnHeapColumnVector(vectorSize, dataType)) {
-      populate.accept(delegate);
-      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, filterIndices);
-      verify.accept(filtered);
+  @Test
+  void testIntegerFiltering() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(5, DataTypes.IntegerType)) {
+      for (int i = 0; i < 5; i++) {
+        delegate.putInt(i, (i + 1) * 10); // [10, 20, 30, 40, 50]
+      }
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
+
+      assertEquals(20, filtered.getInt(0));
+      assertEquals(40, filtered.getInt(1));
     }
   }
 
-  static Stream<Arguments> dataTypeFilteringCases() {
-    StructType structType =
-        new StructType()
-            .add("id", DataTypes.IntegerType)
-            .add("name", DataTypes.StringType);
+  @Test
+  void testLongFiltering() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.LongType)) {
+      for (int i = 0; i < 4; i++) {
+        delegate.putLong(i, (i + 1) * 100L);
+      }
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-    return Stream.of(
-        Arguments.of(
-            "Integer",
-            DataTypes.IntegerType,
-            5,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  for (int i = 0; i < 5; i++) v.putInt(i, (i + 1) * 10); // [10,20,30,40,50]
-                },
-            new int[] {1, 3},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertEquals(20, f.getInt(0));
-                  assertEquals(40, f.getInt(1));
-                }),
-        Arguments.of(
-            "Long",
-            DataTypes.LongType,
-            4,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  for (int i = 0; i < 4; i++) v.putLong(i, (i + 1) * 100L);
-                },
-            new int[] {0, 2},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertEquals(100L, f.getLong(0));
-                  assertEquals(300L, f.getLong(1));
-                }),
-        Arguments.of(
-            "Double",
-            DataTypes.DoubleType,
-            3,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  v.putDouble(0, 1.1);
-                  v.putDouble(1, 2.2);
-                  v.putDouble(2, 3.3);
-                },
-            new int[] {0, 2},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertEquals(1.1, f.getDouble(0), 0.001);
-                  assertEquals(3.3, f.getDouble(1), 0.001);
-                }),
-        Arguments.of(
-            "Boolean",
-            DataTypes.BooleanType,
-            4,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  v.putBoolean(0, true);
-                  v.putBoolean(1, false);
-                  v.putBoolean(2, true);
-                  v.putBoolean(3, false);
-                },
-            new int[] {1, 2},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertFalse(f.getBoolean(0));
-                  assertTrue(f.getBoolean(1));
-                }),
-        Arguments.of(
-            "String",
-            DataTypes.StringType,
-            3,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  v.putByteArray(0, "alice".getBytes());
-                  v.putByteArray(1, "bob".getBytes());
-                  v.putByteArray(2, "charlie".getBytes());
-                },
-            new int[] {2},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertEquals("charlie", f.getUTF8String(0).toString());
-                }),
-        Arguments.of(
-            "Struct (getChild propagates mapping)",
-            structType,
-            3,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  // child(0) = id: [1, 2, 3]
-                  WritableColumnVector idChild = (WritableColumnVector) v.getChild(0);
-                  for (int i = 0; i < 3; i++) idChild.putInt(i, i + 1);
-                  // child(1) = name: ["a", "b", "c"]
-                  WritableColumnVector nameChild = (WritableColumnVector) v.getChild(1);
-                  nameChild.putByteArray(0, "a".getBytes());
-                  nameChild.putByteArray(1, "b".getBytes());
-                  nameChild.putByteArray(2, "c".getBytes());
-                },
-            new int[] {0, 2},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  // getChild should return ColumnVectorWithFilter with the same rowIdMapping
-                  ColumnVector idChild = f.getChild(0);
-                  ColumnVector nameChild = f.getChild(1);
-                  assertTrue(idChild instanceof ColumnVectorWithFilter);
-                  assertTrue(nameChild instanceof ColumnVectorWithFilter);
-                  // filtered: row 0 -> original 0, row 1 -> original 2
-                  assertEquals(1, idChild.getInt(0));
-                  assertEquals(3, idChild.getInt(1));
-                  assertEquals("a", nameChild.getUTF8String(0).toString());
-                  assertEquals("c", nameChild.getUTF8String(1).toString());
-                }),
-        Arguments.of(
-            "Null handling",
-            DataTypes.IntegerType,
-            4,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  v.putInt(0, 10);
-                  v.putNull(1);
-                  v.putInt(2, 30);
-                  v.putNull(3);
-                },
-            new int[] {0, 1, 2, 3},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertFalse(f.isNullAt(0));
-                  assertTrue(f.isNullAt(1));
-                  assertFalse(f.isNullAt(2));
-                  assertTrue(f.isNullAt(3));
-                }),
-        Arguments.of(
-            "Empty mapping",
-            DataTypes.IntegerType,
-            3,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  for (int i = 0; i < 3; i++) v.putInt(i, (i + 1) * 10);
-                },
-            new int[] {},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertEquals(DataTypes.IntegerType, f.dataType());
-                }),
-        Arguments.of(
-            "Identity mapping",
-            DataTypes.IntegerType,
-            3,
-            (Consumer<WritableColumnVector>)
-                v -> {
-                  for (int i = 0; i < 3; i++) v.putInt(i, (i + 1) * 10);
-                },
-            new int[] {0, 1, 2},
-            (Consumer<ColumnVectorWithFilter>)
-                f -> {
-                  assertEquals(10, f.getInt(0));
-                  assertEquals(20, f.getInt(1));
-                  assertEquals(30, f.getInt(2));
-                }));
+      assertEquals(100L, filtered.getLong(0));
+      assertEquals(300L, filtered.getLong(1));
+    }
+  }
+
+  @Test
+  void testDoubleFiltering() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.DoubleType)) {
+      delegate.putDouble(0, 1.1);
+      delegate.putDouble(1, 2.2);
+      delegate.putDouble(2, 3.3);
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
+
+      assertEquals(1.1, filtered.getDouble(0), 0.001);
+      assertEquals(3.3, filtered.getDouble(1), 0.001);
+    }
+  }
+
+  @Test
+  void testBooleanFiltering() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.BooleanType)) {
+      delegate.putBoolean(0, true);
+      delegate.putBoolean(1, false);
+      delegate.putBoolean(2, true);
+      delegate.putBoolean(3, false);
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {1, 2});
+
+      assertFalse(filtered.getBoolean(0));
+      assertTrue(filtered.getBoolean(1));
+    }
+  }
+
+  @Test
+  void testStringFiltering() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.StringType)) {
+      delegate.putByteArray(0, "alice".getBytes());
+      delegate.putByteArray(1, "bob".getBytes());
+      delegate.putByteArray(2, "charlie".getBytes());
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {2});
+
+      assertEquals("charlie", filtered.getUTF8String(0).toString());
+    }
+  }
+
+  @Test
+  void testStructGetChildPropagatesMapping() {
+    StructType structType =
+        new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
+    try (WritableColumnVector delegate = new OnHeapColumnVector(3, structType)) {
+      WritableColumnVector idChild = (WritableColumnVector) delegate.getChild(0);
+      for (int i = 0; i < 3; i++) {
+        idChild.putInt(i, i + 1); // [1, 2, 3]
+      }
+      WritableColumnVector nameChild = (WritableColumnVector) delegate.getChild(1);
+      nameChild.putByteArray(0, "a".getBytes());
+      nameChild.putByteArray(1, "b".getBytes());
+      nameChild.putByteArray(2, "c".getBytes());
+
+      ColumnVectorWithFilter filtered = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
+
+      // getChild should return ColumnVectorWithFilter with the same rowIdMapping
+      ColumnVector filteredId = filtered.getChild(0);
+      ColumnVector filteredName = filtered.getChild(1);
+      assertTrue(filteredId instanceof ColumnVectorWithFilter);
+      assertTrue(filteredName instanceof ColumnVectorWithFilter);
+
+      // filtered: row 0 -> original 0, row 1 -> original 2
+      assertEquals(1, filteredId.getInt(0));
+      assertEquals(3, filteredId.getInt(1));
+      assertEquals("a", filteredName.getUTF8String(0).toString());
+      assertEquals("c", filteredName.getUTF8String(1).toString());
+    }
+  }
+
+  @Test
+  void testNullHandling() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.IntegerType)) {
+      delegate.putInt(0, 10);
+      delegate.putNull(1);
+      delegate.putInt(2, 30);
+      delegate.putNull(3);
+      ColumnVectorWithFilter filtered =
+          new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2, 3});
+
+      assertFalse(filtered.isNullAt(0));
+      assertTrue(filtered.isNullAt(1));
+      assertFalse(filtered.isNullAt(2));
+      assertTrue(filtered.isNullAt(3));
+    }
+  }
+
+  @Test
+  void testEmptyAndIdentityMapping() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
+      delegate.putInt(0, 10);
+      delegate.putInt(1, 20);
+      delegate.putInt(2, 30);
+
+      // Empty mapping
+      ColumnVectorWithFilter empty = new ColumnVectorWithFilter(delegate, new int[] {});
+      assertEquals(DataTypes.IntegerType, empty.dataType());
+
+      // Identity mapping
+      ColumnVectorWithFilter identity = new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2});
+      assertEquals(10, identity.getInt(0));
+      assertEquals(20, identity.getInt(1));
+      assertEquals(30, identity.getInt(2));
+    }
   }
 }
