@@ -38,7 +38,6 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
-import org.apache.spark.sql.delta.stats.{DataFilterSupport, DefaultDataFilterSupport}
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
@@ -704,7 +703,6 @@ class DeltaLog private(
 }
 
 object DeltaLog extends DeltaLogging {
-  private val dataFilterSupport: DataFilterSupport = DefaultDataFilterSupport
 
   /**
    * The key type of `DeltaLog` cache. It consists of
@@ -1142,12 +1140,12 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-    dataFilterSupport.filterFileList(
-      partitionSchema = partitionSchema,
-      files = files,
-      partitionFilters = partitionFilters,
-      partitionColumnPrefixes = partitionColumnPrefixes,
-      shouldRewritePartitionFilters = shouldRewritePartitionFilters,
+    stats.PartitionFilterUtils.filterFileList(
+      partitionSchema,
+      files,
+      partitionFilters,
+      partitionColumnPrefixes,
+      shouldRewritePartitionFilters,
       onMissingPartitionColumn = name =>
         log.error(s"Partition filter referenced column $name not in the partition schema"))
   }
@@ -1166,11 +1164,11 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    dataFilterSupport.rewritePartitionFilters(
-      partitionSchema = partitionSchema,
-      resolver = resolver,
-      partitionFilters = partitionFilters,
-      partitionColumnPrefixes = partitionColumnPrefixes,
+    stats.PartitionFilterUtils.rewritePartitionFilters(
+      partitionSchema,
+      resolver,
+      partitionFilters,
+      partitionColumnPrefixes,
       onMissingPartitionColumn = name =>
         log.error(s"Partition filter referenced column $name not in the partition schema"))
   }
