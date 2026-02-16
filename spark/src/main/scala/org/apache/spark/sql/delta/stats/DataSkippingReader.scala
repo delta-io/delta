@@ -1245,20 +1245,33 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // For data skipping, avoid using the filters that either:
-    // 1. involve subqueries.
-    // 2. are non-deterministic.
-    // 3. involve file metadata struct fields
-    var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic || f.exists {
+    val dataSkippingType = DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
+    val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
+    val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
+    val canRewriteDataFiltersAsPartitionLike =
+      spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+        ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
+        snapshotToScan.numOfFilesIfKnown.exists(_ >=
+          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD))
+
+    val filterPlanner = new DefaultDataSkippingFilterPlanner(
+      useStats = useStats,
+      isIneligible = f => containsSubquery(f) || !f.deterministic || f.exists {
         case MetadataAttribute(_) => true
         case _ => false
-      }
-    }
+      },
+      isPartitionOnly = isPredicatePartitionColumnsOnly(_, partitionColumns, spark),
+      truePredicate = DataSkippingPredicate(trueLiteral),
+      buildDataFilter = constructDataFilters(_),
+      canRewriteAsPartitionLike = canRewriteDataFiltersAsPartitionLike,
+      rewriteAsPartitionLike = expr =>
+        constructDataFilters.rewriteDataFiltersAsPartitionLike(clusteringColumns, expr)
+    )
+    val filterPlan = filterPlanner.plan(filters)
 
-
-    val (partitionFilters, dataFilters) = eligibleFilters
-      .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+    val ineligibleFilters = filterPlan.ineligibleFilters
+    val partitionFilters = filterPlan.partitionFilters
+    val dataFilters = filterPlan.dataFilters
 
     if (dataFilters.isEmpty) recordDeltaOperation(deltaLog, "delta.skipping.partition") {
       // When there are only partition filters we can scan allFiles
@@ -1283,28 +1296,11 @@ trait DataSkippingReaderBase
     } else recordDeltaOperation(deltaLog, "delta.skipping.data") {
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
-      val dataSkippingType = if (partitionFilters.isEmpty) {
+      val finalDataSkippingType = if (partitionFilters.isEmpty) {
         DeltaDataSkippingType.dataSkippingOnlyV1
       } else {
         DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
       }
-      val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
-      val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
-      val canRewriteDataFiltersAsPartitionLike =
-        spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
-          ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
-          snapshotToScan.numOfFilesIfKnown.exists(_ >=
-            spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD))
-
-      val filterPlan = DefaultDataSkippingFilterPlanner.plan(DataSkippingFilterPlanner.Config(
-        useStats = useStats,
-        dataFilters = dataFilters,
-        truePredicate = DataSkippingPredicate(trueLiteral),
-        buildDataFilter = constructDataFilters(_),
-        canRewriteAsPartitionLike = canRewriteDataFiltersAsPartitionLike,
-        rewriteAsPartitionLike = expr =>
-          constructDataFilters.rewriteDataFiltersAsPartitionLike(clusteringColumns, expr)
-      ))
 
       val skippingFilters = filterPlan.skippingFilters
       val unusedFilters = filterPlan.unusedFilters
@@ -1328,7 +1324,7 @@ trait DataSkippingReaderBase
         rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
         unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
+        dataSkippingType = getCorrectDataSkippingType(finalDataSkippingType)
       )
     }
   }

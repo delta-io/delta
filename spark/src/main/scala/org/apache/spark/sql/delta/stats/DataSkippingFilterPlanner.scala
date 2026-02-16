@@ -25,19 +25,14 @@ import org.apache.spark.sql.catalyst.expressions.Expression
  *   - returns used/unused filter sets and the final merged skipping predicate
  */
 private[delta] trait DataSkippingFilterPlanner {
-  def plan(config: DataSkippingFilterPlanner.Config): DataSkippingFilterPlanner.Result
+  def plan(filters: Seq[Expression]): DataSkippingFilterPlanner.Result
 }
 
 private[delta] object DataSkippingFilterPlanner {
-  case class Config(
-      useStats: Boolean,
-      dataFilters: Seq[Expression],
-      truePredicate: DataSkippingPredicate,
-      buildDataFilter: Expression => Option[DataSkippingPredicate],
-      canRewriteAsPartitionLike: Boolean,
-      rewriteAsPartitionLike: Expression => Option[DataSkippingPredicate])
-
   case class Result(
+      ineligibleFilters: Seq[Expression],
+      partitionFilters: Seq[Expression],
+      dataFilters: Seq[Expression],
       skippingFilters: Seq[(Expression, Option[DataSkippingPredicate])],
       partitionLikeFilters: Seq[(Expression, DataSkippingPredicate)],
       unusedFilters: Seq[(Expression, Option[DataSkippingPredicate])],
@@ -47,22 +42,33 @@ private[delta] object DataSkippingFilterPlanner {
 /**
  * Default implementation shared by V1 and V2.
  */
-private[delta] object DefaultDataSkippingFilterPlanner extends DataSkippingFilterPlanner {
+private[delta] class DefaultDataSkippingFilterPlanner(
+    useStats: Boolean,
+    isIneligible: Expression => Boolean,
+    isPartitionOnly: Expression => Boolean,
+    truePredicate: DataSkippingPredicate,
+    buildDataFilter: Expression => Option[DataSkippingPredicate],
+    canRewriteAsPartitionLike: Boolean,
+    rewriteAsPartitionLike: Expression => Option[DataSkippingPredicate])
+  extends DataSkippingFilterPlanner {
   import DataSkippingFilterPlanner._
 
-  override def plan(config: Config): Result = {
-    var (skippingFilters, unusedFilters) = if (config.useStats) {
-      config.dataFilters
-        .map(f => (f, config.buildDataFilter(f)))
+  override def plan(filters: Seq[Expression]): Result = {
+    val (ineligibleFilters, eligibleFilters) = filters.partition(isIneligible)
+    val (partitionFilters, dataFilters) = eligibleFilters.partition(isPartitionOnly)
+
+    var (skippingFilters, unusedFilters) = if (useStats) {
+      dataFilters
+        .map(f => (f, buildDataFilter(f)))
         .partition(_._2.isDefined)
     } else {
-      (Nil, config.dataFilters.map(f => (f, None: Option[DataSkippingPredicate])))
+      (Nil, dataFilters.map(f => (f, None: Option[DataSkippingPredicate])))
     }
 
-    val partitionLikeFilters = if (config.canRewriteAsPartitionLike && unusedFilters.nonEmpty) {
+    val partitionLikeFilters = if (canRewriteAsPartitionLike && unusedFilters.nonEmpty) {
       val (rewrittenUsedFilters, rewrittenUnusedFilters) = unusedFilters
         .map { case (expr, _) =>
-          (expr, config.rewriteAsPartitionLike(expr))
+          (expr, rewriteAsPartitionLike(expr))
         }
         .partition(_._2.isDefined)
       skippingFilters = skippingFilters ++ rewrittenUsedFilters
@@ -77,9 +83,12 @@ private[delta] object DefaultDataSkippingFilterPlanner extends DataSkippingFilte
       .reduceOption((skip1, skip2) => DataSkippingPredicate(
         // Fold filters into a conjunction, while unioning referenced stats.
         skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
-      .getOrElse(config.truePredicate)
+      .getOrElse(truePredicate)
 
     Result(
+      ineligibleFilters = ineligibleFilters,
+      partitionFilters = partitionFilters,
+      dataFilters = dataFilters,
       skippingFilters = skippingFilters,
       partitionLikeFilters = partitionLikeFilters,
       unusedFilters = unusedFilters,
