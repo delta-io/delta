@@ -54,7 +54,6 @@ import org.apache.spark.unsafe.types.UTF8String
  * @param spark                SparkSession (for DeltaSQLConf access)
  * @param dataSkippingType     The type of data skipping being performed
  * @param getStatsColumnOpt    Function to resolve a StatsColumn to a Column expression
- * @param constructNotNullFilter Function to build IsNotNull skipping predicate
  * @param limitPartitionLikeFiltersToClusteringColumns Whether to limit partition-like
  *                             rewrites to clustering columns only
  * @param additionalPartitionLikeFilterSupportedExpressions Extra expression class names

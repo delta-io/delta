@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.stats
 
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Column, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.delta.ClassicColumnConversions._
@@ -61,8 +61,13 @@ private[delta] object DataSkippingFilterPlanner {
  * All filter-related logic is managed here. The caller (DataSkippingReader)
  * only needs to pass raw filters and consume the [[Result]].
  *
+ * The planner internally constructs a [[DataFiltersBuilder]] from the
+ * injected dependencies -- the caller never touches the builder directly.
+ *
  * @param spark              SparkSession (for config access)
- * @param builder            The data filters builder (core rewrite engine)
+ * @param dataSkippingType   The type of data skipping being performed
+ * @param getStatsColumnOpt  Resolves a StatsColumn to a Column expression
+ * @param constructNotNullFilter Builds IsNotNull skipping predicate
  * @param partitionColumns   Partition column names for split classification
  * @param useStats           Whether data skipping is enabled
  * @param clusteringColumns  Clustering column names (for partition-like rewrite)
@@ -71,7 +76,9 @@ private[delta] object DataSkippingFilterPlanner {
  */
 private[delta] class DefaultDataSkippingFilterPlanner(
     spark: SparkSession,
-    builder: DataFiltersBuilder,
+    dataSkippingType: DeltaDataSkippingType,
+    getStatsColumnOpt: StatsColumn => Option[Column],
+    constructNotNullFilter: (StatsProvider, Seq[String]) => Option[DataSkippingPredicate],
     partitionColumns: Seq[String],
     useStats: Boolean,
     clusteringColumns: Seq[String] = Nil,
@@ -82,6 +89,19 @@ private[delta] class DefaultDataSkippingFilterPlanner(
 
   private val truePredicate = DataSkippingPredicate(
     org.apache.spark.sql.Column(TrueLiteral))
+
+  private lazy val builder: DataFiltersBuilder = new DataFiltersBuilder(
+    spark = spark,
+    dataSkippingType = dataSkippingType,
+    getStatsColumnOpt = getStatsColumnOpt,
+    constructNotNullFilter = constructNotNullFilter,
+    limitPartitionLikeFiltersToClusteringColumns =
+      spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY),
+    additionalPartitionLikeFilterSupportedExpressions =
+      spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
+        .toSet.flatMap((exprs: String) => exprs.split(",")))
 
   override def plan(filters: Seq[Expression]): Result = {
     // Step 1: Split ineligible (subquery, non-deterministic, metadata)
