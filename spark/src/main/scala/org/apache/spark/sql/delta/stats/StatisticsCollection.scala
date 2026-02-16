@@ -109,6 +109,7 @@ case class FilterMetric(numFiles: Long, predicates: Seq[QueryPredicateReport])
  *  }}}
  */
 trait StatisticsCollection extends DeltaLogging {
+  private val dataFilterSupport: DataFilterSupport = DefaultDataFilterSupport
   protected def spark: SparkSession
   /** The schema of the target table of this statistics collection. */
   def tableSchema: StructType

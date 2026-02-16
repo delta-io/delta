@@ -38,6 +38,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources._
+import org.apache.spark.sql.delta.stats.{DataFilterSupport, DefaultDataFilterSupport}
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
 import com.google.common.cache.{Cache, CacheBuilder, RemovalNotification}
@@ -703,6 +704,7 @@ class DeltaLog private(
 }
 
 object DeltaLog extends DeltaLogging {
+  private val dataFilterSupport: DataFilterSupport = DefaultDataFilterSupport
 
   /**
    * The key type of `DeltaLog` cache. It consists of
@@ -1140,19 +1142,14 @@ object DeltaLog extends DeltaLogging {
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil,
       shouldRewritePartitionFilters: Boolean = true): DataFrame = {
-
-    val rewrittenFilters = if (shouldRewritePartitionFilters) {
-      rewritePartitionFilters(
-        partitionSchema,
-        files.sparkSession.sessionState.conf.resolver,
-        partitionFilters,
-        partitionColumnPrefixes)
-    } else {
-      partitionFilters
-    }
-    val expr = rewrittenFilters.reduceLeftOption(And).getOrElse(Literal.TrueLiteral)
-    val columnFilter = Column(expr)
-    files.filter(columnFilter)
+    dataFilterSupport.filterFileList(
+      partitionSchema = partitionSchema,
+      files = files,
+      partitionFilters = partitionFilters,
+      partitionColumnPrefixes = partitionColumnPrefixes,
+      shouldRewritePartitionFilters = shouldRewritePartitionFilters,
+      onMissingPartitionColumn = name =>
+        log.error(s"Partition filter referenced column $name not in the partition schema"))
   }
 
   /**
@@ -1169,26 +1166,13 @@ object DeltaLog extends DeltaLogging {
       resolver: Resolver,
       partitionFilters: Seq[Expression],
       partitionColumnPrefixes: Seq[String] = Nil): Seq[Expression] = {
-    partitionFilters
-      .map(_.transformUp {
-      case a: Attribute =>
-        // If we have a special column name, e.g. `a.a`, then an UnresolvedAttribute returns
-        // the column name as '`a.a`' instead of 'a.a', therefore we need to strip the backticks.
-        val unquoted = a.name.stripPrefix("`").stripSuffix("`")
-        val partitionCol = partitionSchema.find { field => resolver(field.name, unquoted) }
-        partitionCol match {
-          case Some(f: StructField) =>
-            val name = DeltaColumnMapping.getPhysicalName(f)
-            Cast(
-              UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", name)),
-              f.dataType)
-          case None =>
-            // This should not be able to happen, but the case was present in the original code so
-            // we kept it to be safe.
-            log.error(s"Partition filter referenced column ${a.name} not in the partition schema")
-            UnresolvedAttribute(partitionColumnPrefixes ++ Seq("partitionValues", a.name))
-        }
-    })
+    dataFilterSupport.rewritePartitionFilters(
+      partitionSchema = partitionSchema,
+      resolver = resolver,
+      partitionFilters = partitionFilters,
+      partitionColumnPrefixes = partitionColumnPrefixes,
+      onMissingPartitionColumn = name =>
+        log.error(s"Partition filter referenced column $name not in the partition schema"))
   }
 
 
