@@ -557,31 +557,16 @@ trait DataSkippingReaderBase
       }
     }
 
-    import DeltaTableUtils._
-    val partitionColumns = metadata.partitionColumns
-
     val dataSkippingType = DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
-    val constructDataFilters = createDataFiltersBuilder(dataSkippingType)
-    val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
-    val canRewriteDataFiltersAsPartitionLike =
-      spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
-        ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
-        snapshotToScan.numOfFilesIfKnown.exists(_ >=
-          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD))
-
+    val builder = createDataFiltersBuilder(dataSkippingType)
     val filterPlanner = new DefaultDataSkippingFilterPlanner(
+      spark = spark,
+      builder = builder,
+      partitionColumns = metadata.partitionColumns,
       useStats = useStats,
-      isIneligible = f => containsSubquery(f) || !f.deterministic || f.exists {
-        case MetadataAttribute(_) => true
-        case _ => false
-      },
-      isPartitionOnly = isPredicatePartitionColumnsOnly(_, partitionColumns, spark),
-      truePredicate = DataSkippingPredicate(trueLiteral),
-      buildDataFilter = constructDataFilters(_),
-      canRewriteAsPartitionLike = canRewriteDataFiltersAsPartitionLike,
-      rewriteAsPartitionLike = expr =>
-        constructDataFilters.rewriteDataFiltersAsPartitionLike(clusteringColumns, expr)
-    )
+      clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan),
+      protocol = Some(snapshotToScan.protocol),
+      numOfFilesIfKnown = snapshotToScan.numOfFilesIfKnown)
     val filterPlan = filterPlanner.plan(filters)
 
     val ineligibleFilters = filterPlan.ineligibleFilters

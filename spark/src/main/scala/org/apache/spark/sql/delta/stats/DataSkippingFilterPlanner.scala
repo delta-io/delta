@@ -16,13 +16,29 @@
 
 package org.apache.spark.sql.delta.stats
 
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
+import org.apache.spark.sql.delta.ClassicColumnConversions._
+import org.apache.spark.sql.delta.DeltaTableUtils.{containsSubquery, isPredicatePartitionColumnsOnly}
+import org.apache.spark.sql.delta.RowCommitVersion.MetadataAttribute
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
+import org.apache.spark.sql.types.StructType
 
 /**
- * Plans data-filter usage for data skipping:
- *   - builds stats-based skipping filters
- *   - optionally rewrites unused filters as partition-like
- *   - returns used/unused filter sets and the final merged skipping predicate
+ * Plans data-filter usage for data skipping.
+ *
+ * Owns the full filter classification and rewrite pipeline:
+ *   1. Split filters into ineligible / eligible
+ *   2. Split eligible into partition / data
+ *   3. Build stats-based skipping predicates via [[DataFiltersBuilder]]
+ *   4. Optionally rewrite unused filters as partition-like
+ *   5. Merge into final skipping predicate
+ *
+ * V1 and V2 share [[DefaultDataSkippingFilterPlanner]]; differences are
+ * captured through the injected [[DataFiltersBuilder]] instance.
  */
 private[delta] trait DataSkippingFilterPlanner {
   def plan(filters: Seq[Expression]): DataSkippingFilterPlanner.Result
@@ -41,34 +57,66 @@ private[delta] object DataSkippingFilterPlanner {
 
 /**
  * Default implementation shared by V1 and V2.
+ *
+ * All filter-related logic is managed here. The caller (DataSkippingReader)
+ * only needs to pass raw filters and consume the [[Result]].
+ *
+ * @param spark              SparkSession (for config access)
+ * @param builder            The data filters builder (core rewrite engine)
+ * @param partitionColumns   Partition column names for split classification
+ * @param useStats           Whether data skipping is enabled
+ * @param clusteringColumns  Clustering column names (for partition-like rewrite)
+ * @param protocol           Table protocol (for partition-like eligibility)
+ * @param numOfFilesIfKnown  Number of files (for partition-like threshold)
  */
 private[delta] class DefaultDataSkippingFilterPlanner(
+    spark: SparkSession,
+    builder: DataFiltersBuilder,
+    partitionColumns: Seq[String],
     useStats: Boolean,
-    isIneligible: Expression => Boolean,
-    isPartitionOnly: Expression => Boolean,
-    truePredicate: DataSkippingPredicate,
-    buildDataFilter: Expression => Option[DataSkippingPredicate],
-    canRewriteAsPartitionLike: Boolean,
-    rewriteAsPartitionLike: Expression => Option[DataSkippingPredicate])
+    clusteringColumns: Seq[String] = Nil,
+    protocol: Option[org.apache.spark.sql.delta.actions.Protocol] = None,
+    numOfFilesIfKnown: Option[Long] = None)
   extends DataSkippingFilterPlanner {
   import DataSkippingFilterPlanner._
 
-  override def plan(filters: Seq[Expression]): Result = {
-    val (ineligibleFilters, eligibleFilters) = filters.partition(isIneligible)
-    val (partitionFilters, dataFilters) = eligibleFilters.partition(isPartitionOnly)
+  private val truePredicate = DataSkippingPredicate(
+    org.apache.spark.sql.Column(TrueLiteral))
 
+  override def plan(filters: Seq[Expression]): Result = {
+    // Step 1: Split ineligible (subquery, non-deterministic, metadata)
+    val (ineligibleFilters, eligibleFilters) = filters.partition { f =>
+      containsSubquery(f) || !f.deterministic || f.exists {
+        case MetadataAttribute(_) => true
+        case _ => false
+      }
+    }
+
+    // Step 2: Split partition vs data
+    val (partitionFilters, dataFilters) = eligibleFilters.partition(
+      isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+
+    // Step 3: Build stats-based skipping predicates
     var (skippingFilters, unusedFilters) = if (useStats) {
       dataFilters
-        .map(f => (f, buildDataFilter(f)))
+        .map(f => (f, builder(f)))
         .partition(_._2.isDefined)
     } else {
       (Nil, dataFilters.map(f => (f, None: Option[DataSkippingPredicate])))
     }
 
-    val partitionLikeFilters = if (canRewriteAsPartitionLike && unusedFilters.nonEmpty) {
+    // Step 4: Partition-like rewrite for clustered tables
+    val canRewriteAsPartitionLike =
+      spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+        protocol.exists(ClusteredTableUtils.isSupported) &&
+        numOfFilesIfKnown.exists(_ >=
+          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&
+        unusedFilters.nonEmpty
+
+    val partitionLikeFilters = if (canRewriteAsPartitionLike) {
       val (rewrittenUsedFilters, rewrittenUnusedFilters) = unusedFilters
         .map { case (expr, _) =>
-          (expr, rewriteAsPartitionLike(expr))
+          (expr, builder.rewriteDataFiltersAsPartitionLike(clusteringColumns, expr))
         }
         .partition(_._2.isDefined)
       skippingFilters = skippingFilters ++ rewrittenUsedFilters
@@ -78,10 +126,10 @@ private[delta] class DefaultDataSkippingFilterPlanner(
       Nil
     }
 
+    // Step 5: Merge into final skipping predicate
     val finalSkippingFilter = skippingFilters
       .map(_._2.get)
       .reduceOption((skip1, skip2) => DataSkippingPredicate(
-        // Fold filters into a conjunction, while unioning referenced stats.
         skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
       .getOrElse(truePredicate)
 
@@ -95,4 +143,3 @@ private[delta] class DefaultDataSkippingFilterPlanner(
       finalSkippingFilter = finalSkippingFilter)
   }
 }
-
