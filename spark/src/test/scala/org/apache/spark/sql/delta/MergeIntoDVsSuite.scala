@@ -21,8 +21,9 @@ import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWi
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
 
 import org.apache.spark.SparkException
+import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.QueryTest
-import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.functions.{col, expr}
 
 trait MergeIntoDVsMixin extends MergeIntoSQLMixin with DeletionVectorsTestUtils {
 
@@ -84,6 +85,39 @@ trait MergeIntoDVsTests extends MergeIntoDVsMixin {
       mergeMetrics.getOrElse("numTargetDeletionVectorsRemoved", -1) === numDeletionVectorsRemoved)
     assert(
       mergeMetrics.getOrElse("numTargetDeletionVectorsUpdated", -1) === numDeletionVectorsUpdated)
+  }
+
+  test("Merge with DVs: target column named `path` should not cause ambiguous `filePath`") {
+    withTempDir { dir =>
+      val targetPath = s"$dir/target"
+
+      Seq(("test_old", "old_hash")).toDF("path", "hash_key")
+        .write
+        .format("delta")
+        .mode("overwrite")
+        .save(targetPath)
+
+      // Make sure DVs are enabled on the table to exercise the DV merge path.
+      enableDeletionVectorsInTable(new Path(targetPath), enable = true)
+
+      val target = io.delta.tables.DeltaTable.forPath(spark, targetPath)
+      val sourceDf = Seq(("test_old", "new_hash")).toDF("path", "hash_key")
+
+      // Force a match + update to exercise DV update code paths.
+      target.as("target")
+        .merge(
+          sourceDf.as("source"),
+          expr("concat_ws('|', source.`path`) = concat_ws('|', target.`path`)"))
+        .whenMatched(expr("target.hash_key != source.hash_key"))
+        .updateExpr(Map("hash_key" -> "source.hash_key"))
+        .whenNotMatched()
+        .insertAll()
+        .execute()
+
+      checkAnswer(
+        spark.read.format("delta").load(targetPath),
+        Seq(("test_old", "new_hash")).toDF("path", "hash_key"))
+    }
   }
 
   test(s"Merge with DVs metrics - Incremental Updates") {
