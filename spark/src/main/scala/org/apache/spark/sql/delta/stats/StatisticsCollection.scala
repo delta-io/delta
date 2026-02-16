@@ -109,6 +109,7 @@ case class FilterMetric(numFiles: Long, predicates: Seq[QueryPredicateReport])
  *  }}}
  */
 trait StatisticsCollection extends DeltaLogging {
+  private val dataFilterSupport: DataFilterSupport = DefaultDataFilterSupport
   protected def spark: SparkSession
   /** The schema of the target table of this statistics collection. */
   def tableSchema: StructType
@@ -304,52 +305,10 @@ trait StatisticsCollection extends DeltaLogging {
 
   /** Returns schema of the statistics collected. */
   lazy val statsSchema: StructType = {
-    // In order to get the Delta min/max stats schema from table schema, we do 1) replace field
-    // name with physical name 2) set nullable to true 3) only keep stats eligible fields
-    // 4) omits metadata in table schema as Delta stats schema does not need the metadata
-    def getMinMaxStatsSchema(schema: StructType): Option[StructType] = {
-      val fields = schema.fields.flatMap {
-        case f@StructField(_, dataType: StructType, _, _) =>
-          getMinMaxStatsSchema(dataType).map { newDataType =>
-            StructField(DeltaColumnMapping.getPhysicalName(f), newDataType)
-          }
-        case f@StructField(_, SkippingEligibleDataType(dataType), _, _) =>
-          Some(StructField(DeltaColumnMapping.getPhysicalName(f), dataType))
-        case _ => None
-      }
-      if (fields.nonEmpty) Some(StructType(fields)) else None
-    }
-
-    // In order to get the Delta null count schema from table schema, we do 1) replace field name
-    // with physical name 2) set nullable to true 3) use LongType for all fields
-    // 4) omits metadata in table schema as Delta stats schema does not need the metadata
-    def getNullCountSchema(schema: StructType): Option[StructType] = {
-      val fields = schema.fields.flatMap {
-        case f@StructField(_, dataType: StructType, _, _) =>
-          getNullCountSchema(dataType).map { newDataType =>
-            StructField(DeltaColumnMapping.getPhysicalName(f), newDataType)
-          }
-        case f: StructField =>
-          Some(StructField(DeltaColumnMapping.getPhysicalName(f), LongType))
-      }
-      if (fields.nonEmpty) Some(StructType(fields)) else None
-    }
-
-    val minMaxStatsSchemaOpt = getMinMaxStatsSchema(statCollectionPhysicalSchema)
-    val nullCountSchemaOpt = getNullCountSchema(statCollectionPhysicalSchema)
-    val tightBoundsFieldOpt =
-      Option.when(deletionVectorsSupported)(TIGHT_BOUNDS -> BooleanType)
-
-    val fields =
-      Array(NUM_RECORDS -> LongType) ++
-      minMaxStatsSchemaOpt.map(MIN -> _) ++
-      minMaxStatsSchemaOpt.map(MAX -> _) ++
-      nullCountSchemaOpt.map(NULL_COUNT -> _) ++
-      tightBoundsFieldOpt
-
-    StructType(fields.map {
-      case (name, dataType) => StructField(name, dataType)
-    })
+    dataFilterSupport.buildStatsSchema(
+      tableSchema = statCollectionPhysicalSchema,
+      getFieldName = DeltaColumnMapping.getPhysicalName,
+      tightBoundsSupported = deletionVectorsSupported)
   }
 
   /**

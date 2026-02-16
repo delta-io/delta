@@ -26,7 +26,6 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
-import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -256,6 +255,7 @@ trait DataSkippingReaderBase
   def schema: StructType
   private[delta] def numOfFilesIfKnown: Option[Long]
   def redactedPath: String
+  private[delta] def stateProvider: DeltaStateProvider
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
@@ -266,27 +266,6 @@ trait DataSkippingReaderBase
         DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
       .toSet.flatMap((exprs: String) => exprs.split(","))
 
-  /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
-  private def withStatsInternal0: DataFrame = {
-    val parsedStats = from_json(col("stats"), statsSchema)
-    // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
-    // This avoids performance overhead for tables without variant columns.
-    // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
-    // expression has no way to decode a VariantVal from an encoded Z85 string.
-    // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
-    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
-      Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
-    } else {
-      parsedStats
-    }
-    allFiles.withColumn("stats", decodedStats)
-  }
-
-  private lazy val withStatsCache =
-    cacheDS(withStatsInternal0, s"Delta Table State with Stats #$version - $redactedPath")
-
-  protected def withStatsInternal: DataFrame = withStatsCache.getDS
-
   /** All files with the statistics column dropped completely. */
   def withNoStats: DataFrame = allFiles.drop("stats")
 
@@ -296,9 +275,7 @@ trait DataSkippingReaderBase
    *
    * @return [[DataFrame]]
    */
-  final def withStats: DataFrame = {
-    withStatsInternal
-  }
+  final def withStats: DataFrame = stateProvider.allAddFilesWithParsedStats
 
   /**
    * Constructs a [[DataSkippingPredicate]] for isNotNull predicates.
@@ -1360,20 +1337,33 @@ trait DataSkippingReaderBase
     import DeltaTableUtils._
     val partitionColumns = metadata.partitionColumns
 
-    // For data skipping, avoid using the filters that either:
-    // 1. involve subqueries.
-    // 2. are non-deterministic.
-    // 3. involve file metadata struct fields
-    var (ineligibleFilters, eligibleFilters) = filters.partition {
-      case f => containsSubquery(f) || !f.deterministic || f.exists {
+    val dataSkippingType = DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
+    val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
+    val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
+    val canRewriteDataFiltersAsPartitionLike =
+      spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
+        ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
+        snapshotToScan.numOfFilesIfKnown.exists(_ >=
+          spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD))
+
+    val filterPlanner = new DefaultDataSkippingFilterPlanner(
+      useStats = useStats,
+      isIneligible = f => containsSubquery(f) || !f.deterministic || f.exists {
         case MetadataAttribute(_) => true
         case _ => false
-      }
-    }
+      },
+      isPartitionOnly = isPredicatePartitionColumnsOnly(_, partitionColumns, spark),
+      truePredicate = DataSkippingPredicate(trueLiteral),
+      buildDataFilter = constructDataFilters(_),
+      canRewriteAsPartitionLike = canRewriteDataFiltersAsPartitionLike,
+      rewriteAsPartitionLike = expr =>
+        constructDataFilters.rewriteDataFiltersAsPartitionLike(clusteringColumns, expr)
+    )
+    val filterPlan = filterPlanner.plan(filters)
 
-
-    val (partitionFilters, dataFilters) = eligibleFilters
-      .partition(isPredicatePartitionColumnsOnly(_, partitionColumns, spark))
+    val ineligibleFilters = filterPlan.ineligibleFilters
+    val partitionFilters = filterPlan.partitionFilters
+    val dataFilters = filterPlan.dataFilters
 
     if (dataFilters.isEmpty) recordDeltaOperation(deltaLog, "delta.skipping.partition") {
       // When there are only partition filters we can scan allFiles
@@ -1398,59 +1388,16 @@ trait DataSkippingReaderBase
     } else recordDeltaOperation(deltaLog, "delta.skipping.data") {
       val finalPartitionFilters = constructPartitionFilters(partitionFilters)
 
-      val dataSkippingType = if (partitionFilters.isEmpty) {
+      val finalDataSkippingType = if (partitionFilters.isEmpty) {
         DeltaDataSkippingType.dataSkippingOnlyV1
       } else {
         DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
       }
 
-      var (skippingFilters, unusedFilters) = if (useStats) {
-        val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
-        dataFilters.map(f => (f, constructDataFilters(f))).partition(f => f._2.isDefined)
-      } else {
-        (Nil, dataFilters.map(f => (f, None)))
-      }
-
-      // If enabled, rewrite unused data filters to use partition-like data skipping for clustered
-      // tables. Only rewrite filters if the table is expected to benefit from partition-like
-      // data skipping:
-      // 1. The table should be have a large portion of files with the same min-max values on the
-      //    referenced columns - as a rough heuristic, require the table to be a clustered table, as
-      //    many files often have the same min-max on the clustering columns.
-      // 2. The table should be large enough to benefit from partition-like data skipping - as a
-      //    rough heuristic, require the table to no longer be considered a "small delta table."
-      // 3. At least 1 data filter was not already used for data skipping.
-      val shouldRewriteDataFiltersAsPartitionLike =
-        spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ENABLED) &&
-          ClusteredTableUtils.isSupported(snapshotToScan.protocol) &&
-          snapshotToScan.numOfFilesIfKnown.exists(_ >=
-            spark.conf.get(DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_THRESHOLD)) &&
-          unusedFilters.nonEmpty
-      val partitionLikeFilters = if (shouldRewriteDataFiltersAsPartitionLike) {
-        val clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan)
-        val (rewrittenUsedFilters, rewrittenUnusedFilters) = {
-          val constructDataFilters = new DataFiltersBuilder(spark, dataSkippingType)
-          unusedFilters
-            .map { case (expr, _) =>
-              val rewrittenExprOpt = constructDataFilters.rewriteDataFiltersAsPartitionLike(
-                clusteringColumns, expr)
-              (expr, rewrittenExprOpt)
-            }
-            .partition(_._2.isDefined)
-        }
-        skippingFilters = skippingFilters ++ rewrittenUsedFilters
-        unusedFilters = rewrittenUnusedFilters
-        rewrittenUsedFilters.map { case (orig, rewrittenOpt) => (orig, rewrittenOpt.get) }
-      } else {
-        Nil
-      }
-
-      val finalSkippingFilters = skippingFilters
-        .map(_._2.get)
-        .reduceOption((skip1, skip2) => DataSkippingPredicate(
-          // Fold the filters into a conjunction, while unioning their referencedStats.
-          skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
-        .getOrElse(DataSkippingPredicate(trueLiteral))
+      val skippingFilters = filterPlan.skippingFilters
+      val unusedFilters = filterPlan.unusedFilters
+      val partitionLikeFilters = filterPlan.partitionLikeFilters
+      val finalSkippingFilters = filterPlan.finalSkippingFilter
 
       val (files, sizes) = {
         getDataSkippedFiles(finalPartitionFilters, finalSkippingFilters, keepNumRecords)
@@ -1469,7 +1416,7 @@ trait DataSkippingReaderBase
         rewrittenPartitionLikeDataFilters = partitionLikeFilters.map(_._2.expr.expr).toSet,
         unusedFilters = ExpressionSet(unusedFilters.map(_._1) ++ ineligibleFilters),
         scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType = getCorrectDataSkippingType(dataSkippingType)
+        dataSkippingType = getCorrectDataSkippingType(finalDataSkippingType)
       )
     }
   }
