@@ -77,9 +77,9 @@ object IcebergConverter {
 /**
  * This class manages the transformation of delta snapshots into their Iceberg equivalent.
  */
-class IcebergConverter(spark: SparkSession)
-    extends UniversalFormatConverter(spark)
-    with DeltaLogging {
+class IcebergConverter
+  extends UniversalFormatConverter
+  with DeltaLogging {
 
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot
