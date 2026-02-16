@@ -24,7 +24,6 @@ import scala.collection.mutable.ArrayBuffer
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
-import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -264,13 +263,6 @@ trait DataSkippingReaderBase
     tableSchema = metadata.schema)
 
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
-
-  private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
-    DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY)
-  private lazy val additionalPartitionLikeFilterSupportedExpressions =
-    spark.sessionState.conf.getConf(
-        DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_ADDITIONAL_SUPPORTED_EXPRESSIONS)
-      .toSet.flatMap((exprs: String) => exprs.split(","))
 
   /** All files with the statistics column dropped completely. */
   def withNoStats: DataFrame = allFiles.drop("stats")
