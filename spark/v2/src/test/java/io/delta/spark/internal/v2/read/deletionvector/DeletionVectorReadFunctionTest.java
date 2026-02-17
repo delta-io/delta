@@ -50,8 +50,10 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
-    List<InternalRow> result = collectRows(readFunc.apply(null));
+    // null: mock reader ignores PartitionedFile; we only test DV filtering/projection logic.
+    List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
+    // Verify filtered and projected output (DV column removed, deleted row filtered).
     assertRowsEquals(result, List.of(row(1, "alice"), row(3, "charlie")));
   }
 
@@ -65,7 +67,7 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
-    List<InternalRow> result = collectRows(readFunc.apply(null));
+    List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
     assertRowsEquals(result, List.of());
   }
@@ -80,7 +82,7 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
-    List<InternalRow> result = collectRows(readFunc.apply(null));
+    List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
     assertRowsEquals(result, List.of(row(1, "alice"), row(2, "bob"), row(3, "charlie")));
   }
@@ -136,7 +138,8 @@ public class DeletionVectorReadFunctionTest {
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockBatchReader(List.of(inputBatches)), context);
-    return collectBatches(readFunc.apply(null));
+    // null: mock reader ignores PartitionedFile; we only test DV filtering/projection logic.
+    return collectBatches(readFunc.apply(/* file= */ null));
   }
 
   private static void assertBatchRows(

@@ -211,7 +211,6 @@ public class PartitionUtils {
             .map(DeletionVectorSchemaContext::getSchemaWithDvColumn)
             .orElse(readDataSchema);
 
-    // Vectorized reader is supported for DV tables using ColumnVectorWithFilter
     boolean enableVectorizedReader =
         ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =

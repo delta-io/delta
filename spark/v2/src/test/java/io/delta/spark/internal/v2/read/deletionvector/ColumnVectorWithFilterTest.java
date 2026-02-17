@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 public class ColumnVectorWithFilterTest {
 
   @Test
-  void testIntegerFiltering() {
+  void testInteger() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(5, DataTypes.IntegerType)) {
       for (int i = 0; i < 5; i++) {
         delegate.putInt(i, (i + 1) * 10); // [10, 20, 30, 40, 50]
@@ -40,7 +40,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testLongFiltering() {
+  void testLong() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.LongType)) {
       for (int i = 0; i < 4; i++) {
         delegate.putLong(i, (i + 1) * 100L);
@@ -53,7 +53,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testDoubleFiltering() {
+  void testDouble() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.DoubleType)) {
       delegate.putDouble(0, 1.1);
       delegate.putDouble(1, 2.2);
@@ -66,7 +66,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testBooleanFiltering() {
+  void testBoolean() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.BooleanType)) {
       delegate.putBoolean(0, true);
       delegate.putBoolean(1, false);
@@ -80,7 +80,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testStringFiltering() {
+  void testString() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.StringType)) {
       delegate.putByteArray(0, "alice".getBytes());
       delegate.putByteArray(1, "bob".getBytes());
@@ -139,7 +139,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testEmptySelectionMapping() {
+  void testNoneSelect() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
       delegate.putInt(0, 10);
       delegate.putInt(1, 20);
@@ -151,7 +151,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testIdentitySelectionMapping() {
+  void testAllSelect() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
       delegate.putInt(0, 10);
       delegate.putInt(1, 20);

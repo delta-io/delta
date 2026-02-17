@@ -70,12 +70,15 @@ public class DeletionVectorReadFunction
 
     // Filter: skip deleted rows (noop for vectorized - batch filtering done in map)
     // Map: project row / filter batch
+    //
+    // Double casts are needed due to Scala Iterator's invariant type parameter:
+    //   Inner: (Iterator<Object>) (Iterator<?>) - erase InternalRow to Object, because in
+    //     vectorized mode Spark passes ColumnarBatch via type erasure.
+    //   Outer: (Iterator<InternalRow>) (Iterator<?>) - erase Object back to InternalRow to
+    //     match the method's return type.
+    // Wrap in CloseableIterator to preserve close() through filter/map when partially consumed.
     return (Iterator<InternalRow>)
         (Iterator<?>)
-            // Use Object as type: Spark passes ColumnarBatch cast to InternalRow in vectorized
-            // mode.
-            // Wrap in CloseableIterator to preserve close() through filter/map when partially
-            // consumed.
             CloseableIterator.wrap((Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file))
                 .filterCloseable(
                     item -> {
