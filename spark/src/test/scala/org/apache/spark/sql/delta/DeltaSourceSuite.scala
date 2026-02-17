@@ -1100,7 +1100,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     assert(JsonUtils.toJson(offsetV1start) === offsetV1start.json)
   }
 
-  testQuietly("recreate the reservoir should fail the query") {
+  testQuietly("streaming query should fail when table is deleted and recreated with new id") {
     withTempDir { inputDir =>
       val tablePath = new Path(inputDir.toURI)
       val deltaLog = DeltaLog.forTable(spark, tablePath)
