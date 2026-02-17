@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.stats
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{DataFrame, QueryTest}
 import org.apache.spark.sql.functions._
