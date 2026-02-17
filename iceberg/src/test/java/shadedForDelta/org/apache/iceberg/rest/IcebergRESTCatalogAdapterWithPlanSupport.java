@@ -22,7 +22,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
 
+import shadedForDelta.org.apache.iceberg.BaseFileScanTask;
+import shadedForDelta.org.apache.iceberg.DeleteFile;
 import shadedForDelta.org.apache.iceberg.FileScanTask;
+import shadedForDelta.org.apache.iceberg.PartitionSpecParser;
+import shadedForDelta.org.apache.iceberg.SchemaParser;
 import shadedForDelta.org.apache.iceberg.Table;
 import shadedForDelta.org.apache.iceberg.TableScan;
 import shadedForDelta.org.apache.iceberg.catalog.Catalog;
@@ -36,6 +40,7 @@ import shadedForDelta.org.apache.iceberg.rest.responses.ErrorResponse;
 import shadedForDelta.org.apache.iceberg.rest.PlanStatus;
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse;
 import shadedForDelta.org.apache.iceberg.expressions.Expression;
+import shadedForDelta.org.apache.iceberg.expressions.ResidualEvaluator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -66,6 +71,11 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   // Static field for test credential injection - credentials to inject into /plan responses
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
   private static volatile Map<String, String> testCredentials = null;
+
+  // Static field for test residual injection - residual expression to override in /plan responses.
+  // When set, all FileScanTasks in the response will have this residual instead of the default.
+  // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
+  private static volatile Expression testResidual = null;
   
   // Static field to capture the request path of /plan requests for test verification
   // Volatile is used to guarantee correct cross-thread access (test thread and Jetty server thread).
@@ -156,6 +166,18 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
   }
 
   /**
+   * Set test residual expression to inject into /plan responses.
+   * When set, all FileScanTasks in the response will have this residual expression
+   * instead of the default (alwaysTrue). Used for testing client-side residual validation.
+   * Package-private for test access via IcebergRESTServer.
+   *
+   * @param residual The residual expression to inject, or null to use the default
+   */
+  static void setTestResidual(Expression residual) {
+    testResidual = residual;
+  }
+
+  /**
    * Clear captured filter, projection, and limit. Call between tests to avoid pollution.
    * Package-private for test access.
    */
@@ -165,6 +187,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     capturedMinRowsRequested = null;
     capturedCaseSensitive = null;
     testCredentials = null;
+    testResidual = null;
     capturedPlanRequestPath = null;
   }
 
@@ -332,6 +355,24 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     }
     LOG.debug("Planned {} file scan tasks", fileScanTasks.size());
 
+    // If a test residual is configured, rebuild tasks with the injected residual
+    Expression residualOverride = testResidual;
+    List<FileScanTask> tasksToReturn;
+    if (residualOverride != null) {
+      tasksToReturn = new ArrayList<>();
+      for (FileScanTask task : fileScanTasks) {
+        tasksToReturn.add(new BaseFileScanTask(
+            task.file(),
+            task.deletes().toArray(new DeleteFile[0]),
+            SchemaParser.toJson(task.spec().schema()),
+            PartitionSpecParser.toJson(task.spec()),
+            ResidualEvaluator.of(task.spec(), residualOverride, capturedCaseSensitive)));
+      }
+      LOG.debug("Injected test residual into {} file scan tasks", tasksToReturn.size());
+    } else {
+      tasksToReturn = fileScanTasks;
+    }
+
     // Get partition specs for serialization
     Map<Integer, shadedForDelta.org.apache.iceberg.PartitionSpec> specsById = table.specs();
     LOG.debug("Table has {} partition specs", specsById.size());
@@ -339,7 +380,7 @@ class IcebergRESTCatalogAdapterWithPlanSupport extends RESTCatalogAdapter {
     // Build response (Pattern 1: COMPLETED with direct tasks)
     return PlanTableScanResponse.builder()
         .withPlanStatus(PlanStatus.COMPLETED)
-        .withFileScanTasks(fileScanTasks)
+        .withFileScanTasks(tasksToReturn)
         .withSpecsById(specsById)
         .build();
   }
