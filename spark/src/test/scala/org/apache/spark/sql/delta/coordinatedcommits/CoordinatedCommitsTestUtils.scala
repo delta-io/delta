@@ -441,16 +441,6 @@ case class TrackingInMemoryCommitCoordinatorBuilder(
   }
 }
 
-case class TrackingGenericInMemoryCommitCoordinatorBuilder(
-    builderName: String, realBuilder: CommitCoordinatorBuilder)
-  extends CommitCoordinatorBuilder {
-  override def getName: String = builderName
-
-  override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
-    new TrackingCommitCoordinatorClient(realBuilder.build(spark, conf))
-  }
-}
-
 class PredictableUuidInMemoryCommitCoordinatorClient(batchSize: Long)
   extends InMemoryCommitCoordinator(batchSize) {
 
