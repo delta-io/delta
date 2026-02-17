@@ -17,13 +17,16 @@ package io.delta.spark.internal.v2.read;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.ExpressionUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
@@ -158,6 +161,14 @@ public class SparkScanBuilder
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
+    // Determine kernel Scan: use distributed data skipping when enabled
+    Scan kernelScan;
+    if (isDistributedScanEnabled()) {
+      kernelScan = buildDistributedScan();
+    } else {
+      kernelScan = kernelScanBuilder.build();
+    }
+
     return new SparkScan(
         snapshotManager,
         initialSnapshot,
@@ -166,8 +177,48 @@ public class SparkScanBuilder
         requiredDataSchema,
         pushedKernelPredicates,
         dataFilters,
-        kernelScanBuilder.build(),
+        kernelScan,
         options);
+  }
+
+  /**
+   * Uses {@link DistributedScanBuilder} to build a Kernel Scan with Spark-level data skipping. The
+   * distributed builder reads checkpoint + delta log files via Spark DataFrames and delegates to V1
+   * shared components for filter planning and scan execution.
+   */
+  private Scan buildDistributedScan() {
+    SparkSession spark = SparkSession.active();
+    int numPartitions = spark.sessionState().conf().numShufflePartitions();
+
+    // Collect all pushed filters (partition + data) for the V1 pipeline
+    Set<Filter> allPushedFilterSet = new LinkedHashSet<>();
+    if (pushedSparkFilters != null) {
+      Collections.addAll(allPushedFilterSet, pushedSparkFilters);
+    }
+    if (dataFilters != null) {
+      Collections.addAll(allPushedFilterSet, dataFilters);
+    }
+    Filter[] allFilters = allPushedFilterSet.toArray(new Filter[0]);
+
+    // Build read schema for Kernel delegation
+    io.delta.kernel.types.StructType kernelReadSchema =
+        SchemaUtils.convertSparkSchemaToKernelSchema(requiredDataSchema);
+
+    DistributedScanBuilder distributedBuilder =
+        new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
+    distributedBuilder
+        .withPushdownFilters(allFilters, partitionSchema)
+        .withReadSchema(kernelReadSchema);
+
+    return distributedBuilder.build();
+  }
+
+  /**
+   * Returns true if distributed data skipping is enabled via configuration. Default: false (use
+   * Kernel-native scan).
+   */
+  private boolean isDistributedScanEnabled() {
+    return Boolean.parseBoolean(options.getOrDefault("distributedScan.enabled", "false"));
   }
 
   CaseInsensitiveStringMap getOptions() {
