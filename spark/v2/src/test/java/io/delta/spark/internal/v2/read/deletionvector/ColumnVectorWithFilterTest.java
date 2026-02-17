@@ -27,7 +27,7 @@ import org.junit.jupiter.api.Test;
 public class ColumnVectorWithFilterTest {
 
   @Test
-  void testInteger() {
+  void testIntegerColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(5, DataTypes.IntegerType)) {
       for (int i = 0; i < 5; i++) {
         delegate.putInt(i, (i + 1) * 10); // [10, 20, 30, 40, 50]
@@ -40,7 +40,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testLong() {
+  void testLongColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.LongType)) {
       for (int i = 0; i < 4; i++) {
         delegate.putLong(i, (i + 1) * 100L);
@@ -53,7 +53,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testDouble() {
+  void testDoubleColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.DoubleType)) {
       delegate.putDouble(0, 1.1);
       delegate.putDouble(1, 2.2);
@@ -66,7 +66,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testBoolean() {
+  void testBooleanColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.BooleanType)) {
       delegate.putBoolean(0, true);
       delegate.putBoolean(1, false);
@@ -80,7 +80,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testString() {
+  void testStringColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.StringType)) {
       delegate.putByteArray(0, "alice".getBytes());
       delegate.putByteArray(1, "bob".getBytes());
@@ -92,7 +92,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testStructGetChildPropagatesMapping() {
+  void testStructColumnVector() {
     StructType structType =
         new StructType().add("id", DataTypes.IntegerType).add("name", DataTypes.StringType);
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, structType)) {
@@ -120,7 +120,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testColumnVectorWithNull() {
+  void testNullColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(4, DataTypes.IntegerType)) {
       // original rows: [10, null, 30, null]
       delegate.putInt(0, 10);
@@ -139,7 +139,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testNoneSelect() {
+  void testNoneSelectColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
       delegate.putInt(0, 10);
       delegate.putInt(1, 20);
@@ -151,7 +151,7 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
-  void testAllSelect() {
+  void testAllSelectColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
       delegate.putInt(0, 10);
       delegate.putInt(1, 20);
