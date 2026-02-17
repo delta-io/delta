@@ -41,18 +41,24 @@ class PreparedDeltaFileIndexRowCountSuite
   }
 
   /**
-   * Test utility that creates a partitioned Delta table and verifies scanned.rows behavior.
-  *
+   * Test utility that creates a partitioned Delta table and verifies scanned.rows and
+   * scanned.logicalRows behavior.
+   *
    * @param alwaysCollectStats value of the DELTA_ALWAYS_COLLECT_STATS flag
    * @param queryTransform function to transform the base DataFrame (apply filters)
    * @param expectedRowsDefined whether scanned.rows should be defined
    * @param expectedRowCount expected row count if defined (None to skip validation)
+   * @param expectedLogicalRowsDefined whether scanned.logicalRows should be defined
+   *                                   (defaults to same as expectedRowsDefined)
+   * @param expectedLogicalRowCount expected logical row count if defined (None to skip validation)
    */
   private def testRowCountBehavior(
       alwaysCollectStats: Boolean,
       queryTransform: DataFrame => DataFrame,
       expectedRowsDefined: Boolean,
-      expectedRowCount: Option[Long] = None): Unit = {
+      expectedRowCount: Option[Long] = None,
+      expectedLogicalRowsDefined: Option[Boolean] = None,
+      expectedLogicalRowCount: Option[Long] = None): Unit = {
     withTempDir { dir =>
       withSQLConf(DeltaSQLConf.DELTA_COLLECT_STATS.key -> "true") {
         spark.range(100).toDF("id")
@@ -75,6 +81,18 @@ class PreparedDeltaFileIndexRowCountSuite
           }
         } else {
           assert(scan.scanned.rows.isEmpty, "scanned.rows should be None")
+        }
+
+        // logicalRows should follow the same defined/undefined pattern as rows by default
+        val logicalDefined = expectedLogicalRowsDefined.getOrElse(expectedRowsDefined)
+        if (logicalDefined) {
+          assert(scan.scanned.logicalRows.isDefined, "scanned.logicalRows should be defined")
+          expectedLogicalRowCount.foreach { expected =>
+            assert(scan.scanned.logicalRows.get == expected,
+              s"Expected $expected logical rows, got ${scan.scanned.logicalRows.get}")
+          }
+        } else {
+          assert(scan.scanned.logicalRows.isEmpty, "scanned.logicalRows should be None")
         }
       }
     }
@@ -121,6 +139,8 @@ class PreparedDeltaFileIndexRowCountSuite
         val df = spark.read.format("delta").load(dir.getAbsolutePath)
         val scan = getDeltaScan(df)
         assert(scan.scanned.rows.isEmpty, "scanned.rows should be None when stats are missing")
+        assert(scan.scanned.logicalRows.isEmpty,
+          "scanned.logicalRows should be None when stats are missing")
       }
     }
   }
