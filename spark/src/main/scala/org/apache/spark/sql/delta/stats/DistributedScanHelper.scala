@@ -17,13 +17,11 @@
 package org.apache.spark.sql.delta.stats
 
 import java.net.{URI, URISyntaxException}
-import java.util
 
 import org.apache.spark.sql.{Column, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.expressions.Expression
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLogFileIndex}
-import org.apache.spark.sql.delta.actions.{Action, AddFile, InMemoryLogReplay, SingleAction}
-import org.apache.spark.sql.delta.implicits._
+import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
 import org.apache.spark.sql.functions._
@@ -37,11 +35,19 @@ import org.apache.spark.sql.types._
  * This helper lives in the V1 module so it has full access to V1
  * internals (`Action.logSchema`, `SingleAction`, `InMemoryLogReplay`, etc.),
  * while exposing a clean Java-friendly API to V2's `DistributedScanBuilder`.
+ *
+ * Returns a **DataFrame** (not collected files) so that `DistributedScan`
+ * can use zero-copy Spark Row -> Kernel Row adapters.
  */
 private[delta] object DistributedScanHelper {
 
   /**
-   * Executes the full V1 data skipping pipeline for V2 batch scans.
+   * Executes the full V1 data skipping pipeline for V2 batch scans and
+   * returns a **DataFrame** with schema `{add: struct<...>}`.
+   *
+   * The DataFrame is NOT collected — it is returned lazily so that
+   * `DistributedScan` can stream rows via `toLocalIterator()` through
+   * zero-copy adapters.
    *
    * @param spark          SparkSession
    * @param loadActions    Supplier for the union of checkpoint + delta log actions
@@ -50,16 +56,16 @@ private[delta] object DistributedScanHelper {
    * @param partitionColumns Partition column names
    * @param partitionSchema  Partition schema (Spark StructType)
    * @param filters        Spark V2 pushdown filters (already classified)
-   * @return Java list of surviving AddFile objects
+   * @return DataFrame with schema `{add: struct<path, partitionValues, size, ...>}`
    */
-  def executeFilteredScan(
+  def executeFilteredScanAsDF(
       spark: SparkSession,
       loadActions: () => DataFrame,
       numPartitions: Int,
       tableSchema: StructType,
       partitionColumns: java.util.List[String],
       partitionSchema: StructType,
-      filters: Array[Filter]): java.util.List[AddFile] = {
+      filters: Array[Filter]): DataFrame = {
 
     val partCols = scala.collection.JavaConverters.asScalaBufferConverter(
       partitionColumns).asScala.toSeq
@@ -89,9 +95,9 @@ private[delta] object DistributedScanHelper {
       Seq.empty
     }
 
-    // 4. Resolve dependencies for the V1 pipeline
+    // 4. Get DataFrames for the V1 pipeline
     val withStats = stateProvider.allAddFilesWithParsedStats
-    val allFiles = stateProvider.allAddFiles.as[AddFile]
+    val allFilesDF = stateProvider.allAddFiles
 
     // Get the base stats column (from the parsed "stats" struct)
     val baseStatsColumn = col("stats")
@@ -108,10 +114,9 @@ private[delta] object DistributedScanHelper {
 
     val useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
-    // 5. If no filters, return all files
+    // 5. If no filters, return all files wrapped as {add: struct<...>}
     if (filterExprs.isEmpty) {
-      val files = allFiles.collect().toSeq
-      return scala.collection.JavaConverters.seqAsJavaListConverter(files).asJava
+      return wrapAsAddStruct(allFilesDF)
     }
 
     // 6. Create filter planner
@@ -129,27 +134,48 @@ private[delta] object DistributedScanHelper {
 
     val plan = filterPlanner.plan(filterExprs)
 
-    // 7. Create scan executor
-    val scanExecutor = new DefaultDeltaScanExecutor(
-      spark = spark,
-      withStats = withStats,
-      allFiles = allFiles,
-      getStatsColumnOpt = getStatsColumnOpt,
-      partitionSchema = partitionSchema)
-
-    // 8. Execute: partition-only or full data-skipping path
-    val files: Seq[AddFile] = if (plan.dataFilters.isEmpty) {
-      val (result, _) = scanExecutor.filterOnPartitions(plan.partitionFilters, false)
-      result
+    // 7. Apply filters as DataFrame operations (no collection!)
+    val filteredDF: DataFrame = if (plan.dataFilters.isEmpty) {
+      // Partition-only path: filter allFiles by partition predicates
+      if (plan.partitionFilters.nonEmpty) {
+        PartitionFilterUtils.filterFileList(partitionSchema, allFilesDF, plan.partitionFilters)
+      } else {
+        allFilesDF
+      }
     } else {
-      val finalPartitionFilters =
+      // Data skipping path: apply partition + data skipping filters to withStats
+      val partitionFilterCol =
         filterPlanner.constructPartitionFilters(plan.partitionFilters)
-      val (result, _) = scanExecutor.getDataSkippedFiles(
-        finalPartitionFilters, plan.verifiedSkippingExpr, false)
-      result
+      withStats.where(partitionFilterCol && plan.verifiedSkippingExpr)
     }
 
-    scala.collection.JavaConverters.seqAsJavaListConverter(files).asJava
+    // 8. Wrap as {add: struct<...>} and return DataFrame (NOT collected)
+    wrapAsAddStruct(filteredDF)
+  }
+
+  /**
+   * Wraps a flat AddFile DataFrame into `{add: struct<...>}` schema.
+   * Serializes any parsed stats back to JSON string first.
+   */
+  private def wrapAsAddStruct(df: DataFrame): DataFrame = {
+    // Serialize parsed stats struct back to JSON string for Kernel compatibility
+    val withSerializedStats = if (df.schema.fieldNames.contains("stats") &&
+        df.schema("stats").dataType.isInstanceOf[StructType]) {
+      df.withColumn("stats", to_json(col("stats")))
+    } else {
+      df
+    }
+    withSerializedStats.select(struct(col("*")).as("add"))
+  }
+
+  /**
+   * Extracts a version number from a delta file path.
+   * E.g. ".../_delta_log/00000000000000000005.json" -> 5
+   */
+  def extractDeltaVersion(path: String): Long = {
+    val fileName = path.substring(path.lastIndexOf('/') + 1)
+    val versionStr = fileName.replace(".json", "")
+    try { versionStr.toLong } catch { case _: NumberFormatException => -1L }
   }
 
   /**

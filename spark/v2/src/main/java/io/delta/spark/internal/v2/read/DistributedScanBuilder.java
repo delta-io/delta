@@ -29,8 +29,8 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.delta.actions.AddFile;
 import org.apache.spark.sql.delta.stats.DistributedScanHelper;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
@@ -45,24 +45,17 @@ import org.apache.spark.sql.types.StructType;
  * <ol>
  *   <li>Extract {@link LogSegment} from Kernel {@link SnapshotImpl} (checkpoint + delta paths)
  *   <li>Load raw actions as Spark DataFrame via {@link DistributedScanHelper#loadActionsFromPaths}
- *   <li>Delegate to V1 shared pipeline via {@link DistributedScanHelper#executeFilteredScan}:
+ *   <li>Delegate to V1 shared pipeline via {@link DistributedScanHelper#executeFilteredScanAsDF}:
  *       <ul>
  *         <li>{@code DefaultStateProvider} — state reconstruction + stats parsing
  *         <li>{@code StatsColumnResolver} — stats column resolution
  *         <li>{@code DefaultDataSkippingFilterPlanner} — filter planning
- *         <li>{@code DefaultDeltaScanExecutor} — scan execution
+ *         <li>DataFrame-level filter application (no collection)
  *       </ul>
- *   <li>Wrap surviving files in a {@link DistributedScan}
+ *   <li>Wrap the filtered DataFrame in a {@link DistributedScan} (zero-copy)
  * </ol>
  *
- * <p>Controlled by {@code spark.databricks.delta.v2.distributedScan.enabled}:
- *
- * <ul>
- *   <li><b>true</b> — this builder (distributed data skipping via V1 pipeline)
- *   <li><b>false</b> — Kernel-native ScanBuilder (single-driver log replay)
- * </ul>
- *
- * @see DistributedScan the Scan produced by this builder
+ * @see DistributedScan the Scan produced by this builder (zero-copy Spark Row → Kernel Row)
  * @see DistributedScanHelper V1 Scala helper that orchestrates the pipeline
  */
 public class DistributedScanBuilder implements ScanBuilder {
@@ -119,14 +112,8 @@ public class DistributedScanBuilder implements ScanBuilder {
   }
 
   /**
-   * Builds the scan using the V1 shared pipeline:
-   *
-   * <ol>
-   *   <li>Load actions from LogSegment
-   *   <li>State reconstruction via DefaultStateProvider
-   *   <li>Filter planning + scan execution via V1 components
-   *   <li>Wrap surviving files in DistributedScan
-   * </ol>
+   * Builds the scan using the V1 shared pipeline, returning a zero-copy {@link DistributedScan}
+   * backed by a filtered DataFrame (not collected).
    */
   @Override
   public Scan build() {
@@ -147,7 +134,9 @@ public class DistributedScanBuilder implements ScanBuilder {
     String[] deltaPaths = deltas.stream().map(FileStatus::getPath).toArray(String[]::new);
 
     long[] deltaVersions =
-        deltas.stream().mapToLong(fs -> extractDeltaVersion(fs.getPath())).toArray();
+        deltas.stream()
+            .mapToLong(fs -> DistributedScanHelper.extractDeltaVersion(fs.getPath()))
+            .toArray();
 
     // Step 2: Register canonicalizePath UDF
     DistributedScanHelper.registerCanonicalizeUdf(spark);
@@ -161,11 +150,9 @@ public class DistributedScanBuilder implements ScanBuilder {
     // Build partition schema from table schema + partition column names
     StructType partSchema = buildPartitionSchema(sparkTableSchema, partitionColumnNames);
 
-    // Step 4: Execute V1 shared pipeline via Scala helper
-    // The helper handles: loadActions -> DefaultStateProvider -> StatsColumnResolver
-    //   -> DefaultDataSkippingFilterPlanner -> DefaultDeltaScanExecutor
-    List<AddFile> filteredFiles =
-        DistributedScanHelper.executeFilteredScan(
+    // Step 4: Execute V1 shared pipeline → returns DataFrame with {add: struct<...>}
+    Dataset<org.apache.spark.sql.Row> plannedDF =
+        DistributedScanHelper.executeFilteredScanAsDF(
             spark,
             () ->
                 DistributedScanHelper.loadActionsFromPaths(
@@ -176,14 +163,8 @@ public class DistributedScanBuilder implements ScanBuilder {
             partSchema,
             pushdownFilters);
 
-    // Step 5: Build table root path
-    String tableRoot = snapshot.getPath();
-    if (!tableRoot.endsWith("/")) {
-      tableRoot = tableRoot + "/";
-    }
-
-    // Step 6: Wrap in DistributedScan
-    return new DistributedScan(filteredFiles, tableRoot, snapshot, readSchema);
+    // Step 5: Wrap in DistributedScan (zero-copy: DataFrame → Kernel rows)
+    return new DistributedScan(plannedDF, snapshot, readSchema);
   }
 
   @Override
@@ -225,19 +206,5 @@ public class DistributedScanBuilder implements ScanBuilder {
     }
 
     return new StructType(orderedFields.toArray(new StructField[0]));
-  }
-
-  /**
-   * Extracts the Delta version from a file path (e.g., ".../_delta_log/00000000000000000123.json"
-   * -> 123).
-   */
-  private static long extractDeltaVersion(String filePath) {
-    String fileName = filePath.substring(filePath.lastIndexOf('/') + 1);
-    String versionStr = fileName.replace(".json", "");
-    try {
-      return Long.parseLong(versionStr);
-    } catch (NumberFormatException e) {
-      throw new IllegalArgumentException("Invalid delta file name: " + fileName, e);
-    }
   }
 }

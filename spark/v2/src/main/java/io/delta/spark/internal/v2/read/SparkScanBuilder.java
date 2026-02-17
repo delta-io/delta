@@ -218,7 +218,7 @@ public class SparkScanBuilder
    * Kernel-native scan).
    */
   private boolean isDistributedScanEnabled() {
-    return Boolean.parseBoolean(options.getOrDefault("distributedScan.enabled", "false"));
+    return true;
   }
 
   CaseInsensitiveStringMap getOptions() {
