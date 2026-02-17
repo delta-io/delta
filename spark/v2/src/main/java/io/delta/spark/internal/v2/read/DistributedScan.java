@@ -176,18 +176,16 @@ public final class DistributedScan implements Scan {
       fieldMap.put(schema.indexOf("deletionVector"), toKernelDeletionVectorRow(dv));
     }
 
-    // tags (nullable)
-    scala.Option<scala.collection.immutable.Map<String, String>> tagsOpt = sparkAddFile.tags();
-    if (tagsOpt.isDefined()) {
+    // tags (nullable Map, not Option)
+    scala.collection.immutable.Map<String, String> tagMap = sparkAddFile.tags();
+    if (tagMap != null && !tagMap.isEmpty()) {
       Map<String, String> tags = new HashMap<>();
-      scala.collection.Iterator<scala.Tuple2<String, String>> tagsIter = tagsOpt.get().iterator();
+      scala.collection.Iterator<scala.Tuple2<String, String>> tagsIter = tagMap.iterator();
       while (tagsIter.hasNext()) {
         scala.Tuple2<String, String> entry = tagsIter.next();
         tags.put(entry._1(), entry._2());
       }
-      if (!tags.isEmpty()) {
-        fieldMap.put(schema.indexOf("tags"), VectorUtils.stringStringMapValue(tags));
-      }
+      fieldMap.put(schema.indexOf("tags"), VectorUtils.stringStringMapValue(tags));
     }
 
     // baseRowId (nullable)

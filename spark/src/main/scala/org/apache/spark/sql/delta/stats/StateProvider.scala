@@ -323,12 +323,13 @@ private[delta] class DefaultStateProvider(
         col("remove").withField("path", col(REMOVE_PATH_CANONICAL_COL_NAME))))
 
     // Step 5: deduplicate via InMemoryLogReplay per partition
+    // Extract to local vals to avoid capturing `this` (non-serializable) in the closure.
+    val fileRetention = minFileRetentionTimestamp
+    val txnRetention = minSetTransactionRetentionTimestamp
     val replayed = reconstructed
       .as[SingleAction]
       .mapPartitions { iter =>
-        val state = new InMemoryLogReplay(
-          minFileRetentionTimestamp,
-          minSetTransactionRetentionTimestamp)
+        val state = new InMemoryLogReplay(fileRetention, txnRetention)
         state.append(0, iter.map(_.unwrap))
         state.checkpoint.map(_.wrap)
       }
