@@ -433,7 +433,7 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
     # Build package string with suffixed Delta artifacts + Iceberg runtime
     package = ','.join([
         "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version),
-        "io.delta:delta-iceberg%s_2.13:%s" % (suffix, version),
+        "io.delta:delta-iceberg_2.13:%s" % (version),
         "org.apache.iceberg:iceberg-spark-runtime-{}_2.13:{}".format(iceberg_spark_ver, iceberg_version)])
 
     print("Package: %s" % package)
