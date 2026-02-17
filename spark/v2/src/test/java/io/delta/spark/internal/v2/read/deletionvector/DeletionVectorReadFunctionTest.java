@@ -39,6 +39,7 @@ public class DeletionVectorReadFunctionTest {
 
   @Test
   public void testFilterDeletedRowsAndProjectRemovesDvColumn() {
+    // Input: 3 rows, middle one is deleted.
     List<InternalRow> inputRows =
         List.of(
             row(1, "alice", (byte) 0), // Not deleted.
@@ -50,7 +51,6 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
 
-    // null: mock reader ignores PartitionedFile; we only test DV filtering/projection logic.
     List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
     // Verify filtered and projected output (DV column removed, deleted row filtered).
@@ -138,7 +138,6 @@ public class DeletionVectorReadFunctionTest {
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
         DeletionVectorReadFunction.wrap(mockBatchReader(List.of(inputBatches)), context);
-    // null: mock reader ignores PartitionedFile; we only test DV filtering/projection logic.
     return collectBatches(readFunc.apply(/* file= */ null));
   }
 
