@@ -88,11 +88,11 @@ class DeltaDataSource
   private def getSnapshotFromTableOrPath(
       sparkSession: SparkSession,
       path: Path,
-      parameters: Map[String, String]): Snapshot = {
+      options: Map[String, String]): Snapshot = {
     catalogTableOpt
       .map(catalogTable => DeltaLog.forTableWithSnapshot(
-        sparkSession, catalogTable, options = parameters))
-      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path, options = parameters))._2
+        sparkSession, catalogTable, options))
+      .getOrElse(DeltaLog.forTableWithSnapshot(sparkSession, path, options))._2
   }
 
   def inferSchema: StructType = new StructType() // empty
