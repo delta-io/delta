@@ -21,8 +21,9 @@ import java.util.UUID
 
 import scala.util.Random
 
-import org.apache.spark.sql.delta.{DeltaColumnMappingTestUtilsBase, DeltaLog, DeltaTable, Snapshot, TableFeature}
+import org.apache.spark.sql.delta.{DeltaLog, DeltaTable, Snapshot, TableFeature}
 import org.apache.spark.sql.delta.actions.Protocol
+import org.apache.spark.sql.delta.columnmapping.DeltaColumnMappingTestUtilsBase
 import org.apache.spark.sql.delta.stats.{DeltaStatistics, PreparedDeltaFileIndex}
 import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 

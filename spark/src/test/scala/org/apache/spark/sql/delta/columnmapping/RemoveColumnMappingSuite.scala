@@ -19,6 +19,9 @@ package org.apache.spark.sql.delta.columnmapping
 import io.delta.tables.DeltaTable
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.schema.DeltaInvariantViolationException
 import org.apache.spark.sql.delta.sources.DeltaSQLConf._
 

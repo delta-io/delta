@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta.deletionvectors
 import java.io.{File, FileNotFoundException}
 import java.net.URISyntaxException
 
-import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeletionVectorsTestUtils, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
+import org.apache.spark.sql.delta.{DeletionVectorsTableFeature, DeltaChecksumException, DeltaConfigs, DeltaLog, DeltaMetricsUtils, DeltaTestUtilsForTempViews}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddFile, DeletionVectorDescriptor, RemoveFile}
 import org.apache.spark.sql.delta.actions.DeletionVectorDescriptor.EMPTY
@@ -821,43 +821,32 @@ class DeletionVectorsSuite extends QueryTest
 }
 
 object DeletionVectorsSuite {
-  val table1Path = "src/test/resources/delta/table-with-dv-large"
-  // Table at version 0: contains [0, 2000)
-  val expectedTable1DataV0 = Seq.range(0, 2000)
-  // Table at version 1: removes rows with id = 0, 180, 300, 700, 1800
-  val v1Removed = Set(0, 180, 300, 700, 1800)
-  val expectedTable1DataV1 = expectedTable1DataV0.filterNot(e => v1Removed.contains(e))
-  // Table at version 2: inserts rows with id = 300, 700
-  val v2Added = Set(300, 700)
-  val expectedTable1DataV2 = expectedTable1DataV1 ++ v2Added
-  // Table at version 3: removes rows with id = 300, 250, 350, 900, 1353, 1567, 1800
-  val v3Removed = Set(300, 250, 350, 900, 1353, 1567, 1800)
-  val expectedTable1DataV3 = expectedTable1DataV2.filterNot(e => v3Removed.contains(e))
-  // Table at version 4: inserts rows with id = 900, 1567
-  val v4Added = Set(900, 1567)
-  val expectedTable1DataV4 = expectedTable1DataV3 ++ v4Added
+  // Delegate to shared test data object
+  val table1Path = DeletionVectorsTestData.table1Path
+  val expectedTable1DataV0 = DeletionVectorsTestData.expectedTable1DataV0
+  val v1Removed = DeletionVectorsTestData.v1Removed
+  val expectedTable1DataV1 = DeletionVectorsTestData.expectedTable1DataV1
+  val v2Added = DeletionVectorsTestData.v2Added
+  val expectedTable1DataV2 = DeletionVectorsTestData.expectedTable1DataV2
+  val v3Removed = DeletionVectorsTestData.v3Removed
+  val expectedTable1DataV3 = DeletionVectorsTestData.expectedTable1DataV3
+  val v4Added = DeletionVectorsTestData.v4Added
+  val expectedTable1DataV4 = DeletionVectorsTestData.expectedTable1DataV4
 
-  val table2Path = "src/test/resources/delta/table-with-dv-small"
-  // Table at version 0: contains 0 - 9
-  val expectedTable2DataV0 = Seq(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)
-  // Table at version 1: removes rows 0 and 9
-  val expectedTable2DataV1 = Seq(1, 2, 3, 4, 5, 6, 7, 8)
+  val table2Path = DeletionVectorsTestData.table2Path
+  val expectedTable2DataV0 = DeletionVectorsTestData.expectedTable2DataV0
+  val expectedTable2DataV1 = DeletionVectorsTestData.expectedTable2DataV1
 
-  val table3Path = "src/test/resources/delta/partitioned-table-with-dv-large"
-  // Table at version 0: contains [0, 2000)
-  val expectedTable3DataV0 = Seq.range(0, 2000)
-  // Table at version 1: removes rows with id = (0, 180, 308, 225, 756, 1007, 1503)
-  val table3V1Removed = Set(0, 180, 308, 225, 756, 1007, 1503)
-  val expectedTable3DataV1 = expectedTable3DataV0.filterNot(e => table3V1Removed.contains(e))
-  // Table at version 2: inserts rows with id = 308, 756
-  val table3V2Added = Set(308, 756)
-  val expectedTable3DataV2 = expectedTable3DataV1 ++ table3V2Added
-  // Table at version 3: removes rows with id = (300, 257, 399, 786, 1353, 1567, 1800)
-  val table3V3Removed = Set(300, 257, 399, 786, 1353, 1567, 1800)
-  val expectedTable3DataV3 = expectedTable3DataV2.filterNot(e => table3V3Removed.contains(e))
-  // Table at version 4: inserts rows with id = 1353, 1567
-  val table3V4Added = Set(1353, 1567)
-  val expectedTable3DataV4 = expectedTable3DataV3 ++ table3V4Added
+  val table3Path = DeletionVectorsTestData.table3Path
+  val expectedTable3DataV0 = DeletionVectorsTestData.expectedTable3DataV0
+  val table3V1Removed = DeletionVectorsTestData.table3V1Removed
+  val expectedTable3DataV1 = DeletionVectorsTestData.expectedTable3DataV1
+  val table3V2Added = DeletionVectorsTestData.table3V2Added
+  val expectedTable3DataV2 = DeletionVectorsTestData.expectedTable3DataV2
+  val table3V3Removed = DeletionVectorsTestData.table3V3Removed
+  val expectedTable3DataV3 = DeletionVectorsTestData.expectedTable3DataV3
+  val table3V4Added = DeletionVectorsTestData.table3V4Added
+  val expectedTable3DataV4 = DeletionVectorsTestData.expectedTable3DataV4
 
   // Table with DV table feature as supported but no DVs
   val table4Path = "src/test/resources/delta/table-with-dv-feature-enabled"

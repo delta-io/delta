@@ -21,6 +21,7 @@ import java.io.File
 
 import org.apache.spark.sql.delta.DeltaConfigs.CHECKPOINT_INTERVAL
 import org.apache.spark.sql.delta.actions.Metadata
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode, DeltaColumnMappingTestUtils}
 import org.apache.spark.sql.delta.schema.{DeltaInvariantViolationException, SchemaUtils}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}

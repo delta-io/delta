@@ -24,6 +24,7 @@ import scala.jdk.CollectionConverters._
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.actions.{AddFile, FileAction, RemoveFile, SingleAction}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
+import org.apache.spark.sql.delta.columnmapping.DeltaColumnMappingTestUtils
 import org.apache.spark.sql.delta.commands.{CloneDeltaSource, CloneSource, CloneSourceFormat}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.FileNames.unsafeDeltaFile

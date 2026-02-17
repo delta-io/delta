@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
+import org.apache.spark.sql.delta.deletionvectors.DeletionVectorsTestUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{DeletedRecordCountsHistogram, DeletedRecordCountsHistogramUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest

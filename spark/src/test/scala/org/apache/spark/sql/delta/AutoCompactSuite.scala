@@ -22,6 +22,7 @@ import java.io.File
 // scalastyle:off import.ordering.noEmptyLine
 import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.columnmapping.{DeltaColumnMappingEnableIdMode, DeltaColumnMappingEnableNameMode}
 import org.apache.spark.sql.delta.commands.optimize._
 import org.apache.spark.sql.delta.hooks.{AutoCompact, AutoCompactType}
 import org.apache.spark.sql.delta.optimize.CompactionTestHelperForAutoCompaction

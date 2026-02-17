@@ -21,6 +21,9 @@ import java.util.UUID
 
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.dml.delete._
+import org.apache.spark.sql.delta.dml.merge._
+import org.apache.spark.sql.delta.dml.update._
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
