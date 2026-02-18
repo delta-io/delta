@@ -1,5 +1,11 @@
 name: "Delta Spark V2 Connector"
-on: [pull_request]
+# Use pull_request_target so GITHUB_TOKEN has write access for PR comments,
+# even on fork-based PRs.
+on: [pull_request_target]
+
+permissions:
+  pull-requests: write
+
 jobs:
   test:
     name: "V2 Connector: Shard ${{ matrix.shard }}"
@@ -18,6 +24,9 @@ jobs:
       DELTA_V2_ENABLE_MODE: STRICT
     steps:
       - uses: actions/checkout@v3
+        with:
+          # pull_request_target defaults to base branch; explicitly checkout PR head
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: technote-space/get-diff-action@v4
         id: git-diff
         with:
@@ -102,15 +111,12 @@ jobs:
 
           passed = totals["tests"] - totals["failures"] - totals["errors"] - totals["skipped"]
 
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"total={totals['tests']}\n")
-              f.write(f"passed={passed}\n")
-              f.write(f"failed={totals['failures'] + totals['errors']}\n")
-              f.write(f"skipped={totals['skipped']}\n")
-
           # Write failed tests to a file for the comment step
           with open("failed-tests-shard-${{ matrix.shard }}.json", "w") as f:
               json.dump(failed_tests, f)
+
+          print(f"Tests: {totals['tests']}, Passed: {passed}, "
+                f"Failed: {totals['failures'] + totals['errors']}, Skipped: {totals['skipped']}")
           PYEOF
       - name: Upload test results
         if: always() && steps.git-diff.outputs.diff
@@ -124,21 +130,15 @@ jobs:
     runs-on: ubuntu-24.04
     needs: test
     if: always()
-    permissions:
-      pull-requests: write
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: v2-test-results-shard-*
           merge-multiple: true
-      - name: Build and post PR comment
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+      - name: Build comment body
         run: |
           python3 - <<'PYEOF'
-          import json, glob, os
+          import json, glob
 
           all_failed = []
           for f in sorted(glob.glob("failed-tests-shard-*.json")):
@@ -163,7 +163,8 @@ jobs:
               lines.append("")
               lines.append("| Test | Message |")
               lines.append("|------|---------|")
-              for t in all_failed[:10]:  # cap at 10 to avoid huge comments
+              # cap at 10 to avoid huge comments
+              for t in all_failed[:10]:
                   name = t["name"].replace("|", "\\|")
                   msg = t["message"].replace("|", "\\|").replace("\n", " ")[:150]
                   lines.append(f"| `{name}` | {msg} |")
@@ -174,14 +175,14 @@ jobs:
 
           body = "\n".join(lines)
 
-          # Write comment body to a temp file to avoid shell escaping issues
-          with open("/tmp/comment_body.md", "w") as f:
+          with open("comment_body.md", "w") as f:
               f.write(body)
 
-          pr = os.environ.get("PR_NUMBER", "")
-          if pr:
-              os.system(f'gh pr comment {pr} --repo "$GH_REPO" --body-file /tmp/comment_body.md')
-          else:
-              print("No PR number found, skipping comment.")
-              print(body)
+          print(body)
           PYEOF
+      - name: Post PR comment
+        uses: mshick/add-pr-comment@v2
+        with:
+          issue: ${{ github.event.pull_request.number }}
+          message-path: comment_body.md
+          message-id: v2-connector-test-results
