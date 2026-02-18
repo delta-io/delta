@@ -29,6 +29,7 @@ import java.math.BigDecimal;
 import java.util.*;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.functions;
 
 /**
  * Kernel {@link Scan} implementation backed by a pre-filtered Spark DataFrame.
@@ -49,16 +50,30 @@ public final class DistributedScan implements Scan {
   private final Scan delegateScan; // for getScanState / getRemainingFilter
 
   /**
-   * Creates a DistributedScan from a pre-filtered DataFrame.
+   * Creates a DistributedScan from a flat AddFile DataFrame.
    *
-   * @param plannedDataFrame filtered DataFrame with scan-file schema (non-null)
+   * <p>The input DataFrame has flat AddFile columns (path, partitionValues, size, ...). This
+   * constructor wraps them into the {@code {add: struct<...>}} schema expected by Kernel, and
+   * serializes any parsed stats struct back to JSON.
+   *
+   * @param addFilesDF flat AddFile DataFrame (non-null)
    * @param snapshot kernel snapshot for delegation metadata (non-null)
    * @param readSchema read schema for Kernel delegation (non-null)
    */
-  DistributedScan(Dataset<Row> plannedDataFrame, Snapshot snapshot, StructType readSchema) {
-    this.plannedDataFrame = requireNonNull(plannedDataFrame, "plannedDataFrame");
+  DistributedScan(Dataset<Row> addFilesDF, Snapshot snapshot, StructType readSchema) {
+    requireNonNull(addFilesDF, "addFilesDF");
     requireNonNull(snapshot, "snapshot");
     requireNonNull(readSchema, "readSchema");
+
+    // Serialize parsed stats struct back to JSON if needed, then wrap as {add: struct<...>}
+    Dataset<Row> df = addFilesDF;
+    org.apache.spark.sql.types.StructType sparkSchema = df.schema();
+    if (sparkSchema.fieldIndex("stats") >= 0
+        && sparkSchema.apply("stats").dataType() instanceof org.apache.spark.sql.types.StructType) {
+      df = df.withColumn("stats", functions.to_json(functions.col("stats")));
+    }
+    this.plannedDataFrame = df.select(functions.struct(functions.col("*")).as("add"));
+
     this.delegateScan = snapshot.getScanBuilder().withReadSchema(readSchema).build();
   }
 

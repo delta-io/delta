@@ -29,34 +29,37 @@ import io.delta.kernel.utils.FileStatus;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.apache.spark.sql.Column;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.delta.stats.DistributedScanHelper;
-import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf;
+import org.apache.spark.sql.delta.stats.*;
+import org.apache.spark.sql.functions;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import scala.Function0;
+import scala.Function1;
+import scala.Option;
+import scala.collection.JavaConverters;
 
 /**
  * Kernel-compatible {@link ScanBuilder} that performs Spark-level data skipping by orchestrating V1
  * shared components on a distributed DataFrame.
  *
- * <p><b>Pipeline:</b>
+ * <p>The pipeline mirrors V1's {@code DataSkippingReaderBase.filesForScan}:
  *
  * <ol>
  *   <li>Extract {@link LogSegment} from Kernel {@link SnapshotImpl} (checkpoint + delta paths)
- *   <li>Load raw actions as Spark DataFrame via {@link DistributedScanHelper#loadActionsFromPaths}
- *   <li>Delegate to V1 shared pipeline via {@link DistributedScanHelper#executeFilteredScanAsDF}:
- *       <ul>
- *         <li>{@code DefaultStateProvider} — state reconstruction + stats parsing
- *         <li>{@code StatsColumnResolver} — stats column resolution
- *         <li>{@code DefaultDataSkippingFilterPlanner} — filter planning
- *         <li>DataFrame-level filter application (no collection)
- *       </ul>
+ *   <li>{@link DefaultStateProvider#fromPaths} — state reconstruction + stats parsing
+ *   <li>{@link StatsColumnResolver} + {@link DefaultDeltaScanExecutor} — shared components
+ *   <li>{@link DefaultDataSkippingFilterPlanner} — classify filters into partition / data /
+ *       ineligible
+ *   <li>{@link DefaultDeltaScanExecutor} DF methods — execute the chosen path
  *   <li>Wrap the filtered DataFrame in a {@link DistributedScan} (zero-copy)
  * </ol>
  *
- * @see DistributedScan the Scan produced by this builder (zero-copy Spark Row → Kernel Row)
- * @see DistributedScanHelper V1 Scala helper that orchestrates the pipeline
+ * @see DistributedScan the Scan produced by this builder (zero-copy Spark Row to Kernel Row)
  */
 public class DistributedScanBuilder implements ScanBuilder {
 
@@ -66,8 +69,7 @@ public class DistributedScanBuilder implements ScanBuilder {
 
   // Mutable builder state — set via fluent methods before build()
   private io.delta.kernel.types.StructType readSchema;
-  private Filter[] pushdownFilters;
-  private StructType sparkPartitionSchema;
+  private Expression[] pushdownExpressions;
 
   /**
    * Creates a ScanBuilder for distributed batch reads.
@@ -81,28 +83,23 @@ public class DistributedScanBuilder implements ScanBuilder {
     this.snapshot = requireNonNull(snapshot, "snapshot");
     this.numPartitions = numPartitions;
     this.readSchema = snapshot.getSchema();
-    this.pushdownFilters = new Filter[0];
-    this.sparkPartitionSchema = new StructType();
+    this.pushdownExpressions = new Expression[0];
   }
 
   /**
-   * Sets the pushdown filters (partition + data) for the scan.
+   * Sets the pushdown expressions (partition + data) for the scan.
    *
-   * @param filters all pushable Spark filters (non-null)
-   * @param partitionSchema partition schema for filter rewriting (non-null)
+   * @param expressions Catalyst expressions from Spark's optimizer (non-null)
    * @return this builder for chaining
    */
-  public DistributedScanBuilder withPushdownFilters(Filter[] filters, StructType partitionSchema) {
-    this.pushdownFilters = requireNonNull(filters, "filters").clone();
-    this.sparkPartitionSchema = requireNonNull(partitionSchema, "partitionSchema");
+  public DistributedScanBuilder withPushdownExpressions(Expression[] expressions) {
+    this.pushdownExpressions = requireNonNull(expressions, "expressions").clone();
     return this;
   }
 
   @Override
   public ScanBuilder withFilter(Predicate predicate) {
-    // Kernel predicates are not used for distributed data skipping.
-    // Filtering is done via the V1 pipeline through withPushdownFilters().
-    return this;
+    return this; // Kernel predicates unused; filtering via V1 pipeline
   }
 
   @Override
@@ -111,60 +108,111 @@ public class DistributedScanBuilder implements ScanBuilder {
     return this;
   }
 
-  /**
-   * Builds the scan using the V1 shared pipeline, returning a zero-copy {@link DistributedScan}
-   * backed by a filtered DataFrame (not collected).
-   */
+  /** Builds the scan: state reconstruction → filter planning → execution → zero-copy wrap. */
   @Override
   public Scan build() {
-    // Step 0: Cast to SnapshotImpl to access LogSegment
+    // ---- 1. Extract file paths from LogSegment ----
     if (!(snapshot instanceof SnapshotImpl)) {
       throw new IllegalArgumentException("Snapshot must be SnapshotImpl to access LogSegment");
     }
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
     LogSegment logSegment = snapshotImpl.getLogSegment();
 
-    // Step 1: Extract file paths from LogSegment
     String[] checkpointPaths =
         logSegment.getCheckpoints().stream().map(FileStatus::getPath).toArray(String[]::new);
-
     long checkpointVersion = logSegment.getCheckpointVersionOpt().orElse(-1L);
 
     List<FileStatus> deltas = logSegment.getDeltas();
     String[] deltaPaths = deltas.stream().map(FileStatus::getPath).toArray(String[]::new);
-
     long[] deltaVersions =
         deltas.stream()
-            .mapToLong(fs -> DistributedScanHelper.extractDeltaVersion(fs.getPath()))
+            .mapToLong(fs -> DefaultStateProvider.extractDeltaVersion(fs.getPath()))
             .toArray();
 
-    // Step 2: Register canonicalizePath UDF
-    DistributedScanHelper.registerCanonicalizeUdf(spark);
-
-    // Step 3: Convert Kernel schemas to Spark schemas
+    // ---- 2. Schema conversion ----
     StructType sparkTableSchema =
         SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema());
-
     List<String> partitionColumnNames = snapshot.getPartitionColumnNames();
-
-    // Build partition schema from table schema + partition column names
     StructType partSchema = buildPartitionSchema(sparkTableSchema, partitionColumnNames);
+    StructType statsSchema = StatsColumnResolver.buildStatsSchema(sparkTableSchema, false);
 
-    // Step 4: Execute V1 shared pipeline → returns DataFrame with {add: struct<...>}
-    Dataset<org.apache.spark.sql.Row> plannedDF =
-        DistributedScanHelper.executeFilteredScanAsDF(
+    // ---- 3. State reconstruction (encapsulates load + canonicalize) ----
+    DefaultStateProvider stateProvider =
+        DefaultStateProvider.fromPaths(
             spark,
-            () ->
-                DistributedScanHelper.loadActionsFromPaths(
-                    spark, checkpointPaths, checkpointVersion, deltaPaths, deltaVersions),
+            checkpointPaths,
+            checkpointVersion,
+            deltaPaths,
+            deltaVersions,
             numPartitions,
-            sparkTableSchema,
-            partitionColumnNames,
-            partSchema,
-            pushdownFilters);
+            statsSchema);
 
-    // Step 5: Wrap in DistributedScan (zero-copy: DataFrame → Kernel rows)
-    return new DistributedScan(plannedDF, snapshot, readSchema);
+    // ---- 4. Build shared components (mirrors DataSkippingReaderBase lazy vals) ----
+    StatsColumnResolver statsColumnResolver =
+        new StatsColumnResolver(functions.col("stats"), statsSchema, sparkTableSchema);
+    Function1<StatsColumn, Option<Column>> getStatsColumnOpt =
+        statsColumnResolver::getStatsColumnOpt;
+
+    // By-name parameters in Scala compile to Function0 in bytecode.
+    // V2 only uses DF methods (getAllFilesAsDF, filterOnPartitionsAsDF,
+    // getDataSkippedFilesAsDF) which access `withStats` but never `allFiles`,
+    // so we pass a no-op for the latter.
+    Function0<Dataset<org.apache.spark.sql.Row>> withStats =
+        stateProvider::allAddFilesWithParsedStats;
+    @SuppressWarnings("unchecked")
+    Function0<Dataset<org.apache.spark.sql.delta.actions.AddFile>> allFilesNoop =
+        (Function0<Dataset<org.apache.spark.sql.delta.actions.AddFile>>) () -> null;
+
+    DefaultDeltaScanExecutor executor =
+        new DefaultDeltaScanExecutor(spark, withStats, allFilesNoop, getStatsColumnOpt, partSchema);
+
+    scala.collection.immutable.Seq<Expression> filterExprs =
+        JavaConverters.asScalaBufferConverter(Arrays.asList(pushdownExpressions))
+            .asScala()
+            .toList();
+
+    // ---- 5. Early exit: no filters → all files ----
+    if (filterExprs.isEmpty()) {
+      return new DistributedScan(executor.getAllFilesAsDF(), snapshot, readSchema);
+    }
+
+    // ---- 6. PLAN: classify filters (mirrors filesForScan step 1) ----
+    boolean useStats =
+        (Boolean) spark.sessionState().conf().getConf(DeltaSQLConf.DELTA_STATS_SKIPPING());
+    scala.collection.immutable.Seq<String> partColsScala =
+        JavaConverters.asScalaBufferConverter(partitionColumnNames).asScala().toList();
+    @SuppressWarnings("unchecked")
+    scala.collection.immutable.Seq<String> emptySeq =
+        (scala.collection.immutable.Seq<String>)
+            (scala.collection.immutable.Seq<?>) scala.collection.immutable.Nil$.MODULE$;
+    DefaultDataSkippingFilterPlanner planner =
+        new DefaultDataSkippingFilterPlanner(
+            spark,
+            DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1(),
+            getStatsColumnOpt,
+            partColsScala,
+            partSchema,
+            useStats,
+            emptySeq, // clusteringColumns
+            Option.empty(), // protocol
+            Option.empty()); // numOfFilesIfKnown
+    DataSkippingFilterPlanner.Result plan = planner.plan(filterExprs);
+
+    // ---- 7. EXECUTE: choose path (mirrors filesForScan step 2) ----
+    Dataset<org.apache.spark.sql.Row> filteredDF;
+    if (plan.dataFilters().isEmpty()) {
+      if (!plan.partitionFilters().isEmpty()) {
+        filteredDF = executor.filterOnPartitionsAsDF(plan.partitionFilters());
+      } else {
+        filteredDF = executor.getAllFilesAsDF();
+      }
+    } else {
+      Column partFilterCol = planner.constructPartitionFilters(plan.partitionFilters());
+      filteredDF = executor.getDataSkippedFilesAsDF(partFilterCol, plan.verifiedSkippingExpr());
+    }
+
+    // ---- 8. Wrap in DistributedScan (zero-copy) ----
+    return new DistributedScan(filteredDF, snapshot, readSchema);
   }
 
   @Override
