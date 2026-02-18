@@ -252,10 +252,12 @@ class CheckpointsSuite
           "fs.gs.impl" -> classOf[FakeGCSFileSystemValidatingCheckpoint].getName,
           "fs.gs.impl.disable.cache" -> "true") {
         val gsPath = s"gs://${tempDir.getCanonicalPath}"
-        // Setting checkpointPolicy=classic because this test is intended for v1 checkpoint only.
-        spark.range(1).write.format("delta")
-          .option(DeltaConfigs.CHECKPOINT_POLICY.key, "classic")
-          .save(gsPath)
+        val writer = spark.range(1).write.format("delta")
+        if (catalogOwnedDefaultCreationEnabledInTests) {
+          // Setting checkpointPolicy=classic because this test is intended for v1 checkpoint only.
+          writer.option(DeltaConfigs.CHECKPOINT_POLICY.key, "classic")
+        }
+        writer.save(gsPath)
         DeltaLog.clearCache()
         val deltaLog = DeltaLog.forTable(spark, new Path(gsPath))
         deltaLog.checkpoint()
