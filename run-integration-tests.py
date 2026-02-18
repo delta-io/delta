@@ -16,12 +16,65 @@
 # limitations under the License.
 #
 
+#
+# Integration test script for Delta Lake. Builds artifacts locally and runs
+# Scala, Python, and pip tests against them.
+#
+# Usage:
+#   python run-integration-tests.py --use-local              # Run all tests
+#   python run-integration-tests.py --use-local --scala-only # Scala tests only
+#   python run-integration-tests.py --use-local --python-only # Python tests only
+#
+# Setup:
+#   With --use-local, tests run across all Spark versions defined in
+#   CrossSparkVersions.scala. Each Spark version needs a local distribution at:
+#     ~/spark-{version}-bin-hadoop3/
+#
+#   Download them from Apache:
+#     wget https://archive.apache.org/dist/spark/spark-{version}/spark-{version}-bin-hadoop3.tgz
+#     tar xzf spark-{version}-bin-hadoop3.tgz -C ~/
+#
+
 import os
 import subprocess
 from os import path
 import shutil
 import argparse
 import json
+
+
+_original_path = os.environ.get("PATH", "")
+
+
+def set_spark_env(spark_version):
+    """
+    Sets SPARK_HOME and prepends its bin/ to PATH for the given Spark version.
+    Resets PATH to its original value first to avoid accumulation.
+
+    This must override any existing SPARK_HOME because the multi-variant loop tests
+    different Spark versions in sequence (e.g., 4.0.1 then 4.1.0).
+    """
+    os.environ["PATH"] = _original_path
+
+    # In non-local mode, spark_version is "" — tests resolve artifacts from Maven Central
+    # and use whatever spark-submit is already on PATH. SNAPSHOT versions also have no
+    # pre-built distribution to look up, so we fall back to PATH.
+    if not spark_version or "-SNAPSHOT" in spark_version:
+        print("Using spark-submit from PATH for version %s" % (spark_version or "unspecified"))
+        return
+
+    spark_home = os.path.expanduser("~/spark-%s-bin-hadoop3" % spark_version)
+    if not os.path.isdir(spark_home):
+        raise Exception(
+            "Spark %s not found at %s. Please download it first:\n"
+            "  wget https://archive.apache.org/dist/spark/spark-%s/spark-%s-bin-hadoop3.tgz\n"
+            "  tar xzf spark-%s-bin-hadoop3.tgz -C ~/"
+            % (spark_version, spark_home, spark_version, spark_version, spark_version))
+
+    os.environ["SPARK_HOME"] = spark_home
+    spark_bin = os.path.join(spark_home, "bin")
+    os.environ["PATH"] = spark_bin + os.pathsep + _original_path
+    print("Using SPARK_HOME=%s" % spark_home)
 
 
 def delete_if_exists(path):
@@ -832,6 +885,7 @@ if __name__ == "__main__":
                 "support_iceberg": "true", "support_hudi": "false"
             }]
         for variant in iceberg_variants:
+            set_spark_env(variant["spark_version"])
             run_iceberg_integration_tests(
                 root_dir, args.version, args.iceberg_lib_version, args.maven_repo, variant)
         quit()
@@ -864,12 +918,14 @@ if __name__ == "__main__":
                 "support_iceberg": "false", "support_hudi": "true"
             }]
         for variant in hudi_variants:
+            set_spark_env(variant["spark_version"])
             run_uniform_hudi_integration_tests(
                 root_dir, args.version, args.hudi_version, args.maven_repo, variant)
         quit()
 
     if args.run_storage_s3_dynamodb_integration_tests:
         for variant in variants:
+            set_spark_env(variant["spark_version"])
             run_dynamodb_logstore_integration_tests(root_dir, args.version, args.test,
                                                     args.maven_repo, args.packages,
                                                     args.dbb_conf, variant)
@@ -877,6 +933,7 @@ if __name__ == "__main__":
 
     if args.run_dynamodb_commit_coordinator_integration_tests:
         for variant in variants:
+            set_spark_env(variant["spark_version"])
             run_dynamodb_commit_coordinator_integration_tests(root_dir, args.version, args.test,
                                                         args.maven_repo, args.packages,
                                                         args.dbb_conf, variant)
@@ -888,6 +945,7 @@ if __name__ == "__main__":
 
     if args.unity_catalog_commit_coordinator_integration_tests:
         for variant in variants:
+            set_spark_env(variant["spark_version"])
             run_unity_catalog_commit_coordinator_integration_tests(root_dir, args.version,
                                                                     args.test, variant,
                                                                     args.packages)
@@ -897,11 +955,13 @@ if __name__ == "__main__":
     # Each test function is called once per variant (the loop is here, not inside the functions)
     if run_scala:
         for variant in variants:
+            set_spark_env(variant["spark_version"])
             run_scala_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                         args.scala_version, variant)
 
     if run_python:
         for variant in variants:
+            set_spark_env(variant["spark_version"])
             run_python_integration_tests(root_dir, args.version, args.test, args.maven_repo,
                                          variant)
 
