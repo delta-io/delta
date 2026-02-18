@@ -31,11 +31,22 @@ def set_spark_env(spark_version):
     """
     Sets SPARK_HOME and prepends its bin/ to PATH for the given Spark version.
     Resets PATH to its original value first to avoid accumulation.
-    For empty or SNAPSHOT versions, just resets PATH (uses whatever is on PATH).
+
+    This must override any existing SPARK_HOME because the multi-variant loop tests
+    different Spark versions in sequence (e.g., 4.0.1 then 4.1.0).
+
+    Requires Spark distributions at ~/spark-{version}-bin-hadoop3/, which is the
+    default location when extracting the Apache tarballs:
+        wget https://archive.apache.org/dist/spark/spark-{version}/spark-{version}-bin-hadoop3.tgz
+        tar xzf spark-{version}-bin-hadoop3.tgz -C ~/
     """
     os.environ["PATH"] = _original_path
 
+    # In non-local mode, spark_version is "" — tests resolve artifacts from Maven Central
+    # and use whatever spark-submit is already on PATH. SNAPSHOT versions also have no
+    # pre-built distribution to look up, so we fall back to PATH.
     if not spark_version or "-SNAPSHOT" in spark_version:
+        print("Using spark-submit from PATH for version %s" % (spark_version or "unspecified"))
         return
 
     spark_home = os.path.expanduser("~/spark-%s-bin-hadoop3" % spark_version)
