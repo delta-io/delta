@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.catalog;
 
 import io.delta.kernel.Transaction;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
@@ -39,9 +40,11 @@ import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * Coordinator for metadata-only CREATE TABLE commits using the DSv2/Kernel path.
+ * Coordinator for CREATE TABLE version-0 commits using the DSv2/Kernel path.
  *
  * <p>This class centralizes CREATE TABLE commit mechanics so callers can keep catalog routing thin.
+ * Callers can pass either empty actions (metadata-only create) or non-empty data actions (future
+ * CTAS-style flows).
  */
 public final class CreateTableCommitCoordinator {
 
@@ -55,7 +58,8 @@ public final class CreateTableCommitCoordinator {
       SparkSession spark,
       String catalogName,
       String engineInfo,
-      boolean isPathIdentifier) {
+      boolean isPathIdentifier,
+      CloseableIterable<Row> dataActions) {
     String location = resolveLocation(ident, properties, isPathIdentifier);
     Map<String, String> tableProperties = filterDsv2Properties(properties);
     io.delta.kernel.types.StructType kernelSchema =
@@ -67,7 +71,7 @@ public final class CreateTableCommitCoordinator {
     Transaction txn =
         snapshotManager.buildCreateTableTransaction(
             kernelSchema, tableProperties, dataLayoutSpec, engineInfo);
-    txn.commit(engine, CloseableIterable.emptyIterable());
+    txn.commit(engine, dataActions);
   }
 
   /**

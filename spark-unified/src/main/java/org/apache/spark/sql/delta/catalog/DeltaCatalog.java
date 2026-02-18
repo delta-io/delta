@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.CreateTableCommitCoordinator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
+import io.delta.kernel.utils.CloseableIterable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -94,7 +95,9 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       Transform[] partitions,
       Map<String, String> properties) {
     DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
-    if (!shouldUseKernelCreatePath(mode, ident, properties)) {
+    if (!(mode.shouldUseKernelMetadataOnlyCreate(properties)
+        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+        && (isUnityCatalog() || isPathIdentifier(ident)))) {
       return super.createTable(ident, schema, partitions, properties);
     }
     boolean isPathTable = isPathIdentifier(ident);
@@ -106,7 +109,8 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         spark(),
         name(),
         ENGINE_INFO,
-        isPathTable);
+        isPathTable,
+        CloseableIterable.emptyIterable());
 
     // Register the table with the catalog (UC delegate) and return a SparkTable.
     // For catalog-registered tables: register via delegate, then loadTable() to get a SparkTable
@@ -175,25 +179,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
-
-  /**
-   * Returns true when all conditions for the kernel-based create path are met:
-   *
-   * <ol>
-   *   <li>Mode policy enables metadata-only Kernel CREATE
-   *   <li>The provider is Delta
-   *   <li>Either the delegate catalog is Unity Catalog (for catalog-registered tables), or the
-   *       identifier is a path-based table (which skips catalog registration entirely).
-   *       Spark's V2SessionCatalog cannot register Delta tables through its V2 createTable API,
-   *       so non-path, non-UC tables must use the V1 path.
-   * </ol>
-   */
-  private boolean shouldUseKernelCreatePath(
-      DeltaV2Mode mode, Identifier ident, Map<String, String> properties) {
-    return mode.shouldUseKernelMetadataOnlyCreate(properties)
-        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
-        && (isUnityCatalog() || isPathIdentifier(ident));
-  }
 
   /**
    * Loads a table based on the {@link DeltaV2Mode} SQL configuration.
