@@ -34,7 +34,8 @@ trait ActionUtils extends VectorTestUtils {
         TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName()).asJava,
       Set(
         TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName(),
-        TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName()).asJava)
+        TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE.featureName(),
+        TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE.featureName()).asJava)
 
   val basicPartitionedMetadata = testMetadata(
     schema = new StructType()
