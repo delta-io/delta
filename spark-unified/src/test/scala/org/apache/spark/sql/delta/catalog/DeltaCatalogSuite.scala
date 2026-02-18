@@ -30,12 +30,14 @@ import java.util.Locale
  * Verifies that DeltaCatalog correctly routes table loading and creation based on
  * DeltaSQLConf.V2_ENABLE_MODE:
  * - STRICT mode: Kernel's SparkTable (V2 connector)
+ * - AUTO mode: DeltaTableV2 (V1 connector) for table loads, kernel path for metadata-only create
  * - NONE mode (default): DeltaTableV2 (V1 connector)
  */
 class DeltaCatalogSuite extends DeltaSQLCommandTest {
 
   private val modeTestCases = Seq(
     ("STRICT", classOf[SparkTable], "Kernel SparkTable"),
+    ("AUTO", classOf[DeltaTableV2], "DeltaTableV2"),
     ("NONE", classOf[DeltaTableV2], "DeltaTableV2")
   )
 
@@ -82,21 +84,34 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
     }
   }
 
-  test("path-based table with mode=STRICT creates via kernel") {
-    withTempDir { tempDir =>
-      val path = tempDir.getAbsolutePath
+  Seq(
+    ("STRICT", classOf[SparkTable]),
+    ("AUTO", classOf[DeltaTableV2])
+  ).foreach { case (mode, expectedClass) =>
+    test(s"path-based table with mode=$mode creates via kernel and keeps expected table type") {
+      withTempDir { tempDir =>
+        val path = tempDir.getAbsolutePath
 
-      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
-        sql(s"CREATE TABLE delta.`$path` (id INT, name STRING) USING delta")
+        withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
+          sql(s"CREATE TABLE delta.`$path` (id INT, name STRING) USING delta")
 
-        // Read the commit JSON and verify it was written by the kernel engine
-        val commitFile = new File(path, "_delta_log/00000000000000000000.json")
-        assert(commitFile.exists(), "Delta log commit file should exist")
+          // Read the commit JSON and verify it was written by the kernel engine
+          val commitFile = new File(path, "_delta_log/00000000000000000000.json")
+          assert(commitFile.exists(), "Delta log commit file should exist")
 
-        val commitJson = new String(Files.readAllBytes(commitFile.toPath))
-        assert(commitJson.contains(DeltaCatalog.ENGINE_INFO),
-          s"Commit should contain engineInfo '${DeltaCatalog.ENGINE_INFO}' " +
-            s"but was: $commitJson")
+          val commitJson = new String(Files.readAllBytes(commitFile.toPath))
+          assert(commitJson.contains(DeltaCatalog.ENGINE_INFO),
+            s"Commit should contain engineInfo '${DeltaCatalog.ENGINE_INFO}' " +
+              s"but was: $commitJson")
+
+          val catalog = spark.sessionState.catalogManager.v2SessionCatalog
+            .asInstanceOf[DeltaCatalog]
+          val ident = org.apache.spark.sql.connector.catalog.Identifier
+            .of(Array("delta"), path)
+          val table = catalog.loadTable(ident)
+          assert(table.getClass == expectedClass,
+            s"Mode $mode should return ${expectedClass.getSimpleName} after create")
+        }
       }
     }
   }

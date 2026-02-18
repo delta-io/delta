@@ -75,6 +75,36 @@ public final class UCUtils {
   }
 
   /**
+   * Extracts Unity Catalog table information from CREATE TABLE properties.
+   *
+   * @param tablePath table path resolved for the CREATE TABLE operation
+   * @param properties table properties passed from catalog create flow
+   * @param catalogName Spark catalog name used to resolve UC config
+   * @param spark SparkSession for resolving Unity Catalog configurations
+   * @return table info if the properties correspond to a UC-managed table, empty otherwise
+   */
+  public static Optional<UCTableInfo> extractTableInfoForCreate(
+      String tablePath, Map<String, String> properties, String catalogName, SparkSession spark) {
+    requireNonNull(tablePath, "tablePath is null");
+    requireNonNull(properties, "properties is null");
+    requireNonNull(catalogName, "catalogName is null");
+    requireNonNull(spark, "spark is null");
+
+    if (!CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)) {
+      return Optional.empty();
+    }
+
+    String ucTableId = properties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      throw new IllegalArgumentException("Cannot extract ucTableId from create table properties");
+    }
+
+    UCCatalogConfig config = resolveCatalogConfig(catalogName, spark);
+    return Optional.of(
+        new UCTableInfo(ucTableId, tablePath, config.uri(), asJava(config.authConfig())));
+  }
+
+  /**
    * Resolves the Unity Catalog configuration for the given catalog name from Spark session configs.
    *
    * @param catalogName the Spark catalog name (e.g., "unity")

@@ -16,29 +16,22 @@
 
 package org.apache.spark.sql.delta.catalog;
 
-import static scala.jdk.javaapi.CollectionConverters.asJava;
-
-import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
-import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
-import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient;
-import io.unitycatalog.client.auth.TokenProvider;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
@@ -48,9 +41,7 @@ import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.DeltaV2Mode;
-import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
-import org.apache.spark.sql.delta.util.CatalogTableUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -95,13 +86,13 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   static final String ENGINE_INFO = "kernel-spark-dsv2";
 
   /**
-   * Creates a Delta table using the kernel-based commit path when STRICT mode is enabled.
+   * Creates a Delta table using the kernel-based commit path when STRICT or AUTO mode is enabled.
    *
    * <p>Routing logic based on {@link DeltaV2Mode}:
    *
    * <ul>
-   *   <li>STRICT + Delta provider: Commits version 0 via Delta Kernel, then finalizes the catalog
-   *       entry via the delegate catalog.
+   *   <li>STRICT/AUTO + Delta provider: Commits version 0 via Delta Kernel, then finalizes the
+   *       catalog entry via the delegate catalog.
    *   <li>Otherwise: Delegates to the V1 path in {@link AbstractDeltaCatalog}.
    * </ul>
    *
@@ -117,7 +108,8 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       StructType schema,
       Transform[] partitions,
       Map<String, String> properties) {
-    if (!isStrictDeltaCreate(ident, properties)) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!shouldUseKernelCreatePath(mode, ident, properties)) {
       return super.createTable(ident, schema, partitions, properties);
     }
 
@@ -154,39 +146,18 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         spark().sessionState().newHadoopConfWithOptions(ScalaUtils.toScalaMap(fsOptions));
     Engine engine = DefaultEngine.create(hadoopConf);
 
-    // For UC managed tables, use the CCv2 path: UCCatalogManagedClient wires in the
-    // UCCatalogManagedCommitter and sets catalogManaged + ucTableId properties.
-    // For external tables, use TableManager directly (no catalog-managed commit needed).
-    CreateTableTransactionBuilder builder;
-    if (CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)) {
-      String ucTableId = properties.get(UCCatalogManagedClient.UC_TABLE_ID_KEY);
-      UCCatalogConfig ucConfig = UCUtils.resolveCatalogConfig(name(), spark());
-      UCTableInfo tableInfo =
-          new UCTableInfo(ucTableId, location, ucConfig.uri(), asJava(ucConfig.authConfig()));
+    DeltaSnapshotManager snapshotManager =
+        SnapshotManagerFactory.createForNewTable(location, engine, properties, name(), spark());
 
-      // Same pattern as SnapshotManagerFactory.createUCManagedSnapshotManager
-      TokenProvider tokenProvider = TokenProvider.create(tableInfo.getAuthConfig());
-      UCClient ucClient = new UCTokenBasedRestClient(tableInfo.getUcUri(), tokenProvider);
-      UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
-      builder =
-          ucCatalogClient.buildCreateTableTransaction(
-              tableInfo.getTableId(), tableInfo.getTablePath(), kernelSchema, ENGINE_INFO);
-    } else {
-      builder = TableManager.buildCreateTableTransaction(location, kernelSchema, ENGINE_INFO);
-    }
-
-    if (!tableProperties.isEmpty()) {
-      builder = builder.withTableProperties(tableProperties);
-    }
-
-    // Extract partition columns from identity transforms
     List<Column> partitionColumns = extractPartitionColumns(partitions);
-    if (!partitionColumns.isEmpty()) {
-      builder = builder.withDataLayoutSpec(DataLayoutSpec.partitioned(partitionColumns));
-    }
+    Optional<DataLayoutSpec> dataLayoutSpec =
+        partitionColumns.isEmpty()
+            ? Optional.empty()
+            : Optional.of(DataLayoutSpec.partitioned(partitionColumns));
 
-    // Commit version 0 of the Delta table
-    Transaction txn = builder.build(engine);
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            kernelSchema, tableProperties, dataLayoutSpec, ENGINE_INFO);
     txn.commit(engine, CloseableIterable.emptyIterable());
 
     // Register the table with the catalog (UC delegate) and return a SparkTable.
@@ -205,7 +176,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       createCatalogTable(ident, schema, partitions, filterCredentialProperties(properties));
       return loadTable(ident);
     }
-    return new SparkTable(ident, location);
+    return loadPathTable(ident);
   }
 
   /**
@@ -257,7 +228,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    * Returns true when all conditions for the kernel-based create path are met:
    *
    * <ol>
-   *   <li>STRICT mode is active
+   *   <li>STRICT or AUTO mode is active
    *   <li>The provider is Delta
    *   <li>Either the delegate catalog is Unity Catalog (for catalog-registered tables), or the
    *       identifier is a path-based table (which skips catalog registration entirely).
@@ -265,11 +236,15 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    *       so non-path, non-UC tables must use the V1 path.
    * </ol>
    */
-  private boolean isStrictDeltaCreate(Identifier ident, Map<String, String> properties) {
-    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
-    return mode.shouldCatalogReturnV2Tables()
+  private boolean shouldUseKernelCreatePath(
+      DeltaV2Mode mode, Identifier ident, Map<String, String> properties) {
+    return isCreatePathEnabledInMode(mode)
         && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
         && (isUnityCatalog() || isPathIdentifier(ident));
+  }
+
+  private static boolean isCreatePathEnabledInMode(DeltaV2Mode mode) {
+    return mode.shouldCatalogReturnV2Tables() || "AUTO".equalsIgnoreCase(mode.getMode());
   }
 
   /**
