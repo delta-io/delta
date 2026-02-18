@@ -1411,7 +1411,7 @@ round-trips, yet it lets the client decide — early and unambiguously — wheth
 The following is an example of a possible API which a Java-based Delta client might require catalog
 implementations to target:
 
-```java
+```scala
 
 interface CatalogManagedTable {
     /**
@@ -2278,11 +2278,8 @@ The following steps could be used to do cleanup of the DeltaLog directory:
 1. Identify a threshold (in days) uptil which we want to preserve the deltaLog. Let's refer to
 midnight UTC of that day as `cutOffTimestamp`. The newest commit not newer than the `cutOffTimestamp` is
 the `cutoffCommit`, because a commit exactly at midnight is an acceptable cutoff. We want to retain everything including and after the `cutoffCommit`.
-2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the
-   `cutOffCommit` is ideal, but an older one will do. Let's call it `cutOffCheckpoint`. We need to
-   preserve the `cutOffCheckpoint` and all published commits after it, because we need
-   them to enable time travel for commits between `cutOffCheckpoint` and the next available
-   checkpoint.
+2. Identify the newest checkpoint that is not newer than the `cutOffCommit`. A checkpoint at the `cutOffCommit` is ideal, but an older one will do. Let's call it `cutOffCheckpoint`.
+We need to preserve the `cutOffCheckpoint` (both the checkpoint file and the JSON commit file at that version) and all published commits after it. The JSON commit file at the `cutOffCheckpoint` version must be preserved because checkpoints do not preserve [commit provenance information](#commit-provenance-information) (e.g., `commitInfo` actions), which may be required by table features such as [In-Commit Timestamps](#in-commit-timestamps). All published commits after `cutOffCheckpoint` must be preserved to enable time travel for commits between `cutOffCheckpoint` and the next available checkpoint.
     - If no `cutOffCheckpoint` can be found, do not proceed with metadata cleanup as there is
       nothing to cleanup.
 3. Delete all [delta log entries](#delta-log-entries), [checkpoint files](#checkpoints), and

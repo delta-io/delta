@@ -477,7 +477,7 @@ round-trips, yet it lets the client decide — early and unambiguously — wheth
 The following is an example of a possible API which a Java-based Delta client might require catalog
 implementations to target:
 
-```java
+```scala
 
 interface CatalogManagedTable {
     /**

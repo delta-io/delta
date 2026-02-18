@@ -30,10 +30,10 @@ Here is the history of all the RFCs propose/accepted/rejected since Feb 6, 2024,
 
 | Date proposed | Date accepted | RFC file | Github issue | RFC title |
 |:-|:-|:-|:-|:-|
-| 2025-04-07    | 2026-02-17    |[catalog-managed.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/catalog-managed.md)            | https://github.com/delta-io/delta/issues/4381 | Catalog-Managed Tables         |
-| 2023-02-28    | 2023-03-26    |[vacuum-protocol-check.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/vacuum-protocol-check.md)| https://github.com/delta-io/delta/issues/2630 | Enforce Vacuum Protocol Check  |
-| 2023-02-02    | 2023-07-24    |[in-commit-timestamps.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/in-commit-timestamps.md)  | https://github.com/delta-io/delta/issues/2532 | In-Commit Timestamps           |
-| 2023-02-09    | 2025-01-28    |[type-widening.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/type-widening.md)                | https://github.com/delta-io/delta/issues/2623 | Type Widening                  |
+| 2025-04-07    | 2026-02-17    |[catalog-managed.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/catalog-managed.md)            | https://github.com/delta-io/delta/issues/4381 | Catalog-Managed Tables         |
+| 2023-02-28    | 2023-03-26    |[vacuum-protocol-check.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/vacuum-protocol-check.md)| https://github.com/delta-io/delta/issues/2630 | Enforce Vacuum Protocol Check  |
+| 2023-02-02    | 2023-07-24    |[in-commit-timestamps.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/in-commit-timestamps.md)  | https://github.com/delta-io/delta/issues/2532 | In-Commit Timestamps           |
+| 2023-02-09    | 2025-01-28    |[type-widening.md](https://github.com/delta-io/delta/blob/master/protocol_rfcs/accepted/type-widening.md)                | https://github.com/delta-io/delta/issues/2623 | Type Widening                  |
 
 ### Rejected RFCs
 
