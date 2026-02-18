@@ -92,7 +92,8 @@ public class TableFeatures {
 
     @Override
     public Set<TableFeature> requiredFeatures() {
-      return Collections.singleton(IN_COMMIT_TIMESTAMP_W_FEATURE);
+      return new HashSet<>(
+          Arrays.asList(IN_COMMIT_TIMESTAMP_W_FEATURE, VACUUM_PROTOCOL_CHECK_RW_FEATURE));
     }
   }
 
