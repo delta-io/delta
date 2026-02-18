@@ -22,6 +22,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -41,14 +42,16 @@ public class TransactionStateRow extends GenericRow {
               "configuration",
               new MapType(StringType.STRING, StringType.STRING, false /* valueContainsNull */))
           .add("tablePath", StringType.STRING)
-          .add("maxRetries", IntegerType.INTEGER);
+          .add("maxRetries", IntegerType.INTEGER)
+          .add("protocol", Protocol.FULL_SCHEMA);
 
   private static final Map<String, Integer> COL_NAME_TO_ORDINAL =
       IntStream.range(0, SCHEMA.length())
           .boxed()
           .collect(toMap(i -> SCHEMA.at(i).getName(), i -> i));
 
-  public static TransactionStateRow of(Metadata metadata, String tablePath, int maxRetries) {
+  public static TransactionStateRow of(
+      Metadata metadata, Protocol protocol, String tablePath, int maxRetries) {
     HashMap<Integer, Object> valueMap = new HashMap<>();
     valueMap.put(COL_NAME_TO_ORDINAL.get("logicalSchemaString"), metadata.getSchemaString());
     valueMap.put(
@@ -57,6 +60,7 @@ public class TransactionStateRow extends GenericRow {
     valueMap.put(COL_NAME_TO_ORDINAL.get("configuration"), metadata.getConfigurationMapValue());
     valueMap.put(COL_NAME_TO_ORDINAL.get("tablePath"), tablePath);
     valueMap.put(COL_NAME_TO_ORDINAL.get("maxRetries"), maxRetries);
+    valueMap.put(COL_NAME_TO_ORDINAL.get("protocol"), protocol.toRow());
     return new TransactionStateRow(valueMap);
   }
 
@@ -170,5 +174,17 @@ public class TransactionStateRow extends GenericRow {
    */
   public static int getMaxRetries(Row transactionState) {
     return transactionState.getInt(COL_NAME_TO_ORDINAL.get("maxRetries"));
+  }
+
+  /**
+   * Get the Protocol from transaction state {@link Row} returned by {@link
+   * Transaction#getTransactionState(Engine)}
+   *
+   * @param transactionState Transaction state state {@link Row}
+   * @return Protocol object
+   */
+  public static Protocol getProtocol(Row transactionState) {
+    Row protocolRow = transactionState.getStruct(COL_NAME_TO_ORDINAL.get("protocol"));
+    return Protocol.fromRow(protocolRow);
   }
 }

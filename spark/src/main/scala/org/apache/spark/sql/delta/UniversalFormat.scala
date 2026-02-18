@@ -292,7 +292,10 @@ object UniversalFormat extends DeltaLogging {
 }
 
 /** Class to facilitate the conversion of Delta into other table formats. */
-abstract class UniversalFormatConverter(spark: SparkSession) {
+abstract class UniversalFormatConverter {
+  /** The current Spark session. */
+  def spark: SparkSession = SparkSession.active
+
   /**
    * Perform an asynchronous conversion.
    *

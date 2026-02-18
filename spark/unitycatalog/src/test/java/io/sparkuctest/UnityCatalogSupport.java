@@ -117,6 +117,9 @@ public abstract class UnityCatalogSupport {
 
   public static final String UC_STATIC_TOKEN = "static-token";
 
+  /** The fake S3 bucket name used for local integration tests. */
+  static final String FAKE_S3_BUCKET = "fakeS3Bucket";
+
   // Environment variables for configuring access to remote unity catalog server.
   public static final String UC_REMOTE = "UC_REMOTE";
   public static final String UC_URI = "UC_URI";
@@ -125,7 +128,7 @@ public abstract class UnityCatalogSupport {
   public static final String UC_SCHEMA_NAME = "UC_SCHEMA_NAME";
   public static final String UC_BASE_TABLE_LOCATION = "UC_BASE_TABLE_LOCATION";
 
-  private static boolean isUCRemoteConfigured() {
+  protected static boolean isUCRemoteConfigured() {
     String ucRemote = System.getenv(UC_REMOTE);
     return ucRemote != null && ucRemote.equalsIgnoreCase("true");
   }
@@ -183,13 +186,13 @@ public abstract class UnityCatalogSupport {
     Preconditions.checkNotNull(ucServer, "Local Unity Catalog Server is not configured");
     Preconditions.checkNotNull(
         ucBaseTableLocation, "Local Unity Catalog Temp Directory is not configured");
-    // For local UC, use default schema and temp directory
+    // Use fake S3 bucket (backed by local filesystem via S3CredentialFileSystem).
     return new UnityCatalogInfo(
         String.format("http://localhost:%s/", ucServerPort),
         "unity",
         UC_STATIC_TOKEN,
         "default",
-        "file://" + ucBaseTableLocation.getAbsolutePath());
+        "s3://" + FAKE_S3_BUCKET + ucBaseTableLocation.getAbsolutePath());
   }
 
   /** Finds an available port for the UC server. */
@@ -245,6 +248,12 @@ public abstract class UnityCatalogSupport {
     serverProps.setProperty("server.managed-table.enabled", "true");
     serverProps.setProperty(
         "storage-root.tables", new File(ucServerDir, "ucroot").getAbsolutePath());
+
+    // Configure S3 credentials for the fake bucket (mirrors UC OSS BaseSparkIntegrationTest).
+    serverProps.setProperty("s3.bucketPath.0", "s3://" + FAKE_S3_BUCKET);
+    serverProps.setProperty("s3.accessKey.0", "fakeAccessKey");
+    serverProps.setProperty("s3.secretKey.0", "fakeSecretKey");
+    serverProps.setProperty("s3.sessionToken.0", "fakeSessionToken");
 
     // Start UC server with configuration
     ServerProperties initServerProperties = new ServerProperties(serverProps);

@@ -904,7 +904,7 @@ case class AddFile(
         val typedPartitionValueLiterals = PartitionUtils.parsePartitionValues(
           partitionValues,
           partitionSchema,
-          timeZone,
+          java.util.TimeZone.getDefault.getID,
           validatePartitionColumns = true)
 
         val stringNormalizedPartitionValues = typedPartitionValueLiterals.map {

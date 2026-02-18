@@ -19,7 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, Optional, UUID}
-import java.util.concurrent.TimeUnit.NANOSECONDS
+import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
+import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
@@ -267,6 +268,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
   // and avoid race conditions between committing and dynamic config changes.
   protected val incrementalCommitEnabled = deltaLog.incrementalCommitEnabled
   protected val shouldVerifyIncrementalCommit = deltaLog.shouldVerifyIncrementalCommit
+  protected val forcedChecksumValidationInterval =
+    spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL)
+  protected val forcedChecksumValidationMinTimeIntervalMinutes =
+    spark.conf.get(DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES)
 
   def clock: Clock = deltaLog.clock
 
@@ -277,6 +282,37 @@ trait OptimisticTransactionImpl extends TransactionHelper
   // overhead of those checks in prod or benchmark settings.
   if (!incrementalCommitEnabled || shouldVerifyIncrementalCommit) {
     snapshot.validateChecksum(Map("context" -> "transactionInitialization"))
+  } else if (
+      forcedChecksumValidationInterval >= 0 &&
+      snapshot.version - snapshot.checkpointProvider.version >= forcedChecksumValidationInterval) {
+    val fileToUseForFreshnessCheck = snapshot.checkpointProvider.topLevelFiles
+      .headOption
+      .getOrElse(snapshot.logSegment.deltas.head)
+    // If the table is very fast moving, the checkpoint could much longer than
+    // forcedChecksumValidationInterval to land. To avoid slowing down
+    // such tables, we skip validation if the checkpoint is fresh as per
+    // the modification time.
+    val skipValidationForFastMovingTable = {
+      val checkpointModificationTime = fileToUseForFreshnessCheck.getModificationTime
+      val currentTime = System.currentTimeMillis()
+      val timeGapMillis = Math.max(currentTime - checkpointModificationTime, 0L)
+      // Only force validation if checkpoint is older than the minimum time gap
+      timeGapMillis < MINUTES.toMillis(forcedChecksumValidationMinTimeIntervalMinutes)
+    }
+
+    if (
+      !skipValidationForFastMovingTable
+      ) {
+      snapshot.validateChecksum(
+        Map(
+          "context" -> "forceValidateChecksumDueToStaleCheckpoint::transactionInitialization",
+          "currentVersion" -> snapshot.version.toString,
+          "checkpointVersion" -> snapshot.checkpointProvider.version.toString,
+          "forcedValidationInterval" -> forcedChecksumValidationInterval.toString,
+          "forcedValidationMinTimeGap" -> forcedChecksumValidationMinTimeIntervalMinutes.toString
+        )
+      )
+    }
   }
 
   /** Tracks the appIds that have been seen by this transaction. */
@@ -586,6 +622,25 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val protocolBeforeUpdate = protocol
+    // `readVersion == -1` indicates the current transaction is reading from a snapshot
+    // where the table has not existed yet.
+    // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
+    // this is just a double check since we only want to auto-enable QoL features
+    // when creating a new CatalogOwned table through CREATE.
+    if (CatalogOwnedTableUtils.shouldEnableCatalogOwned(
+        spark, propertyOverrides = newMetadataTmp.configuration) &&
+        isCreatingNewTable && this.readVersion == -1) {
+
+      // For CatalogOwned table, we add "quality of life" table features as a part of CCv2 table
+      // creation. Look for [[CatalogOwnedTableUtils.updateMetadataForQoLFeatures]] to see
+      // what features are in the list.
+      // Note that we need to add features here because features like `ColumnMapping` or
+      // `RowTracking` have their own validation/update logic below.
+      newMetadataTmp = CatalogOwnedTableUtils.updateMetadataForQoLFeatures(
+        spark,
+        metadata = newMetadataTmp
+        )
+    }
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
@@ -1243,6 +1298,63 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Validates that partition columns that have NOT NULL
+   * constraints are not null in the AddFile action.
+   *
+   * @param addFile The AddFile action to validate
+   * @param notNullPartitionCols Partition columns with NOT NULL constraints
+   */
+  protected def validateAddFileForNullPartitions(
+      addFile: AddFile,
+      notNullPartitionCols: Set[String]): Unit = {
+    notNullPartitionCols.foreach { col =>
+      addFile.partitionValues.get(col) match {
+        case None | Some(null) =>
+          recordDeltaEvent(
+            deltaLog,
+            "delta.constraints.nullPartitionViolation",
+            data = Map(
+              "addFile" -> addFile.json,
+              "notNullPartitionCols" -> notNullPartitionCols.toSeq.mkString(","),
+              "stackTrace" -> Thread.currentThread().getStackTrace.take(20).mkString("\n")
+            ))
+          if (spark.conf.get(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED)) {
+            throw new IllegalStateException(
+              s"AddFile ${addFile.path} has null partition value for NOT NULL column '$col'")
+          }
+        case Some(_) => // Valid non-null partition value
+      }
+    }
+  }
+
+  /**
+   * Returns all the partition columns that have NOT NULL constraints.
+   */
+  protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
+    val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
+      .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
+      .toSet
+    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+  }
+
+  /**
+   * For any partition columns that have NOT NULL constraints,
+   * validate that the partition values in the AddFile actions are not null.
+   */
+  protected def validateActionsForNullPartitions(
+      actions: Seq[Action],
+      metadata: Metadata): Unit = {
+    val notNullPartitionCols = getNotNullPartitionCols(metadata)
+    if (notNullPartitionCols.nonEmpty) {
+      actions.foreach {
+        case a: AddFile =>
+          validateAddFileForNullPartitions(a, notNullPartitionCols)
+        case _ =>
+      }
+    }
+  }
+
+  /**
    * Checks if the passed-in actions have internal SetTransaction conflicts, will throw exceptions
    * in case of conflicts. This function will also remove duplicated [[SetTransaction]]s.
    */
@@ -1467,6 +1579,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         executionObserver.preparingCommit {
           prepareCommit(finalActions, op)
         }
+
+      validateActionsForNullPartitions(preparedActions, metadata)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1718,6 +1832,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       updateMetadataWithCoordinatedCommitsConfs()
       updateMetadataWithInCommitTimestamp(commitInfo)
 
+      // Precompute NOT NULL partition columns for validation during action processing
+      val notNullPartitionCols = getNotNullPartitionCols(metadata)
       var allActions =
         Iterator(commitInfo, metadata) ++
           nonProtocolMetadataActions ++
@@ -1726,6 +1842,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         action match {
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
+            validateAddFileForNullPartitions(a, notNullPartitionCols)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",

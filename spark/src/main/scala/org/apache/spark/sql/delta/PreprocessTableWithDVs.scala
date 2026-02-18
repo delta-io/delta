@@ -74,18 +74,28 @@ object ScanWithDeletionVectors {
     // If the table has no DVs enabled, no change needed
     if (!deletionVectorsReadable(index.protocol, index.metadata)) return None
 
-    require(!index.isInstanceOf[TahoeLogFileIndex],
-      "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
-
     // See if the relation is already modified to include DV reads as part of
     // a previous invocation of this rule on this table
     if (fileFormat.hasTablePath) return None
 
     // See if any files actually have a DV.
+
+    // IMPORTANT: Check this BEFORE requiring pinned snapshot:
+    // 1. Tables can have DV feature enabled without any DV files (e.g., no DELETEs performed yet)
+    // 2. Reading such tables doesn't require DV processing -> doesn't need pinned snapshots
+    // 3. Unnecessary pinned snapshot requirements break legitimate use cases like transaction
+    //    read tracking with TahoeLogFileIndex (e.g., OptimisticTransaction.withNewTransaction)
+    // 4. Performance: Avoids forcing expensive pinned snapshots when not needed
     val filesWithDVs = index
       .matchingFiles(partitionFilters = Seq(TrueLiteral), dataFilters = Seq(TrueLiteral))
       .filter(_.deletionVector != null)
     if (filesWithDVs.isEmpty) return None
+
+    // At this point, we know there are actual files with DVs, so we need a pinned snapshot.
+    // TahoeLogFileIndex (non-pinned) cannot be used with deletion vectors as it may not
+    // have a consistent view of the table state required for correct DV filtering.
+    require(!index.isInstanceOf[TahoeLogFileIndex],
+      "Cannot work with a non-pinned table snapshot of the TahoeFileIndex")
 
     // Get the list of columns in the output of the `LogicalRelation` we are
     // trying to modify. At the end of the plan, we need to return a
