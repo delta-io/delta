@@ -257,6 +257,12 @@ trait DataSkippingReaderBase
   def redactedPath: String
   private[delta] def stateProvider: DeltaStateProvider
 
+  /** Lazily constructed stats column resolver shared by planner, executor, and reader. */
+  private[delta] lazy val statsColumnResolver: StatsColumnResolver = new StatsColumnResolver(
+    baseStatsColumn = getBaseStatsColumn,
+    statsSchema = statsSchema,
+    tableSchema = metadata.schema)
+
   private def useStats = spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_SKIPPING)
 
   private lazy val limitPartitionLikeFiltersToClusteringColumns = spark.sessionState.conf.getConf(
@@ -993,124 +999,26 @@ trait DataSkippingReaderBase
     }
   }
 
-  /**
-   * Returns an expression to access the given statistics for a specific column, or None if that
-   * stats column does not exist.
-   *
-   * @param pathToStatType Path components of one of the fields declared by the `DeltaStatistics`
-   *                       object. For statistics of collated strings, this path contains the
-   *                       versioned collation identifier. In all other cases the path only has one
-   *                       element. The path is in reverse order.
-   * @param pathToColumn The components of the nested column name to get stats for. The components
-   *                     are in reverse order.
-   */
+  // --- Stats column resolution delegated to StatsColumnResolver ---
+
   final protected def getStatsColumnOpt(
-      pathToStatType: Seq[String], pathToColumn: Seq[String]): Option[Column] = {
+      pathToStatType: Seq[String], pathToColumn: Seq[String]): Option[Column] =
+    statsColumnResolver.getStatsColumnOpt(pathToStatType, pathToColumn)
 
-    require(pathToStatType.nonEmpty, "No path to stats type provided.")
-
-    // First validate that pathToStatType is a valid path in the statsSchema. We start at the root
-    // of the stats schema and then follow the path. Note that the path is stored in reverse order.
-    // If one of the path components does not exist, the foldRight operation returns None.
-    val (initialColumn, initialFieldType) = pathToStatType
-      .foldRight(Option((getBaseStatsColumn, statsSchema.asInstanceOf[DataType]))) {
-        case (statTypePathComponent: String, Some((column: Column, struct: StructType))) =>
-          // Find the field matching the current path component name or return None otherwise.
-          struct.fields.collectFirst {
-            case StructField(name, dataType: DataType, _, _) if name == statTypePathComponent =>
-              (column.getField(statTypePathComponent), dataType)
-          }
-        case _ => None
-      }
-      // If the requested stats type doesn't even exist, just return None right away. This can
-      // legitimately happen if we have no stats at all, or if column stats are disabled (in which
-      // case only the NUM_RECORDS stat type is available).
-      .getOrElse { return None }
-
-    // Given a set of path segments in reverse order, e.g. column a.b.c is Seq("c", "b", "a"), we
-    // use a foldRight operation to build up the requested stats column, by successively applying
-    // each new path step against both the table schema and the stats schema. We can't use the stats
-    // schema alone, because the caller-provided path segments use logical column names, while the
-    // stats schema requires physical column names. Instead, we must step into the table schema to
-    // extract that field's physical column name, and use the result to step into the stats schema.
-    //
-    // We use a three-tuple to track state. The traversal starts with the base column for the
-    // requested stat type, the stats schema for the requested stat type, and the table schema. Each
-    // step of the traversal emits the updated column, along with the stats schema and table schema
-    // elements corresponding to that column.
-    val initialState: Option[(Column, DataType, DataType)] =
-      Some((initialColumn, initialFieldType, metadata.schema))
-    pathToColumn
-      .foldRight(initialState) {
-        // NOTE: Only match on StructType, because we cannot traverse through other DataTypes.
-        case (fieldName, Some((statCol, statsSchema: StructType, tableSchema: StructType))) =>
-          // First try to step into the table schema
-          val tableFieldOpt = tableSchema.findNestedFieldIgnoreCase(Seq(fieldName))
-
-          // If that worked, try to step into the stats schema, using its its physical name
-          val statsFieldOpt = tableFieldOpt
-            .map(DeltaColumnMapping.getPhysicalName)
-            .filter(physicalFieldName => statsSchema.exists(_.name == physicalFieldName))
-            .map(statsSchema(_))
-
-          // If all that succeeds, return the new stats column and the corresponding data types.
-          statsFieldOpt.map(statsField =>
-            (statCol.getField(statsField.name), statsField.dataType, tableFieldOpt.get.dataType))
-
-        // Propagate failure if the above match failed (or if already None)
-        case _ => None
-      }
-      // Filter out non-leaf columns -- they lack stats so skipping predicates can't use them.
-      .filterNot(_._2.isInstanceOf[StructType])
-      .map {
-        case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
-          // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
-          // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
-          // records that differ only in microsecond precision. (For example, a file containing only
-          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
-          // to contain the range from 01:02:03.456 to 01:02:03.457.)
-          //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
-          Column(Cast(TimestampAdd(
-            "MILLISECOND",
-            new Literal(1L, LongType),
-            statCol.expr), TimestampType))
-        case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
-          // We also apply the same adjustment of max stats that was applied to Timestamp
-          // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
-          Column(Cast(TimestampAdd(
-            "MILLISECOND",
-            new Literal(1L, LongType),
-            statCol.expr), TimestampNTZType))
-        case (statCol, _, _) =>
-          statCol
-      }
-  }
-
-  /** Convenience overload for single element stat type paths. */
   final protected def getStatsColumnOpt(
       statType: String, pathToColumn: Seq[String] = Nil): Option[Column] =
-    getStatsColumnOpt(Seq(statType), pathToColumn)
+    statsColumnResolver.getStatsColumnOpt(statType, pathToColumn)
 
-  /**
-   * Returns an expression to access the given statistics for a specific column, or a NULL
-   * literal expression if that column does not exist.
-   */
   final protected[delta] def getStatsColumnOrNullLiteral(
       statType: String,
-      pathToColumn: Seq[String] = Nil) : Column =
-    getStatsColumnOpt(Seq(statType), pathToColumn).getOrElse(lit(null))
+      pathToColumn: Seq[String] = Nil): Column =
+    statsColumnResolver.getStatsColumnOrNullLiteral(statType, pathToColumn)
 
-  /** Overload for convenience working with StatsColumn helpers */
   final protected def getStatsColumnOpt(stat: StatsColumn): Option[Column] =
-    getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn)
+    statsColumnResolver.getStatsColumnOpt(stat)
 
-  /** Overload for convenience working with StatsColumn helpers */
   final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
-    getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn).getOrElse(lit(null))
+    statsColumnResolver.getStatsColumnOrNullLiteral(stat)
 
   /** Overload for delta table property override */
   override protected def getDataSkippingStringPrefixLength: Int =
