@@ -71,12 +71,12 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   static final String ENGINE_INFO = "kernel-spark-dsv2";
 
   /**
-   * Creates a Delta table using the kernel-based commit path when STRICT or AUTO mode is enabled.
+   * Creates a Delta table using the kernel-based commit path when enabled by {@link DeltaV2Mode}.
    *
    * <p>Routing logic based on {@link DeltaV2Mode}:
    *
    * <ul>
-   *   <li>STRICT/AUTO + Delta provider: Commits version 0 via Delta Kernel, then finalizes the
+   *   <li>Mode-enabled + Delta provider: Commits version 0 via Delta Kernel, then finalizes the
    *       catalog entry via the delegate catalog.
    *   <li>Otherwise: Delegates to the V1 path in {@link AbstractDeltaCatalog}.
    * </ul>
@@ -180,7 +180,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    * Returns true when all conditions for the kernel-based create path are met:
    *
    * <ol>
-   *   <li>STRICT or AUTO mode is active
+   *   <li>Mode policy enables metadata-only Kernel CREATE
    *   <li>The provider is Delta
    *   <li>Either the delegate catalog is Unity Catalog (for catalog-registered tables), or the
    *       identifier is a path-based table (which skips catalog registration entirely).
@@ -190,13 +190,9 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
    */
   private boolean shouldUseKernelCreatePath(
       DeltaV2Mode mode, Identifier ident, Map<String, String> properties) {
-    return isCreatePathEnabledInMode(mode)
+    return mode.shouldUseKernelMetadataOnlyCreate(properties)
         && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
         && (isUnityCatalog() || isPathIdentifier(ident));
-  }
-
-  private static boolean isCreatePathEnabledInMode(DeltaV2Mode mode) {
-    return mode.shouldCatalogReturnV2Tables() || "AUTO".equalsIgnoreCase(mode.getMode());
   }
 
   /**
