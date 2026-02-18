@@ -1136,7 +1136,10 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-iceberg is only published as delta-iceberg_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
     libraryDependencies ++= {
       if (supportIceberg) {
         Seq(

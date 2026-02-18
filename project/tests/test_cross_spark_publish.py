@@ -40,9 +40,9 @@ SPARK_RELATED_JAR_TEMPLATES = [
 ]
 
 # Iceberg-related modules - only built for Spark versions with supportIceberg=true
-# See CrossSparkVersions.scala for which versions support iceberg
+# delta-iceberg has no Spark suffix (always delta-iceberg_2.13) because it only supports Spark 4.0
 DELTA_ICEBERG_JAR_TEMPLATES = [
-    "delta-iceberg{suffix}_2.13-{version}.jar",
+    "delta-iceberg_2.13-{version}.jar",
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)
@@ -74,12 +74,9 @@ class SparkVersionSpec:
             for jar in SPARK_RELATED_JAR_TEMPLATES
         ]
 
-        # Generate iceberg JAR templates with the suffix (only if this version supports iceberg)
+        # Iceberg JARs have no Spark suffix (always delta-iceberg_2.13)
         if self.support_iceberg:
-            self.iceberg_jars = [
-                jar.format(suffix=self.suffix, version="{version}")
-                for jar in DELTA_ICEBERG_JAR_TEMPLATES
-            ]
+            self.iceberg_jars = list(DELTA_ICEBERG_JAR_TEMPLATES)
         else:
             self.iceberg_jars = []
 
