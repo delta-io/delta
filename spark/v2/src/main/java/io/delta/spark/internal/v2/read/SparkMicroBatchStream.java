@@ -473,6 +473,15 @@ public class SparkMicroBatchStream
     if (cachedStartingVersion != null) {
       return cachedStartingVersion;
     }
+    // Note: returning a version beyond latest snapshot version won't be a problem as callers
+    // of this function won't use the version to retrieve snapshot(refer to
+    // [[getStartingOffset]]).
+    boolean allowOutOfRange =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
 
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
@@ -503,38 +512,49 @@ public class SparkMicroBatchStream
                   /* creationSource= */ Some.apply("sparkMicroBatchStream"),
                   /* enforceRetention= */ true)
               .getTimestamp(spark.sessionState().conf());
-      DeltaHistoryManager.Commit commit =
-          snapshotManager.getActiveCommitAtTime(
-              timestamp.getTime(),
-              /* canReturnLastCommit= */ true,
-              /* mustBeRecreatable= */ false,
-              /* canReturnEarliestCommit= */ true);
-      long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
-      // Note: returning a version beyond latest snapshot version won't be a problem as callers
-      // of this function won't use the version to retrieve snapshot(refer to
-      // [[getStartingOffset]]).
-      boolean allowOutOfRange =
-          (Boolean)
-              spark
-                  .sessionState()
-                  .conf()
-                  .getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
       long startingVersion =
-          DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
-              /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
-              /* commitTimestamp= */ commit.getTimestamp(),
-              /* commitVersion= */ commit.getVersion(),
-              /* latestVersion= */ latestVersion,
-              /* timestamp= */ timestamp,
-              /* canExceedLatest= */ allowOutOfRange);
-      if (startingVersion <= latestVersion) {
-        validateProtocolAt(spark, snapshotManager, engine, startingVersion);
-      }
+          getStartingVersionFromTimestamp(
+              spark, snapshotManager, engine, timestamp, allowOutOfRange);
       cachedStartingVersion = Optional.of(startingVersion);
       return cachedStartingVersion;
     }
     cachedStartingVersion = Optional.empty();
     return cachedStartingVersion;
+  }
+
+  /**
+   * Returns the earliest commit version whose timestamp is >= the provided timestamp.
+   *
+   * <p>This method fetches the commit at the given timestamp via
+   * [[DeltaSnapshotManager.getActiveCommitAtTime]], computes the starting version using
+   * [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]], and validates the protocol at the
+   * returned version.
+   */
+  private static long getStartingVersionFromTimestamp(
+      SparkSession spark,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      Timestamp timestamp,
+      boolean canExceedLatest) {
+    DeltaHistoryManager.Commit commit =
+        snapshotManager.getActiveCommitAtTime(
+            timestamp.getTime(),
+            /* canReturnLastCommit= */ true,
+            /* mustBeRecreatable= */ false,
+            /* canReturnEarliestCommit= */ true);
+    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long startingVersion =
+        DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
+            /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
+            /* commitTimestamp= */ commit.getTimestamp(),
+            /* commitVersion= */ commit.getVersion(),
+            /* latestVersion= */ latestVersion,
+            /* timestamp= */ timestamp,
+            /* canExceedLatest= */ canExceedLatest);
+    if (startingVersion <= latestVersion) {
+      validateProtocolAt(spark, snapshotManager, engine, startingVersion);
+    }
+    return startingVersion;
   }
 
   /**
