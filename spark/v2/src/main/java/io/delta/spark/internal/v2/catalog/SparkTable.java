@@ -35,17 +35,22 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead {
+public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
-          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
+          EnumSet.of(
+              TableCapability.BATCH_READ,
+              TableCapability.MICRO_BATCH_READ,
+              TableCapability.BATCH_WRITE));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -166,6 +171,36 @@ public class SparkTable implements Table, SupportsRead {
    */
   public Optional<CatalogTable> getCatalogTable() {
     return catalogTable;
+  }
+
+  /** Returns the filesystem path to the Delta table. */
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  /** Returns the Hadoop configuration used for table I/O. */
+  public Configuration getHadoopConf() {
+    return hadoopConf;
+  }
+
+  /** Returns the snapshot loaded when this table was created. */
+  public Snapshot getInitialSnapshot() {
+    return initialSnapshot;
+  }
+
+  /** Returns the table options. */
+  public Map<String, String> getOptions() {
+    return options;
+  }
+
+  /** Returns partition column names in table order. */
+  public List<String> getPartitionColumnNames() {
+    return schemaProvider.getPartitionColumnNames();
+  }
+
+  @Override
+  public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
+    return new io.delta.spark.internal.v2.write.DeltaKernelWriteBuilder(this, info);
   }
 
   /**
@@ -368,6 +403,10 @@ public class SparkTable implements Table, SupportsRead {
 
     Transform[] getPartitionTransforms() {
       return withInit(() -> partitionTransforms);
+    }
+
+    List<String> getPartitionColumnNames() {
+      return withInit(() -> partColNames);
     }
   }
 }
