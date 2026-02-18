@@ -503,13 +503,15 @@ public class SparkMicroBatchStream
                   /* creationSource= */ Some.apply("sparkMicroBatchStream"),
                   /* enforceRetention= */ true)
               .getTimestamp(spark.sessionState().conf());
+      Snapshot latestSnapshot = snapshotManager.loadLatestSnapshot();
       DeltaHistoryManager.Commit commit =
           snapshotManager.getActiveCommitAtTime(
+              latestSnapshot,
               timestamp.getTime(),
               /* canReturnLastCommit= */ true,
               /* mustBeRecreatable= */ false,
               /* canReturnEarliestCommit= */ true);
-      long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      long latestVersion = latestSnapshot.getVersion();
       // Note: returning a version beyond latest snapshot version won't be a problem as callers
       // of this function won't use the version to retrieve snapshot(refer to
       // [[getStartingOffset]]).

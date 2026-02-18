@@ -89,7 +89,23 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
       boolean canReturnLastCommit,
       boolean mustBeRecreatable,
       boolean canReturnEarliestCommit) {
-    SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
+    Snapshot latestSnapshot = loadLatestSnapshot();
+    return getActiveCommitAtTime(
+        latestSnapshot,
+        timestampMillis,
+        canReturnLastCommit,
+        mustBeRecreatable,
+        canReturnEarliestCommit);
+  }
+
+  @Override
+  public DeltaHistoryManager.Commit getActiveCommitAtTime(
+      Snapshot latestSnapshot,
+      long timestampMillis,
+      boolean canReturnLastCommit,
+      boolean mustBeRecreatable,
+      boolean canReturnEarliestCommit) {
+    SnapshotImpl snapshot = (SnapshotImpl) latestSnapshot;
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
         kernelEngine,
         snapshot,

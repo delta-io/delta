@@ -82,6 +82,28 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     return new DeltaOptions(Map$.MODULE$.empty(), spark.sessionState().conf());
   }
 
+  private static class CountingPathBasedSnapshotManager extends PathBasedSnapshotManager {
+    private final AtomicInteger loadLatestSnapshotCallCount = new AtomicInteger(0);
+
+    CountingPathBasedSnapshotManager(String tablePath, Configuration hadoopConf) {
+      super(tablePath, hadoopConf);
+    }
+
+    @Override
+    public io.delta.kernel.Snapshot loadLatestSnapshot() {
+      loadLatestSnapshotCallCount.incrementAndGet();
+      return super.loadLatestSnapshot();
+    }
+
+    void resetLoadLatestSnapshotCallCount() {
+      loadLatestSnapshotCallCount.set(0);
+    }
+
+    int getLoadLatestSnapshotCallCount() {
+      return loadLatestSnapshotCallCount.get();
+    }
+  }
+
   @Test
   public void testLatestOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
     SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
@@ -2030,6 +2052,36 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         dsv1Exception.getMessageParameters(),
         dsv2Exception.getMessageParameters(),
         "v1 connector and v2 connector should throw the same error messages when no commit after timestamp and not allow out of range");
+  }
+
+  @Test
+  public void testGetStartingVersionFromTimestamp_loadsLatestSnapshotOnce(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_starting_timestamp_single_load_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    sql("INSERT INTO %s VALUES (1, 'User1')", testTableName);
+    Thread.sleep(10);
+    String betweenV1V2TS = new java.sql.Timestamp(System.currentTimeMillis()).toString();
+    Thread.sleep(10);
+    sql("INSERT INTO %s VALUES (2, 'User2')", testTableName);
+
+    Configuration hadoopConf = new Configuration();
+    CountingPathBasedSnapshotManager snapshotManager =
+        new CountingPathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(
+            snapshotManager,
+            hadoopConf,
+            createDeltaOptions(/* startingVersionValue= */ null, betweenV1V2TS));
+
+    // Reset constructor-time load and only count loads triggered by getStartingVersion.
+    snapshotManager.resetLoadLatestSnapshotCallCount();
+    Optional<Long> startingVersion = stream.getStartingVersion();
+
+    assertEquals(Optional.of(2L), startingVersion);
+    assertEquals(1, snapshotManager.getLoadLatestSnapshotCallCount());
   }
 
   // ================================================================================================
