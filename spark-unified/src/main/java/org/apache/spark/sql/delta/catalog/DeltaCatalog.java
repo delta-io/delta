@@ -16,30 +16,15 @@
 
 package org.apache.spark.sql.delta.catalog;
 
-import io.delta.kernel.Transaction;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.expressions.Column;
-import io.delta.kernel.transaction.DataLayoutSpec;
-import io.delta.kernel.utils.CloseableIterable;
+import io.delta.spark.internal.v2.catalog.CreateTableCommitCoordinator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
-import io.delta.spark.internal.v2.utils.ScalaUtils;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.function.Supplier;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
-import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Transform;
-import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.delta.DeltaV2Mode;
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
 import org.apache.spark.sql.types.StructType;
@@ -112,53 +97,16 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     if (!shouldUseKernelCreatePath(mode, ident, properties)) {
       return super.createTable(ident, schema, partitions, properties);
     }
-
-    // Resolve table location:
-    // - UC tables: location is always in properties (user-specified or UC-assigned)
-    // - Path-based tables: ident.name() IS the path (e.g., delta.`/tmp/table`)
-    String location = properties.get(TableCatalog.PROP_LOCATION);
-    if (location == null) {
-      location = properties.get("location");
-    }
-    if (location == null && isPathIdentifier(ident)) {
-      location = ident.name();
-    }
-
-    // Filter out DSv2-specific keys that are not Delta table properties. This mirrors the
-    // filtering in AbstractDeltaCatalog.createDeltaTable (lines 117-126).
-    Map<String, String> tableProperties = filterDsv2Properties(properties);
-
-    // Convert Spark schema to kernel schema
-    io.delta.kernel.types.StructType kernelSchema =
-        SchemaUtils.convertSparkSchemaToKernelSchema(schema);
-
-    // Build Hadoop config with UC-vended cloud storage credentials from properties.
-    // UCSingleCatalog injects temporary credentials (fs.s3a.access.key, etc.) into
-    // properties before calling delegate.createTable().
-    Map<String, String> fsOptions = new HashMap<>();
-    for (Map.Entry<String, String> entry : properties.entrySet()) {
-      if (DeltaTableUtils.validDeltaTableHadoopPrefixes()
-          .exists(prefix -> entry.getKey().startsWith(prefix))) {
-        fsOptions.put(entry.getKey(), entry.getValue());
-      }
-    }
-    Configuration hadoopConf =
-        spark().sessionState().newHadoopConfWithOptions(ScalaUtils.toScalaMap(fsOptions));
-    Engine engine = DefaultEngine.create(hadoopConf);
-
-    DeltaSnapshotManager snapshotManager =
-        SnapshotManagerFactory.createForNewTable(location, engine, properties, name(), spark());
-
-    List<Column> partitionColumns = extractPartitionColumns(partitions);
-    Optional<DataLayoutSpec> dataLayoutSpec =
-        partitionColumns.isEmpty()
-            ? Optional.empty()
-            : Optional.of(DataLayoutSpec.partitioned(partitionColumns));
-
-    Transaction txn =
-        snapshotManager.buildCreateTableTransaction(
-            kernelSchema, tableProperties, dataLayoutSpec, ENGINE_INFO);
-    txn.commit(engine, CloseableIterable.emptyIterable());
+    boolean isPathTable = isPathIdentifier(ident);
+    CreateTableCommitCoordinator.commitCreateTableVersion0(
+        ident,
+        schema,
+        partitions,
+        properties,
+        spark(),
+        name(),
+        ENGINE_INFO,
+        isPathTable);
 
     // Register the table with the catalog (UC delegate) and return a SparkTable.
     // For catalog-registered tables: register via delegate, then loadTable() to get a SparkTable
@@ -167,13 +115,17 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     // for external). If loadSnapshot() fails due to the createImpl/commitToUC gap (UC doesn't
     // know about version 0), this is where it surfaces.
     // For path-based tables (delta.`/path`): no catalog registration needed.
-    if (!isPathIdentifier(ident)) {
+    if (!isPathTable) {
       // Strip credentials from properties before passing to the UC delegate. The delegate needs
       // catalog coordination keys (location, provider, is_managed_location) but NOT transient
       // credentials (fs.s3a.init.access.key, fs.unitycatalog.auth.token, etc.).
       // In the V1 path, CatalogTable.properties never contains fs.* keys because
       // CreateDeltaTableCommand filters them via DeltaTableUtils.validDeltaTableHadoopPrefixes.
-      createCatalogTable(ident, schema, partitions, filterCredentialProperties(properties));
+      createCatalogTable(
+          ident,
+          schema,
+          partitions,
+          CreateTableCommitCoordinator.filterCredentialProperties(properties));
       return loadTable(ident);
     }
     return loadPathTable(ident);
@@ -245,81 +197,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
 
   private static boolean isCreatePathEnabledInMode(DeltaV2Mode mode) {
     return mode.shouldCatalogReturnV2Tables() || "AUTO".equalsIgnoreCase(mode.getMode());
-  }
-
-  /**
-   * Filters out DSv2-specific keys and filesystem options that are not actual Delta table
-   * properties. This mirrors the filtering in {@code AbstractDeltaCatalog.createDeltaTable}.
-   *
-   * <p>UCSingleCatalog injects two families of transient keys into properties (all keys
-   * originate from {@code UCHadoopConf} constants which carry the {@code fs.} prefix):
-   * <ul>
-   *   <li>{@code fs.*} — Hadoop filesystem credentials (e.g., {@code fs.s3a.init.access.key},
-   *       {@code fs.unitycatalog.auth.token})
-   *   <li>{@code option.fs.*} — same keys with Spark's {@code option.} prefix
-   * </ul>
-   * Both are caught by {@link DeltaTableUtils#validDeltaTableHadoopPrefixes} ({@code "fs."},
-   * {@code "dfs."}) after stripping the {@code option.} prefix.
-   */
-  private static Map<String, String> filterDsv2Properties(Map<String, String> properties) {
-    Map<String, String> filtered = new HashMap<>(properties);
-    filtered.remove(TableCatalog.PROP_LOCATION);
-    filtered.remove(TableCatalog.PROP_PROVIDER);
-    filtered.remove(TableCatalog.PROP_COMMENT);
-    filtered.remove(TableCatalog.PROP_OWNER);
-    filtered.remove(TableCatalog.PROP_EXTERNAL);
-    filtered.remove("path");
-    filtered.remove("option.path");
-    // is_managed_location is a DSv2 coordination property, not a Delta table property
-    filtered.remove(TableCatalog.PROP_IS_MANAGED_LOCATION);
-    // Remove legacy ucTableId key; the new key (io.unitycatalog.tableId) is set by
-    // UCCatalogManagedClient for managed tables.
-    filtered.remove("ucTableId");
-    // Remove filesystem options (UC-vended credentials) and their "option." prefixed variants
-    // — these belong in the Hadoop config, not in the Delta table metadata persisted in the
-    // commit log. All credential keys from UCSingleCatalog carry the "fs." prefix
-    // (e.g., fs.s3a.init.access.key, fs.unitycatalog.auth.token) per UCHadoopConf constants.
-    filtered.entrySet().removeIf(entry -> {
-      String key = entry.getKey();
-      String effectiveKey = key.startsWith("option.") ? key.substring("option.".length()) : key;
-      return DeltaTableUtils.validDeltaTableHadoopPrefixes()
-          .exists(prefix -> effectiveKey.startsWith(prefix));
-    });
-    return filtered;
-  }
-
-  /**
-   * Strips filesystem credential keys ({@code fs.*}, {@code dfs.*}, {@code option.fs.*},
-   * {@code option.dfs.*}) from properties while keeping DSv2 catalog coordination keys
-   * ({@code location}, {@code provider}, {@code is_managed_location}, etc.).
-   *
-   * <p>Used when passing properties to the UC delegate for catalog registration. The delegate
-   * needs catalog keys to register the table, but must NOT receive transient credentials
-   * (e.g., {@code fs.s3a.init.access.key}, {@code fs.unitycatalog.auth.token}).
-   */
-  private static Map<String, String> filterCredentialProperties(Map<String, String> properties) {
-    Map<String, String> filtered = new HashMap<>(properties);
-    filtered.entrySet().removeIf(entry -> {
-      String key = entry.getKey();
-      String effectiveKey = key.startsWith("option.") ? key.substring("option.".length()) : key;
-      return DeltaTableUtils.validDeltaTableHadoopPrefixes()
-          .exists(prefix -> effectiveKey.startsWith(prefix));
-    });
-    return filtered;
-  }
-
-  /**
-   * Extracts partition column names from identity transforms. Only identity transforms are
-   * supported for partitioning (e.g., {@code PARTITIONED BY (col)}).
-   */
-  private static List<Column> extractPartitionColumns(Transform[] partitions) {
-    List<Column> columns = new ArrayList<>();
-    for (Transform partition : partitions) {
-      if (partition.references().length > 0) {
-        columns.add(new Column(partition.references()[0].describe()));
-      }
-    }
-    return columns;
   }
 
   /**
