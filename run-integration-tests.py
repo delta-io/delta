@@ -16,6 +16,25 @@
 # limitations under the License.
 #
 
+#
+# Integration test script for Delta Lake. Builds artifacts locally and runs
+# Scala, Python, and pip tests against them.
+#
+# Usage:
+#   python run-integration-tests.py --use-local              # Run all tests
+#   python run-integration-tests.py --use-local --scala-only # Scala tests only
+#   python run-integration-tests.py --use-local --python-only # Python tests only
+#
+# Setup:
+#   With --use-local, tests run across all Spark versions defined in
+#   CrossSparkVersions.scala. Each Spark version needs a local distribution at:
+#     ~/spark-{version}-bin-hadoop3/
+#
+#   Download them from Apache:
+#     wget https://archive.apache.org/dist/spark/spark-{version}/spark-{version}-bin-hadoop3.tgz
+#     tar xzf spark-{version}-bin-hadoop3.tgz -C ~/
+#
+
 import os
 import subprocess
 from os import path
@@ -34,11 +53,6 @@ def set_spark_env(spark_version):
 
     This must override any existing SPARK_HOME because the multi-variant loop tests
     different Spark versions in sequence (e.g., 4.0.1 then 4.1.0).
-
-    Requires Spark distributions at ~/spark-{version}-bin-hadoop3/, which is the
-    default location when extracting the Apache tarballs:
-        wget https://archive.apache.org/dist/spark/spark-{version}/spark-{version}-bin-hadoop3.tgz
-        tar xzf spark-{version}-bin-hadoop3.tgz -C ~/
     """
     os.environ["PATH"] = _original_path
 
