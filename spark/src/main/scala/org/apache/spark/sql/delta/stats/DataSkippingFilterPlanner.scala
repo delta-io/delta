@@ -17,15 +17,18 @@
 package org.apache.spark.sql.delta.stats
 
 import org.apache.spark.sql.{Column, SparkSession}
-import org.apache.spark.sql.catalyst.expressions.Expression
+import org.apache.spark.sql.catalyst.expressions.{And, Expression}
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaTableUtils.{containsSubquery, isPredicatePartitionColumnsOnly}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.RowCommitVersion.MetadataAttribute
 import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaDataSkippingType.DeltaDataSkippingType
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.delta.stats.DeltaStatistics._
+import org.apache.spark.sql.functions.lit
+import org.apache.spark.sql.types.{LongType, StructType}
 
 /**
  * Plans data-filter usage for data skipping.
@@ -42,6 +45,9 @@ import org.apache.spark.sql.types.StructType
  */
 private[delta] trait DataSkippingFilterPlanner {
   def plan(filters: Seq[Expression]): DataSkippingFilterPlanner.Result
+
+  /** Rewrites partition filter expressions into metadata column references. */
+  def constructPartitionFilters(filters: Seq[Expression]): Column
 }
 
 private[delta] object DataSkippingFilterPlanner {
@@ -52,7 +58,9 @@ private[delta] object DataSkippingFilterPlanner {
       skippingFilters: Seq[(Expression, Option[DataSkippingPredicate])],
       partitionLikeFilters: Seq[(Expression, DataSkippingPredicate)],
       unusedFilters: Seq[(Expression, Option[DataSkippingPredicate])],
-      finalSkippingFilter: DataSkippingPredicate)
+      finalSkippingFilter: DataSkippingPredicate,
+      /** Ready-to-use scan filter: `dataFilter || !statsVerification`. */
+      verifiedSkippingExpr: Column)
 }
 
 /**
@@ -67,7 +75,6 @@ private[delta] object DataSkippingFilterPlanner {
  * @param spark              SparkSession (for config access)
  * @param dataSkippingType   The type of data skipping being performed
  * @param getStatsColumnOpt  Resolves a StatsColumn to a Column expression
- * @param constructNotNullFilter Builds IsNotNull skipping predicate
  * @param partitionColumns   Partition column names for split classification
  * @param useStats           Whether data skipping is enabled
  * @param clusteringColumns  Clustering column names (for partition-like rewrite)
@@ -78,23 +85,64 @@ private[delta] class DefaultDataSkippingFilterPlanner(
     spark: SparkSession,
     dataSkippingType: DeltaDataSkippingType,
     getStatsColumnOpt: StatsColumn => Option[Column],
-    constructNotNullFilter: (StatsProvider, Seq[String]) => Option[DataSkippingPredicate],
     partitionColumns: Seq[String],
+    partitionSchema: StructType,
     useStats: Boolean,
     clusteringColumns: Seq[String] = Nil,
     protocol: Option[org.apache.spark.sql.delta.actions.Protocol] = None,
     numOfFilesIfKnown: Option[Long] = None)
-  extends DataSkippingFilterPlanner {
+  extends DataSkippingFilterPlanner with DeltaLogging {
   import DataSkippingFilterPlanner._
 
-  private val truePredicate = DataSkippingPredicate(
-    org.apache.spark.sql.Column(TrueLiteral))
+  private val trueLiteralCol = org.apache.spark.sql.Column(TrueLiteral)
+
+  private val truePredicate = DataSkippingPredicate(trueLiteralCol)
+
+  /** Resolves a stats column, returning a null literal if the column doesn't exist. */
+  private def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
+    getStatsColumnOpt(stat).getOrElse(lit(null))
+
+  private def getStatsColumnOrNullLiteral(
+      statType: String, pathToColumn: Seq[String] = Nil): Column =
+    getStatsColumnOpt(StatsColumn(statType, pathToColumn, LongType)).getOrElse(lit(null))
+
+  /**
+   * Verifies that all required stats columns exist for a given filter.
+   * If any stat is missing the file must be included (returns FALSE -> NOT(FALSE) = TRUE).
+   */
+  private def verifyStatsForFilter(referencedStats: Set[StatsColumn]): Column = {
+    recordFrameProfile("Delta", "DataSkippingFilterPlanner.verifyStatsForFilter") {
+      referencedStats.flatMap { stat => stat match {
+        case StatsColumn(MIN +: _, _) | StatsColumn(MAX +: _, _) =>
+          Seq(stat, StatsColumn(NULL_COUNT, stat.pathToColumn, LongType),
+            StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType))
+        case _ =>
+          Seq(stat)
+      }}.map { stat => stat match {
+        case StatsColumn(MIN +: _, _) | StatsColumn(MAX +: _, _) =>
+          getStatsColumnOrNullLiteral(stat).isNotNull ||
+            (getStatsColumnOrNullLiteral(NULL_COUNT, stat.pathToColumn) ===
+              getStatsColumnOrNullLiteral(NUM_RECORDS))
+        case _ =>
+          getStatsColumnOrNullLiteral(stat).isNotNull
+      }}
+        .reduceLeftOption(_.and(_))
+        .getOrElse(trueLiteralCol)
+    }
+  }
+
+  override def constructPartitionFilters(filters: Seq[Expression]): Column = {
+    val rewritten = PartitionFilterUtils.rewritePartitionFilters(
+      partitionSchema, spark.sessionState.conf.resolver, filters)
+    rewritten.reduceOption(And).map { expr =>
+      org.apache.spark.sql.Column(expr)
+    }.getOrElse(trueLiteralCol)
+  }
 
   private lazy val builder: DataFiltersBuilder = new DataFiltersBuilder(
     spark = spark,
     dataSkippingType = dataSkippingType,
     getStatsColumnOpt = getStatsColumnOpt,
-    constructNotNullFilter = constructNotNullFilter,
     limitPartitionLikeFiltersToClusteringColumns =
       spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_DATASKIPPING_PARTITION_LIKE_FILTERS_CLUSTERING_COLUMNS_ONLY),
@@ -153,6 +201,12 @@ private[delta] class DefaultDataSkippingFilterPlanner(
         skip1.expr && skip2.expr, skip1.referencedStats ++ skip2.referencedStats))
       .getOrElse(truePredicate)
 
+    // Step 6: Build verified expression: dataFilter || !statsVerification
+    // If any stats are missing, verifyStatsForFilter is FALSE => NOT(FALSE) = TRUE,
+    // forcing the file to be included regardless of the data filter result.
+    val verifiedSkippingExpr =
+      finalSkippingFilter.expr || !verifyStatsForFilter(finalSkippingFilter.referencedStats)
+
     Result(
       ineligibleFilters = ineligibleFilters,
       partitionFilters = partitionFilters,
@@ -160,6 +214,7 @@ private[delta] class DefaultDataSkippingFilterPlanner(
       skippingFilters = skippingFilters,
       partitionLikeFilters = partitionLikeFilters,
       unusedFilters = unusedFilters,
-      finalSkippingFilter = finalSkippingFilter)
+      finalSkippingFilter = finalSkippingFilter,
+      verifiedSkippingExpr = verifiedSkippingExpr)
   }
 }

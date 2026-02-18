@@ -49,7 +49,6 @@ import org.apache.spark.unsafe.types.UTF8String
  * External dependencies are injected through constructor parameters:
  *   - `getStatsColumnOpt`: resolves stat column references (V1 uses column-mapping,
  *     V2 uses simple paths)
- *   - `constructNotNullFilter`: builds IsNotNull predicates
  *
  * @param spark                SparkSession (for DeltaSQLConf access)
  * @param dataSkippingType     The type of data skipping being performed
@@ -63,7 +62,6 @@ private[delta] class DataFiltersBuilder(
     protected val spark: SparkSession,
     protected val dataSkippingType: DeltaDataSkippingType,
     getStatsColumnOpt: StatsColumn => Option[Column],
-    constructNotNullFilter: (StatsProvider, Seq[String]) => Option[DataSkippingPredicate],
     limitPartitionLikeFiltersToClusteringColumns: Boolean,
     additionalPartitionLikeFilterSupportedExpressions: Set[String])
 {
@@ -73,6 +71,16 @@ private[delta] class DataFiltersBuilder(
 
   protected val trueLiteral: Column = Column(TrueLiteral)
   protected val falseLiteral: Column = Column(FalseLiteral)
+
+  /** Builds an IsNotNull skipping predicate: skip files where nullCount == numRecords. */
+  private def constructNotNullFilter(
+      pathToColumn: Seq[String]): Option[DataSkippingPredicate] = {
+    val nullCountCol = StatsColumn(NULL_COUNT, pathToColumn, LongType)
+    val numRecordsCol = StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType)
+    statsProvider.getPredicateWithStatsColumnsIfExists(nullCountCol, numRecordsCol) {
+      (nullCount, numRecords) => nullCount < numRecords
+    }
+  }
 
   // Main function for building data filters.
   def apply(dataFilter: Expression): Option[DataSkippingPredicate] =
@@ -215,7 +223,7 @@ private[delta] class DataFiltersBuilder(
       constructDataFilters(IsNotNull(e), isNullExpansionDepth)
 
     case IsNotNull(SkippingEligibleColumn(a, _)) =>
-      constructNotNullFilter(statsProvider, a)
+      constructNotNullFilter(a)
 
     case Not(IsNotNull(e)) =>
       constructDataFilters(IsNull(e), isNullExpansionDepth)

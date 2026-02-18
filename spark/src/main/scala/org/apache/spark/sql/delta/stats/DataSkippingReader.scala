@@ -315,50 +315,7 @@ trait DataSkippingReaderBase
   override protected def getDataSkippingStringPrefixLength: Int =
     StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
 
-  /**
-   * Returns an expression that can be used to check that the required statistics are present for a
-   * given file. If any required statistics are missing we must include the corresponding file.
-   *
-   * NOTE: We intentionally choose to disable skipping for any file if any required stat is missing,
-   * because doing it that way allows us to check each stat only once (rather than once per
-   * use). Checking per-use would anyway only help for tables where the number of indexed columns
-   * has changed over time, producing add.stats_parsed records with differing schemas. That should
-   * be a rare enough case to not worry about optimizing for, given that the fix requires more
-   * complex skipping predicates that would penalize the common case.
-   */
-  protected def verifyStatsForFilter(referencedStats: Set[StatsColumn]): Column = {
-    recordFrameProfile("Delta", "DataSkippingReader.verifyStatsForFilter") {
-      // The NULL checks for MIN and MAX stats depend on NULL_COUNT and NUM_RECORDS. Derive those
-      // implied dependencies first, so the main pass can treat them like any other column.
-      //
-      // NOTE: We must include explicit NULL checks on all stats columns we access here, because our
-      // caller will negate the expression we return. In case a stats column is NULL, `NOT(expr)`
-      // must return `TRUE`, and without these NULL checks it would instead return
-      // `NOT(NULL)` => `NULL`.
-      referencedStats.flatMap { stat => stat match {
-        case StatsColumn(MIN +: _, _) | StatsColumn(MAX +: _, _) =>
-          Seq(stat, StatsColumn(NULL_COUNT, stat.pathToColumn, LongType),
-            StatsColumn(NUM_RECORDS, pathToColumn = Nil, LongType))
-        case _ =>
-          Seq(stat)
-      }}.map{stat => stat match {
-        // A usable MIN or MAX stat must be non-NULL, unless the column is provably all-NULL
-        //
-        // NOTE: We don't care about NULL/missing NULL_COUNT and NUM_RECORDS here, because the
-        // separate NULL checks we emit for those columns will force the overall validation
-        // predicate conjunction to FALSE in that case -- AND(FALSE, <anything>) is FALSE.
-        case StatsColumn(MIN +: _, _) | StatsColumn(MAX +: _, _) =>
-          getStatsColumnOrNullLiteral(stat).isNotNull ||
-            (getStatsColumnOrNullLiteral(NULL_COUNT, stat.pathToColumn) ===
-              getStatsColumnOrNullLiteral(NUM_RECORDS))
-        case _ =>
-          // Other stats, such as NULL_COUNT and NUM_RECORDS stat, merely need to be non-NULL
-          getStatsColumnOrNullLiteral(stat).isNotNull
-      }}
-        .reduceLeftOption(_.and(_))
-        .getOrElse(trueLiteral)
-    }
-  }
+  // verifyStatsForFilter -> DataSkippingFilterPlanner
 
   private def buildSizeCollectorFilter(): (ArrayAccumulator, Column => Column) = {
     val bytesCompressed = col("size")
@@ -416,17 +373,7 @@ trait DataSkippingReaderBase
     convertDataFrameToAddFiles(ds.toDF())
   }
 
-  /**
-   * Given the partition filters on the data, rewrite these filters by pointing to the metadata
-   * columns.
-   */
-  protected def constructPartitionFilters(filters: Seq[Expression]): Column = {
-    recordFrameProfile("Delta", "DataSkippingReader.constructPartitionFilters") {
-      val rewritten = DeltaLog.rewritePartitionFilters(
-        metadata.partitionSchema, spark.sessionState.conf.resolver, filters)
-      rewritten.reduceOption(And).map { expr => Column(expr) }.getOrElse(trueLiteral)
-    }
-  }
+  // constructPartitionFilters -> DataSkippingFilterPlanner
 
   /**
    * Get all the files in this table given the partition filter and the corresponding size of
@@ -465,20 +412,17 @@ trait DataSkippingReaderBase
    */
   protected def getDataSkippedFiles(
       partitionFilters: Column,
-      dataFilters: DataSkippingPredicate,
+      verifiedSkippingExpr: Column,
       keepNumRecords: Boolean): (Seq[AddFile], Seq[DataSize]) = recordFrameProfile(
       "Delta", "DataSkippingReader.getDataSkippedFiles") {
     val (totalSize, totalFilter) = buildSizeCollectorFilter()
     val (partitionSize, partitionFilter) = buildSizeCollectorFilter()
     val (scanSize, scanFilter) = buildSizeCollectorFilter()
 
-    // NOTE: If any stats are missing, the value of `dataFilters` is untrustworthy -- it could be
-    // NULL or even just plain incorrect. We rely on `verifyStatsForFilter` to be FALSE in that
-    // case, forcing the overall OR to evaluate as TRUE no matter what value `dataFilters` takes.
     val filteredFiles = withStats.where(
         totalFilter(trueLiteral) &&
           partitionFilter(partitionFilters) &&
-          scanFilter(dataFilters.expr || !verifyStatsForFilter(dataFilters.referencedStats))
+          scanFilter(verifiedSkippingExpr)
       )
 
     val statsColumn = if (keepNumRecords) {
@@ -534,8 +478,8 @@ trait DataSkippingReaderBase
       spark = spark,
       dataSkippingType = DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1,
       getStatsColumnOpt = (stat: StatsColumn) => getStatsColumnOpt(stat),
-      constructNotNullFilter = constructNotNullFilter,
       partitionColumns = metadata.partitionColumns,
+      partitionSchema = metadata.partitionSchema,
       useStats = useStats,
       clusteringColumns = ClusteringColumnInfo.extractLogicalNames(snapshotToScan),
       protocol = Some(snapshotToScan.protocol),
@@ -546,39 +490,40 @@ trait DataSkippingReaderBase
     if (plan.dataFilters.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.partition") {
         val (files, scanSize) = filterOnPartitions(plan.partitionFilters, keepNumRecords)
-      DeltaScan(
-        version = version,
-        files = files,
-        total = DataSize(sizeInBytesIfKnown, None, numOfFilesIfKnown),
+        DeltaScan(
+          version = version,
+          files = files,
+          total = DataSize(sizeInBytesIfKnown, None, numOfFilesIfKnown),
           partition = scanSize, scanned = scanSize)(
-        scannedSnapshot = snapshotToScan,
+          scannedSnapshot = snapshotToScan,
           partitionFilters = ExpressionSet(plan.partitionFilters),
-        dataFilters = ExpressionSet(Nil),
-        partitionLikeDataFilters = ExpressionSet(Nil),
-        rewrittenPartitionLikeDataFilters = Set.empty,
+          dataFilters = ExpressionSet(Nil),
+          partitionLikeDataFilters = ExpressionSet(Nil),
+          rewrittenPartitionLikeDataFilters = Set.empty,
           unusedFilters = ExpressionSet(plan.ineligibleFilters),
-        scanDurationMs = System.currentTimeMillis() - startTime,
-        dataSkippingType =
+          scanDurationMs = System.currentTimeMillis() - startTime,
+          dataSkippingType =
             getCorrectDataSkippingType(DeltaDataSkippingType.partitionFilteringOnlyV1))
       }
     } else {
       recordDeltaOperation(deltaLog, "delta.skipping.data") {
-        val finalPartitionFilters = constructPartitionFilters(plan.partitionFilters)
+        val finalPartitionFilters =
+          filterPlanner.constructPartitionFilters(plan.partitionFilters)
         val (files, sizes) =
-          getDataSkippedFiles(finalPartitionFilters, plan.finalSkippingFilter, keepNumRecords)
+          getDataSkippedFiles(finalPartitionFilters, plan.verifiedSkippingExpr, keepNumRecords)
 
         val dataSkippingType = if (plan.partitionFilters.isEmpty) {
-        DeltaDataSkippingType.dataSkippingOnlyV1
-      } else {
-        DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
-      }
+          DeltaDataSkippingType.dataSkippingOnlyV1
+        } else {
+          DeltaDataSkippingType.dataSkippingAndPartitionFilteringV1
+        }
 
         // 3. ASSEMBLE: build DeltaScan from plan metadata + execution results
-      DeltaScan(
-        version = version,
-        files = files,
+        DeltaScan(
+          version = version,
+          files = files,
           total = sizes(0), partition = sizes(1), scanned = sizes(2))(
-        scannedSnapshot = snapshotToScan,
+          scannedSnapshot = snapshotToScan,
           partitionFilters = ExpressionSet(plan.partitionFilters),
           dataFilters = ExpressionSet(plan.skippingFilters.map(_._1)),
           partitionLikeDataFilters = ExpressionSet(plan.partitionLikeFilters.map(_._1)),
@@ -586,7 +531,7 @@ trait DataSkippingReaderBase
             plan.partitionLikeFilters.map(_._2.expr.expr).toSet,
           unusedFilters =
             ExpressionSet(plan.unusedFilters.map(_._1) ++ plan.ineligibleFilters),
-        scanDurationMs = System.currentTimeMillis() - startTime,
+          scanDurationMs = System.currentTimeMillis() - startTime,
           dataSkippingType = getCorrectDataSkippingType(dataSkippingType))
       }
     }
@@ -600,7 +545,10 @@ trait DataSkippingReaderBase
   override def filesForScan(limit: Long, partitionFilters: Seq[Expression]): DeltaScan =
     recordDeltaOperation(deltaLog, "delta.skipping.filteredLimit") {
       val startTime = System.currentTimeMillis()
-      val finalPartitionFilters = constructPartitionFilters(partitionFilters)
+      val rewritten = PartitionFilterUtils.rewritePartitionFilters(
+        metadata.partitionSchema, spark.sessionState.conf.resolver, partitionFilters)
+      val finalPartitionFilters = rewritten.reduceOption(And)
+        .map { expr => Column(expr) }.getOrElse(trueLiteral)
 
       val scan = {
         pruneFilesByLimit(withStats.where(finalPartitionFilters), limit)
