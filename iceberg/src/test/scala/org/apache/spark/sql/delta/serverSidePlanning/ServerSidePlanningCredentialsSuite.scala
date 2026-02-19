@@ -159,25 +159,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     }
   }
 
-  test("ScanPlan with no credentials") {
-    withTempTable("noCredentialsTest") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.noCredentialsTest")
-
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
-      try {
-        // Don't configure any credentials
-        val scanPlan = client.planScan(defaultNamespace.toString, "noCredentialsTest")
-
-        // Verify credentials are absent
-        assert(scanPlan.credentials.isEmpty,
-          "Credentials should be None when server doesn't return any")
-      } finally {
-        client.close()
-      }
-    }
-  }
-
-  test("incomplete credentials throw errors") {
+  test("incomplete/missing credentials throw errors") {
     withTempTable("incompleteCredsTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.incompleteCredsTest")
 
