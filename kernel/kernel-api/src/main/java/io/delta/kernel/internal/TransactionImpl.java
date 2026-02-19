@@ -359,11 +359,11 @@ public class TransactionImpl implements Transaction {
     return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
   }
 
-  private boolean isBlindAppend() {
+  private Optional<Boolean> isBlindAppend() {
     // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
     //  non-blind-append operation. We should revisit how to safely set this to true for actual
     //  blind appends.
-    return false;
+    return Optional.of(false);
   }
 
   private void updateMetadata(Metadata metadata) {

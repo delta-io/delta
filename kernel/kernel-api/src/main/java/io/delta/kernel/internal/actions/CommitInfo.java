@@ -109,7 +109,7 @@ public class CommitInfo {
         children[4].isNullAt(rowId)
             ? Collections.emptyMap()
             : VectorUtils.toJavaMap(children[4].getMap(rowId)),
-        children[5].isNullAt(rowId) ? null : children[5].getBoolean(rowId),
+        Optional.ofNullable(children[5].isNullAt(rowId) ? null : children[5].getBoolean(rowId)),
         children[6].isNullAt(rowId) ? null : children[6].getString(rowId),
         children[7].isNullAt(rowId)
             ? Collections.emptyMap()
@@ -216,7 +216,7 @@ public class CommitInfo {
   private final String engineInfo;
   private final String operation;
   private final Map<String, String> operationParameters;
-  private final boolean isBlindAppend;
+  private final Optional<Boolean> isBlindAppend;
   private final String txnId;
   private Optional<Long> inCommitTimestamp;
   private final Map<String, String> operationMetrics;
@@ -227,7 +227,7 @@ public class CommitInfo {
       String engineInfo,
       String operation,
       Map<String, String> operationParameters,
-      boolean isBlindAppend,
+      Optional<Boolean> isBlindAppend,
       String txnId,
       Map<String, String> operationMetrics) {
     this.inCommitTimestamp = requireNonNull(inCommitTimestamp);
@@ -235,7 +235,7 @@ public class CommitInfo {
     this.engineInfo = requireNonNull(engineInfo);
     this.operation = requireNonNull(operation);
     this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParameters));
-    this.isBlindAppend = isBlindAppend;
+    this.isBlindAppend = requireNonNull(isBlindAppend);
     this.txnId = requireNonNull(txnId);
     this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
   }
@@ -256,7 +256,7 @@ public class CommitInfo {
     return operationParameters;
   }
 
-  public boolean getIsBlindAppend() {
+  public Optional<Boolean> getIsBlindAppend() {
     return isBlindAppend;
   }
 
@@ -289,7 +289,7 @@ public class CommitInfo {
     commitInfo.put(COL_NAME_TO_ORDINAL.get("operation"), operation);
     commitInfo.put(
         COL_NAME_TO_ORDINAL.get("operationParameters"), stringStringMapValue(operationParameters));
-    commitInfo.put(COL_NAME_TO_ORDINAL.get("isBlindAppend"), isBlindAppend);
+    commitInfo.put(COL_NAME_TO_ORDINAL.get("isBlindAppend"), isBlindAppend.orElse(null));
     commitInfo.put(COL_NAME_TO_ORDINAL.get("txnId"), txnId);
     commitInfo.put(
         COL_NAME_TO_ORDINAL.get("operationMetrics"), stringStringMapValue(operationMetrics));
