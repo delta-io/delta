@@ -60,7 +60,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.STARTING_VERSION_OPTION(),
               DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
+              DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
@@ -71,7 +72,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),

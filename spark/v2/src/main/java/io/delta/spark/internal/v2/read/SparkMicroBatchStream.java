@@ -87,6 +87,7 @@ import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
+import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
 public class SparkMicroBatchStream
@@ -105,6 +106,7 @@ public class SparkMicroBatchStream
   private final String tableId;
   private final StructType readSchemaAtSourceInit;
   private final boolean shouldValidateOffsets;
+  private final Optional<Regex> excludeRegex;
   private final SparkSession spark;
   private final String tablePath;
   private final StructType readDataSchema;
@@ -210,6 +212,7 @@ public class SparkMicroBatchStream
             (Boolean)
                 spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
             "shouldValidateOffsets is null");
+    this.excludeRegex = ScalaUtils.toJavaOptional(options.excludeRegex());
     this.maxInitialSnapshotFiles =
         (Integer)
             spark
@@ -427,6 +430,10 @@ public class SparkMicroBatchStream
           continue;
         }
         AddFile addFile = indexedFile.getAddFile();
+        if (excludeRegex.isPresent()
+            && !excludeRegex.get().findFirstIn(addFile.getPath()).isEmpty()) {
+          continue;
+        }
         PartitionedFile partitionedFile =
             PartitionUtils.buildPartitionedFile(
                 addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
