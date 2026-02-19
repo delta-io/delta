@@ -31,6 +31,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.checkpoints.CheckpointMetaData;
 import io.delta.kernel.internal.util.Utils;
@@ -130,14 +131,44 @@ class CheckpointWriterTest extends TestHelper {
         .getPostCommitSnapshot();
   }
 
+  private Optional<Snapshot> writeDomainMetadata(
+      Engine engine, String tablePath, String domain, String conf) {
+
+    // Prepare some dummy AddFile
+    DomainMetadata dm = new DomainMetadata(domain, conf, false);
+
+    var txn =
+        TableManager.loadSnapshot(tablePath)
+            .build(engine)
+            .buildUpdateTableTransaction("dummy", Operation.WRITE)
+            .build(engine);
+
+    return txn.commit(
+            engine,
+            CloseableIterable.inMemoryIterable(
+                Utils.singletonCloseableIterator(
+                    SingleAction.createDomainMetadataSingleAction(dm.toRow()))))
+        .getPostCommitSnapshot();
+  }
+
   private void assertSnapshotRead(
       Engine engine, String tablePath, long version, int numSidecars, int numActions) {
     SnapshotImpl latest = (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
-    assertSnapshotRead(engine, latest, version, numSidecars, numActions);
+    assertSnapshotRead(engine, latest, version, numSidecars, numActions, Map.of());
   }
 
   private void assertSnapshotRead(
       Engine engine, SnapshotImpl snapshot, long version, int numSidecars, int numActions) {
+    assertSnapshotRead(engine, snapshot, version, numSidecars, numActions, Map.of());
+  }
+
+  private void assertSnapshotRead(
+      Engine engine,
+      SnapshotImpl snapshot,
+      long version,
+      int numSidecars,
+      int numActions,
+      Map<String, String> dms) {
     if (version >= 0) {
       assertEquals(version, snapshot.getSnapshotReport().getCheckpointVersion().orElse(-1L));
     }
@@ -160,6 +191,11 @@ class CheckpointWriterTest extends TestHelper {
               .collect(Collectors.toList());
 
       assertEquals(numActions, actions.size());
+    }
+
+    for (Map.Entry<String, String> e : dms.entrySet()) {
+      assertTrue(snapshot.getDomainMetadata(e.getKey()).isPresent());
+      assertEquals(e.getValue(), snapshot.getDomainMetadata(e.getKey()).get());
     }
   }
 
@@ -381,22 +417,30 @@ class CheckpointWriterTest extends TestHelper {
   }
 
   @Test
-  public void testBlockTableWithDomainMetadata() {
+  public void testMergeDomainMetadata() {
     withTempDir(
         dir -> {
           String tablePath = dir.getAbsolutePath();
           Engine engine = DefaultEngine.create(new Configuration());
           StructType schema = new StructType().add("id", IntegerType.INTEGER);
-          Map<String, String> properties = Map.of("delta.feature.domainMetadata", "supported");
+          Map<String, String> properties =
+              Map.of(
+                  "delta.feature.v2Checkpoint", "supported",
+                  "delta.feature.domainMetadata", "supported");
           Optional<Snapshot> snapshot =
               createNonEmptyTable(engine, tablePath, schema, List.of(), properties);
 
-          try {
-            new CheckpointWriter(engine, snapshot.get()).write();
-            fail();
-          } catch (IllegalArgumentException ignore) {
+          writeDomainMetadata(engine, tablePath, "domain1", "conf1");
+          writeDomainMetadata(engine, tablePath, "domain2", "conf2");
+          snapshot = writeDomainMetadata(engine, tablePath, "domain1", "conf2");
 
-          }
+          new CheckpointWriter(engine, snapshot.get()).write();
+          // Write a new commit then read the table
+          writeTable(engine, tablePath, schema).get();
+          SnapshotImpl snapshotAfter =
+              (SnapshotImpl) TableManager.loadSnapshot(tablePath).build(engine);
+          assertSnapshotRead(
+              engine, snapshotAfter, 3, 1, 2, Map.of("domain1", "conf2", "domain2", "conf2"));
         });
   }
 }

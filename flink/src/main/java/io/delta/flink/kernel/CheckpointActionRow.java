@@ -36,15 +36,18 @@ public class CheckpointActionRow implements Row {
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("txn", SetTransaction.FULL_SCHEMA)
-          .add("sidecar", SidecarFile.READ_SCHEMA);
+          .add("sidecar", SidecarFile.READ_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA)
+          .add("add", AddFile.FULL_SCHEMA);
 
   static final List<Function<Object, Row>> ROW_MAPPERS =
       List.of(
-          (obj) -> ((CheckpointMetadataAction) obj).toRow(),
-          (obj) -> ((Metadata) obj).toRow(),
-          (obj) -> ((Protocol) obj).toRow(),
-          (obj) -> ((SetTransaction) obj).toRow(),
-          (obj) -> ((SidecarFile) obj).toRow());
+          obj -> ((CheckpointMetadataAction) obj).toRow(),
+          obj -> ((Metadata) obj).toRow(),
+          obj -> ((Protocol) obj).toRow(),
+          obj -> ((SetTransaction) obj).toRow(),
+          obj -> ((SidecarFile) obj).toRow(),
+          obj -> ((DomainMetadata) obj).toRow());
 
   private final Object action;
 
@@ -59,6 +62,9 @@ public class CheckpointActionRow implements Row {
 
   @Override
   public boolean isNullAt(int ordinal) {
+    if (ordinal >= ROW_MAPPERS.size()) {
+      return true;
+    }
     try {
       ROW_MAPPERS.get(ordinal).apply(action);
       return false;

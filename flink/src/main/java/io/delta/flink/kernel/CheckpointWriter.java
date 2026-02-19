@@ -36,6 +36,7 @@ import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DomainMetadata;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.checkpoints.CheckpointMetaData;
 import io.delta.kernel.internal.checkpoints.CheckpointMetadataAction;
@@ -130,6 +131,8 @@ public class CheckpointWriter {
   /** Max transaction version per appId observed while scanning commits. */
   private final Map<String, Long> transactionIds = new HashMap<>();
 
+  private final Map<String, String> domainMetadatas = new HashMap<>();
+
   /**
    * Creates a checkpoint writer bound to a snapshot.
    *
@@ -143,8 +146,6 @@ public class CheckpointWriter {
 
     Preconditions.checkArgument(
         this.snapshot.getProtocol().supportsFeature(TableFeatures.CHECKPOINT_V2_RW_FEATURE));
-    Preconditions.checkArgument(
-        !this.snapshot.getProtocol().supportsFeature(TableFeatures.DOMAIN_METADATA_W_FEATURE));
     if (this.snapshot.getProtocol().supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE)) {
       // Make sure we are creating checkpoint for a published version
       Preconditions.checkArgument(
@@ -246,7 +247,11 @@ public class CheckpointWriter {
                 engine,
                 snapshot.getPath(),
                 deltaFiles,
-                Set.of(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.TXN))
+                Set.of(
+                    DeltaAction.ADD,
+                    DeltaAction.REMOVE,
+                    DeltaAction.TXN,
+                    DeltaAction.DOMAINMETADATA))
             .flatMap(CommitActions::getActions)
             .map(filterActions(Map.of("add", addFileCounter, "remove", removeFileCounter)))) {
       newSidecar = sidecarFromAddFiles(actions);
@@ -270,6 +275,7 @@ public class CheckpointWriter {
     // - metadata
     // - checkpointMetadata
     // - txn
+    // - domainMetadata
     // - existing sidecars
     // - new sidecar.
     CheckpointMetadataAction checkpointMetadata = new CheckpointMetadataAction(version, Map.of());
@@ -279,7 +285,8 @@ public class CheckpointWriter {
                 Stream.of(
                     snapshot.getProtocol(), snapshot.getMetadata(), checkpointMetadata, newSidecar))
             .combine(existingSidecars)
-            .combine(rowsToBatch(getTransactions()))) {
+            .combine(rowsToBatch(getTransactions()))
+            .combine(rowsToBatch(getDomainMetadatas()))) {
       engine
           .getParquetHandler()
           .writeParquetFileAtomically(String.valueOf(newCheckpointPath), merged);
@@ -394,6 +401,7 @@ public class CheckpointWriter {
       Map<String, AtomicInteger> nameToCounters) {
     return (columnarBatch) -> {
       int txnOrdinal = columnarBatch.getSchema().indexOf("txn");
+      int dmOrdinal = columnarBatch.getSchema().indexOf("domainMetadata");
 
       var entries = new ArrayList<>(nameToCounters.entrySet());
       Integer[] ordinals = new Integer[nameToCounters.size()];
@@ -413,6 +421,17 @@ public class CheckpointWriter {
                   String appId = txnVector.getChild(0).getString(rowId);
                   long txnVersion = txnVector.getChild(1).getLong(rowId);
                   transactionIds.merge(appId, txnVersion, Math::max);
+                }
+                ColumnVector dmVector = columnarBatch.getColumnVector(dmOrdinal);
+                if (!dmVector.isNullAt(rowId)) {
+                  String domain = dmVector.getChild(0).getString(rowId);
+                  String configuration = dmVector.getChild(1).getString(rowId);
+                  boolean removed = dmVector.getChild(2).getBoolean(rowId);
+                  if (removed) {
+                    domainMetadatas.remove(domain);
+                  } else {
+                    domainMetadatas.put(domain, configuration);
+                  }
                 }
                 for (int i = 0; i < ordinals.length; i++) {
                   if (!columnarBatch.getColumnVector(ordinals[i]).isNullAt(rowId)) {
@@ -484,5 +503,10 @@ public class CheckpointWriter {
   private Stream<Object> getTransactions() {
     return transactionIds.entrySet().stream()
         .map(e -> new SetTransaction(e.getKey(), e.getValue(), Optional.empty()));
+  }
+
+  private Stream<Object> getDomainMetadatas() {
+    return domainMetadatas.entrySet().stream()
+        .map(e -> new DomainMetadata(e.getKey(), e.getValue(), false));
   }
 }
