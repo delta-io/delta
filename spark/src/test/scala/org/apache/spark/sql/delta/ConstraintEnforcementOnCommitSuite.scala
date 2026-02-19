@@ -71,6 +71,32 @@ class ConstraintEnforcementOnCommitSuite extends QueryTest
   }
 
   BOOLEAN_DOMAIN.foreach { isCommitLarge =>
+    test(s"detect null partition value for NOT NULL column with column mapping " +
+        s"[isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        sql(s"CREATE TABLE delta.`${tempDir.getCanonicalPath()}` " +
+          s"(part String NOT NULL, value Int) USING delta PARTITIONED BY (part) " +
+          s"TBLPROPERTIES('delta.columnMapping.mode'='name')")
+        val deltaLog = DeltaLog.forTable(spark, tempDir.getCanonicalPath())
+        val physicalPartCol = deltaLog.snapshot.metadata.physicalPartitionColumns.head
+
+        val addFile = AddFile(
+          path = s"$physicalPartCol=__HIVE_DEFAULT_PARTITION__/file.parquet",
+          partitionValues = Map(physicalPartCol -> null),
+          size = 100,
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true,
+          stats = """{"numRecords": 1}"""
+        )
+
+        val e = intercept[IllegalStateException] {
+          commit(deltaLog, addFile, isCommitLarge)
+        }
+        assert(e.getMessage.contains("null partition value"))
+        assert(e.getMessage.contains(s"NOT NULL column '$physicalPartCol'"))
+      }
+    }
+
     test(s"detect null partition value for NOT NULL column [isCommitLarge: $isCommitLarge]") {
       withTempDir { tempDir =>
         val deltaLog = createPartitionedTableWithNotNullColumn(tempDir)
