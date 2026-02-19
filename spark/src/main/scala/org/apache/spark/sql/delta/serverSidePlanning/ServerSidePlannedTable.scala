@@ -480,7 +480,7 @@ object ServerSidePlannedFilePartitionReaderFactory {
         conf.set("fs.gs.impl.disable.cache", "true")
         conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
         conf.set("fs.gs.auth.access.token.provider.impl",
-          "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider")
+          classOf[FixedGcsAccessTokenProvider].getName)
         // Set token for provider to read from config
         conf.set("fs.gs.auth.access.token", oauth2Token)
         // Set expiration if present

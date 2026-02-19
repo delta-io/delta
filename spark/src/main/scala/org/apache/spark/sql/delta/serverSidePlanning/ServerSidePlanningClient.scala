@@ -182,7 +182,6 @@ object ScanPlanStorageCredentials {
 
   /** IRC config key mappings for each credential type. */
   private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
-  private val AZURE_SAS_TOKEN_PREFIX = "adls.sas-token"
   // Trailing dot distinguishes token keys (adls.sas-token.<account>) from
   // expiration keys (adls.sas-token-expires-at-ms.<account>).
   private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
@@ -191,10 +190,11 @@ object ScanPlanStorageCredentials {
 
   /**
    * Check if config contains Azure credentials.
-   * Looks for keys starting with "adls.sas-token".
+   * Requires the actual token key (adls.sas-token.<account>) to be present;
+   * an expiration-only entry is not sufficient to construct valid credentials.
    */
   private def hasAzureKeys(config: Map[String, String]): Boolean = {
-    config.keys.exists(_.startsWith(AZURE_SAS_TOKEN_PREFIX))
+    config.keys.exists(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
   }
 
   /**

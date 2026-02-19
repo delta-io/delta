@@ -23,7 +23,6 @@ import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
-import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 
 /**
  * Test suite for server-side planning credential handling.
@@ -167,9 +166,13 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
             "s3.secret-access-key"),
           ("GCS incomplete: only expiration",
             Map("gcs.oauth2.token-expires-at" -> "1771456336352"),
-            "gcs.oauth2.token")
-          // Note: Azure with Unity Catalog format doesn't have the same notion of "incomplete"
-          // credentials as S3/GCS. Either we have the full adls.sas-token.* key or we don't.
+            "gcs.oauth2.token"),
+          // Expiration-only Azure entry is unrecognized: without the token key
+          // (adls.sas-token.<account>), hasAzureKeys() returns false and we can't
+          // construct valid credentials.
+          ("Azure incomplete: expiration key only, no token key",
+            Map("adls.sas-token-expires-at-ms.myaccount.dfs.core.windows.net" -> "1771456336352"),
+            "Unrecognized credential keys")
         )
 
         errorTestCases.foreach { case (description, incompleteConfig, expectedMessageFragment) =>
