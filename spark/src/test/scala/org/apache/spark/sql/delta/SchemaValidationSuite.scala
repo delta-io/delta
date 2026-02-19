@@ -222,7 +222,7 @@ class SchemaValidationSuite
           .save(tblPath)
       }
       assert(e.getMessage.contains(
-        "A schema mismatch detected when writing to the Delta table"))
+        "A schema mismatch was detected when writing to the Delta table"))
     },
     concurrentChange = dropColFromSampleTable("col2")
   )
