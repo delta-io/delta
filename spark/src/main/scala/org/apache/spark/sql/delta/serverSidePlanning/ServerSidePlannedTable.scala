@@ -419,9 +419,7 @@ class ServerSidePlannedFilePartitionReaderFactory(
         case AzureCredentials(accountName, credentialEntries) =>
           val accountSuffix = s"$accountName.dfs.core.windows.net"
 
-          // Find the SAS token key (not the expiration key)
-          // Token key format: adls.sas-token.<account>.dfs.core.windows.net
-          // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
+          // Find the SAS token key.
           val sasTokenKey = credentialEntries.keys
             .find(key => key.startsWith("adls.sas-token") && !key.contains("expires-at-ms"))
             .getOrElse(throw new RuntimeException(

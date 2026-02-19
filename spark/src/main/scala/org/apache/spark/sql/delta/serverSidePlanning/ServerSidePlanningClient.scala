@@ -206,7 +206,7 @@ object ScanPlanStorageCredentials {
         s"Missing Azure SAS token keys starting with: $AZURE_SAS_TOKEN_PREFIX")
     }
 
-    // Extract account name from SAS token key (not the expiration key)
+    // Extract account name from SAS token key.
     // Token key format: adls.sas-token.<account>.dfs.core.windows.net
     // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
     val sasTokenKey = credentialEntries.keys
@@ -266,7 +266,6 @@ case class S3Credentials(
 
 /**
  * Azure ADLS Gen2 credentials with SAS token.
- * Uses Unity Catalog format with credential entries map for flexible storage.
  */
 case class AzureCredentials(
     accountName: String,
