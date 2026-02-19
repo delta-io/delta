@@ -164,7 +164,8 @@ class IcebergRESTCatalogPlanningClient(
       GcsCredentials(token, expirationEpochMs)
     } else {
       throw new IllegalStateException(
-        "Unrecognized credential keys. Expected S3 (s3.*), Azure (adls.*), or GCS (gcs.*) properties.")
+        "Unrecognized credential keys. " +
+          "Expected S3 (s3.*), Azure (adls.*), or GCS (gcs.*) properties.")
     }
   }
 
