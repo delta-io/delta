@@ -385,8 +385,7 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with catalogManaged",
-    new Protocol(3, 7)
-      .withFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE),
+    new Protocol(3, 7, singleton("catalogManaged"), singleton("catalogManaged")),
     testMetadata())
 
   checkWriteUnsupported(
