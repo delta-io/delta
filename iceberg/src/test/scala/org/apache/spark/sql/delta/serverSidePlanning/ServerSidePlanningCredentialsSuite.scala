@@ -73,7 +73,6 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
-        // Test cases with explicit input → expected credentials → expected config
         // Covers the successful credential extraction and Hadoop configuration injection cases.
         val testCases: Seq[CredentialTestCase] = Seq(
           // S3

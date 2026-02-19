@@ -81,8 +81,6 @@ class IcebergRESTCatalogPlanningClient(
 
   // IRC config key mappings for each credential type
   private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
-  // Trailing dot distinguishes token keys (adls.sas-token.<account>) from
-  // expiration keys (adls.sas-token-expires-at-ms.<account>).
   private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
   private val AZURE_SAS_TOKEN_EXPIRY_PREFIX = "adls.sas-token-expires-at-ms."
   private val GCS_KEYS = Seq("gcs.oauth2.token")
