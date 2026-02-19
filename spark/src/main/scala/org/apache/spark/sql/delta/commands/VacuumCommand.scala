@@ -41,6 +41,7 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.internal.MDC
 import org.apache.spark.paths.SparkPath
 import org.apache.spark.sql.{Column, DataFrame, Dataset, Encoder, SparkSession}
+import org.apache.spark.sql.catalyst.catalog.CatalogTableType
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
@@ -167,6 +168,13 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       deltaLog.protocolWrite(snapshot.protocol)
 
       if (snapshot.isCatalogOwned) {
+        table.catalogTable.foreach { catalogTable =>
+          assert(
+            catalogTable.tableType == CatalogTableType.MANAGED,
+            s"All Catalog Owned tables should be MANAGED tables, " +
+              s"but found ${catalogTable.tableType} for table ${catalogTable.identifier}."
+          )
+        }
         throw DeltaErrors.operationBlockedOnCatalogManagedTable("VACUUM")
       }
 

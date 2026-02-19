@@ -18,11 +18,12 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import io.delta.tables.DeltaTable;
 import java.util.ArrayList;
 import java.util.List;
-import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.TruncationGranularity;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 import scala.Option;
@@ -98,15 +99,12 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
               .hasMessageContaining("OPTIMIZE");
 
-          String location =
-              sql("DESCRIBE EXTENDED %s", tableName).stream()
-                  .filter(row -> row.size() >= 2 && "Location".equals(row.get(0)))
-                  .map(row -> row.get(1))
-                  .findFirst()
-                  .orElseThrow();
-          DeltaLog log = DeltaLog.forTable(spark(), new Path(location));
-          Snapshot snapshot = log.update();
-          assertThatThrownBy(() -> log.cleanUpExpiredLogs(snapshot, Option.empty()))
+          DeltaLog log = DeltaTable.forName(spark(), tableName).deltaLog();
+          Snapshot snapshot = log.snapshot();
+          assertThatThrownBy(
+                  () ->
+                      log.cleanUpExpiredLogs(
+                          snapshot, Option.empty(), Option.empty(), TruncationGranularity.DAY()))
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
               .hasMessageContaining("Metadata cleanup");
         });

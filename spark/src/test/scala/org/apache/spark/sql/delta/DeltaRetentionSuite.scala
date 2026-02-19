@@ -1106,10 +1106,8 @@ class DeltaRetentionSuite extends QueryTest
     withTable("t1") {
       spark.sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      val log = DeltaLog.forTable(spark, new org.apache.hadoop.fs.Path(
-        spark.sessionState.catalog.getTableMetadata(
-          org.apache.spark.sql.catalyst.TableIdentifier("t1")).location))
-      val snapshot = log.update()
+      val (log, snapshot) = getDeltaLogWithSnapshot(
+        org.apache.spark.sql.catalyst.TableIdentifier("t1"))
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           log.cleanUpExpiredLogs(snapshot)
