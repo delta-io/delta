@@ -436,12 +436,8 @@ class ServerSidePlannedFilePartitionReaderFactory(
           conf.set("fs.gs.impl.disable.cache", "true")
           conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
 
-          // Set provider class (both key variants for compatibility)
-          // TODO: Figure out which key to keep - .provider or .provider.impl or both
-          val gcsProviderClass =
-            "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider"
-          conf.set("fs.gs.auth.access.token.provider", gcsProviderClass)
-          conf.set("fs.gs.auth.access.token.provider.impl", gcsProviderClass)
+          conf.set("fs.gs.auth.access.token.provider.impl",
+            "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider")
 
           // Set token for provider to read from config
           conf.set("fs.gs.auth.access.token", oauth2Token)
