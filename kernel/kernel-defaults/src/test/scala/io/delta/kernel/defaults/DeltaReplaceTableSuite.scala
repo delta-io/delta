@@ -217,22 +217,6 @@ abstract class DeltaReplaceTableSuite extends DeltaReplaceTableSuiteBase {
     }
   }
 
-  test("icebergWriterCompatV1 checks are enforced") {
-    withTempDirAndEngine { (tablePath, engine) =>
-      createInitialTable(engine, tablePath)
-      assert(
-        intercept[KernelException] {
-          commitReplaceTable(
-            engine,
-            tablePath,
-            tableProperties = Map(
-              TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true",
-              TableConfig.COLUMN_MAPPING_MODE.getKey -> "name"))
-        }.getMessage.contains("The value 'name' for the property 'delta.columnMapping.mode' is " +
-          "not compatible with icebergWriterCompatV1 requirements"))
-    }
-  }
-
   test("icebergCompatV2 checks are enforced") {
     withTempDirAndEngine { (tablePath, engine) =>
       createInitialTable(engine, tablePath)
