@@ -337,8 +337,6 @@ lazy val sparkV1 = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
-      // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
-      "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop2-2.2.26" % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
@@ -1155,7 +1153,9 @@ lazy val iceberg = (project in file("iceberg"))
           "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
           "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
-          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided"
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+          // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
+          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop2-2.2.26" % "provided"
         )
       } else {
         Seq.empty
