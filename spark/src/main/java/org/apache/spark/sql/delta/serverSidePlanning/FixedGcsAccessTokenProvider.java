@@ -29,10 +29,10 @@ import com.google.auth.oauth2.AccessToken;
  * - fs.gs.auth.access.token: The OAuth2 access token
  * - fs.gs.auth.access.token.expiration.ms: Optional expiration timestamp in epoch milliseconds
  *
- * If no expiration is provided, defaults to 1 hour from current time. This default does not 
- * guarantee that the token will be valid for the entire duration of the query. If the actual token expires earlier, queries will fail. 
+ * If no expiration is provided, defaults to 1 hour from current time. This default does not
+ * guarantee that the token will be valid for the entire duration of the query. If the actual token expires earlier, queries will fail.
  */
-public class ConfBasedGcsAccessTokenProvider implements AccessTokenProvider {
+public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
 
   private static final String CONFIG_TOKEN = "fs.gs.auth.access.token";
   private static final String CONFIG_EXPIRATION_MS = "fs.gs.auth.access.token.expiration.ms";

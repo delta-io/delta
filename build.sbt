@@ -337,7 +337,7 @@ lazy val sparkV1 = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
-      // For ConfBasedGcsAccessTokenProvider (GCS server-side planning credentials)
+      // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
       "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop2-2.2.26" % "provided",
 
       // Test deps

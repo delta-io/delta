@@ -37,6 +37,7 @@ import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSession {
 
   import testImplicits._
+  import CredentialTestHelpers._
 
   private val defaultNamespace = Namespace.of("testDatabase")
   private val defaultSchema = TestSchemas.testSchema
@@ -71,9 +72,6 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
       super.afterAll()
     }
   }
-
-  // Import credential test helpers
-  import CredentialTestHelpers._
 
   test("ScanPlan with cloud provider credentials") {
     withTempTable("credentialsTest") { table =>
@@ -122,7 +120,8 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
             credentialConfig = Map(
               "gcs.oauth2.token" -> "ya29.c.c0AY_VpZg_test_token"),
             expectedToken = "ya29.c.c0AY_VpZg_test_token",
-            expectedExpiration = None),
+            expectedExpiration = None), // The server didn't provide an expiration, so this is None. The 1-hour default happens later when the
+                                        // token provider is instantiated and asked for a token, not during credential parsing.
 
           // GCS WITH expiration
           GcsCredentialTestCase(
@@ -173,7 +172,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
                 testConf.set("fs.gs.impl.disable.cache", "true")
                 testConf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
                 val gcsProviderClass =
-                  "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider"
+                  "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider"
                 testConf.set("fs.gs.auth.access.token.provider", gcsProviderClass)
                 testConf.set("fs.gs.auth.access.token", oauth2Token)
                 expirationEpochMs.foreach(ms =>
@@ -197,7 +196,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
-        // Don't configure any credentials (current default behavior)
+        // Don't configure any credentials
         val scanPlan = client.planScan(defaultNamespace.toString, "noCredentialsTest")
 
         // Verify credentials are absent
@@ -220,13 +219,12 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
           ("Incomplete S3 (missing secret and token)",
             Map("s3.access-key-id" -> "test-key"),
             "s3.secret-access-key"),
-          ("GCS incomplete: only expiration",
+          ("GCS incomplete: only expiration", 
             Map("gcs.oauth2.token-expires-at" -> "1771456336352"),
             "gcs.oauth2.token")
+          // Note: Azure with Unity Catalog format doesn't have the same notion of "incomplete"
+          // credentials as S3/GCS. Either we have the full adls.sas-token.* key or we don't.
         )
-
-        // Note: Azure with Unity Catalog format doesn't have the same notion of "incomplete"
-        // credentials as S3/GCS. Either you have the full adls.sas-token.* key or you don't.
 
         errorTestCases.foreach { case (description, incompleteConfig, expectedMessageFragment) =>
           // Configure server with incomplete credentials
@@ -462,7 +460,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         assert(conf.get("fs.gs.auth.type") == "ACCESS_TOKEN_PROVIDER",
           s"[$description] Expected ACCESS_TOKEN_PROVIDER auth type")
         val expectedProviderClass =
-          "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider"
+          "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider"
         assert(conf.get("fs.gs.auth.access.token.provider") == expectedProviderClass,
           s"[$description] Expected provider class=$expectedProviderClass")
         assert(conf.get("fs.gs.auth.access.token") == expectedToken,
