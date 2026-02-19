@@ -51,6 +51,7 @@ trait DeltaWriteOptions
   import DeltaOptions._
 
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
+  val validateWhere: Option[String] = options.get(VALIDATE_WHERE_OPTION)
   val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
 
   /**
@@ -252,6 +253,12 @@ object DeltaOptions extends DeltaLogging {
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
+  /**
+   * An option to validate that all rows being written match the given predicate, without changing
+   * the write mode semantics (e.g. append remains append). Intended to provide atomic "validate and
+   * commit" behavior for any write mode.
+   */
+  val VALIDATE_WHERE_OPTION = "validateWhere"
   /** An option to allow automatic schema merging during a write operation. */
   val MERGE_SCHEMA_OPTION = "mergeSchema"
   /** An option to allow overwriting schema and partitioning during an overwrite write operation. */
@@ -321,6 +328,7 @@ object DeltaOptions extends DeltaLogging {
   val validOptionKeys : Set[String] = Set(
     IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
     REPLACE_WHERE_OPTION,
+    VALIDATE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
