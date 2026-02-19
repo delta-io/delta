@@ -1328,13 +1328,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns all the partition columns that have NOT NULL constraints.
+   * Returns the physical names of partition columns that have NOT NULL constraints.
+   * Physical names are used because AddFile.partitionValues keys use physical column names
+   * when column mapping is enabled.
    */
   protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
     val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
       .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
       .toSet
-    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+    metadata.partitionSchema
+      .filter(f => notNullColumns.contains(f.name))
+      .map(DeltaColumnMapping.getPhysicalName)
+      .toSet
   }
 
   /**
