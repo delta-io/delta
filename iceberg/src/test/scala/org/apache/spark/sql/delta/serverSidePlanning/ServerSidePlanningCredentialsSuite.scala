@@ -73,113 +73,79 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     }
   }
 
-  test("ScanPlan with cloud provider credentials") {
+  test("Credentials: server response parsing and Hadoop configuration") {
     withTempTable("credentialsTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.credentialsTest")
 
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
-        // Test cases for all three cloud providers with and without expiration
+        // Test cases with explicit input → expected credentials → expected config
         val testCases: Seq[CredentialTestCase] = Seq(
-          // S3 test case
+          // S3
           S3CredentialTestCase(
             description = "S3 with session token",
-            credentialConfig = Map(
-              "s3.access-key-id" -> "test-access-key",
-              "s3.secret-access-key" -> "test-secret-key",
-              "s3.session-token" -> "test-session-token"),
-            expectedAccessKeyId = "test-access-key",
-            expectedSecretAccessKey = "test-secret-key",
-            expectedSessionToken = "test-session-token"),
+            accessKeyId = "test-access-key",
+            secretAccessKey = "test-secret-key",
+            sessionToken = "test-session-token"
+          ),
 
-          // Azure WITHOUT expiration
+          // Azure without expiration
           AzureCredentialTestCase(
             description = "Azure without expiration",
-            credentialConfig = Map(
-              "adls.sas-token.unitycatalogmetastore.dfs.core.windows.net" ->
-                "sv=2023-01-03&ss=b&srt=sco&sp=rwdlac&se=2025-12-31T23:59:59Z&sig=test"),
-            expectedAccountName = "unitycatalogmetastore",
-            expectedSasToken = "sv=2023-01-03&ss=b&srt=sco&sp=rwdlac&se=2025-12-31T23:59:59Z&sig=test",
-            hasExpiration = false),
+            accountName = "unitycatalogmetastore",
+            sasToken = "sv=2023-01-03&ss=b&srt=sco&sp=rwdlac&se=2025-12-31T23:59:59Z&sig=test",
+            expirationMs = None
+          ),
 
-          // Azure WITH expiration
+          // Azure with expiration
           AzureCredentialTestCase(
             description = "Azure with expiration",
-            credentialConfig = Map(
-              "adls.sas-token.unitycatalogmetastore.dfs.core.windows.net" ->
-                "sv=2023-01-03&ss=b&srt=sco&sp=rwdlac&se=2025-12-31T23:59:59Z&sig=test",
-              "adls.sas-token-expires-at-ms.unitycatalogmetastore.dfs.core.windows.net" ->
-                "1771456336352"),
-            expectedAccountName = "unitycatalogmetastore",
-            expectedSasToken = "sv=2023-01-03&ss=b&srt=sco&sp=rwdlac&se=2025-12-31T23:59:59Z&sig=test",
-            hasExpiration = true),
+            accountName = "unitycatalogmetastore",
+            sasToken = "sv=2023-01-03&ss=b&srt=sco&sp=rwdlac&se=2025-12-31T23:59:59Z&sig=test",
+            expirationMs = Some(1771456336352L)
+          ),
 
-          // GCS WITHOUT expiration
+          // GCS without expiration
           GcsCredentialTestCase(
             description = "GCS without expiration",
-            credentialConfig = Map(
-              "gcs.oauth2.token" -> "ya29.c.c0AY_VpZg_test_token"),
-            expectedToken = "ya29.c.c0AY_VpZg_test_token",
-            expectedExpiration = None), // The server didn't provide an expiration, so this is None. The 1-hour default happens later when the
-                                        // token provider is instantiated and asked for a token, not during credential parsing.
+            token = "ya29.c.c0AY_VpZg_test_token",
+            expirationMs = None
+          ),
 
-          // GCS WITH expiration
+          // GCS with expiration
           GcsCredentialTestCase(
             description = "GCS with expiration",
-            credentialConfig = Map(
-              "gcs.oauth2.token" -> "ya29.c.c0AY_VpZg_test_token",
-              "gcs.oauth2.token-expires-at" -> "1771456336352"),
-            expectedToken = "ya29.c.c0AY_VpZg_test_token",
-            expectedExpiration = Some(1771456336352L))
+            token = "ya29.c.c0AY_VpZg_test_token",
+            expirationMs = Some(1771456336352L)
+          )
         )
 
         testCases.foreach { testCase =>
-          // Configure server to return test credentials
-          server.setTestCredentials(testCase.credentialConfig.asJava)
+          server.setTestCredentials(testCase.serverInput.asJava)
 
-          // Call planScan
           val scanPlan = client.planScan(defaultNamespace.toString, "credentialsTest")
 
-          // Validate credential parsing
           assert(scanPlan.credentials.isDefined,
             s"[${testCase.description}] Credentials should be present in ScanPlan")
-          testCase.validateCredentials(scanPlan.credentials.get)
 
-          // Validate Hadoop config injection by simulating what the factory does
+          assert(scanPlan.credentials.get == testCase.expectedCredentials,
+            s"[${testCase.description}] Parsed credentials don't match expected.\n" +
+            s"Expected: ${testCase.expectedCredentials}\n" +
+            s"Got: ${scanPlan.credentials.get}")
+
           val testConf = new Configuration()
           scanPlan.credentials.foreach { creds =>
-            creds match {
-              case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
-                testConf.set("fs.s3a.path.style.access", "true")
-                testConf.set("fs.s3.impl.disable.cache", "true")
-                testConf.set("fs.s3a.impl.disable.cache", "true")
-                testConf.set("fs.s3a.access.key", accessKeyId)
-                testConf.set("fs.s3a.secret.key", secretAccessKey)
-                testConf.set("fs.s3a.session.token", sessionToken)
-
-              case AzureCredentials(accountName, credentialEntries) =>
-                val accountSuffix = s"$accountName.dfs.core.windows.net"
-                val sasTokenKey = credentialEntries.keys
-                  .find(key => key.startsWith("adls.sas-token") && !key.contains("expires-at-ms"))
-                  .get
-                val sasTokenValue = credentialEntries(sasTokenKey)
-                testConf.set("fs.abfs.impl.disable.cache", "true")
-                testConf.set("fs.abfss.impl.disable.cache", "true")
-                testConf.set(s"fs.azure.account.auth.type.$accountSuffix", "SAS")
-                testConf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasTokenValue)
-
-              case GcsCredentials(oauth2Token, expirationEpochMs) =>
-                testConf.set("fs.gs.impl.disable.cache", "true")
-                testConf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
-                val gcsProviderClass =
-                  "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider"
-                testConf.set("fs.gs.auth.access.token.provider", gcsProviderClass)
-                testConf.set("fs.gs.auth.access.token", oauth2Token)
-                expirationEpochMs.foreach(ms =>
-                  testConf.set("fs.gs.auth.access.token.expiration.ms", ms.toString))
-            }
+            ServerSidePlannedFilePartitionReaderFactory.configureCredentials(testConf, creds)
           }
-          testCase.validateHadoopConfig(testConf)
+
+          // Validate Hadoop config matches expected
+          testCase.expectedHadoopConfig.foreach { case (key, expectedValue) =>
+            val actualValue = testConf.get(key)
+            assert(actualValue == expectedValue,
+              s"[${testCase.description}] Hadoop config mismatch for key '$key'.\n" +
+              s"Expected: $expectedValue\n" +
+              s"Got: $actualValue")
+          }
 
           // Clear for next test case
           server.clearCaptured()
@@ -219,7 +185,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
           ("Incomplete S3 (missing secret and token)",
             Map("s3.access-key-id" -> "test-key"),
             "s3.secret-access-key"),
-          ("GCS incomplete: only expiration", 
+          ("GCS incomplete: only expiration",
             Map("gcs.oauth2.token-expires-at" -> "1771456336352"),
             "gcs.oauth2.token")
           // Note: Azure with Unity Catalog format doesn't have the same notion of "incomplete"
@@ -236,9 +202,11 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
           }
 
           // Verify error message contains relevant fragment
+          // scalastyle:off caselocale
           assert(exception.getMessage.toLowerCase.contains(expectedMessageFragment.toLowerCase),
             s"[$description] Error message should contain '$expectedMessageFragment'. " +
             s"Got: ${exception.getMessage}")
+          // scalastyle:on caselocale
 
           // Clear for next test case
           server.clearCaptured()
@@ -336,17 +304,26 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
   private object CredentialTestHelpers {
 
     /**
-     * Base trait for credential test cases.
-     * Implementations validate both:
-     * 1. Credential parsing from IRC server response
-     * 2. Hadoop configuration injection for file system access
+     * Test case for end-to-end credential validation.
+     *
+     * Flow: serverInput → (client parses) → expectedCredentials →
+     *       (factory configures) → expectedHadoopConfig
      */
     sealed trait CredentialTestCase {
+      /** Test case name */
       def description: String
+
+      /** Cloud provider type (S3, Azure, GCS) */
       def cloudProvider: String
-      def credentialConfig: Map[String, String]
-      def validateCredentials(credentials: ScanPlanStorageCredentials): Unit
-      def validateHadoopConfig(conf: Configuration): Unit
+
+      /** INPUT: Credential config map that server returns */
+      def serverInput: Map[String, String]
+
+      /** EXPECTED OUTPUT 1: Parsed credentials from server response */
+      def expectedCredentials: ScanPlanStorageCredentials
+
+      /** EXPECTED OUTPUT 2: Hadoop configuration keys and values */
+      def expectedHadoopConfig: Map[String, String]
     }
 
     /**
@@ -354,39 +331,29 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
      */
     case class S3CredentialTestCase(
         description: String,
-        credentialConfig: Map[String, String],
-        expectedAccessKeyId: String,
-        expectedSecretAccessKey: String,
-        expectedSessionToken: String
+        accessKeyId: String,
+        secretAccessKey: String,
+        sessionToken: String
     ) extends CredentialTestCase {
       override def cloudProvider: String = "S3"
 
-      override def validateCredentials(credentials: ScanPlanStorageCredentials): Unit = {
-        assert(credentials.isInstanceOf[S3Credentials],
-          s"[$description] Expected S3Credentials but got ${credentials.getClass.getSimpleName}")
-        val s3Creds = credentials.asInstanceOf[S3Credentials]
-        assert(s3Creds.accessKeyId == expectedAccessKeyId,
-          s"[$description] Expected accessKeyId=$expectedAccessKeyId but got ${s3Creds.accessKeyId}")
-        assert(s3Creds.secretAccessKey == expectedSecretAccessKey,
-          s"[$description] Expected secretAccessKey=$expectedSecretAccessKey but got ${s3Creds.secretAccessKey}")
-        assert(s3Creds.sessionToken == expectedSessionToken,
-          s"[$description] Expected sessionToken=$expectedSessionToken but got ${s3Creds.sessionToken}")
-      }
+      override def serverInput: Map[String, String] = Map(
+        "s3.access-key-id" -> accessKeyId,
+        "s3.secret-access-key" -> secretAccessKey,
+        "s3.session-token" -> sessionToken
+      )
 
-      override def validateHadoopConfig(conf: Configuration): Unit = {
-        assert(conf.get("fs.s3a.access.key") == expectedAccessKeyId,
-          s"[$description] S3 access key not configured correctly")
-        assert(conf.get("fs.s3a.secret.key") == expectedSecretAccessKey,
-          s"[$description] S3 secret key not configured correctly")
-        assert(conf.get("fs.s3a.session.token") == expectedSessionToken,
-          s"[$description] S3 session token not configured correctly")
-        assert(conf.get("fs.s3a.path.style.access") == "true",
-          s"[$description] S3 path style access not enabled")
-        assert(conf.get("fs.s3.impl.disable.cache") == "true",
-          s"[$description] S3 FileSystem cache not disabled")
-        assert(conf.get("fs.s3a.impl.disable.cache") == "true",
-          s"[$description] S3A FileSystem cache not disabled")
-      }
+      override def expectedCredentials: ScanPlanStorageCredentials =
+        S3Credentials(accessKeyId, secretAccessKey, sessionToken)
+
+      override def expectedHadoopConfig: Map[String, String] = Map(
+        "fs.s3a.path.style.access" -> "true",
+        "fs.s3.impl.disable.cache" -> "true",
+        "fs.s3a.impl.disable.cache" -> "true",
+        "fs.s3a.access.key" -> accessKeyId,
+        "fs.s3a.secret.key" -> secretAccessKey,
+        "fs.s3a.session.token" -> sessionToken
+      )
     }
 
     /**
@@ -394,44 +361,37 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
      */
     case class AzureCredentialTestCase(
         description: String,
-        credentialConfig: Map[String, String],
-        expectedAccountName: String,
-        expectedSasToken: String,
-        hasExpiration: Boolean = false
+        accountName: String,
+        sasToken: String,
+        expirationMs: Option[Long] = None
     ) extends CredentialTestCase {
       override def cloudProvider: String = "Azure"
 
-      override def validateCredentials(credentials: ScanPlanStorageCredentials): Unit = {
-        assert(credentials.isInstanceOf[AzureCredentials],
-          s"[$description] Expected AzureCredentials but got ${credentials.getClass.getSimpleName}")
-        val azureCreds = credentials.asInstanceOf[AzureCredentials]
-        assert(azureCreds.accountName == expectedAccountName,
-          s"[$description] Expected accountName=$expectedAccountName but got ${azureCreds.accountName}")
-
-        // Validate credential entries contain expected keys
-        val tokenKey = s"adls.sas-token.$expectedAccountName.dfs.core.windows.net"
-        assert(azureCreds.credentialEntries.contains(tokenKey),
-          s"[$description] Credential entries should contain key: $tokenKey")
-        assert(azureCreds.credentialEntries(tokenKey) == expectedSasToken,
-          s"[$description] Expected SAS token=$expectedSasToken but got ${azureCreds.credentialEntries(tokenKey)}")
-
-        if (hasExpiration) {
-          val expiryKey = s"adls.sas-token-expires-at-ms.$expectedAccountName.dfs.core.windows.net"
-          assert(azureCreds.credentialEntries.contains(expiryKey),
-            s"[$description] Credential entries should contain expiry key: $expiryKey")
+      override def serverInput: Map[String, String] = {
+        val base = Map(
+          s"adls.sas-token.$accountName.dfs.core.windows.net" -> sasToken
+        )
+        expirationMs match {
+          case Some(ms) =>
+            val expiryKey = s"adls.sas-token-expires-at-ms.$accountName.dfs.core.windows.net"
+            base + (expiryKey -> ms.toString)
+          case None => base
         }
       }
 
-      override def validateHadoopConfig(conf: Configuration): Unit = {
-        val accountSuffix = s"$expectedAccountName.dfs.core.windows.net"
-        assert(conf.get(s"fs.azure.account.auth.type.$accountSuffix") == "SAS",
-          s"[$description] Expected SAS auth type for $accountSuffix")
-        assert(conf.get(s"fs.azure.sas.fixed.token.$accountSuffix") == expectedSasToken,
-          s"[$description] Expected SAS token=$expectedSasToken for $accountSuffix")
-        assert(conf.get("fs.abfs.impl.disable.cache") == "true",
-          s"[$description] ABFS FileSystem cache not disabled")
-        assert(conf.get("fs.abfss.impl.disable.cache") == "true",
-          s"[$description] ABFSS FileSystem cache not disabled")
+      override def expectedCredentials: ScanPlanStorageCredentials = {
+        val entries = serverInput
+        AzureCredentials(accountName, entries)
+      }
+
+      override def expectedHadoopConfig: Map[String, String] = {
+        val accountSuffix = s"$accountName.dfs.core.windows.net"
+        Map(
+          "fs.abfs.impl.disable.cache" -> "true",
+          "fs.abfss.impl.disable.cache" -> "true",
+          s"fs.azure.account.auth.type.$accountSuffix" -> "SAS",
+          s"fs.azure.sas.fixed.token.$accountSuffix" -> sasToken
+        )
       }
     }
 
@@ -440,41 +400,33 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
      */
     case class GcsCredentialTestCase(
         description: String,
-        credentialConfig: Map[String, String],
-        expectedToken: String,
-        expectedExpiration: Option[Long] = None
+        token: String,
+        expirationMs: Option[Long] = None
     ) extends CredentialTestCase {
       override def cloudProvider: String = "GCS"
 
-      override def validateCredentials(credentials: ScanPlanStorageCredentials): Unit = {
-        assert(credentials.isInstanceOf[GcsCredentials],
-          s"[$description] Expected GcsCredentials but got ${credentials.getClass.getSimpleName}")
-        val gcsCreds = credentials.asInstanceOf[GcsCredentials]
-        assert(gcsCreds.oauth2Token == expectedToken,
-          s"[$description] Expected token=$expectedToken but got ${gcsCreds.oauth2Token}")
-        assert(gcsCreds.expirationEpochMs == expectedExpiration,
-          s"[$description] Expected expiration=$expectedExpiration but got ${gcsCreds.expirationEpochMs}")
+      override def serverInput: Map[String, String] = {
+        val base = Map("gcs.oauth2.token" -> token)
+        expirationMs match {
+          case Some(ms) => base + ("gcs.oauth2.token-expires-at" -> ms.toString)
+          case None => base
+        }
       }
 
-      override def validateHadoopConfig(conf: Configuration): Unit = {
-        assert(conf.get("fs.gs.auth.type") == "ACCESS_TOKEN_PROVIDER",
-          s"[$description] Expected ACCESS_TOKEN_PROVIDER auth type")
-        val expectedProviderClass =
-          "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider"
-        assert(conf.get("fs.gs.auth.access.token.provider") == expectedProviderClass,
-          s"[$description] Expected provider class=$expectedProviderClass")
-        assert(conf.get("fs.gs.auth.access.token") == expectedToken,
-          s"[$description] Expected token=$expectedToken")
-        assert(conf.get("fs.gs.impl.disable.cache") == "true",
-          s"[$description] GCS FileSystem cache not disabled")
+      override def expectedCredentials: ScanPlanStorageCredentials =
+        GcsCredentials(token, expirationMs)
 
-        expectedExpiration match {
-          case Some(expMs) =>
-            assert(conf.get("fs.gs.auth.access.token.expiration.ms") == expMs.toString,
-              s"[$description] Expected expiration=$expMs")
-          case None =>
-            assert(conf.get("fs.gs.auth.access.token.expiration.ms") == null,
-              s"[$description] Expected no expiration config")
+      override def expectedHadoopConfig: Map[String, String] = {
+        val base = Map(
+          "fs.gs.impl.disable.cache" -> "true",
+          "fs.gs.auth.type" -> "ACCESS_TOKEN_PROVIDER",
+          "fs.gs.auth.access.token.provider.impl" ->
+            "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider",
+          "fs.gs.auth.access.token" -> token
+        )
+        expirationMs match {
+          case Some(ms) => base + ("fs.gs.auth.access.token.expiration.ms" -> ms.toString)
+          case None => base
         }
       }
     }
