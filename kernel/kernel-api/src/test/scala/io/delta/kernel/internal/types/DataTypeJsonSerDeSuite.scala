@@ -450,6 +450,36 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
     testRoundTrip(deeplyNestedMapJson, deeplyNestedMapType)
   }
 
+  test("serialize/deserialize: geometry and geography as nested types") {
+    // Array of geometry
+    testRoundTrip(
+      arrayTypeJson("\"geometry(OGC:CRS84)\"", false),
+      new ArrayType(new GeometryType(), false))
+
+    // Array of geography with non-default SRID and algorithm
+    testRoundTrip(
+      arrayTypeJson("\"geography(EPSG:4326, planar)\"", true),
+      new ArrayType(new GeographyType("EPSG:4326", "planar"), true))
+
+    // Struct with geometry and geography fields
+    testRoundTrip(
+      structTypeJson(Seq(
+        structFieldJson("geom", "\"geometry(EPSG:4326)\"", false),
+        structFieldJson("geog", "\"geography(EPSG:3857, spherical)\"", true))),
+      new StructType()
+        .add("geom", new GeometryType("EPSG:4326"), false)
+        .add("geog", new GeographyType("EPSG:3857", "spherical"), true))
+
+    // Struct containing arrays of geometry and geography
+    testRoundTrip(
+      structTypeJson(Seq(
+        structFieldJson("geoms", arrayTypeJson("\"geometry(OGC:CRS84)\"", false), true),
+        structFieldJson("geogs", arrayTypeJson("\"geography(OGC:CRS84, planar)\"", true), false))),
+      new StructType()
+        .add("geoms", new ArrayType(new GeometryType(), false), true)
+        .add("geogs", new ArrayType(new GeographyType("OGC:CRS84", "planar"), true), false))
+  }
+
   test("serialize/deserialize: special characters for column name") {
     val json = structTypeJson(Seq(
       structFieldJson("@_! *c", "\"string\"", true)))

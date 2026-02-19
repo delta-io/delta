@@ -556,10 +556,10 @@ public class DataTypeJsonSerDe {
       gen.writeString(format("decimal(%d,%d)", decimalType.getPrecision(), decimalType.getScale()));
     } else if (dataType instanceof GeometryType) {
       GeometryType geometryType = (GeometryType) dataType;
-      gen.writeString(geometryType.toJson());
+      gen.writeString(geometryType.simpleString());
     } else if (dataType instanceof GeographyType) {
       GeographyType geographyType = (GeographyType) dataType;
-      gen.writeString(geographyType.toJson());
+      gen.writeString(geographyType.simpleString());
     } else {
       gen.writeString(dataType.toString());
     }

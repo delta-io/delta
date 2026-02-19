@@ -67,12 +67,11 @@ public final class GeometryType extends DataType {
   }
 
   /**
-   * Serialize this GeometryType to its string representation for JSON serialization. Format:
-   * "geometry(<srid>)"
+   * Serialize this GeometryType to its string representation with minimal info.
    *
    * @return the serialized string representation
    */
-  public String toJson() {
+  public String simpleString() {
     return String.format("geometry(%s)", srid);
   }
 

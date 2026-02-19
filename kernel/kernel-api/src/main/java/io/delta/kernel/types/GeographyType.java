@@ -93,12 +93,11 @@ public final class GeographyType extends DataType {
   }
 
   /**
-   * Serialize this GeographyType to its string representation for JSON serialization. Format:
-   * "geography(<srid>, <algorithm>)"
+   * Serialize this GeographyType to its string representation with minimal info.
    *
    * @return the serialized string representation
    */
-  public String toJson() {
+  public String simpleString() {
     return String.format("geography(%s, %s)", srid, algorithm);
   }
 
