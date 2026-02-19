@@ -119,6 +119,31 @@ public class DeltaV2Mode {
   }
 
   /**
+   * Determines if metadata-only CREATE TABLE should use the Kernel-based commit path.
+   *
+   * <p>Mode behavior:
+   *
+   * <ul>
+   *   <li>STRICT: enabled for all tables
+   *   <li>AUTO: enabled only for Unity Catalog managed tables
+   *   <li>NONE (default): disabled
+   * </ul>
+   *
+   * @param properties CREATE TABLE properties map
+   * @return true if metadata-only CREATE should use Kernel commit path
+   */
+  public boolean shouldUseKernelMetadataOnlyCreate(Map<String, String> properties) {
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        return CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+      default:
+        return false;
+    }
+  }
+
+  /**
    * Gets the current mode string (for logging/debugging).
    */
   public String getMode() {
