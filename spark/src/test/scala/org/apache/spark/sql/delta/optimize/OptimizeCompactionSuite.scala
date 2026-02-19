@@ -213,6 +213,21 @@ trait OptimizeCompactionSuiteBase extends QueryTest
 
         // Verify the final data after optimization hasn't changed.
         checkAnswer(spark.read.format("delta").load(path), data)
+
+        // Now delete enough records from a fourth file to make it eligible for compaction
+        // by itself
+        val file3 = filesV0(9)
+        deleteRows(deltaLog, file3, approxPhyRows = 1000, ratioOfRowsToDelete = 0.06d) // v6
+
+        withSQLConf(DeltaSQLConf.DELTA_OPTIMIZE_MIN_FILE_SIZE.key -> targetSmallSize.toString) {
+          executeOptimizePath(path) // v7
+        }
+
+        val changes2 = deltaLog.getChanges(startVersion = 7, catalogTableOpt = None).next()._2
+
+        // file3 should have been compacted now by itself
+        assert(removedFiles(changes2).map(_.path).toSet === Set(file3.path))
+        assert(addedFiles(changes2).size == 1) // Expect one new file added
       }
     }
   }
