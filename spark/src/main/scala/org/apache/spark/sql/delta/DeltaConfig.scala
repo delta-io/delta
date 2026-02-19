@@ -214,14 +214,35 @@ trait DeltaConfigsBase extends DeltaLogging {
               kv
             case None => throw DeltaErrors.unknownConfigurationKeyException(key)
           }
-        case _ =>
-          if (entries.containsKey(key)) {
-            logConsole(s"""
-              |You are trying to set a property the key of which is the same as Delta config: $key.
-              |If you are trying to set a Delta config, prefix it with "delta.", e.g. 'delta.$key'.
-            """.stripMargin)
+
+        case lKey =>
+          // Check if this key (without delta. prefix) matches a known Delta config
+          Option(entries.get(lKey)) match {
+            case Some(deltaConfig) =>
+              // Auto-normalize: user passed a Delta config key without "delta." prefix
+              logConsole(
+                s"Auto-normalizing table property '$key' to '${deltaConfig.key}'. " +
+                s"Consider using '${deltaConfig.key}' directly in the future.")
+              // Handle special validation for retention configs
+              val logRetentionKey =
+                DeltaConfigs.LOG_RETENTION.key.stripPrefix("delta.").toLowerCase(Locale.ROOT)
+              val tombstoneRetentionKey =
+                DeltaConfigs.TOMBSTONE_RETENTION.key.stripPrefix("delta.").toLowerCase(Locale.ROOT)
+              if (lKey == logRetentionKey || lKey == tombstoneRetentionKey) {
+                val ret = deltaConfig(value) // validate and return normalized key
+                // Normalize the configs map for compatibility validation
+                val normalizedConfigs = configurations.map { case (k, v) =>
+                  normalizeConfigKey(k) -> v
+                }
+                validateTombstoneAndLogRetentionDurationCompatibility(normalizedConfigs)
+                ret
+              } else {
+                deltaConfig(value) // validate and return with proper "delta." prefix
+              }
+            case None =>
+              // Non-delta prefixed keys that don't match any known Delta config are allowed as-is
+              kv
           }
-          kv
       }
     }
   }
@@ -325,6 +346,17 @@ trait DeltaConfigsBase extends DeltaLogging {
   def getMilliSeconds(i: CalendarInterval): Long = {
     getMicroSeconds(i) / 1000L
   }
+
+  /**
+   * Normalizes a config key to its canonical Delta config key if it matches a known config.
+   * Handles both "delta." prefixed and non-prefixed keys.
+  */
+  private def normalizeConfigKey(key: String): String = {
+    val lk = key.toLowerCase(Locale.ROOT)
+    val lookupKey = if (lk.startsWith("delta.")) lk.stripPrefix("delta.") else lk
+    Option(entries.get(lookupKey)).map(_.key).getOrElse(key)
+  }
+
 
   private def getMicroSeconds(i: CalendarInterval): Long = {
     assert(i.months == 0)
