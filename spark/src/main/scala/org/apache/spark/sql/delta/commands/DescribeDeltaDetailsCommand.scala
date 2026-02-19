@@ -19,15 +19,14 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.sql.Timestamp
 
-import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, Snapshot, UnresolvedPathOrIdentifier}
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.skipping.clustering.{ClusteredTableUtils, ClusteringColumnInfo}
 import org.apache.spark.sql.delta.util.DeltaCommitFileProvider
 import org.apache.hadoop.fs.Path
-
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.{CatalystTypeConverters, ScalaReflection, TableIdentifier}
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, UnaryNode}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -152,6 +151,64 @@ case class DescribeDeltaDetailCommand(
         tableFeatures = null))
   }
 
+  /**
+   * Attempts to find a table name in the catalog that corresponds to the given location.
+   * This is used when accessing a table by path to recover the table name for tables
+   * created with saveAsTable.
+   */
+  private def findTableNameByLocation(
+      sparkSession: SparkSession,
+      location: String): Option[String] = {
+    try {
+      val catalog = sparkSession.sessionState.catalog
+      val currentDatabase = catalog.getCurrentDatabase
+      val normalizedLocation = new Path(location).toString
+
+      // Check tables in the current database first
+      val currentDbTables = catalog.listTables(currentDatabase)
+      for (tableIdentifier <- currentDbTables) {
+        try {
+          val table = catalog.getTableMetadata(tableIdentifier)
+          table.storage.locationUri.foreach { tableLocationUri =>
+            val tableLocation = new Path(tableLocationUri).toString
+            if (tableLocation == normalizedLocation) {
+              return Some(table.qualifiedName)
+            }
+          }
+        } catch {
+          case _: Exception => // Ignore tables we can't access
+        }
+      }
+
+      // If not found in current database, check all databases
+      val allDatabases = catalog.listDatabases()
+      for (database <- allDatabases if database != currentDatabase) {
+        try {
+          val tables = catalog.listTables(database)
+          for (tableIdentifier <- tables) {
+            try {
+              val table = catalog.getTableMetadata(tableIdentifier)
+              table.storage.locationUri.foreach { tableLocationUri =>
+                val tableLocation = new Path(tableLocationUri).toString
+                if (tableLocation == normalizedLocation) {
+                  return Some(table.qualifiedName)
+                }
+              }
+            } catch {
+              case _: Exception => // Ignore tables we can't access
+            }
+          }
+        } catch {
+          case _: Exception => // Ignore databases we can't access
+        }
+      }
+
+      None
+    } catch {
+      case _: Exception => None // Return None if any error occurs during lookup
+    }
+  }
+
   private def describeDeltaTable(
       sparkSession: SparkSession,
       deltaLog: DeltaLog,
@@ -159,7 +216,12 @@ case class DescribeDeltaDetailCommand(
       tableMetadata: Option[CatalogTable]): Seq[Row] = {
     val currentVersionPath = DeltaCommitFileProvider(snapshot).deltaFile(snapshot.version)
     val fs = currentVersionPath.getFileSystem(deltaLog.newDeltaHadoopConf())
-    val tableName = tableMetadata.map(_.qualifiedName).getOrElse(snapshot.metadata.name)
+    val tableName = tableMetadata.map(_.qualifiedName).getOrElse {
+      // If no table metadata is available (accessed by path), try to find the table name
+      // by looking up the catalog for a table with matching location
+      findTableNameByLocation(sparkSession, deltaLog.dataPath.toString)
+        .getOrElse(snapshot.metadata.name)
+    }
     val featureNames = (
       snapshot.protocol.implicitlySupportedFeatures.map(_.name) ++
         snapshot.protocol.readerAndWriterFeatureNames).toSeq.sorted
