@@ -26,6 +26,9 @@ Usage:
     # Filter by Spark version:
     python3 project/scripts/collect_test_durations.py --branch master --spark-version 4.0
 
+    # Analyze local test reports (used by CI after downloading artifacts):
+    python3 project/scripts/collect_test_durations.py --local-dir ./test-reports
+
 Requirements:
     - gh CLI authenticated with access to delta-io/delta
     - Python 3.6+
@@ -226,6 +229,50 @@ def parse_artifact_dir(artifact_dir):
     return durations, xml_count
 
 
+def collect_durations_from_local_dir(local_dir, spark_version_filter):
+    """Collect test durations from local directories of JUnit XML reports.
+
+    Expects subdirectories matching the pattern test-reports-spark<version>-shard<N>,
+    as created by actions/download-artifact.
+    """
+    all_durations = {}  # suite_name -> duration_minutes
+    shard_durations = defaultdict(float)  # shard -> total_duration
+
+    for entry in sorted(os.listdir(local_dir)):
+        entry_path = os.path.join(local_dir, entry)
+        if not os.path.isdir(entry_path):
+            continue
+
+        match = re.match(r"test-reports-spark([\d.]+)-shard(\d+)", entry)
+        if not match:
+            continue
+
+        spark_version = match.group(1)
+        shard = int(match.group(2))
+
+        if spark_version_filter and spark_version != spark_version_filter:
+            continue
+
+        print(f"  Parsing {entry}...")
+        durations, xml_count = parse_artifact_dir(entry_path)
+        print(f"    -> {xml_count} XML files, {len(durations)} suites")
+
+        shard_total = 0.0
+        for suite_name, dur in durations.items():
+            if suite_name not in all_durations or dur > all_durations[suite_name]:
+                all_durations[suite_name] = dur
+            shard_total += dur
+        shard_durations[(spark_version, shard)] = shard_total
+
+    # Print per-shard actual durations
+    if shard_durations:
+        print(f"\n--- Actual per-shard durations (this run) ---")
+        for (sv, shard), total in sorted(shard_durations.items()):
+            print(f"  Spark {sv}, Shard {shard}: {total:.1f} min")
+
+    return all_durations
+
+
 def collect_durations_from_run(run_id, spark_version_filter, tmpdir):
     """Collect test durations from a single workflow run."""
     artifacts = list_artifacts(run_id)
@@ -362,6 +409,9 @@ def main():
                        help="Branch name (uses latest successful runs)")
     group.add_argument("--pr", type=int,
                        help="PR number (uses latest successful run)")
+    group.add_argument("--local-dir", type=str,
+                       help="Local directory containing downloaded test-report "
+                            "artifact directories (e.g., test-reports-spark4.0-shard0/)")
     parser.add_argument(
         "--last-n-runs", type=int, default=DEFAULT_LAST_N_RUNS,
         help=f"Number of recent successful runs to average across "
@@ -398,27 +448,33 @@ def main():
     if args.pr or args.run_id:
         args.last_n_runs = 1
 
-    # Step 1: Resolve run IDs
-    run_ids = get_run_ids(args)
-    print(f"\nCollecting durations from {len(run_ids)} run(s)...")
+    if args.local_dir:
+        # Local mode: parse JUnit XML files directly from disk
+        print(f"Parsing local test reports from {args.local_dir}...")
+        avg_durations = collect_durations_from_local_dir(
+            args.local_dir, args.spark_version)
+        num_sources = 1
+    else:
+        # Remote mode: download artifacts from GitHub Actions
+        run_ids = get_run_ids(args)
+        print(f"\nCollecting durations from {len(run_ids)} run(s)...")
+        num_sources = len(run_ids)
 
-    # Step 2: Collect durations from all runs
-    # suite_name -> list of durations across runs
-    all_run_durations = defaultdict(list)
+        # suite_name -> list of durations across runs
+        all_run_durations = defaultdict(list)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for i, run_id in enumerate(run_ids):
-            print(f"\n--- Run {i + 1}/{len(run_ids)}: {run_id} ---")
-            run_durations = collect_durations_from_run(
-                run_id, args.spark_version, tmpdir)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            for i, run_id in enumerate(run_ids):
+                print(f"\n--- Run {i + 1}/{len(run_ids)}: {run_id} ---")
+                run_durations = collect_durations_from_run(
+                    run_id, args.spark_version, tmpdir)
 
-            for suite_name, dur in run_durations.items():
-                all_run_durations[suite_name].append(dur)
+                for suite_name, dur in run_durations.items():
+                    all_run_durations[suite_name].append(dur)
 
-    # Step 3: Compute average duration across runs
-    avg_durations = {}
-    for suite_name, durs in all_run_durations.items():
-        avg_durations[suite_name] = round(sum(durs) / len(durs), 2)
+        avg_durations = {}
+        for suite_name, durs in all_run_durations.items():
+            avg_durations[suite_name] = round(sum(durs) / len(durs), 2)
 
     # Sort by duration descending
     sorted_suites = sorted(avg_durations.items(), key=lambda x: -x[1])
@@ -433,7 +489,7 @@ def main():
     print(f"\n{'=' * 100}")
     print(f"RESULTS: {total_suites} test suites, "
           f"total duration: {total_duration:.1f} minutes")
-    print(f"Averaged across {len(run_ids)} run(s)")
+    print(f"Averaged across {num_sources} run(s)")
     print(f"{'=' * 100}\n")
 
     if args.output_scala or args.update_file:
@@ -449,7 +505,7 @@ def main():
         print(f"{'#':<5} {'Suite':<90} {'Avg (min)':>10} {'Runs':>5}")
         print("-" * 112)
         for i, (name, dur) in enumerate(sorted_suites, 1):
-            runs = len(all_run_durations[name])
+            runs = len(all_run_durations[name]) if not args.local_dir else 1
             print(f"{i:<5} {name:<90} {dur:>8.2f}m {runs:>5}")
 
     # Summary stats

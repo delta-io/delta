@@ -136,3 +136,22 @@ jobs:
           name: test-reports-spark${{ matrix.spark_version }}-shard${{ matrix.shard }}
           path: "**/target/test-reports/*.xml"
           retention-days: 7
+
+  analyze:
+    name: "Shard Balance Analysis"
+    runs-on: ubuntu-24.04
+    needs: test
+    if: always()
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download all test report artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: test-reports-*
+          path: test-reports
+      - name: Analyze shard balance
+        run: |
+          python3 project/scripts/collect_test_durations.py \
+            --local-dir test-reports \
+            --num-shards 4 \
+            --num-groups 4
