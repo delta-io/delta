@@ -536,6 +536,7 @@ public class SparkMicroBatchStream
       Engine engine,
       Timestamp timestamp,
       boolean canExceedLatest) {
+    // TODO(#5999): optimize duplicate loadLatestSnapshot calls
     DeltaHistoryManager.Commit commit =
         snapshotManager.getActiveCommitAtTime(
             timestamp.getTime(),
