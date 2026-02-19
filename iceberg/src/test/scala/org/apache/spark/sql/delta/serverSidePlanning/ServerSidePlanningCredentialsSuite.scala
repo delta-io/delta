@@ -205,11 +205,9 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
           }
 
           // Verify error message contains relevant fragment
-          // scalastyle:off caselocale
-          assert(exception.getMessage.toLowerCase.contains(expectedMessageFragment.toLowerCase),
+          assert(exception.getMessage.contains(expectedMessageFragment),
             s"[$description] Error message should contain '$expectedMessageFragment'. " +
             s"Got: ${exception.getMessage}")
-          // scalastyle:on caselocale
 
           // Clear for next test case
           server.clearCaptured()
