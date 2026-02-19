@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
 import java.io.FileNotFoundException
 import java.net.URI
 import java.sql.Timestamp
@@ -165,7 +164,23 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       import org.apache.spark.sql.delta.implicits._
 
       val snapshot = table.update()
+      // Fail fast for non-Delta paths (no valid snapshot), preserving the historical
+      // IllegalArgumentException contract when VACUUM is run on a non-reservoir path.
+      require(snapshot.version >= 0, "No state defined for this table. Is this really " +
+        "a Delta table? Refusing to garbage collect.")
+
       deltaLog.protocolWrite(snapshot.protocol)
+
+      // Determine whether VACUUM LITE is currently blocked because the log has been pruned
+      // and no usable last-vacuum info exists. We only want VACUUM FULL to "repair" the table
+      // in this case so that subsequent VACUUM LITE can succeed.
+      val earliestCommitVersion = DeltaHistoryManager.getEarliestDeltaFile(deltaLog)
+      val lastVacuumVersionOpt =
+        LastVacuumInfo.getLastVacuumInfo(deltaLog)
+          .flatMap(_.latestCommitVersionOutsideOfRetentionWindow)
+      val needsRepairForLite =
+        earliestCommitVersion != 0 &&
+          lastVacuumVersionOpt.forall(_ < earliestCommitVersion)
 
       // VACUUM can break clones by removing files that clones still references for managed tables.
       // Eventually the catalog should track this dependency to avoid breaking clones,
@@ -242,15 +257,22 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val partitionColumns = snapshot.metadata.partitionSchema.fieldNames
       val parallelism = spark.sessionState.conf.parallelPartitionDiscoveryParallelism
       val shouldIcebergMetadataDirBeHidden = UniversalFormat.icebergEnabled(snapshot.metadata)
+
+      // For VACUUM LITE we always need this. For VACUUM FULL we only compute it if the table is
+      // in a state where VACUUM LITE would be blocked (log pruned and no usable last-vacuum info).
       val latestCommitVersionOutsideOfRetentionWindowOpt: Option[Long] =
-        if (vacuumType == VacuumType.LITE) {
+        if (vacuumType == VacuumType.LITE ||
+            (vacuumType == VacuumType.FULL && needsRepairForLite)) {
           try {
             val timestamp = new Timestamp(deleteBeforeTimestamp)
             val commit = new DeltaHistoryManager(deltaLog).getActiveCommitAtTime(
-              timestamp, table.catalogTable, canReturnLastCommit = true, mustBeRecreatable = false)
+              timestamp,
+              table.catalogTable,
+              canReturnLastCommit = true,
+              mustBeRecreatable = false)
             Some(commit.version)
           } catch {
-            case ex: DeltaErrors.TimestampEarlierThanCommitRetentionException => None
+            case _: DeltaErrors.TimestampEarlierThanCommitRetentionException => None
           }
         } else {
           None
@@ -281,6 +303,7 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           )
           (files, None, None)
           }
+
       val allFilesAndDirs = allFilesAndDirsWithDuplicates.groupByKey(_.path)
         .mapGroups { (k, v) =>
           val duplicates = v.toSeq
@@ -407,8 +430,16 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
             Some(filesDeleted),
             Some(dirCounts))
 
-          LastVacuumInfo.persistLastVacuumInfo(
-            LastVacuumInfo(latestCommitVersionOutsideOfRetentionWindowOpt), deltaLog)
+          // Persist last-vacuum info for:
+          //  - VACUUM LITE (existing behavior), or
+          //  - VACUUM FULL when it is repairing a table whose log has been pruned such that
+          //    VACUUM LITE would otherwise be blocked.
+          if (latestCommitVersionOutsideOfRetentionWindowOpt.nonEmpty &&
+              (vacuumType == VacuumType.LITE ||
+                (vacuumType == VacuumType.FULL && needsRepairForLite))) {
+            LastVacuumInfo.persistLastVacuumInfo(
+              LastVacuumInfo(latestCommitVersionOutsideOfRetentionWindowOpt), deltaLog)
+          }
 
           logInfo(log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, filesDeleted)} files " +
             log"(${MDC(DeltaLogKeys.NUM_BYTES, sizeOfDataToDelete)} bytes) and directories in " +
@@ -950,8 +981,9 @@ trait VacuumCommandImpl extends DeltaCommand {
       clock: Clock,
       config: ValidFilesConfig): VacuumCommand.ValidFilesResult = {
     import org.apache.spark.sql.delta.implicits._
-    require(snapshot.version >= 0, "No state defined for this table. Is this really " +
-      "a Delta table? Refusing to garbage collect.")
+    require(
+      snapshot.version >= 0,
+      "No state defined for this table. Is this really a Delta table? Refusing to garbage collect.")
 
     val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
 
