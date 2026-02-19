@@ -216,8 +216,11 @@ public class Checkpointer {
           } else if (FileNames.isCheckpointFile(fileName)) {
             currentFileVersion = FileNames.checkpointVersion(fileName);
           } else {
-            // allow all other types of files.
-            currentFileVersion = currentVersion;
+            // Skip unrecognized file types (e.g. .crc files). If we assigned
+            // them a version, they could prematurely trigger the break condition
+            // below and cause us to miss recent checkpoints.
+            numberOfFilesSearched++;
+            continue;
           }
 
           boolean shouldContinue =
