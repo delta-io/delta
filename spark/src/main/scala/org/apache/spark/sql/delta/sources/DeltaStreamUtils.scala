@@ -260,7 +260,7 @@ object DeltaStreamUtils {
   }
 
   /**
-   * - If commitVersion exactly matches the provided timestamp, we return it.
+   * - If commit's timestamp exactly matches the provided timestamp, we return it.
    * - Otherwise, we return the earliest commit version
    *   with a timestamp greater than the provided one.
    * - If the provided timestamp is larger than the timestamp
