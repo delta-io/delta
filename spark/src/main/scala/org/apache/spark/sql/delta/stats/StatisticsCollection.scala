@@ -561,7 +561,9 @@ object StatisticsCollection extends DeltaCommand {
             commonPrefix == droppedColumnParts.size
           }.nonEmpty
         }
-        .map(columnParts => UnresolvedAttribute(columnParts).name)
+        // Preserve special characters via backticks when needed, while keeping the original
+        // unescaped format for normal identifiers (e.g. `a.b` stays `a.b`).
+        .map(columnParts => columnParts.map(quoteIfNeeded).mkString("."))
         .mkString(",")
       Map(DeltaConfigs.DATA_SKIPPING_STATS_COLUMNS.key -> deltaStatsColumnStr)
     }.getOrElse(Map.empty[String, String])

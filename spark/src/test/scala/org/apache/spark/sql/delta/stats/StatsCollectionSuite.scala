@@ -792,6 +792,39 @@ class StatsCollectionSuite
     }
   }
 
+  test("drop/rename columns with special characters updates dataSkippingStatsColumns") {
+    withTable("delta_table") {
+      sql(
+        """
+          |CREATE TABLE delta_table (`c#c` INT, `c-1` INT, c3 INT)
+          |USING delta
+          |TBLPROPERTIES(
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.minReaderVersion' = '2',
+          |  'delta.minWriterVersion' = '5',
+          |  'delta.dataSkippingStatsColumns' = '`c#c`,`c-1`'
+          |)
+          |""".stripMargin)
+
+      sql("ALTER TABLE delta_table DROP COLUMN `c#c`")
+
+      val statsAfterDrop = sql("SHOW TBLPROPERTIES delta_table")
+        .collect()
+        .map(r => r.getString(0) -> r.getString(1))
+        .toMap
+        .getOrElse("delta.dataSkippingStatsColumns", "")
+      assert(statsAfterDrop == "`c-1`")
+
+      sql("ALTER TABLE delta_table RENAME COLUMN `c-1` TO `c-2`")
+      val statsAfterRename = sql("SHOW TBLPROPERTIES delta_table")
+        .collect()
+        .map(r => r.getString(0) -> r.getString(1))
+        .toMap
+        .getOrElse("delta.dataSkippingStatsColumns", "")
+      assert(statsAfterRename == "`c-2`")
+    }
+  }
+
   test("Duplicated delta statistic columns: create") {
     Seq(
       ("'c0,c0'", "c0"),
