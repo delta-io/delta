@@ -19,8 +19,6 @@ package org.apache.spark.sql.delta.serverSidePlanning;
 import com.google.cloud.hadoop.util.AccessTokenProvider;
 import org.apache.hadoop.conf.Configuration;
 
-import com.google.auth.oauth2.AccessToken;
-
 /**
  * A custom AccessTokenProvider used for server-side planning with temporary GCS credentials from
  * credential vending services.
@@ -41,7 +39,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
   private Configuration conf;
 
   @Override
-  public AccessToken getAccessToken() {
+  public AccessTokenProvider.AccessToken getAccessToken() {
     String token = conf.get(CONFIG_TOKEN);
     if (token == null || token.isEmpty()) {
       throw new RuntimeException("Missing GCS access token in configuration: " + CONFIG_TOKEN);
@@ -62,7 +60,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
       expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
     }
 
-    return new AccessToken(token, expirationMs);
+    return new AccessTokenProvider.AccessToken(token, expirationMs);
   }
 
   @Override

@@ -183,6 +183,10 @@ object ScanPlanStorageCredentials {
   /** IRC config key mappings for each credential type. */
   private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
   private val AZURE_SAS_TOKEN_PREFIX = "adls.sas-token"
+  // Trailing dot distinguishes token keys (adls.sas-token.<account>) from
+  // expiration keys (adls.sas-token-expires-at-ms.<account>).
+  private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
+  private val AZURE_SAS_TOKEN_EXPIRY_PREFIX = "adls.sas-token-expires-at-ms."
   private val GCS_KEYS = Seq("gcs.oauth2.token")
 
   /**
@@ -198,30 +202,23 @@ object ScanPlanStorageCredentials {
    * from the key pattern: adls.sas-token.<account>.dfs.core.windows.net
    */
   private def buildAzureCredentials(config: Map[String, String]): AzureCredentials = {
-    // Filter all keys starting with Azure SAS token prefix
-    val credentialEntries = config.filterKeys(_.startsWith(AZURE_SAS_TOKEN_PREFIX)).toMap
-
-    if (credentialEntries.isEmpty) {
-      throw new IllegalStateException(
-        s"Missing Azure SAS token keys starting with: $AZURE_SAS_TOKEN_PREFIX")
-    }
-
-    // Extract account name from SAS token key.
     // Token key format: adls.sas-token.<account>.dfs.core.windows.net
-    // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
-    val sasTokenKey = credentialEntries.keys
-      .find(key => key.startsWith(AZURE_SAS_TOKEN_PREFIX) &&
-                   !key.contains("expires-at-ms"))
+    val sasTokenKey = config.keys
+      .find(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
       .getOrElse(throw new IllegalStateException(
-        s"No valid SAS token key found in: ${credentialEntries.keys.mkString(", ")}"))
+        s"Missing Azure SAS token key starting with: $AZURE_SAS_TOKEN_KEY_PREFIX"))
 
     val accountName = sasTokenKey
-      .stripPrefix(s"$AZURE_SAS_TOKEN_PREFIX.")
+      .stripPrefix(AZURE_SAS_TOKEN_KEY_PREFIX)
       .stripSuffix(".dfs.core.windows.net")
 
-    AzureCredentials(
-      accountName = accountName,
-      credentialEntries = credentialEntries)
+    val sasToken = config(sasTokenKey)
+
+    // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
+    val expiresAtMs = config.get(s"$AZURE_SAS_TOKEN_EXPIRY_PREFIX$accountName.dfs.core.windows.net")
+      .flatMap(s => scala.util.Try(s.toLong).toOption)
+
+    AzureCredentials(accountName = accountName, sasToken = sasToken, expiresAtMs = expiresAtMs)
   }
 
   /**
@@ -269,7 +266,8 @@ case class S3Credentials(
  */
 case class AzureCredentials(
     accountName: String,
-    credentialEntries: Map[String, String]) extends ScanPlanStorageCredentials
+    sasToken: String,
+    expiresAtMs: Option[Long]) extends ScanPlanStorageCredentials
 
 /**
  * Google Cloud Storage OAuth2 token credentials.

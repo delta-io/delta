@@ -467,21 +467,14 @@ object ServerSidePlannedFilePartitionReaderFactory {
         conf.set("fs.s3a.secret.key", secretAccessKey)
         conf.set("fs.s3a.session.token", sessionToken)
 
-      case AzureCredentials(accountName, credentialEntries) =>
+      case AzureCredentials(accountName, sasToken, _) =>
         val accountSuffix = s"$accountName.dfs.core.windows.net"
-
-        // Find the SAS token key.
-        val sasTokenKey = credentialEntries.keys
-          .find(key => key.startsWith("adls.sas-token") && !key.contains("expires-at-ms"))
-          .getOrElse(throw new RuntimeException(
-            s"No valid SAS token key found for account: $accountName"))
-        val sasTokenValue = credentialEntries(sasTokenKey)
 
         // Configure ABFS connector for SAS authentication
         conf.set("fs.abfs.impl.disable.cache", "true")
         conf.set("fs.abfss.impl.disable.cache", "true")
         conf.set(s"fs.azure.account.auth.type.$accountSuffix", "SAS")
-        conf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasTokenValue)
+        conf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasToken)
 
       case GcsCredentials(oauth2Token, expirationEpochMs) =>
         conf.set("fs.gs.impl.disable.cache", "true")

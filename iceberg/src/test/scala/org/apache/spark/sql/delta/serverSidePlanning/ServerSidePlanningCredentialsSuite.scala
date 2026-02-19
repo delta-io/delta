@@ -294,10 +294,8 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         }
       }
 
-      override def expectedCredentials: ScanPlanStorageCredentials = {
-        val entries = serverInput
-        AzureCredentials(accountName, entries)
-      }
+      override def expectedCredentials: ScanPlanStorageCredentials =
+        AzureCredentials(accountName, sasToken, expirationMs)
 
       override def expectedHadoopConfig: Map[String, String] = {
         val accountSuffix = s"$accountName.dfs.core.windows.net"
