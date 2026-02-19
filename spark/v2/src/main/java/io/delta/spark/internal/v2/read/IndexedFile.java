@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.RemoveFile;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 
 /**
@@ -30,24 +31,45 @@ import org.apache.spark.sql.delta.sources.AdmittableFile;
  * <p>For CDC reads, this class also holds:
  *
  * <ul>
- *   <li>changeType (e.g., "insert") — assigned by the streaming engine for initial snapshot files
+ *   <li>RemoveFile actions (for inferred CDC deletes)
+ *   <li>CDCFileInfo (for explicit AddCDCFile actions)
+ *   <li>changeType (e.g., "insert", "delete", "update_preimage", "update_postimage")
  *   <li>commitTimestamp (milliseconds since epoch)
+ *   <li>shouldSkip flag (for no-op merge handling)
  * </ul>
  */
 public class IndexedFile implements AdmittableFile {
   private final long version;
   private final long index;
   private final AddFile addFile;
+  private final RemoveFile removeFile;
+  private final CDCFileInfo cdcFile;
   private final String changeType;
   private final long commitTimestamp;
+  private final boolean shouldSkip;
 
   /** Constructor for non-CDC AddFile actions. */
   public IndexedFile(long version, long index, AddFile addFile) {
     this.version = version;
     this.index = index;
     this.addFile = addFile;
+    this.removeFile = null;
+    this.cdcFile = null;
     this.changeType = null;
     this.commitTimestamp = -1;
+    this.shouldSkip = false;
+  }
+
+  /** Constructor for CDC - explicit CDC file (AddCDCFile). */
+  public IndexedFile(long version, long index, CDCFileInfo cdcFile, long commitTimestamp) {
+    this.version = version;
+    this.index = index;
+    this.addFile = null;
+    this.removeFile = null;
+    this.cdcFile = cdcFile;
+    this.changeType = null; // _change_type is in the CDC file data itself
+    this.commitTimestamp = commitTimestamp;
+    this.shouldSkip = false;
   }
 
   /** Constructor for CDC - inferred from AddFile (e.g., initial snapshot "insert"). */
@@ -56,8 +78,79 @@ public class IndexedFile implements AdmittableFile {
     this.version = version;
     this.index = index;
     this.addFile = addFile;
+    this.removeFile = null;
+    this.cdcFile = null;
     this.changeType = changeType;
     this.commitTimestamp = commitTimestamp;
+    this.shouldSkip = false;
+  }
+
+  /** Constructor for CDC - inferred from RemoveFile (delete). */
+  public IndexedFile(
+      long version, long index, RemoveFile removeFile, String changeType, long commitTimestamp) {
+    this.version = version;
+    this.index = index;
+    this.addFile = null;
+    this.removeFile = removeFile;
+    this.cdcFile = null;
+    this.changeType = changeType;
+    this.commitTimestamp = commitTimestamp;
+    this.shouldSkip = false;
+  }
+
+  /**
+   * Constructor for CDC with shouldSkip flag (for no-op merge handling).
+   *
+   * <p>MERGE can sometimes rewrite files in a way which *could* have changed data (so dataChange =
+   * true) but did not actually do so (so no CDC will be produced). In this case, we mark the files
+   * as shouldSkip=true to indicate that CDC shouldn't be produced from them.
+   */
+  public IndexedFile(
+      long version,
+      long index,
+      AddFile addFile,
+      String changeType,
+      long commitTimestamp,
+      boolean shouldSkip) {
+    this.version = version;
+    this.index = index;
+    this.addFile = addFile;
+    this.removeFile = null;
+    this.cdcFile = null;
+    this.changeType = changeType;
+    this.commitTimestamp = commitTimestamp;
+    this.shouldSkip = shouldSkip;
+  }
+
+  /** Constructor for CDC with shouldSkip flag — RemoveFile (inferred delete). */
+  public IndexedFile(
+      long version,
+      long index,
+      RemoveFile removeFile,
+      String changeType,
+      long commitTimestamp,
+      boolean shouldSkip) {
+    this.version = version;
+    this.index = index;
+    this.addFile = null;
+    this.removeFile = removeFile;
+    this.cdcFile = null;
+    this.changeType = changeType;
+    this.commitTimestamp = commitTimestamp;
+    this.shouldSkip = shouldSkip;
+  }
+
+  /** Constructor for CDC with shouldSkip flag — explicit CDC file (AddCDCFile). */
+  public IndexedFile(
+      long version, long index, CDCFileInfo cdcFile, long commitTimestamp, boolean shouldSkip) {
+    this.version = version;
+    this.index = index;
+    this.addFile = null;
+    this.removeFile = null;
+    this.cdcFile = cdcFile;
+    this.changeType = null; // _change_type is in the CDC file data itself
+    this.commitTimestamp = commitTimestamp;
+    this.shouldSkip = shouldSkip;
   }
 
   public long getVersion() {
@@ -72,6 +165,14 @@ public class IndexedFile implements AdmittableFile {
     return addFile;
   }
 
+  public RemoveFile getRemoveFile() {
+    return removeFile;
+  }
+
+  public CDCFileInfo getCdcFile() {
+    return cdcFile;
+  }
+
   public String getChangeType() {
     return changeType;
   }
@@ -80,20 +181,41 @@ public class IndexedFile implements AdmittableFile {
     return commitTimestamp;
   }
 
-  /** Returns true if this IndexedFile is for CDC (has changeType set). */
+  public boolean isShouldSkip() {
+    return shouldSkip;
+  }
+
+  /** Returns true if this IndexedFile contains an explicit CDC file (AddCDCFile action). */
+  public boolean isCDCFile() {
+    return cdcFile != null;
+  }
+
+  /** Returns true if this IndexedFile contains a RemoveFile action (for inferred CDC deletes). */
+  public boolean isRemoveFile() {
+    return removeFile != null;
+  }
+
+  /** Returns true if this IndexedFile is for CDC (has changeType or cdcFile set). */
   public boolean isCDC() {
-    return changeType != null;
+    return changeType != null || cdcFile != null;
   }
 
   @Override
   public boolean hasFileAction() {
-    return addFile != null;
+    return addFile != null || removeFile != null || cdcFile != null;
   }
 
   @Override
   public long getFileSize() {
-    checkState(addFile != null, "check hasFileAction() before calling getFileSize()");
-    return addFile.getSize();
+    checkState(hasFileAction(), "check hasFileAction() before calling getFileSize()");
+    if (addFile != null) {
+      return addFile.getSize();
+    } else if (removeFile != null) {
+      // RemoveFile.getSize() returns Optional<Long>
+      return removeFile.getSize().orElse(0L);
+    } else {
+      return cdcFile.getSize();
+    }
   }
 
   @Override
@@ -105,11 +227,20 @@ public class IndexedFile implements AdmittableFile {
     if (addFile != null) {
       sb.append(", addFile=").append(addFile);
     }
+    if (removeFile != null) {
+      sb.append(", removeFile=").append(removeFile);
+    }
+    if (cdcFile != null) {
+      sb.append(", cdcFile=").append(cdcFile);
+    }
     if (changeType != null) {
       sb.append(", changeType='").append(changeType).append('\'');
     }
     if (commitTimestamp >= 0) {
       sb.append(", commitTimestamp=").append(commitTimestamp);
+    }
+    if (shouldSkip) {
+      sb.append(", shouldSkip=true");
     }
     sb.append('}');
     return sb.toString();

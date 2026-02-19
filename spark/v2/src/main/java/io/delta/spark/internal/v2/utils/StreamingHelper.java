@@ -22,16 +22,20 @@ import io.delta.kernel.CommitActions;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
+import io.delta.kernel.internal.actions.AddCDCFile;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.CDCFileInfo;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.io.IOException;
 import java.util.*;
@@ -231,6 +235,83 @@ public class StreamingHelper {
     }
 
     return versionToMetadata;
+  }
+
+  /**
+   * Get AddCDCFile (CDC file) from a batch at the specified row, if present.
+   *
+   * <p>Returns a CDCFileInfo wrapper containing the path, partition values, and size extracted from
+   * the CDC action column.
+   *
+   * @param batch the columnar batch containing actions
+   * @param rowId the row index to extract from
+   * @return Optional containing CDCFileInfo if CDC action is present, empty otherwise
+   */
+  public static Optional<CDCFileInfo> getCDCFile(ColumnarBatch batch, int rowId) {
+    int cdcIdx = batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.CDC.colName);
+    if (cdcIdx < 0) {
+      // CDC column not in schema (not requested in action set)
+      return Optional.empty();
+    }
+
+    ColumnVector cdcVector = batch.getColumnVector(cdcIdx);
+    if (cdcVector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+
+    Row cdcRow = StructRow.fromStructVector(cdcVector, rowId);
+    checkState(
+        cdcRow != null,
+        String.format("Failed to extract CDC struct from batch at rowId=%d.", rowId));
+
+    // Use named field lookups via AddCDCFile.FULL_SCHEMA for resilience to schema evolution.
+    String path = cdcRow.getString(AddCDCFile.FULL_SCHEMA.indexOf("path"));
+    MapValue partitionValues = cdcRow.getMap(AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"));
+    long size = cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size"));
+
+    return Optional.of(new CDCFileInfo(path, partitionValues, size));
+  }
+
+  /**
+   * Get CommitInfo action from a batch at the specified row, if present.
+   *
+   * <p>Mirrors the pattern used by {@link #getMetadata(ColumnarBatch, int)}.
+   */
+  public static Optional<CommitInfo> getCommitInfo(ColumnarBatch batch, int rowId) {
+    int commitInfoIdx =
+        batch.getSchema().indexOf(DeltaLogActionUtils.DeltaAction.COMMITINFO.colName);
+    if (commitInfoIdx < 0) {
+      // CommitInfo column not in schema (not requested in action set)
+      return Optional.empty();
+    }
+
+    ColumnVector commitInfoVector = batch.getColumnVector(commitInfoIdx);
+    CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, rowId);
+    return Optional.ofNullable(commitInfo);
+  }
+
+  /**
+   * Java port of CDCReader.shouldSkipFileActionsInCommit. Determines whether a MERGE commit
+   * produced no actual data changes and its file actions should be skipped for CDC purposes.
+   *
+   * <p>A MERGE can rewrite files with dataChange=true but produce no logical changes (no rows
+   * inserted, updated, or deleted). In this case, CDC should not be generated from the file
+   * actions.
+   *
+   * @param commitInfo The commit info to check
+   * @return true if the commit is a no-op MERGE whose file actions should be skipped
+   */
+  public static boolean shouldSkipFileActionsInCommit(CommitInfo commitInfo) {
+    boolean isMerge = "MERGE".equals(commitInfo.getOperation());
+    if (!isMerge) {
+      return false;
+    }
+    Map<String, String> metrics = commitInfo.getOperationMetrics();
+    // All three metrics must be present and equal to "0" for us to skip.
+    // If any metric is missing, we conservatively don't skip.
+    return "0".equals(metrics.get("numTargetRowsInserted"))
+        && "0".equals(metrics.get("numTargetRowsUpdated"))
+        && "0".equals(metrics.get("numTargetRowsDeleted"));
   }
 
   /** Private constructor to prevent instantiation of this utility class. */

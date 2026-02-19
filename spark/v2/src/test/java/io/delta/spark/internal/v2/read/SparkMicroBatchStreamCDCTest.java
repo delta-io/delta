@@ -25,6 +25,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -42,6 +43,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
+import scala.Some;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.immutable.Seq;
@@ -123,6 +125,14 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     return Optional.of(new DeltaSource.AdmissionLimits(options, scalaMaxFiles, scalaMaxBytes));
   }
 
+  /** Convenience wrapper: create AdmissionLimits with just maxFiles. */
+  private Optional<DeltaSource.AdmissionLimits> createLimits(int maxFiles) {
+    Option<Object> maxFilesOpt = new Some<>((Object) maxFiles);
+    Option<Object> maxBytesOpt = Option.empty();
+    return Optional.of(
+        new DeltaSource.AdmissionLimits(emptyDeltaOptions(), maxFilesOpt, maxBytesOpt));
+  }
+
   /** Collect all DSv1 IndexedFiles from getFileChangesWithRateLimit. */
   private List<org.apache.spark.sql.delta.sources.IndexedFile> collectDSv1CDCFiles(
       DeltaSource deltaSource,
@@ -161,22 +171,43 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
   }
 
   /**
-   * Compare CDC file changes between DSv1 and DSv2. Compares version, index, and AddFile path. DSv1
-   * IndexedFile has no changeType or commitTimestamp, so those are skipped.
+   * Compare CDC file changes between DSv1 and DSv2. Filters to data files only (files with a file
+   * action) because sentinel files (BEGIN/END markers for offset tracking) may differ in count
+   * between DSv1 and DSv2 when admission limits are in play. Compares version, index, shouldSkip,
+   * and file action path (add/remove/cdc). DSv1 IndexedFile has no changeType or commitTimestamp,
+   * so those are skipped.
    */
   private void compareCDCFileChanges(
       List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files, List<IndexedFile> dsv2Files) {
-    assertEquals(dsv1Files.size(), dsv2Files.size(), "CDC file count mismatch");
-    for (int i = 0; i < dsv1Files.size(); i++) {
-      var d1 = dsv1Files.get(i);
-      var d2 = dsv2Files.get(i);
+    // Filter to data files only — sentinel files (no file action) are implementation details
+    // for offset tracking and may differ in count between DSv1 and DSv2.
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1DataFiles =
+        dsv1Files.stream().filter(f -> f.getFileAction() != null).collect(Collectors.toList());
+    List<IndexedFile> dsv2DataFiles =
+        dsv2Files.stream().filter(IndexedFile::hasFileAction).collect(Collectors.toList());
+
+    assertEquals(dsv1DataFiles.size(), dsv2DataFiles.size(), "CDC data file count mismatch");
+    for (int i = 0; i < dsv1DataFiles.size(); i++) {
+      var d1 = dsv1DataFiles.get(i);
+      var d2 = dsv2DataFiles.get(i);
       assertEquals(d1.version(), d2.getVersion(), "version mismatch at " + i);
       assertEquals(d1.index(), d2.getIndex(), "index mismatch at " + i);
+      assertEquals(d1.shouldSkip(), d2.isShouldSkip(), "shouldSkip mismatch at " + i);
 
-      // Compare AddFile path
-      String d1Path = d1.add() != null ? d1.add().path() : null;
-      String d2Path = d2.getAddFile() != null ? d2.getAddFile().getPath() : null;
-      assertEquals(d1Path, d2Path, "add path mismatch at " + i);
+      // Compare file action path
+      String d1Path =
+          d1.add() != null
+              ? d1.add().path()
+              : d1.remove() != null
+                  ? d1.remove().path()
+                  : d1.cdc() != null ? d1.cdc().path() : null;
+      String d2Path =
+          d2.getAddFile() != null
+              ? d2.getAddFile().getPath()
+              : d2.getRemoveFile() != null
+                  ? d2.getRemoveFile().getPath()
+                  : d2.getCdcFile() != null ? d2.getCdcFile().getPath() : null;
+      assertEquals(d1Path, d2Path, "path mismatch at " + i);
     }
   }
 
@@ -230,7 +261,42 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
                 },
             /* useLatestVersionAsFrom= */ true,
             /* fromVersion= */ -1L, // ignored when useLatestVersionAsFrom=true
-            /* isInitialSnapshot= */ true));
+            /* isInitialSnapshot= */ true),
+        Arguments.of(
+            "Insert-only incremental (inferred CDC)",
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3')", tableName);
+                },
+            /* useLatestVersionAsFrom= */ false,
+            /* fromVersion= */ 1L,
+            /* isInitialSnapshot= */ false),
+        Arguments.of(
+            "Explicit CDC from UPDATE and DELETE",
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  sql("UPDATE %s SET name = 'UpdatedUser1' WHERE id = 1", tableName);
+                  sql("DELETE FROM %s WHERE id = 2", tableName);
+                },
+            /* useLatestVersionAsFrom= */ false,
+            /* fromVersion= */ 1L,
+            /* isInitialSnapshot= */ false),
+        Arguments.of(
+            "No-op MERGE (shouldSkip=true)",
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql(
+                      "MERGE INTO %s t USING (SELECT 999 AS id, 'Ghost' AS name) s "
+                          + "ON t.id = s.id "
+                          + "WHEN MATCHED THEN UPDATE SET t.name = s.name",
+                      tableName);
+                },
+            /* useLatestVersionAsFrom= */ false,
+            /* fromVersion= */ 1L,
+            /* isInitialSnapshot= */ false));
   }
 
   @ParameterizedTest(name = "{0}")
@@ -282,6 +348,81 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
 
     // Compare
     assertFalse(dsv1Files.isEmpty(), "DSv1 should return files for: " + testDescription);
+    compareCDCFileChanges(dsv1Files, dsv2Files);
+  }
+
+  // ================================================================================================
+  // Test 3: DSv1-vs-DSv2 comparison for getFileChangesWithRateLimit with admission limits
+  // ================================================================================================
+
+  static Stream<Arguments> cdcRateLimitingParameters() {
+    return Stream.of(
+        Arguments.of(
+            "Explicit CDC batch admission (maxFiles=1)",
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  sql("UPDATE %s SET name = 'UpdatedAll' WHERE id <= 3", tableName);
+                },
+            /* maxFiles= */ 1),
+        Arguments.of(
+            "Inferred CDC per-file admission (maxFiles=2)",
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                  sql("INSERT INTO %s VALUES (5, 'User5'), (6, 'User6')", tableName);
+                },
+            /* maxFiles= */ 2),
+        Arguments.of(
+            "Version-level termination (maxFiles=1)",
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+                  sql("INSERT INTO %s VALUES (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3')", tableName);
+                },
+            /* maxFiles= */ 1));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("cdcRateLimitingParameters")
+  public void testGetFileChangesWithRateLimitForCDC(
+      String testDescription, ScenarioSetup setup, int maxFiles, @TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName =
+        "test_cdc_ratelimit_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    enableCDC(tableName);
+    setup.setup(tableName, tempDir);
+
+    long fromVersion = 1L; // after enableCDC ALTER TABLE
+    boolean isInitialSnapshot = false;
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, createCDCDeltaOptions());
+    Optional<DeltaSource.AdmissionLimits> dsv1Limits = createLimits(maxFiles);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files =
+        collectDSv1CDCFiles(
+            deltaSource,
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            isInitialSnapshot,
+            dsv1Limits);
+
+    // DSv2 — need fresh AdmissionLimits (stateful)
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, createCDCDeltaOptions());
+    Optional<DeltaSource.AdmissionLimits> dsv2Limits = createLimits(maxFiles);
+    List<IndexedFile> dsv2Files =
+        collectDSv2CDCFiles(
+            stream, fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot, dsv2Limits);
+
+    // Compare
     compareCDCFileChanges(dsv1Files, dsv2Files);
   }
 }
