@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.serverSidePlanning
 
 import scala.jdk.CollectionConverters._
 
-import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 import org.apache.http.HttpHeaders
 import org.apache.http.client.methods.HttpGet

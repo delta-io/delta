@@ -80,6 +80,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         // Test cases with explicit input → expected credentials → expected config
+        // Covers the successful credential extraction and Hadoop configuration injection cases.
         val testCases: Seq[CredentialTestCase] = Seq(
           // S3
           S3CredentialTestCase(
@@ -121,13 +122,15 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         )
 
         testCases.foreach { testCase =>
+          // Set server to return credentials.
           server.setTestCredentials(testCase.serverInput.asJava)
 
           val scanPlan = client.planScan(defaultNamespace.toString, "credentialsTest")
 
           assert(scanPlan.credentials.isDefined,
             s"[${testCase.description}] Credentials should be present in ScanPlan")
-
+          
+          // Confirm client parsed credentials correctly.
           assert(scanPlan.credentials.get == testCase.expectedCredentials,
             s"[${testCase.description}] Parsed credentials don't match expected.\n" +
             s"Expected: ${testCase.expectedCredentials}\n" +
@@ -138,7 +141,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
             ServerSidePlannedFilePartitionReaderFactory.configureCredentials(testConf, creds)
           }
 
-          // Validate Hadoop config matches expected
+          // Validate Hadoop config matches expectation.
           testCase.expectedHadoopConfig.foreach { case (key, expectedValue) =>
             val actualValue = testConf.get(key)
             assert(actualValue == expectedValue,

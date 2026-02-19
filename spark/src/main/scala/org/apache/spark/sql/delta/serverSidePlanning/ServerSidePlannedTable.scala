@@ -451,7 +451,6 @@ class ServerSidePlannedFilePartitionReaderFactory(
 object ServerSidePlannedFilePartitionReaderFactory {
   /**
    * Configures Hadoop Configuration with storage credentials from server-side planning.
-   * This method is used by both production code and tests to ensure consistent behavior.
    *
    * @param conf The Hadoop Configuration to modify
    * @param credentials The credentials to inject into the configuration
