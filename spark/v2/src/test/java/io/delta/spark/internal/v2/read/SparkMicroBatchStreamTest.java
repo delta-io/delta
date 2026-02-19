@@ -1801,7 +1801,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     // called.
     assertThrows(
         IllegalArgumentException.class,
-        () -> createDeltaOptions("-1", /* startingTimestampValue= */ null));
+        () -> createDeltaOptions(/* startingVersionValue= */ "-1", /* startingTimestampValue= */ null));
   }
 
   /**
@@ -2873,7 +2873,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
           Map$.MODULE$.<String, String>empty().updated("startingVersion", startingVersionValue);
       return new DeltaOptions(scalaMap, spark.sessionState().conf());
     } else {
-      // Create Scala Map with startingVersion
+      // Create Scala Map with startingTimestamp
       scala.collection.immutable.Map<String, String> scalaMap =
           Map$.MODULE$.<String, String>empty().updated("startingTimestamp", startingTimestampValue);
       return new DeltaOptions(scalaMap, spark.sessionState().conf());
