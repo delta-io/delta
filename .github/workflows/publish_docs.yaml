@@ -23,9 +23,9 @@ jobs:
             ref: v4.0.1
             java: 17
             out_dir: docs/apis/_site/api
-          - name: 3.3.2
-            ref: v3.3.2
-            java: 8
+          - name: 4.0.0
+            ref: v4.0.0
+            java: 17
             out_dir: docs/apis/_site/api
 
     steps:
