@@ -1380,6 +1380,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
           DeltaLog.clearCache()
           val table = DeltaTableV2(spark, dir, clock)
 
+          val table = DeltaTableV2(spark, dir, clock)
           setCommitClock(table, 0L, clock)
           val expectedReturn = if (isDryRun) {
             // dry run returns files that will be deleted
