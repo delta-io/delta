@@ -37,7 +37,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
 
-  private lazy val server = ServerSidePlanningTestUtils.startServer()
+  private lazy val server = IcebergRESTServerTestUtils.startServer()
   private lazy val catalog = server.getCatalog()
   private lazy val serverUri = s"http://localhost:${server.getPort}"
 
@@ -510,7 +510,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
    * Convenience wrapper for withTempTable that uses the test suite's default values.
    */
   private def withTempTable[T](tableName: String)(func: Table => T): T = {
-    ServerSidePlanningTestUtils.withTempTable(
+    IcebergRESTServerTestUtils.withTempTable(
       catalog, defaultNamespace, tableName,
       defaultSchema, defaultSpec, Some(server)
     )(func)
@@ -520,7 +520,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
    * Convenience wrapper for populateTestData that uses the test suite's SparkSession.
    */
   private def populateTestData(tableName: String): Unit = {
-    ServerSidePlanningTestUtils.populateTestData(spark, tableName)
+    IcebergRESTServerTestUtils.populateTestData(spark, tableName)
   }
 
   test("User-Agent header format") {

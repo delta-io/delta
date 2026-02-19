@@ -34,7 +34,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
 
   private static final String CONFIG_TOKEN = "fs.gs.auth.access.token";
   private static final String CONFIG_EXPIRATION_MS = "fs.gs.auth.access.token.expiration.ms";
-  private static final long FALLBACK_EXPIRATION_MS = 3600_000L; 
+  private static final long FALLBACK_EXPIRATION_MS = 3600_000L;
 
   private Configuration conf;
 
@@ -56,7 +56,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
         expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
       }
     } else {
-      // No expiration provided, use fallback. 
+      // No expiration provided, use fallback.
       expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
     }
 

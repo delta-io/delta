@@ -36,7 +36,7 @@ import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
  * - Managing table lifecycle with guaranteed cleanup
  * - Populating test data with consistent schemas
  */
-object ServerSidePlanningTestUtils {
+object IcebergRESTServerTestUtils {
 
   /**
    * Starts an IcebergRESTServer on a dynamic port and verifies it's reachable.
