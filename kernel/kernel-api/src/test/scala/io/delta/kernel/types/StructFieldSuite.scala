@@ -266,18 +266,13 @@ class StructFieldSuite extends AnyFunSuite {
       new StructField(
         "mapField",
         new MapType(
-          new StructField("key", new StringType("ICU.DE_DE"), false),
+          new StructField("key", new StringType("SPARK.UTF8_BINARY"), false),
           new StructField("value", LongType.LONG, true).withTypeChanges(
             Seq(
               new TypeChange(ShortType.SHORT, IntegerType.INTEGER),
               new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava)),
         false),
       FieldMetadata.builder()
-        .putFieldMetadata(
-          COLLATIONS_METADATA_KEY,
-          FieldMetadata.builder()
-            .putString("mapField.key", "ICU.DE_DE")
-            .build())
         .putFieldMetadataArray(
           DELTA_TYPE_CHANGES_KEY,
           Array(
