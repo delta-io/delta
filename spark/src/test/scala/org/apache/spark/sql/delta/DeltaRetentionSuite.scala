@@ -144,8 +144,14 @@ class DeltaRetentionSuite extends QueryTest
         intervalStringToMillis("interval 2 day"))
       log.cleanUpExpiredLogs(log.snapshot)
 
+      // Catalog-owned mode may retain commit 0 as a backfilled delta even when cleanup succeeds.
+      // Ignore version 0 for this boundary check so we still validate that expired deltas before
+      // the latest checkpoint are deleted.
       val minDeltaFile =
-        getDeltaFiles(logPath).map(f => FileNames.deltaVersion(new Path(f.toString))).min
+        getDeltaFiles(logPath)
+          .map(f => FileNames.deltaVersion(new Path(f.toString)))
+          .filterNot(v => catalogOwnedDefaultCreationEnabledInTests && v == 0)
+          .min
       val maxChkFile = getCheckpointFiles(logPath).map(f =>
         FileNames.checkpointVersion(new Path(f.toString))).max
 
@@ -1184,4 +1190,3 @@ class DeltaRetentionWithCatalogOwnedBatch2Suite
     }
   }
 }
-
