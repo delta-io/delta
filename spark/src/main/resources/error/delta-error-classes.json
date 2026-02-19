@@ -2568,6 +2568,18 @@
     ],
     "sqlState" : "22000"
   },
+  "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART" : {
+    "message" : [
+      "The streaming query's schema does not match the current table schema.",
+      "Query schema (from analysis): <querySchema>",
+      "",
+      "Current table schema: <tableSchema>",
+      "",
+      "The table schema has changed since this streaming query was created.",
+      "Please create a new streaming DataFrame to pick up the current schema."
+    ],
+    "sqlState" : "KD007"
+  },
   "DELTA_STREAMING_SCHEMA_LOCATION_CONFLICT" : {
     "message" : [
       "Detected conflicting schema location '<loc>' while streaming from table or table located at '<table>'.",
