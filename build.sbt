@@ -114,8 +114,6 @@ lazy val commonSettings = Seq(
   },
 
   testOptions += Tests.Argument("-oF"),
-  // Write JUnit XML test reports for collecting per-suite durations
-  Test / testOptions += Tests.Argument("-u", "target/test-reports"),
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,

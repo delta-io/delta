@@ -24,6 +24,25 @@ Usage:
     # Only show top 100 slowest suites:
     python3 project/scripts/collect_test_durations.py --branch master --top-n 100
 
+Prerequisites:
+    Before running this script, you must temporarily enable JUnit XML test reports
+    and artifact uploads in the CI workflow:
+
+    1. Add to build.sbt (in the commonSettings block, after the testOptions line):
+         Test / testOptions += Tests.Argument("-u", "target/test-reports"),
+
+    2. Add to .github/workflows/spark_test.yaml (after the "Run Scala/Java tests" step):
+         - name: Upload test reports
+           if: always()
+           uses: actions/upload-artifact@v4
+           with:
+             name: test-reports-spark${{ matrix.spark_version }}-shard${{ matrix.shard }}
+             path: "**/target/test-reports/*.xml"
+             retention-days: 7
+
+    3. Push, wait for CI to complete, then run this script.
+    4. Revert the build.sbt and workflow changes after collecting durations.
+
 Requirements:
     - gh CLI authenticated with access to delta-io/delta
     - Python 3.6+
