@@ -416,16 +416,37 @@ class ServerSidePlannedFilePartitionReaderFactory(
           conf.set("fs.s3a.secret.key", secretAccessKey)
           conf.set("fs.s3a.session.token", sessionToken)
 
-        case AzureCredentials(accountName, sasToken, containerName) =>
+        case AzureCredentials(accountName, _containerName, credentialEntries) =>
+          val accountSuffix = s"$accountName.dfs.core.windows.net"
+
+          // Find the SAS token key (not the expires-at key)
+          val sasTokenKey = credentialEntries.keys.find(!_.contains("sas-token-expires-at-ms"))
+            .getOrElse(credentialEntries.keys.head)
+          val sasTokenValue = credentialEntries(sasTokenKey)
+
+          // Configure ABFS connector for SAS authentication
           conf.set("fs.abfs.impl.disable.cache", "true")
           conf.set("fs.abfss.impl.disable.cache", "true")
-          // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
-          val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
-          conf.set(sasKey, sasToken)
+          conf.set(s"fs.azure.account.auth.type.$accountSuffix", "SAS")
+          conf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasTokenValue)
 
-        case GcsCredentials(oauth2Token) =>
+        case GcsCredentials(oauth2Token, expirationEpochMs) =>
           conf.set("fs.gs.impl.disable.cache", "true")
+          conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
+
+          // Set provider class (both key variants for compatibility)
+          // TODO: Figure out which key to keep - .provider or .provider.impl or both
+          val gcsProviderClass = "org.apache.spark.sql.delta.serverSidePlanning.gcs." +
+            "ConfBasedGcsAccessTokenProvider"
+          conf.set("fs.gs.auth.access.token.provider", gcsProviderClass)
+          conf.set("fs.gs.auth.access.token.provider.impl", gcsProviderClass)
+
+          // Set token for provider to read from config
           conf.set("fs.gs.auth.access.token", oauth2Token)
+
+          // Set expiration if present
+          expirationEpochMs.foreach(ms =>
+            conf.set("fs.gs.auth.access.token.expiration.ms", ms.toString))
       }
     }
 

@@ -337,6 +337,10 @@ lazy val sparkV1 = (project in file("spark"))
       "org.apache.spark" %% "spark-catalyst" % sparkVersion.value % "provided",
       // For DynamoDBCommitStore
       "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      // For ConfBasedGcsAccessTokenProvider (GCS server-side planning credentials)
+      // Use hadoop2-2.2.x for compile: AccessToken is (String, Long). Runtime often has this API (e.g. UC/GCS).
+      // TODO: Revisit whether 'provided' scope is correct or if we should use a different scope
+      "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop2-2.2.26" % "provided",
 
       // Test deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
