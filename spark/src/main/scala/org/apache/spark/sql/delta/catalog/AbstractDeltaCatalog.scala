@@ -366,9 +366,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]
   ): Table = {
-      val columns =
-        org.apache.spark.sql.connector.catalog.CatalogV2Util.structTypeToV2Columns(schema)
-      super.createTable(ident, columns, partitions, properties)
+      // Use the schema-based createTable API. Some delegating catalogs (e.g. UCSingleCatalog)
+      // support a richer set of Spark SQL types via the schema path than via the Column-based
+      // overload. Using the schema overload keeps behavior consistent with Spark SQL DDL.
+      super.createTable(ident, schema, partitions, properties)
   }
 
 
