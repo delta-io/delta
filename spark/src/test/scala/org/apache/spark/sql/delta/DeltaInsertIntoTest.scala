@@ -155,6 +155,17 @@ trait DeltaInsertIntoTest
     }
   }
 
+  /** INSERT INTO BY NAME REPLACE WHERE */
+  object SQLInsertOverwriteByNameReplaceWhere extends Insert {
+    val name: String = s"INSERT INTO BY NAME REPLACE WHERE"
+    val mode: SaveMode = SaveMode.Overwrite
+    val byName: Boolean = true
+    val isSQL: Boolean = true
+    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
+      sql(s"INSERT INTO target BY NAME REPLACE WHERE $whereCol = $whereValue " +
+        s"SELECT ${columns.mkString(", ")} FROM source")
+  }
+
   /** INSERT OVERWRITE PARTITION (part = 1) */
   object SQLInsertOverwritePartitionByPosition extends Insert {
     val name: String = s"INSERT OVERWRITE PARTITION (partition)"
@@ -348,6 +359,7 @@ trait DeltaInsertIntoTest
   /** Collects all the types of insert previously defined. */
   protected lazy val allInsertTypes: Set[Insert] = Set(
         SQLInsertOverwriteReplaceWhere,
+        SQLInsertOverwriteByNameReplaceWhere,
         SQLInsertOverwritePartitionByPosition,
         SQLInsertOverwritePartitionColList,
         DFv1InsertIntoDynamicPartitionOverwrite,
