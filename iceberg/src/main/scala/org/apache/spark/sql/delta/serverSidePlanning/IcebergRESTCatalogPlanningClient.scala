@@ -83,7 +83,8 @@ class IcebergRESTCatalogPlanningClient(
   private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
   private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
   private val AZURE_SAS_TOKEN_EXPIRY_PREFIX = "adls.sas-token-expires-at-ms."
-  private val GCS_KEYS = Seq("gcs.oauth2.token")
+  private val GCS_TOKEN_KEY = "gcs.oauth2.token"
+  private val GCS_EXPIRY_KEY = "gcs.oauth2.token-expires-at"
 
   private case class S3Credentials(
       accessKeyId: String,
@@ -162,9 +163,9 @@ class IcebergRESTCatalogPlanningClient(
         get("s3.session-token"))
     } else if (hasAzureKeys(config)) {
       buildAzureCredentials(config)
-    } else if (hasAny(GCS_KEYS)) {
-      val token = get("gcs.oauth2.token")
-      val expirationEpochMs = config.get("gcs.oauth2.token-expires-at")
+    } else if (config.contains(GCS_TOKEN_KEY)) {
+      val token = get(GCS_TOKEN_KEY)
+      val expirationEpochMs = config.get(GCS_EXPIRY_KEY)
         .flatMap(s => scala.util.Try(s.toLong).toOption)
       GcsCredentials(token, expirationEpochMs)
     } else {

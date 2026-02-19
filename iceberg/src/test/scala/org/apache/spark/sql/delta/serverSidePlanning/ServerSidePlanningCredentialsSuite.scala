@@ -154,10 +154,10 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         val errorTestCases = Seq(
           ("Incomplete S3 (missing secret and token)",
             Map("s3.access-key-id" -> "test-key"),
-            "s3.secret-access-key"),
+            "Missing required credential"),
           ("GCS incomplete: only expiration",
             Map("gcs.oauth2.token-expires-at" -> "1771456336352"),
-            "gcs.oauth2.token"),
+            "Unrecognized credential keys"),
           // Expiration-only Azure entry is unrecognized: without the token key
           // (adls.sas-token.<account>), hasAzureKeys() returns false and we can't
           // construct valid credentials.
