@@ -68,6 +68,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -542,6 +543,13 @@ public class TransactionImpl implements Transaction {
       }
 
       boolean isAppendOnlyTable = APPEND_ONLY_ENABLED.fromMetadata(metadata);
+      boolean isCdfEnabled = TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+
+      // Track CDF validation state: whether we've seen adds and removes
+      // with enableChangeDataFeed=true
+      // This is wrapped in an AtomicBoolean to allow modification from within the lambda
+      final AtomicBoolean hasAddWithDataChange = new AtomicBoolean(false);
+      final AtomicBoolean hasRemoveWithDataChange = new AtomicBoolean(false);
 
       // Create a new CloseableIterator that will return the metadata actions followed by the
       // data actions.
@@ -555,6 +563,25 @@ public class TransactionImpl implements Transaction {
                       RemoveFile removeFile = new RemoveFile(action.getStruct(REMOVE_FILE_ORDINAL));
                       if (isAppendOnlyTable && removeFile.getDataChange()) {
                         throw DeltaErrors.cannotModifyAppendOnlyTable(dataPath.toString());
+                      }
+                      // Track removes with dataChange=true for table creation validation
+                      if (isCdfEnabled && removeFile.getDataChange()) {
+                        hasRemoveWithDataChange.set(true);
+                        // Check if we've already seen adds with dataChange=true
+                        if (hasAddWithDataChange.get()) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
+                      }
+                    }
+                    if (!action.isNullAt(ADD_FILE_ORDINAL)) {
+                      AddFile addFile = new AddFile(action.getStruct(ADD_FILE_ORDINAL));
+                      // Track adds with dataChange=true for table creation validation
+                      if (isCdfEnabled && addFile.getDataChange()) {
+                        hasAddWithDataChange.set(true);
+                        // Check if we've already seen removes with dataChange=true
+                        if (hasRemoveWithDataChange.get()) {
+                          throw DeltaErrors.cdfMixedAddRemoveNotSupported(dataPath.toString());
+                        }
                       }
                     }
                     return action;

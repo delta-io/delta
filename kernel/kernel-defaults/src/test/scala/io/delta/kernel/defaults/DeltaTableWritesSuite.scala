@@ -17,7 +17,7 @@ package io.delta.kernel.defaults
 
 import java.io.File
 import java.nio.file.Files
-import java.util.{Locale, Optional}
+import java.util.{Locale, Optional, UUID}
 
 import scala.collection.immutable.Seq
 import scala.jdk.CollectionConverters._
@@ -37,10 +37,12 @@ import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.expressions.Literal._
 import io.delta.kernel.internal.{ScanImpl, SnapshotImpl, TableConfig}
 import io.delta.kernel.internal.checkpoints.CheckpointerSuite.selectSingleElement
+import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.table.SnapshotBuilderImpl
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.{Clock, JsonUtils}
 import io.delta.kernel.internal.util.SchemaUtils.casePreservingPartitionColNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.shaded.com.fasterxml.jackson.databind.node.ObjectNode
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types._
@@ -1829,6 +1831,108 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
           expIsReadyForCheckpoint = false)
         verifyCommitInfo(tablePath = tablePath, version = 0)
         verifyWrittenContent(tablePath, testSchema, expData)
+      }
+    }
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Change Data Feed (CDF) tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  private def createAddFileRow(
+      path: String = s"part-${UUID.randomUUID()}.parquet",
+      dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{AddFile, SingleAction}
+    import io.delta.kernel.internal.util.PartitionUtils
+
+    val partitionValues = PartitionUtils.serializePartitionMap(
+      java.util.Collections.emptyMap[String, Literal]())
+
+    val addFileRow = AddFile.createAddFileRow(
+      testSchema,
+      path,
+      partitionValues,
+      100L, // size
+      System.currentTimeMillis(), // modificationTime
+      dataChange,
+      Optional.empty(), // deletionVector
+      Optional.empty(), // tags
+      Optional.empty(), // baseRowId
+      Optional.empty(), // defaultRowCommitVersion
+      Optional.empty() // stats
+    )
+
+    SingleAction.createAddFileSingleAction(addFileRow)
+  }
+
+  // Helper to create a mock RemoveFile action row
+  private def createRemoveFileRow(
+      path: String,
+      dataChange: Boolean = true): Row = {
+    import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
+
+    val removeFileRow = new GenericRow(
+      RemoveFile.FULL_SCHEMA,
+      Map[Integer, Object](
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> path,
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) -> Long.box(
+          System.currentTimeMillis()),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) -> Boolean.box(dataChange),
+        Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) -> Long.box(100L)).asJava)
+
+    SingleAction.createRemoveFileSingleAction(removeFileRow)
+  }
+
+  // Test cases: (description, actions, shouldSucceed)
+  val cdfTestCases: Seq[(String, Seq[Row], Boolean)] = Seq(
+    ("add with dataChange=true", Seq(createAddFileRow(dataChange = true)), true),
+    ("add with dataChange=false", Seq(createAddFileRow(dataChange = false)), true),
+    (
+      "multiple adds with dataChange=true",
+      Seq(createAddFileRow(dataChange = true), createAddFileRow(dataChange = true)),
+      true),
+    (
+      "multiple removes with dataChange=true", {
+        val path1 = "file1.parquet"
+        val path2 = "file2.parquet"
+        Seq(
+          createAddFileRow(path1, dataChange = false),
+          createAddFileRow(path2, dataChange = false),
+          createRemoveFileRow(path1, dataChange = true),
+          createRemoveFileRow(path2, dataChange = true))
+      },
+      true),
+    (
+      "add dataChange=true, remove dataChange=false", {
+        val path = "file1.parquet"
+        Seq(
+          createAddFileRow(path, dataChange = true),
+          createRemoveFileRow(path, dataChange = false))
+      },
+      true),
+    (
+      "add dataChange=true, remove dataChange=true", {
+        val path = "file1.parquet"
+        Seq(createAddFileRow(path, dataChange = true), createRemoveFileRow(path, dataChange = true))
+      },
+      false))
+
+  cdfTestCases.foreach { case (desc, actions, shouldSucceed) =>
+    test(s"CDF-enabled table: $desc - ${if (shouldSucceed) "succeeds" else "fails"}") {
+      withTempDirAndEngine { (tablePath, engine) =>
+        val tableProps = Map(TableConfig.CHANGE_DATA_FEED_ENABLED.getKey -> "true")
+        val txn = getCreateTxn(engine, tablePath, testSchema, tableProperties = tableProps)
+
+        val actionsIterable = inMemoryIterable(toCloseableIterator(actions.asJava.iterator()))
+
+        if (shouldSucceed) {
+          val result = commitTransaction(txn, engine, actionsIterable)
+          assert(result.getVersion === 0)
+        } else {
+          intercept[KernelException] {
+            commitTransaction(txn, engine, actionsIterable)
+          }
+        }
       }
     }
   }
