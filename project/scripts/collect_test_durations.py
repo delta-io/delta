@@ -207,12 +207,10 @@ def parse_artifact_dir(artifact_dir):
                 continue
 
             for suite_name, duration_sec in results:
-                # Use simple class name (last part after dot)
-                simple_name = suite_name.rsplit(".", 1)[-1] if "." in suite_name else suite_name
                 dur_min = round(duration_sec / 60, 2)
                 # Keep the longer duration if a suite appears multiple times
-                if simple_name not in durations or dur_min > durations[simple_name]:
-                    durations[simple_name] = dur_min
+                if suite_name not in durations or dur_min > durations[suite_name]:
+                    durations[suite_name] = dur_min
 
     return durations, xml_count
 
