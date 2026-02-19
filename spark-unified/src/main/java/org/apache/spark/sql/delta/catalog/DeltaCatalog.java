@@ -176,10 +176,6 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         () -> super.loadPathTable(ident));
   }
 
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
-
   /**
    * Loads a table based on the {@link DeltaV2Mode} SQL configuration.
    *
