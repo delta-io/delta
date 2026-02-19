@@ -16,9 +16,16 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
 import java.util.ArrayList;
 import java.util.List;
+import org.apache.hadoop.fs.Path;
+import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.Snapshot;
 import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
+import scala.Option;
 
 public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
 
@@ -68,5 +75,40 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     Assertions.assertThat(prunedResults).isEqualTo(expected);
+  }
+
+  @Test
+  public void testMaintenanceOpsBlockedOnManagedTable() throws Exception {
+    withNewTable(
+        "maintenance_blocked",
+        "id INT",
+        TableType.MANAGED,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1)", tableName);
+
+          assertThatThrownBy(() -> sql("OPTIMIZE %s", tableName))
+              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
+              .hasMessageContaining("OPTIMIZE");
+
+          assertThatThrownBy(() -> sql("VACUUM %s", tableName))
+              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
+              .hasMessageContaining("VACUUM");
+
+          assertThatThrownBy(() -> sql("REORG TABLE %s APPLY (PURGE)", tableName))
+              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
+              .hasMessageContaining("OPTIMIZE");
+
+          String location =
+              sql("DESCRIBE EXTENDED %s", tableName).stream()
+                  .filter(row -> row.size() >= 2 && "Location".equals(row.get(0)))
+                  .map(row -> row.get(1))
+                  .findFirst()
+                  .orElseThrow();
+          DeltaLog log = DeltaLog.forTable(spark(), new Path(location));
+          Snapshot snapshot = log.update();
+          assertThatThrownBy(() -> log.cleanUpExpiredLogs(snapshot, Option.empty()))
+              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
+              .hasMessageContaining("Metadata cleanup");
+        });
   }
 }
