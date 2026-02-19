@@ -406,7 +406,7 @@ class ServerSidePlannedFilePartitionReaderFactory(
     // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
     // (avoids AccessDenied when temp creds expire and a cached FS is reused).
     // Aligns with CredPropsUtil in the Unity Catalog connector.
-    credentials.foreach(ServerSidePlannedFilePartitionReaderFactory.configureCredentials(conf, _))
+    credentials.foreach(_.configure(conf))
 
     new SerializableConfiguration(conf)
   }
@@ -442,51 +442,6 @@ class ServerSidePlannedFilePartitionReaderFactory(
     }
 
     new ServerSidePlannedFilePartitionReader(filePartition, parquetReaderBuilder)
-  }
-}
-
-/**
- * Companion object for ServerSidePlannedFilePartitionReaderFactory.
- */
-object ServerSidePlannedFilePartitionReaderFactory {
-  /**
-   * Configures Hadoop Configuration with storage credentials from server-side planning.
-   *
-   * @param conf The Hadoop Configuration to modify
-   * @param credentials The credentials to inject into the configuration
-   */
-  def configureCredentials(
-      conf: org.apache.hadoop.conf.Configuration,
-      credentials: ScanPlanStorageCredentials): Unit = {
-    credentials match {
-      case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
-        conf.set("fs.s3a.path.style.access", "true")
-        conf.set("fs.s3.impl.disable.cache", "true")
-        conf.set("fs.s3a.impl.disable.cache", "true")
-        conf.set("fs.s3a.access.key", accessKeyId)
-        conf.set("fs.s3a.secret.key", secretAccessKey)
-        conf.set("fs.s3a.session.token", sessionToken)
-
-      case AzureCredentials(accountName, sasToken, _) =>
-        val accountSuffix = s"$accountName.dfs.core.windows.net"
-
-        // Configure ABFS connector for SAS authentication
-        conf.set("fs.abfs.impl.disable.cache", "true")
-        conf.set("fs.abfss.impl.disable.cache", "true")
-        conf.set(s"fs.azure.account.auth.type.$accountSuffix", "SAS")
-        conf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasToken)
-
-      case GcsCredentials(oauth2Token, expirationEpochMs) =>
-        conf.set("fs.gs.impl.disable.cache", "true")
-        conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
-        conf.set("fs.gs.auth.access.token.provider.impl",
-          "org.apache.spark.sql.delta.serverSidePlanning.FixedGcsAccessTokenProvider")
-        // Set token for provider to read from config
-        conf.set("fs.gs.auth.access.token", oauth2Token)
-        // Set expiration if present
-        expirationEpochMs.foreach(ms =>
-          conf.set("fs.gs.auth.access.token.expiration.ms", ms.toString))
-    }
   }
 }
 

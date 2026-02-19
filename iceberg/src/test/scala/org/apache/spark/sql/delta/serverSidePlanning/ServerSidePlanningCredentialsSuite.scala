@@ -37,7 +37,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
   private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
 
-  private lazy val server = ServerSidePlanningTestUtils.startServer()
+  private lazy val server = IcebergRESTServerTestUtils.startServer()
   private lazy val catalog = server.getCatalog()
   private lazy val serverUri = s"http://localhost:${server.getPort}"
 
@@ -124,16 +124,8 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
           assert(scanPlan.credentials.isDefined,
             s"[${testCase.description}] Credentials should be present in ScanPlan")
 
-          // Confirm client parsed credentials correctly.
-          assert(scanPlan.credentials.get == testCase.expectedCredentials,
-            s"[${testCase.description}] Parsed credentials don't match expected.\n" +
-            s"Expected: ${testCase.expectedCredentials}\n" +
-            s"Got: ${scanPlan.credentials.get}")
-
           val testConf = new Configuration()
-          scanPlan.credentials.foreach { creds =>
-            ServerSidePlannedFilePartitionReaderFactory.configureCredentials(testConf, creds)
-          }
+          scanPlan.credentials.foreach(_.configure(testConf))
 
           // Validate Hadoop config matches expectation.
           testCase.expectedHadoopConfig.foreach { case (key, expectedValue) =>
@@ -202,7 +194,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
    * Convenience wrapper for withTempTable that uses the test suite's default values.
    */
   private def withTempTable[T](tableName: String)(func: Table => T): T = {
-    ServerSidePlanningTestUtils.withTempTable(
+    IcebergRESTServerTestUtils.withTempTable(
       catalog, defaultNamespace, tableName,
       defaultSchema, defaultSpec, Some(server)
     )(func)
@@ -212,7 +204,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
    * Convenience wrapper for populateTestData that uses the test suite's SparkSession.
    */
   private def populateTestData(tableName: String): Unit = {
-    ServerSidePlanningTestUtils.populateTestData(spark, tableName)
+    IcebergRESTServerTestUtils.populateTestData(spark, tableName)
   }
 
   /**
@@ -224,8 +216,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     /**
      * Test case for end-to-end credential validation.
      *
-     * Flow: serverInput → (client parses) → expectedCredentials →
-     *       (factory configures) → expectedHadoopConfig
+     * Flow: serverInput → (client parses) → creds.configure(conf) → expectedHadoopConfig
      */
     sealed trait CredentialTestCase {
       /** Test case name */
@@ -237,10 +228,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
       /** INPUT: Credential config map that server returns */
       def serverInput: Map[String, String]
 
-      /** EXPECTED OUTPUT 1: Parsed credentials from server response */
-      def expectedCredentials: ScanPlanStorageCredentials
-
-      /** EXPECTED OUTPUT 2: Hadoop configuration keys and values */
+      /** EXPECTED OUTPUT: Hadoop configuration keys and values */
       def expectedHadoopConfig: Map[String, String]
     }
 
@@ -260,9 +248,6 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         "s3.secret-access-key" -> secretAccessKey,
         "s3.session-token" -> sessionToken
       )
-
-      override def expectedCredentials: ScanPlanStorageCredentials =
-        S3Credentials(accessKeyId, secretAccessKey, sessionToken)
 
       override def expectedHadoopConfig: Map[String, String] = Map(
         "fs.s3a.path.style.access" -> "true",
@@ -297,9 +282,6 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
         }
       }
 
-      override def expectedCredentials: ScanPlanStorageCredentials =
-        AzureCredentials(accountName, sasToken, expirationMs)
-
       override def expectedHadoopConfig: Map[String, String] = {
         val accountSuffix = s"$accountName.dfs.core.windows.net"
         Map(
@@ -328,9 +310,6 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
           case None => base
         }
       }
-
-      override def expectedCredentials: ScanPlanStorageCredentials =
-        GcsCredentials(token, expirationMs)
 
       override def expectedHadoopConfig: Map[String, String] = {
         val base = Map(

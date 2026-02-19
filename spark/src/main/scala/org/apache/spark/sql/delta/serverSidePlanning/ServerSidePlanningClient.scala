@@ -174,107 +174,13 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
 }
 
 /**
- * Temporary storage credentials from server-side planning response.
+ * Functional interface for applying storage credentials to a Hadoop configuration.
+ * Implementations are responsible for setting the appropriate Hadoop config keys
+ * for their respective cloud provider.
  */
-sealed trait ScanPlanStorageCredentials
-
-object ScanPlanStorageCredentials {
-
-  /** IRC config key mappings for each credential type. */
-  private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
-  // Trailing dot distinguishes token keys (adls.sas-token.<account>) from
-  // expiration keys (adls.sas-token-expires-at-ms.<account>).
-  private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
-  private val AZURE_SAS_TOKEN_EXPIRY_PREFIX = "adls.sas-token-expires-at-ms."
-  private val GCS_KEYS = Seq("gcs.oauth2.token")
-
-  /**
-   * Check if config contains Azure credentials.
-   * Requires the actual token key (adls.sas-token.<account>) to be present;
-   * an expiration-only entry is not sufficient to construct valid credentials.
-   */
-  private def hasAzureKeys(config: Map[String, String]): Boolean = {
-    config.keys.exists(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
-  }
-
-  /**
-   * Build Azure credentials by extracting the account name
-   * from the key pattern: adls.sas-token.<account>.dfs.core.windows.net
-   */
-  private def buildAzureCredentials(config: Map[String, String]): AzureCredentials = {
-    // Token key format: adls.sas-token.<account>.dfs.core.windows.net
-    val sasTokenKey = config.keys
-      .find(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
-      .getOrElse(throw new IllegalStateException(
-        s"Missing Azure SAS token key starting with: $AZURE_SAS_TOKEN_KEY_PREFIX"))
-
-    val accountName = sasTokenKey
-      .stripPrefix(AZURE_SAS_TOKEN_KEY_PREFIX)
-      .stripSuffix(".dfs.core.windows.net")
-
-    val sasToken = config(sasTokenKey)
-
-    // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
-    val expiresAtMs = config.get(s"$AZURE_SAS_TOKEN_EXPIRY_PREFIX$accountName.dfs.core.windows.net")
-      .flatMap(s => scala.util.Try(s.toLong).toOption)
-
-    AzureCredentials(accountName = accountName, sasToken = sasToken, expiresAtMs = expiresAtMs)
-  }
-
-  /**
-   * Factory method to create credentials from IRC config map.
-   * Tries each credential type and returns the first complete match.
-   * Throws IllegalStateException if credentials are incomplete or unrecognized.
-   */
-  def fromConfig(config: Map[String, String]): ScanPlanStorageCredentials = {
-    def get(key: String): String =
-      config.getOrElse(key, throw new IllegalStateException(s"Missing required credential: $key"))
-
-    def hasAny(keys: Seq[String]): Boolean = keys.exists(config.contains)
-
-    // Try each sealed trait subtype in priority order
-    if (hasAny(S3_KEYS)) {
-      S3Credentials(
-        get("s3.access-key-id"),
-        get("s3.secret-access-key"),
-        get("s3.session-token"))
-    } else if (hasAzureKeys(config)) {
-      buildAzureCredentials(config)
-    } else if (hasAny(GCS_KEYS)) {
-      val token = get("gcs.oauth2.token")
-      val expirationEpochMs = config.get("gcs.oauth2.token-expires-at")
-        .flatMap(s => scala.util.Try(s.toLong).toOption)
-      GcsCredentials(token, expirationEpochMs)
-    } else {
-      throw new IllegalStateException(
-        s"Unrecognized credential keys: ${config.keys.mkString(", ")}. " +
-          "Expected S3, Azure, or GCS properties.")
-    }
-  }
+trait ScanPlanStorageCredentials {
+  def configure(conf: org.apache.hadoop.conf.Configuration): Unit
 }
-
-/**
- * AWS S3 temporary credentials.
- */
-case class S3Credentials(
-    accessKeyId: String,
-    secretAccessKey: String,
-    sessionToken: String) extends ScanPlanStorageCredentials
-
-/**
- * Azure ADLS Gen2 credentials with SAS token.
- */
-case class AzureCredentials(
-    accountName: String,
-    sasToken: String,
-    expiresAtMs: Option[Long]) extends ScanPlanStorageCredentials
-
-/**
- * Google Cloud Storage OAuth2 token credentials.
- */
-case class GcsCredentials(
-    oauth2Token: String,
-    expirationEpochMs: Option[Long] = None) extends ScanPlanStorageCredentials
 
 /**
  * Result of a table scan plan operation.
