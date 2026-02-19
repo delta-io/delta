@@ -1551,13 +1551,15 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"VACUUM t1")
         },
-        "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE"
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "VACUUM")
       )
       checkError(
         intercept[DeltaUnsupportedOperationException] {
           spark.sql(s"VACUUM t1 DRY RUN")
         },
-        "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE"
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "VACUUM")
       )
     }
     CatalogOwnedCommitCoordinatorProvider.clearBuilders()

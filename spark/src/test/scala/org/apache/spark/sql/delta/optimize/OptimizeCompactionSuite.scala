@@ -24,6 +24,8 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions._
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedCommitCoordinatorProvider
+import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -636,6 +638,24 @@ trait OptimizeCompactionSuiteBase extends QueryTest
       df = df.partitionBy(columns: _*)
     })
     df.format("delta").mode("append").save(tablePath)
+  }
+
+  test("optimize on a catalog owned managed table should fail") {
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
+    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
+      "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
+    withTable("t1") {
+      spark.sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
+        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          spark.sql(s"OPTIMIZE t1")
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "OPTIMIZE")
+      )
+    }
+    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
   }
 }
 

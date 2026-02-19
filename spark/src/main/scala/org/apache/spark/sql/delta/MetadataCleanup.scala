@@ -77,6 +77,9 @@ trait MetadataCleanup extends DeltaLogging {
       catalogTableOpt: Option[CatalogTable] = None,
       deltaRetentionMillisOpt: Option[Long] = None,
       cutoffTruncationGranularity: TruncationGranularity = DAY): Unit = {
+    if (snapshotToCleanup.isCatalogOwned) {
+      throw DeltaErrors.operationBlockedOnCatalogManagedTable("Metadata cleanup")
+    }
     recordDeltaOperation(this, "delta.log.cleanup") {
       val retentionMillis =
         deltaRetentionMillisOpt.getOrElse(deltaRetentionMillis(unsafeVolatileSnapshot.metadata))

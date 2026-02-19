@@ -2909,6 +2909,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION" : {
+    "message" : [
+      "<operation> is blocked by the catalog for Catalog-Managed tables."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",
@@ -3187,12 +3193,6 @@
   "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
     "message" : [
       "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
-    ],
-    "sqlState" : "0AKDC"
-  },
-  "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" : {
-    "message" : [
-      "Running vacuum on catalog-managed tables is currently not supported."
     ],
     "sqlState" : "0AKDC"
   },

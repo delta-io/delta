@@ -154,6 +154,10 @@ case class OptimizeTableCommand(
       throw DeltaErrors.notADeltaTableException(table.deltaLog.dataPath.toString)
     }
 
+    if (snapshot.isCatalogOwned) {
+      throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
+    }
+
     val isClusteredTable = ClusteredTableUtils.isSupported(snapshot.protocol)
     if (isClusteredTable) {
       if (userPartitionPredicates.nonEmpty) {
