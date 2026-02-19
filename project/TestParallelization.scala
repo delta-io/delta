@@ -212,7 +212,7 @@ object TestParallelization {
      * 100 slowest test suites and their durations (in minutes).
      *
      * Generated from JUnit XML test reports using:
-     *   python3 project/scripts/collect_test_durations.py --pr <N> --top-n 100 --output-scala
+     *   python3 project/scripts/collect_test_durations.py --branch master --update-file
      */
     val TOP_N_HIGH_DURATION_TEST_SUITES: List[(String, Double)] = List(
       ("org.apache.spark.sql.delta.DeltaRetentionWithCatalogOwnedBatch1Suite", 22.66),

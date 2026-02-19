@@ -114,6 +114,9 @@ lazy val commonSettings = Seq(
   },
 
   testOptions += Tests.Argument("-oF"),
+  // Always generate JUnit XML test reports for shard rebalancing analysis.
+  // Reports are collected by CI and used by project/scripts/collect_test_durations.py.
+  Test / testOptions += Tests.Argument("-u", "target/test-reports"),
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
