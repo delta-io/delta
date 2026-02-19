@@ -30,7 +30,6 @@ import shadedForDelta.org.apache.iceberg.catalog._
  */
 class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSession {
 
-  import testImplicits._
   import CredentialTestHelpers._
 
   private val defaultNamespace = Namespace.of("testDatabase")
@@ -116,7 +115,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
 
         testCases.foreach { testCase =>
           // Set server to return credentials.
-          server.setTestCredentials(testCase.serverInput.asJava)
+          server.setTestCredentials(testCase.serverResponse.asJava)
 
           val scanPlan = client.planScan(defaultNamespace.toString, "credentialsTest")
 
@@ -215,7 +214,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     /**
      * Test case for end-to-end credential validation.
      *
-     * Flow: serverInput → (client parses) → creds.configure(conf) → expectedHadoopConfig
+     * Flow: serverResponse → (client parses) → creds.configure(conf) → expectedHadoopConfig
      */
     sealed trait CredentialTestCase {
       /** Test case name */
@@ -225,7 +224,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
       def cloudProvider: String
 
       /** INPUT: Credential config map that server returns */
-      def serverInput: Map[String, String]
+      def serverResponse: Map[String, String]
 
       /** EXPECTED OUTPUT: Hadoop configuration keys and values */
       def expectedHadoopConfig: Map[String, String]
@@ -242,7 +241,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     ) extends CredentialTestCase {
       override def cloudProvider: String = "S3"
 
-      override def serverInput: Map[String, String] = Map(
+      override def serverResponse: Map[String, String] = Map(
         "s3.access-key-id" -> accessKeyId,
         "s3.secret-access-key" -> secretAccessKey,
         "s3.session-token" -> sessionToken
@@ -269,7 +268,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     ) extends CredentialTestCase {
       override def cloudProvider: String = "Azure"
 
-      override def serverInput: Map[String, String] = {
+      override def serverResponse: Map[String, String] = {
         val base = Map(
           s"adls.sas-token.$accountName.dfs.core.windows.net" -> sasToken
         )
@@ -302,7 +301,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     ) extends CredentialTestCase {
       override def cloudProvider: String = "GCS"
 
-      override def serverInput: Map[String, String] = {
+      override def serverResponse: Map[String, String] = {
         val base = Map("gcs.oauth2.token" -> token)
         expirationMs match {
           case Some(ms) => base + ("gcs.oauth2.token-expires-at" -> ms.toString)

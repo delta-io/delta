@@ -82,7 +82,6 @@ class IcebergRESTCatalogPlanningClient(
   // IRC config key mappings for each credential type
   private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
   private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
-  private val AZURE_SAS_TOKEN_EXPIRY_PREFIX = "adls.sas-token-expires-at-ms."
   private val GCS_TOKEN_KEY = "gcs.oauth2.token"
   private val GCS_EXPIRY_KEY = "gcs.oauth2.token-expires-at"
 
@@ -102,8 +101,7 @@ class IcebergRESTCatalogPlanningClient(
 
   private case class AzureCredentials(
       accountName: String,
-      sasToken: String,
-      expiresAtMs: Option[Long]) extends ScanPlanStorageCredentials {
+      sasToken: String) extends ScanPlanStorageCredentials {
     override def configure(conf: Configuration): Unit = {
       val accountSuffix = s"$accountName.dfs.core.windows.net"
       conf.set("fs.abfs.impl.disable.cache", "true")
@@ -143,11 +141,7 @@ class IcebergRESTCatalogPlanningClient(
 
     val sasToken = config(sasTokenKey)
 
-    val expiresAtMs = config.get(
-        s"$AZURE_SAS_TOKEN_EXPIRY_PREFIX$accountName.dfs.core.windows.net")
-      .flatMap(s => scala.util.Try(s.toLong).toOption)
-
-    AzureCredentials(accountName = accountName, sasToken = sasToken, expiresAtMs = expiresAtMs)
+    AzureCredentials(accountName = accountName, sasToken = sasToken)
   }
 
   private def fromConfig(config: Map[String, String]): ScanPlanStorageCredentials = {
@@ -170,8 +164,7 @@ class IcebergRESTCatalogPlanningClient(
       GcsCredentials(token, expirationEpochMs)
     } else {
       throw new IllegalStateException(
-        s"Unrecognized credential keys: ${config.keys.mkString(", ")}. " +
-          "Expected S3, Azure, or GCS properties.")
+        "Unrecognized credential keys. Expected S3 (s3.*), Azure (adls.*), or GCS (gcs.*) properties.")
     }
   }
 
