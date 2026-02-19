@@ -282,3 +282,36 @@ class MockListFromDeleteFileSystemClient(listContents: Seq[FileStatus])
 
   def getDeleteCalls: Seq[String] = deleteCalls
 }
+
+/**
+ * A [[CloseableIterator]] wrapper that tracks whether `close()` has been called
+ * and how many times. Used to verify that iterators are properly closed after use.
+ */
+class CloseTrackingIterator[T](delegate: CloseableIterator[T]) extends CloseableIterator[T] {
+  var closeCount: Int = 0
+
+  override def hasNext: Boolean = delegate.hasNext
+  override def next(): T = delegate.next()
+  override def close(): Unit = {
+    closeCount += 1
+    delegate.close()
+  }
+}
+
+/**
+ * A mock [[FileSystemClient]] that returns close-tracking iterators from `listFrom` calls.
+ * Used to verify that iterators are properly closed after use.
+ */
+class CloseTrackingFileSystemClient(listFromProvider: String => Seq[FileStatus])
+    extends BaseMockFileSystemClient {
+  var createdIterators: Seq[CloseTrackingIterator[FileStatus]] = Seq.empty
+
+  override def listFrom(filePath: String): CloseableIterator[FileStatus] = {
+    val delegate = toCloseableIterator(listFromProvider(filePath).iterator.asJava)
+    val tracker = new CloseTrackingIterator(delegate)
+    createdIterators = createdIterators :+ tracker
+    tracker
+  }
+
+  override def resolvePath(path: String): String = path
+}
