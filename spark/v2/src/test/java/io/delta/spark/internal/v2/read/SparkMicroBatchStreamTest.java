@@ -1801,7 +1801,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     // called.
     assertThrows(
         IllegalArgumentException.class,
-        () -> createDeltaOptions(/* startingVersionValue= */ "-1", /* startingTimestampValue= */ null));
+        () ->
+            createDeltaOptions(
+                /* startingVersionValue= */ "-1", /* startingTimestampValue= */ null));
   }
 
   /**
