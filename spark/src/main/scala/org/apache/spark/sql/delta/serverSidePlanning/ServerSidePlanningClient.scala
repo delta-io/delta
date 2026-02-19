@@ -186,7 +186,7 @@ object ScanPlanStorageCredentials {
   private val GCS_KEYS = Seq("gcs.oauth2.token")
 
   /**
-   * Check if config contains Azure credentials (Unity Catalog format).
+   * Check if config contains Azure credentials.
    * Looks for keys starting with "adls.sas-token".
    */
   private def hasAzureKeys(config: Map[String, String]): Boolean = {
@@ -194,8 +194,8 @@ object ScanPlanStorageCredentials {
   }
 
   /**
-   * Build Azure credentials from Unity Catalog format config.
-   * Extracts account name from key pattern: adls.sas-token.<account>.dfs.core.windows.net
+   * Build Azure credentials by extracting the account name
+   * from the key pattern: adls.sas-token.<account>.dfs.core.windows.net
    */
   private def buildAzureCredentials(config: Map[String, String]): AzureCredentials = {
     // Filter all keys starting with Azure SAS token prefix
@@ -206,11 +206,14 @@ object ScanPlanStorageCredentials {
         s"Missing Azure SAS token keys starting with: $AZURE_SAS_TOKEN_PREFIX")
     }
 
-    // Extract account name from first SAS token key
-    // Key format: adls.sas-token.<account>.dfs.core.windows.net
+    // Extract account name from SAS token key (not the expiration key)
+    // Token key format: adls.sas-token.<account>.dfs.core.windows.net
+    // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
     val sasTokenKey = credentialEntries.keys
-      .find(!_.contains("sas-token-expires-at-ms"))
-      .getOrElse(credentialEntries.keys.head)
+      .find(key => key.startsWith(AZURE_SAS_TOKEN_PREFIX) &&
+                   !key.contains("expires-at-ms"))
+      .getOrElse(throw new IllegalStateException(
+        s"No valid SAS token key found in: ${credentialEntries.keys.mkString(", ")}"))
 
     val accountName = sasTokenKey
       .stripPrefix(s"$AZURE_SAS_TOKEN_PREFIX.")
@@ -218,7 +221,6 @@ object ScanPlanStorageCredentials {
 
     AzureCredentials(
       accountName = accountName,
-      containerName = "", // Not used with Unity Catalog format
       credentialEntries = credentialEntries)
   }
 
@@ -268,7 +270,6 @@ case class S3Credentials(
  */
 case class AzureCredentials(
     accountName: String,
-    containerName: String,
     credentialEntries: Map[String, String]) extends ScanPlanStorageCredentials
 
 /**

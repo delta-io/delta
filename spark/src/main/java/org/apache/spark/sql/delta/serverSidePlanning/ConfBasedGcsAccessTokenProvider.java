@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.serverSidePlanning.gcs;
+package org.apache.spark.sql.delta.serverSidePlanning;
 
 import com.google.cloud.hadoop.util.AccessTokenProvider;
 import org.apache.hadoop.conf.Configuration;
@@ -64,15 +64,12 @@ public class ConfBasedGcsAccessTokenProvider implements AccessTokenProvider {
       expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
     }
 
-    // Use (String, Long) constructor for backwards compatibility with older util-hadoop versions
-    // Newer versions use (String, Instant) which causes NoSuchMethodError at runtime
     return new AccessToken(token, expirationMs);
   }
 
   @Override
   public void refresh() {
-    // Token refresh is handled externally by credential vending service
-    // This provider just reads the latest token from config
+    // No refresh needed, token is static and expires.
   }
 
   @Override

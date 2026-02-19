@@ -416,12 +416,16 @@ class ServerSidePlannedFilePartitionReaderFactory(
           conf.set("fs.s3a.secret.key", secretAccessKey)
           conf.set("fs.s3a.session.token", sessionToken)
 
-        case AzureCredentials(accountName, _containerName, credentialEntries) =>
+        case AzureCredentials(accountName, credentialEntries) =>
           val accountSuffix = s"$accountName.dfs.core.windows.net"
 
-          // Find the SAS token key (not the expires-at key)
-          val sasTokenKey = credentialEntries.keys.find(!_.contains("sas-token-expires-at-ms"))
-            .getOrElse(credentialEntries.keys.head)
+          // Find the SAS token key (not the expiration key)
+          // Token key format: adls.sas-token.<account>.dfs.core.windows.net
+          // Expiration key format: adls.sas-token-expires-at-ms.<account>.dfs.core.windows.net
+          val sasTokenKey = credentialEntries.keys
+            .find(key => key.startsWith("adls.sas-token") && !key.contains("expires-at-ms"))
+            .getOrElse(throw new RuntimeException(
+              s"No valid SAS token key found for account: $accountName"))
           val sasTokenValue = credentialEntries(sasTokenKey)
 
           // Configure ABFS connector for SAS authentication
@@ -436,8 +440,8 @@ class ServerSidePlannedFilePartitionReaderFactory(
 
           // Set provider class (both key variants for compatibility)
           // TODO: Figure out which key to keep - .provider or .provider.impl or both
-          val gcsProviderClass = "org.apache.spark.sql.delta.serverSidePlanning.gcs." +
-            "ConfBasedGcsAccessTokenProvider"
+          val gcsProviderClass =
+            "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider"
           conf.set("fs.gs.auth.access.token.provider", gcsProviderClass)
           conf.set("fs.gs.auth.access.token.provider.impl", gcsProviderClass)
 

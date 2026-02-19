@@ -615,7 +615,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       assert(conf.get("fs.gs.auth.type") == "ACCESS_TOKEN_PROVIDER",
         "Expected ACCESS_TOKEN_PROVIDER auth type")
       val expectedProviderClass =
-        "org.apache.spark.sql.delta.serverSidePlanning.gcs.ConfBasedGcsAccessTokenProvider"
+        "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider"
       assert(conf.get("fs.gs.auth.access.token.provider") == expectedProviderClass,
         s"Expected provider class=$expectedProviderClass")
       assert(conf.get("fs.gs.auth.access.token") == expectedToken,
@@ -711,11 +711,11 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
                 testConf.set("fs.s3a.secret.key", secretAccessKey)
                 testConf.set("fs.s3a.session.token", sessionToken)
 
-              case AzureCredentials(accountName, _containerName, credentialEntries) =>
+              case AzureCredentials(accountName, credentialEntries) =>
                 val accountSuffix = s"$accountName.dfs.core.windows.net"
                 val sasTokenKey = credentialEntries.keys
-                  .find(!_.contains("sas-token-expires-at-ms"))
-                  .getOrElse(credentialEntries.keys.head)
+                  .find(key => key.startsWith("adls.sas-token") && !key.contains("expires-at-ms"))
+                  .get
                 val sasTokenValue = credentialEntries(sasTokenKey)
                 testConf.set("fs.abfs.impl.disable.cache", "true")
                 testConf.set("fs.abfss.impl.disable.cache", "true")
@@ -726,7 +726,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
                 testConf.set("fs.gs.impl.disable.cache", "true")
                 testConf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
                 val gcsProviderClass =
-                  "org.apache.spark.sql.delta.serverSidePlanning.gcs.ConfBasedGcsAccessTokenProvider"
+                  "org.apache.spark.sql.delta.serverSidePlanning.ConfBasedGcsAccessTokenProvider"
                 testConf.set("fs.gs.auth.access.token.provider", gcsProviderClass)
                 testConf.set("fs.gs.auth.access.token", oauth2Token)
                 expirationEpochMs.foreach(ms =>
