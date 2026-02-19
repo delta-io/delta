@@ -159,11 +159,12 @@ class CrossSparkPublishTest:
         """Runs an SBT command and returns True if successful."""
         print(f"  {description}")
         try:
+            # Run command with output going to console (inherit parent's stdout/stderr)
             subprocess.run(command, cwd=self.delta_root, check=True,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+                          stdout=None, stderr=None)
             return True
-        except subprocess.CalledProcessError:
-            print(f"  ✗ Command failed: {' '.join(command)}")
+        except subprocess.CalledProcessError as e:
+            print(f"  ✗ Command failed with exit code {e.returncode}: {' '.join(command)}")
             return False
 
     def validate_jars(self, expected: Set[str], test_name: str) -> bool:
