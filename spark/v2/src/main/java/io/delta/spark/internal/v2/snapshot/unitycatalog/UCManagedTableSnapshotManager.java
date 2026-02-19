@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CommitRangeNotFoundException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
@@ -168,13 +169,29 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    */
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
-    return ucCatalogManagedClient.loadCommitRange(
-        engine,
-        tableId,
-        tablePath,
-        Optional.of(startVersion) /* startVersionOpt */,
-        Optional.empty() /* startTimestampOpt */,
-        endVersion /* endVersionOpt */,
-        Optional.empty() /* endTimestampOpt */);
+    try {
+      return ucCatalogManagedClient.loadCommitRange(
+          engine,
+          tableId,
+          tablePath,
+          Optional.of(startVersion) /* startVersionOpt */,
+          Optional.empty() /* startTimestampOpt */,
+          endVersion /* endVersionOpt */,
+          Optional.empty() /* endTimestampOpt */);
+    } catch (IllegalArgumentException e) {
+      // UC-managed tables can temporarily observe a Delta log version that has not yet been
+      // ratified by UC. For streaming, treat this as "no data available yet" by mapping to
+      // CommitRangeNotFoundException, which SparkMicroBatchStream handles as empty.
+      String msg = String.valueOf(e.getMessage());
+      if (msg.contains("latest version ratified by UC")
+          || msg.contains("Cannot load commit range with start version")
+          || msg.contains("Cannot load commit range with end version")) {
+        CommitRangeNotFoundException mapped =
+            new CommitRangeNotFoundException(tablePath, startVersion, endVersion);
+        mapped.initCause(e);
+        throw mapped;
+      }
+      throw e;
+    }
   }
 }

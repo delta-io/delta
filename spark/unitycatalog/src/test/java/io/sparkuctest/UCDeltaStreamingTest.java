@@ -169,7 +169,7 @@ public class UCDeltaStreamingTest extends UCDeltaTableIntegrationBaseTest {
             assertTrue(query.isActive(), "Streaming query should be active");
 
             // Write a few batches and verify the stream consumes them.
-            for (long i = 1; i <= 3; i += 1) {
+            for (long i = 1; i <= 1000; i += 1) {
               String value = "value_" + i;
               spark
                   .sql(String.format("INSERT INTO %s VALUES (%d, '%s')", tableName, i, value))
