@@ -45,14 +45,14 @@ public final class SnapshotManagerFactory {
   private SnapshotManagerFactory() {}
 
   /**
-   * Creates a snapshot manager for the given table.
+   * Creates a snapshot manager for an existing Delta table.
    *
-   * @param tablePath the filesystem path to the Delta table
+   * @param tablePath the filesystem path to the existing Delta table
    * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
    * @param catalogTable optional Spark catalog table metadata
    * @return a {@link DeltaSnapshotManager} appropriate for the table type
    */
-  public static DeltaSnapshotManager create(
+  public static DeltaSnapshotManager createForExistingTable(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {

@@ -28,6 +28,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.util.ArrayList;
 import java.util.Map;
@@ -137,7 +138,8 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   }
 
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(
+      Engine kernelEngine, long startVersion, Optional<Long> endVersion) {
     CommitRangeBuilder builder =
         TableManager.loadCommitRange(
             tablePath, CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
@@ -147,17 +149,17 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
           builder.withEndBoundary(CommitRangeBuilder.CommitBoundary.atVersion(endVersion.get()));
     }
 
-    return builder.build(engine);
+    return builder.build(kernelEngine);
   }
 
   @Override
   public Transaction buildCreateTableTransaction(
-      io.delta.kernel.types.StructType schema,
+      StructType kernelSchema,
       Map<String, String> tableProperties,
       Optional<DataLayoutSpec> dataLayoutSpec,
       String engineInfo) {
     CreateTableTransactionBuilder builder =
-        TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo);
+        TableManager.buildCreateTableTransaction(tablePath, kernelSchema, engineInfo);
     if (!tableProperties.isEmpty()) {
       builder = builder.withTableProperties(tableProperties);
     }
