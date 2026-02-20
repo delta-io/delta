@@ -83,7 +83,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
-  protected lazy val isUnityCatalog: Boolean = {
+  private lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
@@ -355,20 +355,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
-  protected def getProvider(properties: util.Map[String, String]): String = {
+  private def getProvider(properties: util.Map[String, String]): String = {
     Option(properties.get("provider"))
       .getOrElse(spark.sessionState.conf.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME))
   }
 
-  protected def createCatalogTable(
+  private def createCatalogTable(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
       properties: util.Map[String, String]
   ): Table = {
-      // Use the schema-based createTable API. Some delegating catalogs (e.g. UCSingleCatalog)
-      // support a richer set of Spark SQL types via the schema path than via the Column-based
-      // overload. Using the schema overload keeps behavior consistent with Spark SQL DDL.
       super.createTable(ident, schema, partitions, properties)
   }
 
