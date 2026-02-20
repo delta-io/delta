@@ -83,7 +83,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
-  private lazy val isUnityCatalog: Boolean = {
+  protected lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
@@ -355,12 +355,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
-  private def getProvider(properties: util.Map[String, String]): String = {
+  protected def getProvider(properties: util.Map[String, String]): String = {
     Option(properties.get("provider"))
       .getOrElse(spark.sessionState.conf.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME))
   }
 
-  private def createCatalogTable(
+  protected def createCatalogTable(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
