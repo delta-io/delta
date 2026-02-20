@@ -1,27 +1,13 @@
 name: "Integration Tests (Release Validation)"
 
 on:
-  workflow_dispatch:
-    inputs:
-      run_scala_python:
-        description: 'Run Scala + Python integration tests'
-        type: boolean
-        default: true
-      run_iceberg:
-        description: 'Run Iceberg integration tests'
-        type: boolean
-        default: true
-      run_hudi:
-        description: 'Run Uniform Hudi integration tests'
-        type: boolean
-        default: true
-      run_pip:
-        description: 'Run pip installation tests (requires PyPI package to be staged)'
-        type: boolean
-        default: false
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
@@ -58,7 +44,6 @@ jobs:
   scala-python-integration:
     name: "Scala + Python Integration"
     needs: generate-spark-info
-    if: ${{ inputs.run_scala_python }}
     runs-on: ubuntu-24.04
     steps:
       - name: Show runner specs
@@ -103,7 +88,6 @@ jobs:
   pip-integration:
     name: "Pip Installation"
     needs: generate-spark-info
-    if: ${{ inputs.run_pip }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +125,6 @@ jobs:
   iceberg-integration:
     name: "Iceberg Integration"
     needs: generate-spark-info
-    if: ${{ inputs.run_iceberg }}
     runs-on: ubuntu-24.04
     steps:
       - name: Show runner specs
@@ -186,7 +169,6 @@ jobs:
   hudi-integration:
     name: "Uniform Hudi Integration"
     needs: generate-spark-info
-    if: ${{ inputs.run_hudi }}
     runs-on: ubuntu-24.04
     steps:
       - name: Show runner specs
