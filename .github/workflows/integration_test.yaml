@@ -35,7 +35,7 @@ jobs:
           FULL_VERSIONS="{}"
           for SHORT in $(echo "$RELEASED" | jq -r '.[]'); do
             FULL=$(python3 project/scripts/get_spark_version_info.py --get-field "$SHORT" fullVersion | jq -r)
-            FULL_VERSIONS=$(echo "$FULL_VERSIONS" | jq --arg k "$SHORT" --arg v "$FULL" '. + {($k): $v}')
+            FULL_VERSIONS=$(echo "$FULL_VERSIONS" | jq -c --arg k "$SHORT" --arg v "$FULL" '. + {($k): $v}')
           done
           echo "spark_full_versions=$FULL_VERSIONS" >> $GITHUB_OUTPUT
           echo "Released versions: $RELEASED"
