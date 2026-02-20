@@ -1,0 +1,36 @@
+name: "Kernel Unity Catalog"
+on:
+  push:
+    paths:
+      - 'build.sbt'
+      - 'version.sbt'
+      - 'kernel/**/*.scala'
+      - 'kernel/**/*.java'
+      - 'storage/**/*.scala'
+      - 'storage/**/*.java'
+      - '.github/workflows/kernel_unitycatalog_test.yaml'
+  pull_request:
+    paths:
+      - 'build.sbt'
+      - 'version.sbt'
+      - 'kernel/**/*.scala'
+      - 'kernel/**/*.java'
+      - 'storage/**/*.scala'
+      - 'storage/**/*.java'
+      - '.github/workflows/kernel_unitycatalog_test.yaml'
+jobs:
+  test:
+    name: "Kernel Unity Catalog Tests"
+    runs-on: ubuntu-24.04
+    env:
+      SCALA_VERSION: 2.13.16
+    steps:
+      - uses: actions/checkout@v3
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Run Unity tests with coverage
+        run: |
+          ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
