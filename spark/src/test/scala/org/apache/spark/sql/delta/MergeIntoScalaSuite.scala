@@ -702,4 +702,24 @@ trait MergeIntoScalaTests extends MergeIntoScalaMixin {
       DeltaMergeIntoClause.toActions(Seq(Assignment("1".expr, "1".expr)))
     }
   }
+
+  test("#3099: target table used in source should not cause error") {
+    withTable("mytab") {
+      spark.sql("create table mytab (id int) using delta")
+
+      // Without the fix, the following SQL fails with AnalysisException
+      spark.sql("""
+        merge into mytab as target
+        using (
+          select (select max(id) from mytab) as id
+          from (
+            select to_timestamp('2000-01-01 00:00:00') dummy
+            from mytab
+          )
+        ) as source
+        on target.id = source.id
+        when matched then update set target.id = 0
+      """)
+    }
+  }
 }
