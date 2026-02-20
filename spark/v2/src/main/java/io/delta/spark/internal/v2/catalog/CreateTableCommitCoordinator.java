@@ -66,7 +66,7 @@ public final class CreateTableCommitCoordinator {
         SchemaUtils.convertSparkSchemaToKernelSchema(schema);
     Engine engine = createKernelEngine(spark, properties);
     DeltaSnapshotManager snapshotManager =
-        SnapshotManagerFactory.createForNewTable(location, engine, properties, catalogName, spark);
+        SnapshotManagerFactory.forCreateTable(location, engine, properties, catalogName, spark);
     Optional<DataLayoutSpec> dataLayoutSpec = toDataLayoutSpec(partitions);
     Transaction txn =
         snapshotManager.buildCreateTableTransaction(
