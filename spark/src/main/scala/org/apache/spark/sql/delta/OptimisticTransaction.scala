@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
 import java.util.{ConcurrentModificationException, Optional, UUID}
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
@@ -326,10 +327,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
     new java.util.concurrent.ConcurrentLinkedQueue[DeltaTableReadPredicate]
 
   /** Tracks specific files that have been seen by this transaction. */
-  protected val readFiles = new HashSet[AddFile]
+  protected val readFiles: java.util.Set[AddFile] = ConcurrentHashMap.newKeySet[AddFile]()
 
   /** Whether the whole table was read during the transaction. */
-  protected var readTheWholeTable = false
+  @volatile protected var readTheWholeTable = false
 
   /** Tracks if this transaction has already committed. */
   protected var committed: Option[CommittedTransaction] = None
@@ -1172,7 +1173,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Mark the given files as read within this transaction. */
   def trackFilesRead(files: Seq[AddFile]): Unit = {
-    readFiles ++= files
+    readFiles.addAll(files.asJava)
   }
 
   /** Mark the predicates that have been queried by this transaction. */
@@ -1596,7 +1597,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         DomainMetadataUtils.validateDomainMetadataSupportedAndNoDuplicate(finalActions, protocol)
 
       isBlindAppend = {
-        val dependsOnFiles = !readPredicates.isEmpty || readFiles.nonEmpty
+        val dependsOnFiles = !readPredicates.isEmpty || !readFiles.isEmpty
         val onlyAddFiles =
           preparedActions.collect { case f: FileAction => f }.forall(_.isInstanceOf[AddFile])
         onlyAddFiles && !dependsOnFiles
@@ -1639,7 +1640,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       val currentTransactionInfo = CurrentTransactionInfo(
         txnId = txnId,
         readPredicates = readPredicates.asScala.toVector,
-        readFiles = readFiles.toSet,
+        readFiles = readFiles.asScala.toSet,
         readWholeTable = readTheWholeTable,
         readAppIds = readTxn.toSet,
         metadata = metadata,
@@ -1986,7 +1987,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val t = new OptimisticTransaction(deltaLog, catalogTable, snapshot)
     t.executionObserver = executionObserver.createChild()
     t.readPredicates.addAll(readPredicates)
-    t.readFiles ++= readFilesSubset
+    t.readFiles.addAll(readFilesSubset.asJava)
     t.readTxn ++= readTxn
     t
   }
