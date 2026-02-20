@@ -1,0 +1,229 @@
+name: "Integration Tests (Release Validation)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_scala_python:
+        description: 'Run Scala + Python integration tests'
+        type: boolean
+        default: true
+      run_iceberg:
+        description: 'Run Iceberg integration tests'
+        type: boolean
+        default: true
+      run_hudi:
+        description: 'Run Uniform Hudi integration tests'
+        type: boolean
+        default: true
+      run_pip:
+        description: 'Run pip installation tests (requires PyPI package to be staged)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
+
+jobs:
+  generate-spark-info:
+    name: "Generate Spark Version Info"
+    runs-on: ubuntu-24.04
+    outputs:
+      released_spark_versions: ${{ steps.generate.outputs.released_spark_versions }}
+      spark_full_versions: ${{ steps.generate.outputs.spark_full_versions }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Generate Spark version info
+        id: generate
+        run: |
+          RELEASED=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions)
+          echo "released_spark_versions=$RELEASED" >> $GITHUB_OUTPUT
+
+          FULL_VERSIONS="{}"
+          for SHORT in $(echo "$RELEASED" | jq -r '.[]'); do
+            FULL=$(python3 project/scripts/get_spark_version_info.py --get-field "$SHORT" fullVersion | jq -r)
+            FULL_VERSIONS=$(echo "$FULL_VERSIONS" | jq --arg k "$SHORT" --arg v "$FULL" '. + {($k): $v}')
+          done
+          echo "spark_full_versions=$FULL_VERSIONS" >> $GITHUB_OUTPUT
+          echo "Released versions: $RELEASED"
+          echo "Full version map: $FULL_VERSIONS"
+
+  scala-python-integration:
+    name: "Scala + Python Integration"
+    needs: generate-spark-info
+    if: ${{ inputs.run_scala_python }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Show runner specs
+        run: |
+          echo "=== GitHub Runner Specs ==="
+          echo "CPU cores: $(nproc)"
+          echo "Total RAM: $(free -h | grep '^Mem:' | awk '{print $2}')"
+          echo "Available RAM: $(free -h | grep '^Mem:' | awk '{print $7}')"
+          echo "Disk space: $(df -h / | tail -1 | awk '{print $2 " total, " $4 " available"}')"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-scala-python-${{ runner.os }}
+      - name: Download Spark distributions
+        run: |
+          FULL_VERSIONS='${{ needs.generate-spark-info.outputs.spark_full_versions }}'
+          for SHORT in $(echo '${{ needs.generate-spark-info.outputs.released_spark_versions }}' | jq -r '.[]'); do
+            FULL=$(echo "$FULL_VERSIONS" | jq -r --arg k "$SHORT" '.[$k]')
+            if [ ! -d ~/spark-${FULL}-bin-hadoop3 ]; then
+              echo "Downloading Spark ${FULL}..."
+              wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
+              tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
+              rm "spark-${FULL}-bin-hadoop3.tgz"
+            fi
+          done
+      - name: Run Scala + Python integration tests
+        run: python run-integration-tests.py --use-local --no-pip
+
+  pip-integration:
+    name: "Pip Installation"
+    needs: generate-spark-info
+    if: ${{ inputs.run_pip }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-pip-${{ runner.os }}
+      - name: Download Spark distributions
+        run: |
+          FULL_VERSIONS='${{ needs.generate-spark-info.outputs.spark_full_versions }}'
+          for SHORT in $(echo '${{ needs.generate-spark-info.outputs.released_spark_versions }}' | jq -r '.[]'); do
+            FULL=$(echo "$FULL_VERSIONS" | jq -r --arg k "$SHORT" '.[$k]')
+            if [ ! -d ~/spark-${FULL}-bin-hadoop3 ]; then
+              echo "Downloading Spark ${FULL}..."
+              wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
+              tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
+              rm "spark-${FULL}-bin-hadoop3.tgz"
+            fi
+          done
+      - name: Run pip installation tests
+        run: python run-integration-tests.py --use-local --pip-only
+
+  iceberg-integration:
+    name: "Iceberg Integration"
+    needs: generate-spark-info
+    if: ${{ inputs.run_iceberg }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Show runner specs
+        run: |
+          echo "=== GitHub Runner Specs ==="
+          echo "CPU cores: $(nproc)"
+          echo "Total RAM: $(free -h | grep '^Mem:' | awk '{print $2}')"
+          echo "Available RAM: $(free -h | grep '^Mem:' | awk '{print $7}')"
+          echo "Disk space: $(df -h / | tail -1 | awk '{print $2 " total, " $4 " available"}')"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-iceberg-${{ runner.os }}
+      - name: Download Spark distributions
+        run: |
+          FULL_VERSIONS='${{ needs.generate-spark-info.outputs.spark_full_versions }}'
+          for SHORT in $(echo '${{ needs.generate-spark-info.outputs.released_spark_versions }}' | jq -r '.[]'); do
+            FULL=$(echo "$FULL_VERSIONS" | jq -r --arg k "$SHORT" '.[$k]')
+            if [ ! -d ~/spark-${FULL}-bin-hadoop3 ]; then
+              echo "Downloading Spark ${FULL}..."
+              wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
+              tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
+              rm "spark-${FULL}-bin-hadoop3.tgz"
+            fi
+          done
+      - name: Run Iceberg integration tests
+        run: python run-integration-tests.py --use-local --run-iceberg-integration-tests
+
+  hudi-integration:
+    name: "Uniform Hudi Integration"
+    needs: generate-spark-info
+    if: ${{ inputs.run_hudi }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Show runner specs
+        run: |
+          echo "=== GitHub Runner Specs ==="
+          echo "CPU cores: $(nproc)"
+          echo "Total RAM: $(free -h | grep '^Mem:' | awk '{print $2}')"
+          echo "Available RAM: $(free -h | grep '^Mem:' | awk '{print $7}')"
+          echo "Disk space: $(df -h / | tail -1 | awk '{print $2 " total, " $4 " available"}')"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - name: Cache SBT and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2/cache
+            ~/.coursier/cache
+            ~/.cache/coursier
+          key: sbt-integration-hudi-${{ runner.os }}
+      - name: Download Spark distributions
+        run: |
+          FULL_VERSIONS='${{ needs.generate-spark-info.outputs.spark_full_versions }}'
+          for SHORT in $(echo '${{ needs.generate-spark-info.outputs.released_spark_versions }}' | jq -r '.[]'); do
+            FULL=$(echo "$FULL_VERSIONS" | jq -r --arg k "$SHORT" '.[$k]')
+            if [ ! -d ~/spark-${FULL}-bin-hadoop3 ]; then
+              echo "Downloading Spark ${FULL}..."
+              wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
+              tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
+              rm "spark-${FULL}-bin-hadoop3.tgz"
+            fi
+          done
+      - name: Run Uniform Hudi integration tests
+        run: python run-integration-tests.py --use-local --run-uniform-hudi-integration-tests
