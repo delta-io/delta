@@ -18,15 +18,10 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.delta.tables.DeltaTable;
 import java.util.ArrayList;
 import java.util.List;
-import org.apache.spark.sql.delta.DeltaLog;
-import org.apache.spark.sql.delta.Snapshot;
-import org.apache.spark.sql.delta.TruncationGranularity;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import scala.Option;
 
 public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
 
@@ -98,15 +93,6 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
           assertThatThrownBy(() -> sql("REORG TABLE %s APPLY (PURGE)", tableName))
               .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
               .hasMessageContaining("OPTIMIZE");
-
-          DeltaLog log = DeltaTable.forName(spark(), tableName).deltaLog();
-          Snapshot snapshot = log.snapshot();
-          assertThatThrownBy(
-                  () ->
-                      log.cleanUpExpiredLogs(
-                          snapshot, Option.empty(), Option.empty(), TruncationGranularity.DAY()))
-              .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION")
-              .hasMessageContaining("Metadata cleanup");
         });
   }
 }

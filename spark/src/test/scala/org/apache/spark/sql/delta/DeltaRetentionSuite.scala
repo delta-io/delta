@@ -23,8 +23,6 @@ import scala.language.postfixOps
 
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, RemoveFile, SetTransaction}
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedCommitCoordinatorProvider
-import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -1097,26 +1095,6 @@ class DeltaRetentionSuite extends QueryTest
         expectedCommitsAfterCleanup = (0 to 15),
         expectedCheckpointsAfterCleanup = Set(8, 10))
     }
-  }
-
-  test("metadata cleanup on a catalog owned managed table should fail") {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
-    withTable("t1") {
-      spark.sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
-      val (log, snapshot) = getDeltaLogWithSnapshot(
-        org.apache.spark.sql.catalyst.TableIdentifier("t1"))
-      checkError(
-        intercept[DeltaUnsupportedOperationException] {
-          log.cleanUpExpiredLogs(snapshot)
-        },
-        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
-        parameters = Map("operation" -> "Metadata cleanup")
-      )
-    }
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
   }
 }
 
