@@ -832,7 +832,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hudi-version",
         required=False,
-        default="0.15.0",
+        default="1.1.1",
         help="Hudi library version"
     )
     parser.add_argument(

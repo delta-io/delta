@@ -1123,9 +1123,11 @@ val deltaIcebergSparkIncludePrefixes = Seq(
 
   // We only want the files in this project from this package. e.g. we want to exclude
   // org/apache/spark/sql/delta/commands/convert/ConvertTargetFile.class (from delta-spark project).
+  "org/apache/spark/sql/delta/commands/convert/DelegatingIcebergTable",
   "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
   "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
-  "org/apache/spark/sql/delta/commands/convert/IcebergTable"
+  "org/apache/spark/sql/delta/commands/convert/IcebergTable",
+  "org/apache/spark/sql/delta/commands/convert/IcebergTableLike"
 )
 
 // Build using: build/sbt clean icebergShaded/compile iceberg/compile
