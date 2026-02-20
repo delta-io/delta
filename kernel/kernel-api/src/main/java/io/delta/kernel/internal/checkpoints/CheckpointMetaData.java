@@ -15,9 +15,14 @@
  */
 package io.delta.kernel.internal.checkpoints;
 
+import static io.delta.kernel.internal.util.VectorUtils.stringStringMapValue;
+import static io.delta.kernel.internal.util.VectorUtils.toJavaMap;
+
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.LongType;
+import io.delta.kernel.types.MapType;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.*;
 
@@ -26,23 +31,32 @@ public class CheckpointMetaData {
     return new CheckpointMetaData(
         row.getLong(0),
         row.getLong(1),
-        row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)));
+        row.isNullAt(2) ? Optional.empty() : Optional.of(row.getLong(2)),
+        row.isNullAt(3) ? Map.of() : toJavaMap(row.getMap(3)));
   }
 
   public static StructType READ_SCHEMA =
       new StructType()
           .add("version", LongType.LONG, false /* nullable */)
           .add("size", LongType.LONG, false /* nullable */)
-          .add("parts", LongType.LONG);
+          .add("parts", LongType.LONG)
+          .add("tags", new MapType(StringType.STRING, StringType.STRING, false));
 
   public final long version;
   public final long size;
   public final Optional<Long> parts;
+  public final Map<String, String> tags;
 
   public CheckpointMetaData(long version, long size, Optional<Long> parts) {
+    this(version, size, parts, Map.of());
+  }
+
+  public CheckpointMetaData(
+      long version, long size, Optional<Long> parts, Map<String, String> tags) {
     this.version = version;
     this.size = size;
     this.parts = parts;
+    this.tags = tags;
   }
 
   public Row toRow() {
@@ -50,6 +64,9 @@ public class CheckpointMetaData {
     dataMap.put(0, version);
     dataMap.put(1, size);
     parts.ifPresent(aLong -> dataMap.put(2, aLong));
+    if (!tags.isEmpty()) {
+      dataMap.put(3, stringStringMapValue(tags));
+    }
 
     return new GenericRow(READ_SCHEMA, dataMap);
   }
@@ -63,6 +80,8 @@ public class CheckpointMetaData {
         + size
         + ", parts="
         + parts
+        + ", tags="
+        + tags
         + '}';
   }
 }

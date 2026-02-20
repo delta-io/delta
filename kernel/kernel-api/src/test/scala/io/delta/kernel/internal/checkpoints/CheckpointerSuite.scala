@@ -238,6 +238,7 @@ object CheckpointerSuite extends VectorTestUtils {
         case 0 => longVector(Seq(40)) // version
         case 1 => longVector(Seq(44)) // size
         case 2 => longVector(Seq(20)); // parts
+        case 3 => mapTypeVector(Seq(Map.empty[String, String])) // tags
       }
     }
 

@@ -1010,6 +1010,7 @@ class MockReadLastCheckpointFileJsonHandler(
             case 0 => longVector(Seq(lastCheckpointVersion)) /* version */
             case 1 => longVector(Seq(100)) /* size */
             case 2 => longVector(Seq(1)) /* parts */
+            case 3 => mapTypeVector(Seq(Map.empty[String, String]))
           }
         }
 
