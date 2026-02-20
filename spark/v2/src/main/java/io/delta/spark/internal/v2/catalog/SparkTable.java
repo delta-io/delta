@@ -146,7 +146,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
     Engine kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager =
-        SnapshotManagerFactory.createForExistingTable(tablePath, kernelEngine, catalogTable);
+        SnapshotManagerFactory.forExistingTable(tablePath, kernelEngine, catalogTable);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
 

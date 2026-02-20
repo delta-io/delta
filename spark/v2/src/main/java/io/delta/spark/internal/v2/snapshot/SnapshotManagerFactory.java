@@ -53,7 +53,7 @@ public final class SnapshotManagerFactory {
    * @param catalogTable optional Spark catalog table metadata
    * @return a {@link DeltaSnapshotManager} appropriate for the table type
    */
-  public static DeltaSnapshotManager createForExistingTable(
+  public static DeltaSnapshotManager forExistingTable(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {
@@ -79,7 +79,7 @@ public final class SnapshotManagerFactory {
    * @param spark Spark session used for UC config resolution
    * @return a {@link DeltaSnapshotManager} appropriate for the new table type
    */
-  public static DeltaSnapshotManager createForNewTable(
+  public static DeltaSnapshotManager forCreateTable(
       String tablePath,
       Engine kernelEngine,
       Map<String, String> properties,
