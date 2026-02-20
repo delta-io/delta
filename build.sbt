@@ -662,7 +662,10 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-contribs is only published as delta-contribs_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 

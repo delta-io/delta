@@ -82,7 +82,7 @@ import Unidoc._
  * 1. Spark-Dependent Published Modules:
  *    - Use CrossSparkVersions.sparkDependentSettings(sparkVersion)
  *    - Include releaseSettings (publishable)
- *    - Examples: delta-spark, delta-connect-*, delta-sharing-spark, delta-iceberg, delta-hudi
+ *    - Examples: delta-spark, delta-connect-*, delta-sharing-spark, delta-iceberg, delta-hudi, delta-contribs
  *    - These modules get version-specific artifact names for non-default Spark versions
  *    - Automatically included in cross-Spark publishing
  *
