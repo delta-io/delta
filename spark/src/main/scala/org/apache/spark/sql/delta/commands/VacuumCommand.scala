@@ -47,6 +47,8 @@ import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
 import org.apache.spark.sql.functions.{col, count, lit, replace, startswith, substr, sum}
 import org.apache.spark.sql.types.{BooleanType, LongType, StringType, StructField, StructType}
 import org.apache.spark.util.{Clock, SerializableConfiguration, SystemClock, Utils}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong}
+
 
 /**
  * Vacuums the table by clearing all untracked files and folders within this table.
@@ -164,6 +166,27 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
       import org.apache.spark.sql.delta.implicits._
 
+      val filesListedCounter = new AtomicLong(0L)
+      val dirsListedCounter = new AtomicLong(0L)
+      val vacuumCompleted = new AtomicBoolean(false)
+      val progressLoggingEnabled = new AtomicBoolean(false)
+
+      val isProgressLoggingEnabled =
+        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_VACUUM_PROGRESS_LOGGING_ENABLED)
+
+      val filesListedAcc =
+        if (isProgressLoggingEnabled) {
+          Some(spark.sparkContext.longAccumulator("deltaVacuumFilesListed"))
+        } else {
+          None
+        }
+      val dirsListedAcc =
+        if (isProgressLoggingEnabled) {
+          Some(spark.sparkContext.longAccumulator("deltaVacuumDirsListed"))
+        } else {
+          None
+        }
+
       val snapshot = table.update()
       deltaLog.protocolWrite(snapshot.protocol)
 
@@ -185,6 +208,70 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
       val isLiteVacuumEnabled = spark.sessionState.conf.getConf(DeltaSQLConf.LITE_VACUUM_ENABLED)
       val defaultType = if (isLiteVacuumEnabled) VacuumType.LITE else VacuumType.FULL
       val vacuumType = vacuumTypeOpt.map(VacuumType.withName).getOrElse(defaultType)
+      val isPartitioned = snapshot.metadata.partitionColumns.nonEmpty
+
+      val truncatedTableId = deltaLog.truncatedTableId
+
+      val progressThread: Option[Thread] =
+        if (isProgressLoggingEnabled) {
+          val thread = new Thread(s"delta-vacuum-progress-$truncatedTableId") {
+            override def run(): Unit = {
+              try {
+                val logIntervalMillis =
+                  spark.sessionState.conf.getConf(
+                    DeltaSQLConf.DELTA_VACUUM_PROGRESS_LOGGING_INTERVAL_MS)
+                while (!vacuumCompleted.get()) {
+                  if (progressLoggingEnabled.get()) {
+                    val files: Long = filesListedAcc match {
+                      case Some(acc) => acc.value
+                      case None => 0L
+                    }
+                    val dirs: Long = dirsListedAcc match {
+                      case Some(acc) => acc.value
+                      case None => 0L
+                    }
+                    // For FULL vacuum on non-partitioned tables, we conceptually always have
+                    // at least the base directory. For partitioned tables we only report the
+                    // actual number of directories seen. For LITE vacuum we only scan commit
+                    // files from the Delta log, so directory listing semantics don't apply.
+                    val dirsForReporting = if (isPartitioned) dirs else if (dirs == 0L) 1L else dirs
+
+                    filesListedCounter.set(files)
+                    dirsListedCounter.set(dirsForReporting)
+
+                    vacuumType match {
+                      case VacuumType.FULL =>
+                        logInfo(
+                          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+                          log"[VACUUM_FULL] Directory listing in progress for" +
+                          log" path ${MDC(DeltaLogKeys.PATH, path)}: " +
+                          log"Listed ${MDC(DeltaLogKeys.NUM_FILES, files)} files in " +
+                          log"${MDC(DeltaLogKeys.NUM_DIRS, dirsForReporting)} " +
+                          log"directories scanned so far")
+                      case VacuumType.LITE =>
+                        logInfo(
+                          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] " +
+                          log"[VACUUM_LITE] Scanning Transaction log for files with " +
+                          log"delete/cdc action in path ${MDC(DeltaLogKeys.PATH, path)} " +
+                            log"is in progress " )
+                    }
+                  }
+                  Thread.sleep(logIntervalMillis)
+                }
+              } catch {
+                case _: InterruptedException =>
+                  // Thread interrupted during sleep or shutdown, exit quietly.
+                case NonFatal(e) =>
+                  logWarning("Error while logging vacuum listing progress", e)
+              }
+            }
+          }
+          thread.setDaemon(true)
+          thread.start()
+          Some(thread)
+        } else {
+          None
+        }
 
       val snapshotTombstoneRetentionMillis = DeltaLog.tombstoneRetentionMillis(snapshot.metadata)
       val retentionMillis = retentionHours.flatMap { h =>
@@ -281,7 +368,27 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
           )
           (files, None, None)
           }
-      val allFilesAndDirs = allFilesAndDirsWithDuplicates.groupByKey(_.path)
+
+      if (isProgressLoggingEnabled) {
+        progressLoggingEnabled.set(true)
+      }
+
+      val allFilesAndDirsWithProgress =
+        (isProgressLoggingEnabled, filesListedAcc, dirsListedAcc) match {
+          case (true, Some(fileAcc), Some(dirAcc)) =>
+            allFilesAndDirsWithDuplicates.map { status =>
+              if (status.isDir) {
+                dirAcc.add(1L)
+              } else {
+                fileAcc.add(1L)
+              }
+              status
+            }
+          case _ =>
+            allFilesAndDirsWithDuplicates
+        }
+
+      val allFilesAndDirs = allFilesAndDirsWithProgress.groupByKey(_.path)
         .mapGroups { (k, v) =>
           val duplicates = v.toSeq
           // of all the duplicates we can return the newest file.
@@ -418,6 +525,8 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
 
           spark.createDataset(Seq(basePath)).toDF("path")
         } finally {
+          vacuumCompleted.set(true)
+          progressThread.foreach(_.interrupt())
           allFilesAndDirs.unpersist()
         }
       }
