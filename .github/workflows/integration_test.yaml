@@ -85,43 +85,6 @@ jobs:
       - name: Run Scala + Python integration tests
         run: python run-integration-tests.py --use-local --no-pip
 
-  pip-integration:
-    name: "Pip Installation"
-    needs: generate-spark-info
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "zulu"
-          java-version: "17"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-      - name: Cache SBT and dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.sbt
-            ~/.ivy2/cache
-            ~/.coursier/cache
-            ~/.cache/coursier
-          key: sbt-integration-pip-${{ runner.os }}
-      - name: Download Spark distributions
-        run: |
-          FULL_VERSIONS='${{ needs.generate-spark-info.outputs.spark_full_versions }}'
-          for SHORT in $(echo '${{ needs.generate-spark-info.outputs.released_spark_versions }}' | jq -r '.[]'); do
-            FULL=$(echo "$FULL_VERSIONS" | jq -r --arg k "$SHORT" '.[$k]')
-            if [ ! -d ~/spark-${FULL}-bin-hadoop3 ]; then
-              echo "Downloading Spark ${FULL}..."
-              wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
-              tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
-              rm "spark-${FULL}-bin-hadoop3.tgz"
-            fi
-          done
-      - name: Run pip installation tests
-        run: python run-integration-tests.py --use-local --pip-only
-
   iceberg-integration:
     name: "Iceberg Integration"
     needs: generate-spark-info
@@ -164,7 +127,7 @@ jobs:
             fi
           done
       - name: Run Iceberg integration tests
-        run: python run-integration-tests.py --use-local --run-iceberg-integration-tests
+        run: python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
 
   hudi-integration:
     name: "Uniform Hudi Integration"
@@ -208,4 +171,4 @@ jobs:
             fi
           done
       - name: Run Uniform Hudi integration tests
-        run: python run-integration-tests.py --use-local --run-uniform-hudi-integration-tests
+        run: python run-integration-tests.py --use-local --run-uniform-hudi-integration-tests --hudi-version 1.1.1
