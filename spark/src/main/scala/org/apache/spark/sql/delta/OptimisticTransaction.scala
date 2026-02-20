@@ -622,6 +622,25 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val protocolBeforeUpdate = protocol
+    // `readVersion == -1` indicates the current transaction is reading from a snapshot
+    // where the table has not existed yet.
+    // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
+    // this is just a double check since we only want to auto-enable QoL features
+    // when creating a new CatalogOwned table through CREATE.
+    if (CatalogOwnedTableUtils.shouldEnableCatalogOwned(
+        spark, propertyOverrides = newMetadataTmp.configuration) &&
+        isCreatingNewTable && this.readVersion == -1) {
+
+      // For CatalogOwned table, we add "quality of life" table features as a part of CCv2 table
+      // creation. Look for [[CatalogOwnedTableUtils.updateMetadataForQoLFeatures]] to see
+      // what features are in the list.
+      // Note that we need to add features here because features like `ColumnMapping` or
+      // `RowTracking` have their own validation/update logic below.
+      newMetadataTmp = CatalogOwnedTableUtils.updateMetadataForQoLFeatures(
+        spark,
+        metadata = newMetadataTmp
+        )
+    }
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
@@ -1309,13 +1328,18 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns all the partition columns that have NOT NULL constraints.
+   * Returns the physical names of partition columns that have NOT NULL constraints.
+   * Physical names are used because AddFile.partitionValues keys use physical column names
+   * when column mapping is enabled.
    */
   protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
     val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
       .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
       .toSet
-    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+    metadata.partitionSchema
+      .filter(f => notNullColumns.contains(f.name))
+      .map(DeltaColumnMapping.getPhysicalName)
+      .toSet
   }
 
   /**

@@ -81,8 +81,12 @@ class CatalogOwnedEnablementSuite
 
   protected def createTable(
       tableName: String,
+      clusterBy: Seq[String] = Seq.empty,
       properties: Map[String, String] = Map.empty): Unit = {
     var stmt = s"CREATE TABLE $tableName (id INT) USING delta "
+    if (clusterBy.nonEmpty) {
+      stmt += s"CLUSTER BY (${clusterBy.mkString(", ")}) "
+    }
     if (properties.nonEmpty) {
       val kv = properties.map { case (k, v) => s"'$k' = '$v'" }.mkString(", ")
       stmt += s"TBLPROPERTIES ($kv)"
@@ -254,6 +258,56 @@ class CatalogOwnedEnablementSuite
         "logStore" -> logStore
       )
     )
+  }
+
+  test("Quality of life table feature should be enabled by CREATE CLONE for target table") {
+    withRandomTable(createCatalogOwnedTableAtInit = false) { tableName =>
+      withTable("t1", "t2") {
+        val qolTableFeatures =
+          CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._1)
+            .toSet
+        withSQLConf(defaultCatalogOwnedFeatureEnabledKey -> "supported") {
+          sql(s"CREATE TABLE t1 SHALLOW CLONE $tableName")
+        }
+        sql(s"CREATE TABLE t2 SHALLOW CLONE $tableName TBLPROPERTIES " +
+          s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+        Seq("t1", "t2").foreach { t =>
+          validateOnlySpecifiedQoLTableFeaturesAndMetadataPresent(
+            tableName = t,
+            supportedTableFeatures = qolTableFeatures
+          )
+          validateCatalogOwnedCompleteEnablement(tableName = t, expectEnabled = true)
+          sql(s"INSERT INTO $t VALUES (3), (4), (5), (6)")
+          checkAnswer(sql(s"SELECT * FROM $t"),
+            Seq(Row(1), Row(2), Row(3), Row(4), Row(5), Row(6)))
+        }
+      }
+    }
+  }
+
+  test("Quality of life table features and corresponding metadata should be " +
+      "automatically enabled for CatalogOwned table") {
+    withRandomTable(createCatalogOwnedTableAtInit = true) { tableName =>
+      // [[RowTrackingFeature]], [[DeletionVectorsTableFeature]],
+      // and [[V2CheckpointTableFeature]] should be enabled by default.
+      validateQoLFeaturesEnablement(tableName, expected = true)
+    }
+
+    // QoL features should also be enabled w/ other additional features enablement
+    // during CatalogOwned creation.
+    withTable("t1") {
+      // Enable [[ClusteringTableFeature]] and [[ChangeDataFeedTableFeature]] during CO creation.
+      createTable("t1", clusterBy = Seq("id"), properties = Map(
+        s"delta.feature.${CatalogOwnedTableFeature.name}" -> "supported",
+        DeltaConfigs.CHANGE_DATA_FEED.key -> "true"))
+      sql("INSERT INTO t1 VALUES (1), (2)")
+      validateQoLFeaturesEnablement(tableName = "t1", expected = true)
+      val (_, snapshot) = getDeltaLogWithSnapshot(TableIdentifier("t1"))
+      val readerAndWriterFeatureNames = snapshot.protocol.readerAndWriterFeatureNames
+      assert(readerAndWriterFeatureNames.contains(ChangeDataFeedTableFeature.name) &&
+        readerAndWriterFeatureNames.contains(ClusteringTableFeature.name))
+      validateCatalogOwnedCompleteEnablement(tableName = "t1", expectEnabled = true)
+    }
   }
 
   test("ALTER TABLE should be blocked if attempts to disable ICT") {

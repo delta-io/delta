@@ -59,9 +59,9 @@ object HudiConverter {
 /**
  * This class manages the transformation of delta snapshots into their Hudi equivalent.
  */
-class HudiConverter(spark: SparkSession)
-    extends UniversalFormatConverter(spark)
-    with DeltaLogging {
+class HudiConverter
+  extends UniversalFormatConverter
+  with DeltaLogging {
 
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot

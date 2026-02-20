@@ -41,6 +41,8 @@ def getMajorMinor(version: String): (Int, Int) = {
         s"Please check https://docs.delta.io/latest/releases.html")
   }
 }
+// Maps Delta version (major, minor) to the compatible Spark version.
+// Used as a fallback for local dev when SPARK_VERSION env var is not set.
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
   // TODO: how to run integration tests for multiple Spark versions
   case (major, minor) if major >= 4 && minor >= 1 => "4.1.0"
@@ -165,7 +167,7 @@ def getLibraryDependencies(
   // Package suffix comes from CrossSparkVersions.scala (single source of truth)
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
   val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
-  val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
+  val deltaIcebergDep = "io.delta" % s"delta-iceberg_${scalaBinVersion}" % deltaVersion
 
   val resolvedSparkVersion = resolveSparkVersion(deltaVersion)
 

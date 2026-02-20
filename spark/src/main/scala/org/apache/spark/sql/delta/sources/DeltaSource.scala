@@ -115,62 +115,21 @@ trait DeltaSourceBase extends Source
     with DeltaLogging { self: DeltaSource =>
 
   /**
-   * Flag that allows user to force enable unsafe streaming read on Delta table with
-   * column mapping enabled AND drop/rename actions.
+   * Configuration options for handling schema changes behavior. Controls unsafe operations like
+   * column mapping changes, partition column changes, nullability changes, and type widening.
    */
-  protected lazy val allowUnsafeStreamingReadOnColumnMappingSchemaChanges: Boolean = {
-    val unsafeFlagEnabled = spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES)
-    if (unsafeFlagEnabled) {
-      recordDeltaEvent(
-        deltaLog,
-        "delta.unsafe.streaming.readOnColumnMappingSchemaChanges"
-      )
-    }
-    unsafeFlagEnabled
-  }
-
-  protected lazy val allowUnsafeStreamingReadOnPartitionColumnChanges: Boolean =
-    spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE
+  protected lazy val schemaReadOptions: DeltaStreamUtils.SchemaReadOptions = {
+    val schemaReadOptions = DeltaStreamUtils.SchemaReadOptions.fromSparkSession(
+      spark = spark,
+      isStreamingFromColumnMappingTable =
+        snapshotAtSourceInit.metadata.columnMappingMode != NoMapping,
+      isTypeWideningSupportedInProtocol = TypeWidening.isSupported(snapshotAtSourceInit.protocol))
+    if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) recordDeltaEvent(
+      deltaLog,
+      "delta.unsafe.streaming.readOnColumnMappingSchemaChanges"
     )
-
-  /**
-   * Flag that allows user to disable the read-compatibility check during stream start which
-   * protects against an corner case in which verifyStreamHygiene could not detect.
-   * This is a bug fix but yet a potential behavior change, so we add a flag to fallback.
-   */
-  protected lazy val forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
-    spark.sessionState.conf.getConf(
-      DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START)
-
-  /**
-   * Flag that allow user to fallback to the legacy behavior in which user can allow nullable=false
-   * schema to read nullable=true data, which is incorrect but a behavior change regardless.
-   */
-  protected lazy val forceEnableUnsafeReadOnNullabilityChange =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE)
-
-  /**
-   * Whether we are streaming from a table with column mapping enabled
-   */
-  protected val isStreamingFromColumnMappingTable: Boolean =
-    snapshotAtSourceInit.metadata.columnMappingMode != NoMapping
-
-  /**
-   * Whether we are streaming from a table that has the type widening table feature enabled.
-   */
-  protected lazy val typeWideningEnabled: Boolean =
-    spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE) &&
-      TypeWidening.isSupported(snapshotAtSourceInit.protocol)
-
-  /**
-   * Whether we should track widening type changes to allow users to accept them and resume
-   * stream processing.
-   */
-  protected lazy val enableSchemaTrackingForTypeWidening: Boolean =
-    spark.sessionState.conf
-      .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING)
+    schemaReadOptions
+  }
 
   /**
    * The persisted schema from the schema log that must be used to read data files in this Delta
@@ -544,14 +503,16 @@ trait DeltaSourceBase extends Source
       }
 
     // Cannot perfectly verify column mapping schema changes if we cannot compute a start snapshot.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
-        isStreamingFromColumnMappingTable && errOpt.isDefined) {
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
+        schemaReadOptions.isStreamingFromColumnMappingTable && errOpt.isDefined) {
       throw DeltaErrors.failedToGetSnapshotDuringColumnMappingStreamingReadCheck(errOpt.get)
     }
 
     // Perform schema check if we need to, considering all escape flags.
-    if (!allowUnsafeStreamingReadOnColumnMappingSchemaChanges || typeWideningEnabled ||
-        !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges ||
+        schemaReadOptions.typeWideningEnabled ||
+        !schemaReadOptions.
+            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
       startVersionSnapshotOpt.foreach { snapshot =>
         checkReadIncompatibleSchemaChanges(
           snapshot.metadata,
@@ -620,7 +581,8 @@ trait DeltaSourceBase extends Source
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart ||
-        !forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
+        !schemaReadOptions.
+            forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart) {
 
       val schemaChange = if (options.readChangeFeed) {
         CDCReader.cdcReadSchema(metadata.schema)
@@ -628,27 +590,17 @@ trait DeltaSourceBase extends Source
         metadata.schema
       }
 
-      val schemaReadOptions = DeltaStreamUtils.SchemaReadOptions(
-        allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
-          allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
-        allowUnsafeStreamingReadOnPartitionColumnChanges =
-          allowUnsafeStreamingReadOnPartitionColumnChanges,
-        forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
-          forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
-        forceEnableUnsafeReadOnNullabilityChange = forceEnableUnsafeReadOnNullabilityChange,
-        isStreamingFromColumnMappingTable = isStreamingFromColumnMappingTable,
-        typeWideningEnabled = typeWideningEnabled,
-        enableSchemaTrackingForTypeWidening = enableSchemaTrackingForTypeWidening
-      )
       // There is a schema change. All of files after this commit will use `schemaChange`. Hence, we
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       val backfilling = version < snapshotAtSourceInit.version
       // Partition column change will be ignored if user enable the unsafe flag
-      val newPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-      else newMetadata.partitionColumns
-      val oldPartitionColumns = if (allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
-      else oldMetadata.partitionColumns
+      val newPartitionColumns =
+        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+        else newMetadata.partitionColumns
+      val oldPartitionColumns =
+        if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges) Seq.empty
+        else oldMetadata.partitionColumns
 
       val checkResult = DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
         schemaChange, schema,
@@ -668,8 +620,9 @@ trait DeltaSourceBase extends Source
             "retryable" -> isRetryable,
             "backfilling" -> backfilling,
             "readChangeDataFeed" -> options.readChangeFeed,
-            "typeWideningEnabled" -> typeWideningEnabled,
-            "enableSchemaTrackingForTypeWidening" -> enableSchemaTrackingForTypeWidening,
+            "typeWideningEnabled" -> schemaReadOptions.typeWideningEnabled,
+            "enableSchemaTrackingForTypeWidening" ->
+                schemaReadOptions.enableSchemaTrackingForTypeWidening,
             "containsWideningTypeChanges" ->
               TypeWidening.containsWideningTypeChanges(schema, schemaChange)
           )
@@ -709,19 +662,20 @@ trait DeltaSourceBase extends Source
       newMetadata: Metadata,
       validatedDuringStreamStart: Boolean): Unit = {
     val shouldTrackSchema: Boolean =
-      if (typeWideningEnabled && enableSchemaTrackingForTypeWidening &&
+      if (schemaReadOptions.typeWideningEnabled &&
+          schemaReadOptions.enableSchemaTrackingForTypeWidening &&
         TypeWidening.containsWideningTypeChanges(oldMetadata.schema, newMetadata.schema)) {
         // If schema tracking is enabled for type widening, we will detect widening type changes and
         // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
         // DROP/RENAME for column mapping.
         true
-      } else if (allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
+      } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges) {
         false
       } else {
         // Column mapping schema changes
         assert(!trackingMetadataChange, "should not check schema change while tracking it")
         !DeltaColumnMapping.hasNoColumnMappingSchemaChanges(newMetadata, oldMetadata,
-          allowUnsafeStreamingReadOnPartitionColumnChanges)
+          schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges)
       }
 
     if (shouldTrackSchema) {
