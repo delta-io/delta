@@ -772,7 +772,7 @@ if __name__ == "__main__":
         required=False,
         default=None,
         help="Directory path where the downloaded pypi artifacts are present. " +
-            "It should have two files: e.g. delta-spark-3.1.0.tar.gz, delta_spark-3.1.0-py3-none-any.whl")
+            "It should have two files: e.g. delta_spark-3.1.0.tar.gz, delta_spark-3.1.0-py3-none-any.whl")
     parser.add_argument(
         "--use-local",
         required=False,
