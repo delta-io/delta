@@ -67,6 +67,7 @@ import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -217,6 +218,7 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
+    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
   }
 
   @Override
@@ -1008,6 +1010,51 @@ public class SparkMicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Validates that the analysis-time schema is compatible with the latest snapshot schema. This
+   * catches cases where the table schema changed after the streaming query was analyzed, and the
+   * user restarts the stream with a stale DataFrame.
+   */
+  private void validateSchemaCompatibilityOnStartup(
+      StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
+    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
+    StructType querySchema = dataSchema;
+    for (StructField field : partitionSchema.fields()) {
+      querySchema = querySchema.add(field);
+    }
+
+    // This flag unblocks streaming reads when partition columns have been overwritten.
+    // When set, skip partition column validation by passing empty lists.
+    Seq<String> newPartitionColumns, oldPartitionColumns;
+    if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
+      newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+      oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+    } else {
+      oldPartitionColumns =
+          CollectionConverters.asScala(Arrays.asList(partitionSchema.fieldNames())).toSeq();
+      newPartitionColumns =
+          CollectionConverters.asScala(
+                  VectorUtils.toJavaList(snapshotAtSourceInit.getMetadata().getPartitionColumns())
+                      .stream()
+                      .map(Object::toString)
+                      .collect(Collectors.toList()))
+              .toSeq();
+    }
+
+    DeltaStreamUtils.SchemaCompatibilityResult checkResult =
+        DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
+            /* dataSchema= */ snapshotSchema,
+            /* readSchema= */ querySchema,
+            /* newPartitionColumns= */ newPartitionColumns,
+            /* oldPartitionColumns= */ oldPartitionColumns,
+            /* backfilling= */ false,
+            /* readOptions= */ schemaReadOptions);
+
+    if (!DeltaStreamUtils.SchemaCompatibilityResult$.MODULE$.isCompatible(checkResult)) {
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
+    }
   }
 
   /**

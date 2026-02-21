@@ -1222,6 +1222,14 @@ trait DeltaErrorsBase
     }
   }
 
+  def streamingSchemaMismatchOnRestart(
+      querySchema: StructType,
+      tableSchema: StructType): RuntimeException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART",
+      messageParameters = Array(formatSchema(querySchema), formatSchema(tableSchema)))
+  }
+
   def streamWriteNullTypeException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE",

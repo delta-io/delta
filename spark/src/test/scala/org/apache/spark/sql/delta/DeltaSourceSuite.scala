@@ -2482,7 +2482,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("restarting a query should pick up latest table schema and recover") {
+  test("add column: restarting with new DataFrame should recover") {
     withTempDir { inputDir =>
       withTempDir { checkpointDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
@@ -2525,7 +2525,132 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
+  test("add column: restarting with stale DataFrame should fail") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 2).foreach { i =>
+          val v = Seq(i.toString).toDF("id")
+          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        // First run: stream detects schema change and fails
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer("0", "1"),
+          Execute { _ =>
+            withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+            Seq(("2", "a")).toDF("id", "newcol")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          },
+          ExpectFailure[DeltaIllegalStateException](t =>
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          }
+        )
+
+        // Restarting with the same DataFrame cannot recover from column addition because the
+        // plan's read schema is fixed at analysis time. User must create a new DataFrame.
+        // TODO(#5319): Assert the specific error class once V1 and V2 are aligned.
+        intercept[StreamingQueryException] {
+          val q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+          try q.processAllAvailable() finally q.stop()
+        }
+      }
+    }
+  }
+
+  test("change partition columns: restarting with stale DataFrame should fail") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        // Create a table with two columns, partitioned by "part".
+        Seq(("0", "x")).toDF("id", "part")
+          .write.format("delta").partitionBy("part").save(deltaLog.dataPath.toString)
+        Seq(("1", "y")).toDF("id", "part")
+          .write.format("delta").mode("append").save(deltaLog.dataPath.toString)
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        // First run: process initial data, then change partition columns.
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          Execute { _ =>
+            // Change partition columns from "part" to "id" via metadata-only commit.
+            val txn = deltaLog.startTransaction()
+            val metadata = txn.metadata
+            txn.commit(
+              metadata.copy(partitionColumns = Seq("id")) :: Nil,
+              DeltaOperations.ManualUpdate)
+          },
+          ExpectFailure[DeltaIllegalStateException](t =>
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          }
+        )
+
+        // Restarting with the same stale DataFrame should fail because the partition
+        // columns have changed.
+        // TODO(#5319): Assert the specific error class once V1 and V2 are aligned.
+        intercept[StreamingQueryException] {
+          val q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+          try q.processAllAvailable() finally q.stop()
+        }
+      }
+    }
+  }
+
+  test("change partition columns: unsafe flag allows restart with stale DataFrame") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        Seq(("0", "x")).toDF("id", "part")
+          .write.format("delta").partitionBy("part").save(deltaLog.dataPath.toString)
+        Seq(("1", "y")).toDF("id", "part")
+          .write.format("delta").mode("append").save(deltaLog.dataPath.toString)
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          Execute { _ =>
+            val txn = deltaLog.startTransaction()
+            val metadata = txn.metadata
+            txn.commit(
+              metadata.copy(partitionColumns = Seq("id")) :: Nil,
+              DeltaOperations.ManualUpdate)
+          },
+          ExpectFailure[DeltaIllegalStateException](t =>
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          }
+        )
+
+        // With the unsafe flag, restarting with the stale DataFrame should succeed.
+        withSQLConf(
+          DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE
+            .key -> "true") {
+          val q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+          try q.processAllAvailable() finally q.stop()
+        }
+      }
+    }
+  }
+
   test("handling nullability schema changes") {
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
