@@ -73,6 +73,32 @@ public interface DeltaSnapshotManager {
       boolean canReturnEarliestCommit);
 
   /**
+   * Finds and returns the commit that was active at a specific timestamp using a caller-provided
+   * latest snapshot.
+   *
+   * <p>This overload allows callers that already loaded the latest snapshot to reuse it and avoid
+   * loading the latest snapshot again.
+   *
+   * @param latestSnapshot the latest snapshot of the table to use for commit resolution
+   * @param timestampMillis the timestamp in milliseconds since epoch (UTC)
+   * @param canReturnLastCommit if true, returns the last commit if the timestamp is after all
+   *     commits; if false, throws an exception
+   * @param mustBeRecreatable if true, only considers commits that can be fully recreated from
+   *     available log files; if false, considers all commits
+   * @param canReturnEarliestCommit if true, returns the earliest commit if the timestamp is before
+   *     all commits; if false, throws an exception
+   * @return the commit that was active at the specified timestamp
+   * @throws io.delta.kernel.exceptions.KernelException if no suitable commit is found based on the
+   *     provided flags
+   */
+  DeltaHistoryManager.Commit getActiveCommitAtTime(
+      Snapshot latestSnapshot,
+      long timestampMillis,
+      boolean canReturnLastCommit,
+      boolean mustBeRecreatable,
+      boolean canReturnEarliestCommit);
+
+  /**
    * Checks if a specific version of the Delta table exists and is accessible.
    *
    * @param version the version to check

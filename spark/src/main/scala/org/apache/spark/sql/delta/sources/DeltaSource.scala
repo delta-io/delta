@@ -1428,14 +1428,12 @@ object DeltaSource extends DeltaLogging {
   }
 
   /**
-   * - If a commit version exactly matches the provided timestamp, we return it.
-   * - Otherwise, we return the earliest commit version
-   *   with a timestamp greater than the provided one.
-   * - If the provided timestamp is larger than the timestamp
-   *   of any committed version, and canExceedLatest is disabled we throw an error.
-   * - If the provided timestamp is larger than the timestamp
-   *   of any committed version, and canExceedLatest is enabled we return a version that is greater
-   *   than deltaLog.snapshot.version by one
+   * Returns the earliest commit version whose timestamp is >= the provided timestamp.
+   *
+   * This method fetches the commit at the given timestamp via
+   * [[DeltaLog.history.getActiveCommitAtTime]], computes the starting version using
+   * [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]], and validates the protocol
+   * at the returned version.
    *
    * @param spark - current spark session
    * @param deltaLog - Delta log of the table for which we find the version.
@@ -1443,6 +1441,8 @@ object DeltaSource extends DeltaLogging {
    * @param timestamp - user specified timestamp
    * @param canExceedLatest - if true, version can be greater than the latest snapshot commit
    * @return - corresponding version number for timestamp
+   * @see [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]] for the core version
+   *      computation logic
    */
   def getStartingVersionFromTimestamp(
       spark: SparkSession,
@@ -1457,31 +1457,20 @@ object DeltaSource extends DeltaLogging {
       canReturnLastCommit = true,
       mustBeRecreatable = false,
       canReturnEarliestCommit = true)
-    if (commit.timestamp >= timestamp.getTime) {
-      validateProtocolAt(spark, deltaLog, catalogTableOpt, commit.version)
-      // Find the commit at the `timestamp` or the earliest commit
-      commit.version
-    } else {
-      // commit.timestamp is not the same, so this commit is a commit before the timestamp and
-      // the next version if exists should be the earliest commit after the timestamp.
-      // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
-      //
-      // Note2: In the use case of [[CDCReader]] timestamp passed in can exceed the latest commit
-      // timestamp, caller doesn't expect exception, and can handle the non-existent version.
-      val latestNotExceeded = commit.version + 1 <= deltaLog.unsafeVolatileSnapshot.version
-      if (latestNotExceeded || canExceedLatest) {
-        if (latestNotExceeded) {
-          validateProtocolAt(spark, deltaLog, catalogTableOpt, commit.version + 1)
-        }
-        commit.version + 1
-      } else {
-        val commitTs = new Timestamp(commit.timestamp)
-        val timestampFormatter = TimestampFormatter(DateTimeUtils.getTimeZone(tz))
-        val tsString = DateTimeUtils.timestampToString(
-          timestampFormatter, DateTimeUtils.fromJavaTimestamp(commitTs))
-        throw DeltaErrors.timestampGreaterThanLatestCommit(timestamp, commitTs, tsString)
-      }
+    // Note: `getActiveCommitAtTime` has called `update`, so we don't need to call it again.
+    val latestVersion = deltaLog.unsafeVolatileSnapshot.version
+    val startingVersion = DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
+      timeZone = tz,
+      commitTimestamp = commit.timestamp,
+      commitVersion = commit.version,
+      latestVersion = latestVersion,
+      timestamp = timestamp,
+      canExceedLatest = canExceedLatest
+    )
+    if (startingVersion <= latestVersion) {
+      validateProtocolAt(spark, deltaLog, catalogTableOpt, startingVersion)
     }
+    startingVersion
   }
 
   /**
