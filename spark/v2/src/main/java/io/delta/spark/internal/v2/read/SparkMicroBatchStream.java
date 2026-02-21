@@ -30,6 +30,7 @@ import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -48,6 +49,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
@@ -134,21 +136,25 @@ public class SparkMicroBatchStream
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
 
-  // Cache for the initial snapshot files to avoid re-sorting on repeated access.
+  // Cache for the initial snapshot: stores the sorted DataFrame (persisted in Spark's managed
+  // memory/disk) instead of a List<IndexedFile> in JVM heap. Each call to getSnapshotFiles()
+  // creates a fresh iterator via toLocalIterator(). Mirrors DSv1's DeltaSourceSnapshot pattern.
   private static class InitialSnapshotCache {
-    final Long version;
-    final List<IndexedFile> files;
+    final long version;
+    final Dataset<org.apache.spark.sql.Row> sortedAddFiles;
 
-    InitialSnapshotCache(Long version, List<IndexedFile> files) {
+    InitialSnapshotCache(long version, Dataset<org.apache.spark.sql.Row> sortedAddFiles) {
       this.version = version;
-      this.files = files;
+      this.sortedAddFiles = sortedAddFiles;
+    }
+
+    void close() {
+      sortedAddFiles.unpersist();
     }
   }
 
   private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
       new AtomicReference<>(null);
-
-  private final int maxInitialSnapshotFiles;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -194,12 +200,6 @@ public class SparkMicroBatchStream
             "shouldValidateOffsets is null");
     this.schemaReadOptions =
         Objects.requireNonNull(constructSchemaReadOptions(), "schemaReadOptions is null");
-    this.maxInitialSnapshotFiles =
-        (Integer)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
   }
 
   private DeltaStreamUtils.SchemaReadOptions constructSchemaReadOptions() {
@@ -997,47 +997,204 @@ public class SparkMicroBatchStream
   private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
     InitialSnapshotCache cache = cachedInitialSnapshot.get();
 
-    if (cache != null && cache.version != null && cache.version == version) {
-      return Utils.toCloseableIterator(cache.files.iterator());
+    if (cache == null || cache.version != version) {
+      // Unpersist the old cached DataFrame if present
+      if (cache != null) {
+        cache.close();
+      }
+      cache = loadAndCacheSnapshot(version);
+      cachedInitialSnapshot.set(cache);
     }
 
-    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version);
-
-    cachedInitialSnapshot.set(
-        new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
-
-    return Utils.toCloseableIterator(indexedFiles.iterator());
+    // Stream from the cached DataFrame — no List<IndexedFile> in JVM heap.
+    return snapshotDataFrameToIndexedFiles(cache.version, cache.sortedAddFiles);
   }
 
-  /** Loads snapshot files at the specified version. */
-  private List<IndexedFile> loadAndValidateSnapshot(long version) {
-    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+  /**
+   * Convert a cached sorted DataFrame to a CloseableIterator of IndexedFile, with BEGIN/END
+   * sentinels and sequential indices. Each call creates a fresh iterator via toLocalIterator().
+   */
+  private static CloseableIterator<IndexedFile> snapshotDataFrameToIndexedFiles(
+      long version, Dataset<org.apache.spark.sql.Row> sortedDf) {
+    java.util.Iterator<org.apache.spark.sql.Row> sparkIter = sortedDf.toLocalIterator();
 
+    // Wrap with sentinels and sequential index assignment
+    java.util.Iterator<IndexedFile> indexedIter =
+        new java.util.Iterator<IndexedFile>() {
+          private boolean sentBegin = false;
+          private boolean sentEnd = false;
+          private long idx = 0;
+
+          @Override
+          public boolean hasNext() {
+            return !sentBegin || sparkIter.hasNext() || !sentEnd;
+          }
+
+          @Override
+          public IndexedFile next() {
+            if (!sentBegin) {
+              sentBegin = true;
+              return new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null);
+            }
+            if (sparkIter.hasNext()) {
+              AddFile addFile = sparkRowToAddFile(sparkIter.next());
+              return new IndexedFile(version, idx++, addFile);
+            }
+            if (!sentEnd) {
+              sentEnd = true;
+              return new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null);
+            }
+            throw new java.util.NoSuchElementException();
+          }
+        };
+
+    return Utils.toCloseableIterator(indexedIter);
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // Spark schema for AddFile fields used in DataFrame-based external sorting.
+  // Mirrors Kernel's AddFile.SCHEMA_WITHOUT_STATS but in Spark types.
+  //////////////////////////////////////////////////////////////////////////////
+
+  private static final org.apache.spark.sql.types.StructType DV_SPARK_SCHEMA =
+      new org.apache.spark.sql.types.StructType()
+          .add("storageType", org.apache.spark.sql.types.DataTypes.StringType, false)
+          .add("pathOrInlineDv", org.apache.spark.sql.types.DataTypes.StringType, false)
+          .add("offset", org.apache.spark.sql.types.DataTypes.IntegerType, true)
+          .add("sizeInBytes", org.apache.spark.sql.types.DataTypes.IntegerType, false)
+          .add("cardinality", org.apache.spark.sql.types.DataTypes.LongType, false);
+
+  private static final org.apache.spark.sql.types.DataType STRING_STRING_MAP =
+      org.apache.spark.sql.types.DataTypes.createMapType(
+          org.apache.spark.sql.types.DataTypes.StringType,
+          org.apache.spark.sql.types.DataTypes.StringType);
+
+  private static final org.apache.spark.sql.types.StructType ADD_FILE_SPARK_SCHEMA =
+      new org.apache.spark.sql.types.StructType()
+          .add("path", org.apache.spark.sql.types.DataTypes.StringType, false)
+          .add("partitionValues", STRING_STRING_MAP, false)
+          .add("size", org.apache.spark.sql.types.DataTypes.LongType, false)
+          .add("modificationTime", org.apache.spark.sql.types.DataTypes.LongType, false)
+          .add("dataChange", org.apache.spark.sql.types.DataTypes.BooleanType, false)
+          .add("deletionVector", DV_SPARK_SCHEMA, true)
+          .add("tags", STRING_STRING_MAP, true)
+          .add("baseRowId", org.apache.spark.sql.types.DataTypes.LongType, true)
+          .add("defaultRowCommitVersion", org.apache.spark.sql.types.DataTypes.LongType, true);
+
+  /** Convert a Kernel {@link AddFile} to a Spark {@link org.apache.spark.sql.Row}. */
+  @SuppressWarnings("unchecked")
+  private static org.apache.spark.sql.Row addFileToSparkRow(AddFile addFile) {
+    Map<String, String> partitionValues = VectorUtils.toJavaMap(addFile.getPartitionValues());
+
+    org.apache.spark.sql.Row dvRow = null;
+    Optional<DeletionVectorDescriptor> dvOpt = addFile.getDeletionVector();
+    if (dvOpt.isPresent()) {
+      DeletionVectorDescriptor dv = dvOpt.get();
+      dvRow =
+          org.apache.spark.sql.RowFactory.create(
+              dv.getStorageType(),
+              dv.getPathOrInlineDv(),
+              dv.getOffset().orElse(null),
+              dv.getSizeInBytes(),
+              dv.getCardinality());
+    }
+
+    Map<String, String> tags =
+        addFile
+            .getTags()
+            .map(t -> (Map<String, String>) (Map<?, ?>) VectorUtils.toJavaMap(t))
+            .orElse(null);
+
+    return org.apache.spark.sql.RowFactory.create(
+        addFile.getPath(),
+        partitionValues,
+        addFile.getSize(),
+        addFile.getModificationTime(),
+        addFile.getDataChange(),
+        dvRow,
+        tags,
+        addFile.getBaseRowId().orElse(null),
+        addFile.getDefaultRowCommitVersion().orElse(null));
+  }
+
+  /** Convert a Spark {@link org.apache.spark.sql.Row} back to a Kernel {@link AddFile}. */
+  private static AddFile sparkRowToAddFile(org.apache.spark.sql.Row row) {
+    String path = row.getString(0);
+    Map<String, String> partitionValues = row.getJavaMap(1);
+    long size = row.getLong(2);
+    long modificationTime = row.getLong(3);
+    boolean dataChange = row.getBoolean(4);
+
+    Optional<DeletionVectorDescriptor> dvOpt = Optional.empty();
+    if (!row.isNullAt(5)) {
+      org.apache.spark.sql.Row dvRow = row.getStruct(5);
+      dvOpt =
+          Optional.of(
+              new DeletionVectorDescriptor(
+                  dvRow.getString(0),
+                  dvRow.getString(1),
+                  dvRow.isNullAt(2) ? Optional.empty() : Optional.of(dvRow.getInt(2)),
+                  dvRow.getInt(3),
+                  dvRow.getLong(4)));
+    }
+
+    Optional<Map<String, String>> tagsOpt = Optional.empty();
+    if (!row.isNullAt(6)) {
+      tagsOpt = Optional.of(row.getJavaMap(6));
+    }
+
+    Optional<Long> baseRowId = row.isNullAt(7) ? Optional.empty() : Optional.of(row.getLong(7));
+    Optional<Long> defaultRowCommitVersion =
+        row.isNullAt(8) ? Optional.empty() : Optional.of(row.getLong(8));
+
+    io.delta.kernel.data.MapValue kernelPartVals =
+        VectorUtils.stringStringMapValue(partitionValues);
+    Optional<io.delta.kernel.data.MapValue> kernelTags =
+        tagsOpt.map(VectorUtils::stringStringMapValue);
+
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("path"), path);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("partitionValues"), kernelPartVals);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("size"), size);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("modificationTime"), modificationTime);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("dataChange"), dataChange);
+    dvOpt.ifPresent(
+        dv -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector"), dv.toRow()));
+    kernelTags.ifPresent(t -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("tags"), t));
+    baseRowId.ifPresent(id -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("baseRowId"), id));
+    defaultRowCommitVersion.ifPresent(
+        v -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("defaultRowCommitVersion"), v));
+
+    return new AddFile(
+        new io.delta.kernel.internal.data.GenericRow(AddFile.SCHEMA_WITHOUT_STATS, fieldMap));
+  }
+
+  /**
+   * Loads snapshot files at the specified version, sorts them via Spark DataFrame, and persists the
+   * sorted result. The persisted DataFrame lives in Spark's managed memory (off-heap, can spill to
+   * disk), not in JVM heap. Mirrors DSv1's {@code DeltaSourceSnapshot} caching pattern.
+   *
+   * <p>The intermediate {@code List<Row>} is a short-lived temporary allocation needed to bridge
+   * Kernel's iterator into Spark's {@code createDataFrame} API. After {@code persist() + count()}
+   * materializes the DataFrame into Spark's managed storage, the List becomes eligible for GC.
+   * Kernel's Scan/Engine are not serializable, so an inline-RDD approach fails during Spark's
+   * shuffle serialization checks.
+   */
+  private InitialSnapshotCache loadAndCacheSnapshot(long version) {
+    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
     Scan scan = snapshot.getScanBuilder().build();
 
-    List<AddFile> addFiles = new ArrayList<>();
+    // Stream Kernel scan files into Spark Rows. This List is short-lived: it becomes
+    // GC-eligible once the DataFrame is persisted below.
+    List<org.apache.spark.sql.Row> sparkRows = new ArrayList<>();
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
         ColumnarBatch batch = filteredBatch.getData();
 
-        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
-        // (checkpoint files) files.
         for (int rowId = 0; rowId < batch.getSize(); rowId++) {
           Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
-          if (addOpt.isPresent()) {
-            addFiles.add(addOpt.get());
-
-            // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
-            // etc.).
-            // This limit aims to prevent OOM for large tables.
-            // TODO(#5318): support large tables and remove this limit.
-            if (addFiles.size() > maxInitialSnapshotFiles) {
-              throw (RuntimeException)
-                  DeltaErrors.initialSnapshotTooLargeForStreaming(
-                      version, addFiles.size(), maxInitialSnapshotFiles, tablePath);
-            }
-          }
+          addOpt.ifPresent(add -> sparkRows.add(addFileToSparkRow(add)));
         }
       }
     } catch (IOException e) {
@@ -1045,25 +1202,20 @@ public class SparkMicroBatchStream
           String.format("Failed to read snapshot files at version %d", version), e);
     }
 
-    // TODO(#5318): For large snapshots, consider external sorting.
-    // CRITICAL: Sort by modificationTime, then path for deterministic ordering
-    addFiles.sort(
-        Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
+    // Create DataFrame, sort with Spark (can spill to disk), and persist.
+    // After persist() + count(), data lives in Spark's managed memory/disk and sparkRows can GC.
+    Dataset<org.apache.spark.sql.Row> sortedDf =
+        spark
+            .createDataFrame(sparkRows, ADD_FILE_SPARK_SCHEMA)
+            .repartitionByRange(
+                org.apache.spark.sql.functions.col("modificationTime"),
+                org.apache.spark.sql.functions.col("path"))
+            .sort("modificationTime", "path")
+            .persist(org.apache.spark.storage.StorageLevel.MEMORY_AND_DISK());
 
-    // Build IndexedFile list with sentinels
-    List<IndexedFile> indexedFiles = new ArrayList<>();
+    // Trigger materialization so the data is cached and sparkRows can be GC'd.
+    sortedDf.count();
 
-    // Add BEGIN sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null));
-
-    // Add data files with sequential indices starting from 0
-    for (int i = 0; i < addFiles.size(); i++) {
-      indexedFiles.add(new IndexedFile(version, i, addFiles.get(i)));
-    }
-
-    // Add END sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
-
-    return indexedFiles;
+    return new InitialSnapshotCache(version, sortedDf);
   }
 }
