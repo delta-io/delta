@@ -1,0 +1,144 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.delta.spark.internal.v2.read.deletionvector;
+
+import org.apache.spark.sql.types.Decimal;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.spark.sql.vectorized.ColumnarArray;
+import org.apache.spark.sql.vectorized.ColumnarMap;
+import org.apache.spark.unsafe.types.UTF8String;
+
+/**
+ * A column vector that applies row-level filtering using a row ID mapping.
+ *
+ * <p>Wraps an existing column vector and remaps row indices during data access, effectively
+ * filtering the original data to only expose the live subset of rows without copying data.
+ *
+ * <p>Follows Apache Iceberg's ColumnVectorWithFilter pattern.
+ */
+public class ColumnVectorWithFilter extends ColumnVector {
+  private final ColumnVector delegate;
+  private final int[] rowIdMapping;
+  private volatile ColumnVectorWithFilter[] children = null;
+
+  public ColumnVectorWithFilter(ColumnVector delegate, int[] rowIdMapping) {
+    super(delegate.dataType());
+    this.delegate = delegate;
+    this.rowIdMapping = rowIdMapping;
+  }
+
+  @Override
+  public void close() {
+    delegate.close();
+  }
+
+  @Override
+  public boolean hasNull() {
+    return delegate.hasNull();
+  }
+
+  @Override
+  public int numNulls() {
+    // Computing the actual number of nulls with rowIdMapping is expensive.
+    // It is OK to overestimate and return the number of nulls in the original vector.
+    return delegate.numNulls();
+  }
+
+  @Override
+  public boolean isNullAt(int rowId) {
+    return delegate.isNullAt(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public boolean getBoolean(int rowId) {
+    return delegate.getBoolean(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public byte getByte(int rowId) {
+    return delegate.getByte(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public short getShort(int rowId) {
+    return delegate.getShort(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public int getInt(int rowId) {
+    return delegate.getInt(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public long getLong(int rowId) {
+    return delegate.getLong(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public float getFloat(int rowId) {
+    return delegate.getFloat(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public double getDouble(int rowId) {
+    return delegate.getDouble(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public ColumnarArray getArray(int rowId) {
+    return delegate.getArray(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public ColumnarMap getMap(int rowId) {
+    return delegate.getMap(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public Decimal getDecimal(int rowId, int precision, int scale) {
+    return delegate.getDecimal(rowIdMapping[rowId], precision, scale);
+  }
+
+  @Override
+  public UTF8String getUTF8String(int rowId) {
+    return delegate.getUTF8String(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public byte[] getBinary(int rowId) {
+    return delegate.getBinary(rowIdMapping[rowId]);
+  }
+
+  @Override
+  public ColumnVector getChild(int ordinal) {
+    if (children == null) {
+      synchronized (this) {
+        if (children == null) {
+          // Eagerly create all children to avoid race condition on children[ordinal] access
+          StructType structType = (StructType) dataType();
+          ColumnVectorWithFilter[] newChildren =
+              new ColumnVectorWithFilter[structType.fields().length];
+          for (int i = 0; i < newChildren.length; i++) {
+            newChildren[i] = new ColumnVectorWithFilter(delegate.getChild(i), rowIdMapping);
+          }
+          children = newChildren;
+        }
+      }
+    }
+    return children[ordinal];
+  }
+}

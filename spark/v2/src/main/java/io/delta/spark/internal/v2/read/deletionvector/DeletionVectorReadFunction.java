@@ -17,9 +17,12 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import io.delta.spark.internal.v2.utils.CloseableIterator;
 import java.io.Serializable;
+import java.util.Arrays;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.vectorized.ColumnVector;
+import org.apache.spark.sql.vectorized.ColumnarBatch;
 import scala.Function1;
 import scala.collection.Iterator;
 import scala.runtime.AbstractFunction1;
@@ -57,6 +60,7 @@ public class DeletionVectorReadFunction
   }
 
   @Override
+  @SuppressWarnings("unchecked")
   public Iterator<InternalRow> apply(PartitionedFile file) {
     int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
     // Use pre-computed ordinals from DeletionVectorSchemaContext.
@@ -64,17 +68,72 @@ public class DeletionVectorReadFunction
         ProjectingInternalRow.apply(
             dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());
 
-    // Wrap the base iterator as CloseableIterator to preserve close() through filter/map.
-    // This ensures proper resource cleanup even when the iterator is not fully consumed.
-    Iterator<InternalRow> baseIterator = baseReadFunc.apply(file);
+    // Filter: skip deleted rows (noop for vectorized - batch filtering done in map)
+    // Map: project row / filter batch
+    //
+    // Double casts are needed due to Scala Iterator's invariant type parameter:
+    //   Inner: (Iterator<Object>) (Iterator<?>) - erase InternalRow to Object, because in
+    //     vectorized mode Spark passes ColumnarBatch via type erasure.
+    //   Outer: (Iterator<InternalRow>) (Iterator<?>) - erase Object back to InternalRow to
+    //     match the method's return type.
+    // Wrap in CloseableIterator to preserve close() through filter/map when partially consumed.
+    return (Iterator<InternalRow>)
+        (Iterator<?>)
+            CloseableIterator.wrap((Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file))
+                .filterCloseable(
+                    item -> {
+                      if (item instanceof InternalRow) {
+                        // Row-based: filter deleted rows
+                        return ((InternalRow) item).getByte(dvColumnIndex) == ROW_NOT_DELETED;
+                      }
+                      // Vectorized: noop (batch filtering done in map)
+                      return true;
+                    })
+                .mapCloseable(
+                    item -> {
+                      if (item instanceof ColumnarBatch) {
+                        return filterAndProjectBatch((ColumnarBatch) item, dvColumnIndex);
+                      } else {
+                        // Row-based: project out DV column
+                        projection.project((InternalRow) item);
+                        return projection;
+                      }
+                    });
+  }
 
-    return CloseableIterator.wrap(baseIterator)
-        .filterCloseable(row -> row.getByte(dvColumnIndex) == ROW_NOT_DELETED)
-        .mapCloseable(
-            row -> {
-              projection.project(row);
-              return (InternalRow) projection;
-            });
+  /** Filter active rows and project out the DV column from a ColumnarBatch. */
+  private static ColumnarBatch filterAndProjectBatch(ColumnarBatch batch, int dvColumnIndex) {
+    int[] activeRows = findActiveRows(batch, dvColumnIndex);
+    ColumnVector[] filteredColumns = buildFilteredColumns(batch, dvColumnIndex, activeRows);
+    return new ColumnarBatch(filteredColumns, activeRows.length);
+  }
+
+  /** Build projected output columns by dropping the DV column and applying active row mapping. */
+  private static ColumnVector[] buildFilteredColumns(
+      ColumnarBatch batch, int dvColumnIndex, int[] activeRows) {
+    ColumnVector[] filteredColumns = new ColumnVector[batch.numCols() - 1];
+    int outputIndex = 0;
+    for (int inputIndex = 0; inputIndex < batch.numCols(); inputIndex++) {
+      if (inputIndex == dvColumnIndex) {
+        continue;
+      }
+      filteredColumns[outputIndex++] =
+          new ColumnVectorWithFilter(batch.column(inputIndex), activeRows);
+    }
+    return filteredColumns;
+  }
+
+  /** Find indices of rows where DV column is 0 (not deleted). */
+  private static int[] findActiveRows(ColumnarBatch batch, int dvColumnIndex) {
+    ColumnVector dvColumn = batch.column(dvColumnIndex);
+    int[] temp = new int[batch.numRows()];
+    int count = 0;
+    for (int i = 0; i < batch.numRows(); i++) {
+      if (dvColumn.getByte(i) == ROW_NOT_DELETED) {
+        temp[count++] = i;
+      }
+    }
+    return Arrays.copyOf(temp, count);
   }
 
   /** Factory method to wrap a reader function with DV filtering. */
