@@ -29,7 +29,7 @@ from xml.etree import ElementTree
 REPO = "delta-io/delta"
 CSV_FILE = "project/test-durations.csv"
 DEFAULT_LAST_N_RUNS = 5
-DEFAULT_TOP_N = 100
+DEFAULT_TOP_N = 200
 
 
 def run_gh(args):
@@ -187,9 +187,12 @@ def main():
             f.write(f"{name},{dur}\n")
 
     print(f"\nWrote {len(sorted_suites)} suites to {CSV_FILE}")
-    print(f"Total duration: {sum(d for _, d in sorted_suites):.1f} min")
-    print(f"Slowest: {sorted_suites[0][0]} ({sorted_suites[0][1]} min)")
-    print(f"Fastest included: {sorted_suites[-1][0]} ({sorted_suites[-1][1]} min)")
+    if sorted_suites:
+        print(f"Total duration: {sum(d for _, d in sorted_suites):.1f} min")
+        print(f"Slowest: {sorted_suites[0][0]} ({sorted_suites[0][1]} min)")
+        print(f"Fastest included: {sorted_suites[-1][0]} ({sorted_suites[-1][1]} min)")
+    else:
+        print("No test-report artifacts found. Has the JUnit XML upload been enabled on master?")
 
 
 if __name__ == "__main__":
