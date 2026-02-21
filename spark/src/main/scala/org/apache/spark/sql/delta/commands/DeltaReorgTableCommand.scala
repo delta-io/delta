@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LeafCommand, LogicalPlan, UnaryCommand}
@@ -75,7 +76,7 @@ case class DeltaReorgTableCommand(
         DeltaReorgTableMode.PURGE | DeltaReorgTableMode.REWRITE_TYPE_WIDENING, None) =>
       optimizeByReorg(sparkSession)
     case DeltaReorgTableSpec(DeltaReorgTableMode.UNIFORM_ICEBERG, Some(icebergCompatVersion)) =>
-      val table = getDeltaTable(target, "REORG")
+      val table = DeltaTableV2.extractFrom(target, "REORG")
       upgradeUniformIcebergCompatVersion(table, sparkSession, icebergCompatVersion)
   }
 
