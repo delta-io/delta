@@ -55,6 +55,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.ShowPartitions
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
@@ -85,6 +86,17 @@ class DeltaAnalysis(session: SparkSession)
   type CastFunction = (Expression, DataType, String) => Expression
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
+    // Intercept SHOW PARTITIONS for Delta tables
+    // Spark's ShowPartitions command requires SUPPORTS_PARTITION_MANAGEMENT capability,
+    // but Delta manages partitions through the transaction log, not the metastore.
+    // We intercept and replace with our custom command that reads from the Delta log.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, table: DeltaTableV2, _), partSpec, _) =>
+      val partitionSpec = partSpec.collect {
+        case UnresolvedPartitionSpec(spec, _) => spec
+      }.getOrElse(Map.empty[String, String])
+      ShowDeltaPartitionsCommand(r, partitionSpec)
+
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
         needsSchemaAdjustmentByOrdinal(d, a.query, r.schema, a.writeOptions) =>
@@ -515,7 +527,8 @@ class DeltaAnalysis(session: SparkSession)
       }
 
     case u @ UpdateTable(table, assignments, condition) if u.childrenResolved =>
-      val (cols, expressions) = assignments.map(a => a.key -> a.value).unzip
+      val (cols, expressions): (Seq[Expression], Seq[Expression]) =
+        assignments.map(a => a.key -> a.value).unzip
       // rewrites Delta from V2 to V1
       val newTable = stripTempViewWrapper(table).transformUp { case DeltaRelation(lr) => lr }
         newTable.collectLeaves().headOption match {
