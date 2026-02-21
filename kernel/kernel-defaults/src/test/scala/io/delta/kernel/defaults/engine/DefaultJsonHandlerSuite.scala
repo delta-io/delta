@@ -490,4 +490,68 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
 
     checkAnswer(Seq(actResult), Seq(expResult))
   }
+
+  test("parse CommitInfo JSON with missing isBlindAppend field") {
+    val input =
+      """
+        |{
+        |   "inCommitTimestamp":1740009523401,
+        |   "timestamp":1740009523401,
+        |   "engineInfo":"myengine.com",
+        |   "operation":"WRITE",
+        |   "operationParameters":
+        |     {"mode":"Append","partitionBy":"[]"},
+        |   "txnId":"cb009f42-5da1-4e7e-b4fa-09de3332f52a",
+        |   "operationMetrics": {
+        |       "numFiles":"1"
+        |   }
+        |}
+        |""".stripMargin
+
+    val output = jsonHandler.parseJson(
+      stringVector(Seq(input)),
+      CommitInfo.FULL_SCHEMA,
+      Optional.empty())
+    assert(output.getSize == 1)
+    val actResult = TestRow(output.getRows.next)
+    val expResult = TestRow(
+      1740009523401L,
+      1740009523401L,
+      "myengine.com",
+      "WRITE",
+      Map("mode" -> "Append", "partitionBy" -> "[]"),
+      null, // isBlindAppend is missing from JSON, should be null
+      "cb009f42-5da1-4e7e-b4fa-09de3332f52a",
+      Map("numFiles" -> "1"))
+
+    checkAnswer(Seq(actResult), Seq(expResult))
+  }
+
+  test("fromColumnVector handles null isBlindAppend from parsed JSON without NPE") {
+    val input =
+      """
+        |{
+        |   "timestamp":1740009523401,
+        |   "engineInfo":"myengine.com",
+        |   "operation":"WRITE",
+        |   "operationParameters":{},
+        |   "txnId":"test-txn-id",
+        |   "operationMetrics":{}
+        |}
+        |""".stripMargin
+
+    val readSchema = new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA)
+    val output = jsonHandler.parseJson(
+      stringVector(Seq(s"""{"commitInfo":${input.trim}}""")),
+      readSchema,
+      Optional.empty())
+    assert(output.getSize == 1)
+    val commitInfoVector = output.getColumnVector(0)
+    val commitInfo = CommitInfo.fromColumnVector(commitInfoVector, 0)
+
+    assert(commitInfo != null)
+    assert(commitInfo.getIsBlindAppend === Optional.empty())
+    assert(commitInfo.getInCommitTimestamp === Optional.empty())
+    assert(commitInfo.getTimestamp === 1740009523401L)
+  }
 }
