@@ -34,14 +34,15 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       CREATE TABLE test_db.shared_test (
         id INT,
         name STRING,
-        value INT
+        value INT,
+        a STRUCT<`b.c`: STRING>
       ) USING parquet
     """)
     sql("""
-      INSERT INTO test_db.shared_test (id, name, value) VALUES
-      (1, 'alpha', 10),
-      (2, 'beta', 20),
-      (3, 'gamma', 30)
+      INSERT INTO test_db.shared_test (id, name, value, a) VALUES
+      (1, 'alpha', 10, struct('abc_1')),
+      (2, 'beta', 20, struct('abc_2')),
+      (3, 'gamma', 30, struct('abc_3'))
     """)
   }
 
@@ -268,7 +269,7 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(metadata.tableProperties.isEmpty)
   }
 
-  test("UnityCatalogMetadata constructs IRC endpoint from UC URI") {
+  test("UnityCatalogMetadata constructs base IRC endpoint from UC URI") {
     val ucUri = "https://unity-catalog-server.example.com"
     val metadata = UnityCatalogMetadata(
       catalogName = "test_catalog",
@@ -277,13 +278,12 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       tableProps = Map.empty
     )
 
-    // This test validates the fallback case where /v1/config is unreachable.
-    // The endpoint construction logic attempts to call /v1/config at the UC URI,
-    // but since there's no server at this URL, it falls back to the simple path
-    // without prefix. For tests of the prefix case with a real IRC server, see
-    // IcebergRESTCatalogPlanningClientSuite.
+    // UnityCatalogMetadata returns the base Iceberg REST path up to /v1.
+    // The IcebergRESTCatalogPlanningClient then calls config to get the prefix
+    // and constructs the full endpoint URL per the Iceberg REST catalog spec.
     val expectedEndpoint =
-      "https://unity-catalog-server.example.com/api/2.1/unity-catalog/iceberg-rest"
+      "https://unity-catalog-server.example.com/api/2.1/unity-catalog/" +
+      "iceberg-rest/v1"
     assert(metadata.planningEndpointUri == expectedEndpoint)
   }
 
@@ -360,6 +360,17 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
       assert(capturedProjection.isEmpty,
         "No projection should be pushed when selecting all columns")
+    }
+  }
+
+  test("projection escaping with dotted column names") {
+    withPushdownCapturingEnabled {
+      sql("SELECT a.`b.c` FROM test_db.shared_test").collect()
+
+      val capturedProjection = TestServerSidePlanningClient.getCapturedProjection
+      assert(capturedProjection.isDefined, "Projection should be pushed down")
+      assert(capturedProjection.get == Seq("a.`b.c`"),
+        s"Expected escaped [a.`b.c`], got ${capturedProjection.get}")
     }
   }
 

@@ -23,7 +23,7 @@ import java.util.Locale
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
-import org.apache.http.client.methods.HttpPost
+import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
@@ -36,8 +36,18 @@ import org.apache.spark.util.Utils
 import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import shadedForDelta.org.apache.iceberg.PartitionSpec
+import shadedForDelta.org.apache.iceberg.expressions.Expressions
 import shadedForDelta.org.apache.iceberg.rest.requests.{PlanTableScanRequest, PlanTableScanRequestParser}
 import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
+
+/**
+ * Case class for parsing Iceberg REST catalog /v1/config response.
+ * Per the Iceberg REST spec, the config endpoint returns defaults and overrides.
+ * The optional "prefix" in overrides is used for multi-tenant catalog paths.
+ */
+private case class CatalogConfigResponse(
+    defaults: Map[String, String],
+    overrides: Map[String, String])
 
 /**
  * Iceberg REST implementation of ServerSidePlanningClient that calls Iceberg REST catalog server.
@@ -49,20 +59,62 @@ import shadedForDelta.org.apache.iceberg.rest.responses.PlanTableScanResponse
  * Thread safety: This class creates a shared HTTP client that is thread-safe for concurrent
  * requests. The HTTP client should be explicitly closed by calling close() when done.
  *
- * @param icebergRestCatalogUriRoot Base URI of the Iceberg REST catalog server, e.g.,
- *                                   "http://localhost:8181". Should not include trailing slash
- *                                   or "/v1" prefix.
+ * @param baseUriRaw Base URI of the Iceberg REST catalog up to /v1, e.g.,
+ *                   "http://<catalog-URL>/iceberg/v1". Trailing slashes are handled automatically.
+ * @param catalogName Name of the catalog for config endpoint query parameter.
  * @param token Authentication token for the catalog server.
  */
 class IcebergRESTCatalogPlanningClient(
-    icebergRestCatalogUriRoot: String,
+    baseUriRaw: String,
+    catalogName: String,
     token: String) extends ServerSidePlanningClient with AutoCloseable {
+
+  // Normalize baseUri to handle trailing slashes
+  private val baseUri = baseUriRaw.stripSuffix("/")
 
   // Sentinel value indicating "use current snapshot" in Iceberg REST API
   private val CURRENT_SNAPSHOT_ID = 0L
 
   // Partition spec ID for unpartitioned tables
   private val UNPARTITIONED_SPEC_ID = 0
+
+  /**
+   * Lazily fetch the catalog configuration and construct the endpoint URI root.
+   * Calls /v1/config?warehouse=<catalogName> per Iceberg REST catalog spec to get the prefix.
+   * If no prefix is returned, uses baseUri directly without any prefix per Iceberg spec.
+   */
+  private lazy val icebergRestCatalogUriRoot: String = {
+    fetchCatalogPrefix() match {
+      case Some(prefix) => s"$baseUri/$prefix"
+      case None => baseUri
+    }
+  }
+
+  /**
+   * Fetch catalog prefix from /v1/config endpoint per Iceberg REST catalog spec.
+   * Returns None on any error or if no prefix is defined in the config.
+   */
+  private def fetchCatalogPrefix(): Option[String] = {
+    try {
+      val configUri = s"$baseUri/config?warehouse=$catalogName"
+      val httpGet = new HttpGet(configUri)
+      val response = httpClient.execute(httpGet)
+      try {
+        if (response.getStatusLine.getStatusCode == HttpStatus.SC_OK) {
+          val body = EntityUtils.toString(response.getEntity)
+          val config = JsonUtils.fromJson[CatalogConfigResponse](body)
+          // Apply overrides on top of defaults per Iceberg REST spec
+          config.overrides.get("prefix").orElse(config.defaults.get("prefix"))
+        } else {
+          None
+        }
+      } finally {
+        response.close()
+      }
+    } catch {
+      case _: Exception => None
+    }
+  }
 
   private val httpHeaders = {
     val baseHeaders = Map(
@@ -71,7 +123,7 @@ class IcebergRESTCatalogPlanningClient(
       HttpHeaders.USER_AGENT -> buildUserAgent()
     )
     // Add Bearer token authentication if token is provided
-    val headersWithAuth = if (token != null && token.nonEmpty) {
+    val headersWithAuth = if (token.nonEmpty) {
       baseHeaders + (HttpHeaders.AUTHORIZATION -> s"Bearer $token")
     } else {
       baseHeaders
@@ -186,13 +238,11 @@ class IcebergRESTCatalogPlanningClient(
       sparkProjectionOption: Option[Seq[String]] = None,
       sparkLimitOption: Option[Int] = None): ScanPlan = {
     // Construct the /plan endpoint URI. For Unity Catalog tables, the
-    // icebergRestCatalogUriRoot is constructed by UnityCatalogMetadata which calls
-    // /v1/config to get the optional prefix and builds the proper endpoint
-    // (e.g., {ucUri}/api/2.1/unity-catalog/iceberg-rest/v1/{prefix}).
-    // For other catalogs, the endpoint is passed directly via metadata.
+    // Call /v1/config to get the catalog prefix, then construct the full endpoint.
+    // icebergRestCatalogUriRoot is lazily constructed as: {baseUri}/{prefix}
+    // where prefix comes from /v1/config?warehouse=<catalogName> per Iceberg REST spec.
     // See: https://iceberg.apache.org/rest-catalog-spec/
-    val planTableScanUri =
-      s"$icebergRestCatalogUriRoot/v1/namespaces/$database/tables/$table/plan"
+    val planTableScanUri = s"$icebergRestCatalogUriRoot/namespaces/$database/tables/$table/plan"
 
     // Request planning for current snapshot. snapshotId = 0 means "use current snapshot"
     // in the Iceberg REST API spec. Time-travel queries are not yet supported.
@@ -281,6 +331,16 @@ class IcebergRESTCatalogPlanningClient(
     val files = response.fileScanTasks().asScala.map { task =>
       require(task != null, "FileScanTask cannot be null")
       require(task.file() != null, "DataFile cannot be null")
+
+      // Validate that the server does not expect the application of a residual. The application of
+      // a residual filter is currently not supported, and its ignorance leads to wrong results.
+      val residual = task.residual()
+      if (residual != null && !residual.isEquivalentTo(Expressions.alwaysTrue)) {
+        throw new UnsupportedOperationException(
+          s"Found FileScanTask with residual: ${residual}. " +
+            s"Only FileScanTasks with no or alwaysTrue residual are currently supported.")
+      }
+
       val file = task.file()
 
       // Validate that table is unpartitioned. Partitioned tables are not supported yet.

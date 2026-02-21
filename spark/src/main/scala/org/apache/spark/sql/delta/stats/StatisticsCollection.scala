@@ -238,6 +238,13 @@ trait StatisticsCollection extends DeltaLogging {
   }
 
   /**
+   * Returns the prefix length of strings that should be used for data skipping.
+   * Intentionally left abstract to let implementation decide whether table property overrides
+   * need to be included.
+   */
+  protected def getDataSkippingStringPrefixLength: Int
+
+  /**
    * Returns a struct column that can be used to collect statistics for the current
    * schema of the table.
    * The types we keep stats on must be consistent with DataSkippingReader.SkippingEligibleLiteral.
@@ -245,8 +252,7 @@ trait StatisticsCollection extends DeltaLogging {
    * collect the NULL_COUNT stats for it as the number of rows.
    */
   lazy val statsCollector: Column = {
-    val stringPrefix =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
+    val stringPrefix = getDataSkippingStringPrefixLength
 
     // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
     val tightBoundsColOpt =
@@ -262,6 +268,11 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
+        // Write null for min/max Variant stats because collecting variant stats is not supported
+        // yet.
+        case (c, SkippingEligibleDataType(_: VariantType), true) =>
+          lit(null).cast(VariantType)
+
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
           min(c)
@@ -272,6 +283,11 @@ trait StatisticsCollection extends DeltaLogging {
           val udfTruncateMax =
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
+
+        // Write null for min/max Variant stats because collecting variant stats is not supported
+        // yet.
+        case (c, SkippingEligibleDataType(_: VariantType), true) =>
+          lit(null).cast(VariantType)
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>

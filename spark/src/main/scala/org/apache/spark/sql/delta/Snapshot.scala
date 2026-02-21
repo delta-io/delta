@@ -19,11 +19,14 @@ package org.apache.spark.sql.delta
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.{Locale, TimeZone}
 
+import scala.collection.JavaConverters._
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.actions.Action.logSchema
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CommitCoordinatorClient, CommitCoordinatorProvider, CoordinatedCommitsUsageLogs, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -38,10 +41,14 @@ import org.apache.spark.sql.delta.util.StateCache
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit.CommitCoordinatorClient
 import org.apache.hadoop.fs.{FileStatus, Path}
+import org.apache.parquet.format.converter.ParquetMetadataConverter.NO_FILTER
+import org.apache.parquet.hadoop.Footer
+import org.apache.parquet.hadoop.ParquetFileReader
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.execution.datasources.parquet.{ParquetFileFormat, ParquetToSparkSchemaConverter}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
@@ -528,11 +535,59 @@ class Snapshot(
    * when sorted in ascending order, will order older actions before newer ones, as required by
    * [[InMemoryLogReplay]]); and [[ADD_STATS_TO_USE_COL_NAME]] (to handle certain combinations of
    * config settings for delta.checkpoint.writeStatsAsJson and delta.checkpoint.writeStatsAsStruct).
+   * When we see a V2 checkpoint without the old stats column, but the stats_parsed column, we
+   * json encode the stats_parsed column back as "stats" again. This is a temporary correctness
+   * hack.
    */
   protected def loadActions: DataFrame = {
-    fileIndices.map(deltaLog.loadIndex(_))
-      .reduceOption(_.union(_)).getOrElse(emptyDF)
-      .withColumn(ADD_STATS_TO_USE_COL_NAME, col("add.stats"))
+    if (fileIndices.isEmpty) return emptyDF
+
+    // Augment the schema with a NullType add.stats_parsed column, as a place-holder for
+    // compatibility with the checkpoint parquet. Both deltas and checkpoints generally use this
+    // schema. HOWEVER, IF (and only if) a checkpoint actually exists, AND it provides an
+    // add.stats_parsed column AND it lacks an add.stats column, THEN (and only then) the checkpoint
+    // DF includes the actual add.stats_parsed column -- not a NullType placeholder -- from which we
+    // generate the add_stats_to_use column (add.stats is unused in that case). Meanwhile, JSON
+    // deltas always map add.stats to add_stats_to_use, and always use the placeholder.
+    val logSchemaToUse = Action.logSchema
+    val jsonStatsCol = col("add.stats")
+    val deltas = deltaFileIndexOpt.map(deltaLog.loadIndex(_, logSchemaToUse))
+      .map(_.withColumn(ADD_STATS_TO_USE_COL_NAME, jsonStatsCol))
+
+    val checkpointDataframes = checkpointProvider
+      .allActionsFileIndexesAndSchemas(spark, deltaLog)
+      .map { case (index, schema) =>
+        val addSchema = schema("add").dataType.asInstanceOf[StructType]
+        val (checkpointSchemaToUse, checkpointStatsColToUse) =
+          if (addSchema.exists(_.name == "stats_parsed") && !addSchema.exists(_.name == "stats")) {
+            val statsParsedSchema = addSchema("stats_parsed").dataType.asInstanceOf[StructType]
+            val checkpointSchemaToUse =
+              Action.logSchemaWithAddStatsParsed(addSchema("stats_parsed"))
+            val statsCol = col("add.stats_parsed")
+            // Only use EncodeNestedVariantAsZ85String if the schema contains VariantType.
+            // This avoids performance overhead for tables without variant columns.
+            val encodedStatsCol =
+              if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsParsedSchema)) {
+                Column(EncodeNestedVariantAsZ85String(statsCol.expr))
+              } else {
+                statsCol
+              }
+            (
+              checkpointSchemaToUse,
+              to_json(encodedStatsCol)
+            )
+          } else {
+            // Normal (JSON-like) schema suffices
+            (logSchemaToUse, jsonStatsCol)
+          }
+
+        // For schema compat, make sure to discard add.stats_parsed (if present)
+        deltaLog.loadIndex(index, checkpointSchemaToUse)
+          .withColumn(COMMIT_VERSION_COLUMN, lit(checkpointProvider.version))
+          .withColumn(ADD_STATS_TO_USE_COL_NAME, checkpointStatsColToUse)
+          .withColumn("add", col("add").dropFields("stats_parsed"))
+      }
+      (checkpointDataframes ++ deltas).reduce(_.union(_))
   }
 
   /**
@@ -816,6 +871,30 @@ object Snapshot extends DeltaLogging {
     } else {
       base
     }
+  }
+
+  /**
+   * Gets the schema of a single parquet file by reading its footer. Code here is copied from
+   * ParquetFileFormat.
+   */
+  private[delta] def getParquetFileSchemaAndRowCount(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      file: FileStatus): (StructType, Long) = {
+    // Converter used to convert Parquet `MessageType` to Spark SQL `StructType`
+    val converter = new ParquetToSparkSchemaConverter(
+      assumeBinaryIsString = spark.sessionState.conf.isParquetBinaryAsString,
+      assumeInt96IsTimestamp = spark.sessionState.conf.isParquetINT96AsTimestamp)
+
+    val conf = deltaLog.newDeltaHadoopConf()
+
+    val parquetMetadata = {
+      ParquetFileReader.readFooter(deltaLog.newDeltaHadoopConf(), file.getPath)
+    }
+    val rowCount = parquetMetadata.getBlocks.asScala.map(_.getRowCount).sum
+
+    val footer = new Footer(file.getPath(), parquetMetadata)
+    (ParquetFileFormat.readSchemaFromFooter(footer, converter), rowCount)
   }
 }
 

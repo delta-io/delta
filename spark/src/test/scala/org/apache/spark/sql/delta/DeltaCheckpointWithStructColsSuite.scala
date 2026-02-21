@@ -679,6 +679,121 @@ class DeltaCheckpointWithStructColsSuite
       }
     }
   }
+
+  Seq(Seq("part"), Nil).foreach { partitionBy =>
+    test("do not lose file stats after a checkpoint when writeStatsAsJson=false - isPartitioned: " +
+        partitionBy.nonEmpty) {
+      withTempDir { dir =>
+        var start = 0
+        def writeNewData(mode: String): Unit = {
+          spark.range(start, start + 10).withColumn("part", 'id % 4)
+            .write
+            .format("delta")
+            .mode(mode)
+            .partitionBy(partitionBy: _*)
+            .save(dir.getCanonicalPath)
+          start += 10
+        }
+        writeNewData("append")
+        val deltaLog = DeltaLog.forTable(spark, dir)
+        checkpointWithProperty(writeStatsAsJson = Some(false))(deltaLog)
+
+        def checkpointAndCheck(): Unit = {
+          deltaLog.checkpoint()
+          val checkpoint = spark.read.parquet(
+            FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toString)
+
+          // use physical name if possible
+          val id = getPhysicalName("id", deltaLog.snapshot.schema)
+          val adds = checkpoint.where("add is not null").selectExpr("add.*")
+          assert(adds.selectExpr(s"stats_parsed.minValues.`$id`")
+            .collect().forall(r => !r.isNullAt(0)),
+            "minValues was null for some values.\n" + adds.collect().mkString("\n"))
+          assert(adds.selectExpr(s"stats_parsed.maxValues.`$id`")
+            .collect().forall(r => !r.isNullAt(0)),
+            "maxValues was null for some values.\n" + adds.collect().mkString("\n"))
+          assert(adds.selectExpr(s"stats_parsed.nullCount.`$id`")
+            .collect().forall(r => !r.isNullAt(0)),
+            "nullCount was null for some values.\n" + adds.collect().mkString("\n"))
+
+          checkAnswer(
+            adds.select("path"),
+            deltaLog.snapshot.allFiles.select("path")
+          )
+        }
+
+        writeNewData("append")
+        checkpointAndCheck()
+        writeNewData("overwrite")
+        checkpointAndCheck()
+      }
+    }
+  }
+
+  test("switching between v1 and v2 checkpoints") {
+    withTempDir { dir =>
+      spark.range(0, 10).withColumn("part", 'id % 4).write.format("delta").partitionBy("part")
+        .save(dir.getCanonicalPath)
+      val deltaLog = DeltaLog.forTable(spark, dir)
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES " +
+        s"('delta.checkpoint.writeStatsAsStruct'='true')")
+      deltaLog.checkpoint()
+      def getLatestCheckpoint: DataFrame = spark.read.parquet(
+        FileNames.checkpointFileSingular(deltaLog.logPath, deltaLog.snapshot.version).toString)
+
+      // statsAsStruct=true, statsAsJson=true
+      val withStructAndJson = getLatestCheckpoint
+
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES " +
+        s"('delta.checkpoint.writeStatsAsStruct'='false')")
+      deltaLog.checkpoint()
+      // statsAsStruct=false, statsAsJson=true
+      val noStructWithJson = getLatestCheckpoint
+      // The columns should be the same, without the stats_parsed column in noStructWithJson
+      checkAnswer(
+        noStructWithJson.select("add.*")
+          .select("path", "partitionValues", "modificationTime", "tags", "stats"),
+        withStructAndJson.select("add.*")
+          .select("path", "partitionValues", "modificationTime", "tags", "stats")
+      )
+
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES " +
+        s"('delta.checkpoint.writeStatsAsStruct'='true'," +
+        s"'delta.checkpoint.writeStatsAsJson'='false')")
+      deltaLog.checkpoint()
+      // statsAsStruct=true, statsAsJson=false
+      val withStructNoJson = getLatestCheckpoint
+      checkAnswer(
+        withStructNoJson.select("add.*"),
+        withStructAndJson.select("add.*").drop("stats")
+      )
+
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES " +
+        s"('delta.checkpoint.writeStatsAsStruct'='false')")
+      deltaLog.checkpoint()
+      // statsAsStruct=false, statsAsJson=false
+      val noStructNoJson = getLatestCheckpoint
+      // should not have the stats column anymore
+      checkAnswer(
+        noStructNoJson.select("add.*"),
+        noStructWithJson.select("add.*").drop("stats"))
+
+      // going to a v2 checkpoint with the json stats
+      sql(s"ALTER TABLE delta.`${dir.getCanonicalPath}` SET TBLPROPERTIES " +
+        s"('delta.checkpoint.writeStatsAsStruct'='true'," +
+        s"'delta.checkpoint.writeStatsAsJson'='true')")
+      deltaLog.checkpoint()
+      // statsAsStruct=true, statsAsJson=true
+      val lostAllStats = getLatestCheckpoint
+      // should be identical to withStructAndJson
+      checkAnswer(
+        lostAllStats.select("add.*"),
+        withStructAndJson.select("add.*")
+          .withColumn("stats", lit(null))
+          .withColumn("stats_parsed", lit(null))
+      )
+    }
+  }
 }
 
 

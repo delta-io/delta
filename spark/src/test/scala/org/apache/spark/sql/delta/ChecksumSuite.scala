@@ -261,6 +261,103 @@ class ChecksumSuite
       }
     }
   }
+
+  test("force checksum validation due to stale checkpoint") {
+    withSQLConf(
+      DeltaSQLConf.INCREMENTAL_COMMIT_VERIFY.key -> "false",
+      // Set this to 0 to ensure that validation is not
+      // skipped due the checkpoint not being old enough
+      DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES.key -> "0",
+      DeltaSQLConf.DELTA_CHECKSUM_MISMATCH_IS_FATAL.key -> "true",
+      DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> "true",
+      DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_ENABLED.key -> "false",
+      DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> "999"
+    ) {
+      withTempTable(createTable = false) { tableName =>
+        spark
+          .range(4)
+          .write
+          .format("delta")
+          .saveAsTable(tableName)
+        // Create checkpoint at version 0
+        DeltaLog.forTable(spark, TableIdentifier(tableName)).checkpoint()
+        def validateAttemptedTransactionFails: Unit = {
+          DeltaLog.clearCache()
+          val usageLogs = Log4jUsageLogger.track {
+            intercept[DeltaIllegalStateException] {
+              DeltaLog
+              .forTable(spark, TableIdentifier(tableName))
+              .startTransaction()
+            }
+          }
+          val validationFailureLogs = filterUsageRecords(usageLogs, "delta.checksum.invalid")
+          assert(validationFailureLogs.size == 1)
+          validationFailureLogs.foreach { log =>
+            val usageLogBlob = JsonUtils.fromJson[Map[String, Any]](log.blob)
+            val mismatchingFieldsOpt = usageLogBlob.get("mismatchingFields")
+            assert(mismatchingFieldsOpt.isDefined)
+            val mismatchingFieldsSet = mismatchingFieldsOpt.get.asInstanceOf[Seq[String]].toSet
+            val expectedMismatchingFields = Set(
+              "numOfProtocol",
+              "numOfMetadata",
+              "tableSizeBytes",
+              "numFiles"
+            )
+            assert(mismatchingFieldsSet === expectedMismatchingFields)
+          }
+        }
+        // Write 4 commits. Also, corrupt every checksum file.
+        (1 to 4).foreach { version =>
+          spark.range(1)
+            .write
+            .format("delta")
+            .mode("append")
+            .saveAsTable(tableName)
+          // Corrupt the checksum file.
+          val log = DeltaLog
+            .forTable(spark, TableIdentifier(tableName))
+          val checksum = log.readChecksum(version).get
+          val corruptedChecksum = checksum.copy(
+            numProtocol = 2,
+            numMetadata = 2,
+            tableSizeBytes = checksum.tableSizeBytes + 1,
+            numFiles = checksum.numFiles + 1)
+          val corruptedChecksumJson = JsonUtils.toJson(corruptedChecksum)
+          log.store.write(
+            FileNames.checksumFile(log.logPath, version),
+            Seq(corruptedChecksumJson).toIterator,
+            overwrite = true)
+
+          withSQLConf(
+            // Set the forced checksum validation interval to the current version
+            // so that validation is triggered
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> version.toString
+          ) {
+            validateAttemptedTransactionFails
+          }
+          withSQLConf(
+            // Set the validation interval to a value smaller than the current version
+            // so that validation is triggered
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> "0"
+          ) {
+            validateAttemptedTransactionFails
+          }
+          withSQLConf(
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_INTERVAL.key -> "0",
+            // Validation should only be triggered if the checkpoint was
+            // created more than 999 minutes ago. Which should not be
+            // the case here.
+            DeltaSQLConf.FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES.key -> "999"
+          ) {
+            DeltaLog.clearCache()
+            DeltaLog
+              .forTable(spark, TableIdentifier(tableName))
+              .startTransaction()
+          }
+        }
+      }
+    }
+  }
 }
 
 class ChecksumWithCatalogOwnedBatch1Suite extends ChecksumSuite {

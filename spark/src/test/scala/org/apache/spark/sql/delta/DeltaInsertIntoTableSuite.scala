@@ -1561,6 +1561,24 @@ abstract class DeltaInsertIntoTests(
     }
   }
 
+  // FIXME: Documenting existing behaviour. Fixing this should be a bugfix and not behavior change.
+  test("insertInto: __HIVE_DEFAULT_PARTITION__ results in null partition column") {
+    val t1 = "tbl"
+    withTable(t1) {
+      sql(s"CREATE TABLE $t1 (part string, data string) USING $v2Format PARTITIONED BY (part)")
+
+      // Insert with __HIVE_DEFAULT_PARTITION__ as partition value
+      // __HIVE_DEFAULT_PARTITION__ is a tombstone value for null partition column
+      sql(s"INSERT INTO $t1 VALUES ('__HIVE_DEFAULT_PARTITION__', 'test')")
+
+      // Verify that the partition column is null
+      checkAnswer(
+        sql(s"SELECT part, data FROM $t1"),
+        Seq(Row(null, "test"))
+      )
+    }
+  }
+
   // This behavior is specific to Delta
   testQuietly("insertInto: schema enforcement") {
     val t1 = "tbl"

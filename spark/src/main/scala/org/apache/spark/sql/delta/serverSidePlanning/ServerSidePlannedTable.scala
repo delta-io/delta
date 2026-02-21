@@ -34,24 +34,12 @@ import org.apache.spark.sql.execution.datasources.{FileFormat, PartitionedFile}
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat
 import org.apache.spark.sql.sources.{And, Filter}
 import org.apache.spark.sql.types.StructType
-import org.apache.spark.sql.util.CaseInsensitiveStringMap
+import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
 
 /**
  * Companion object for ServerSidePlannedTable with factory methods.
  */
 object ServerSidePlannedTable extends DeltaLogging {
-  /**
-   * Property keys that indicate table credentials are available.
-   * Unity Catalog tables may expose temporary credentials via these properties.
-   */
-  private val CREDENTIAL_PROPERTY_KEYS = Seq(
-    "storage.credential",
-    "aws.temporary.credentials",
-    "azure.temporary.credentials",
-    "gcs.temporary.credentials",
-    "credential"
-  )
-
   /**
    * Determine if server-side planning should be used based on catalog type,
    * credential availability, and configuration.
@@ -161,15 +149,19 @@ object ServerSidePlannedTable extends DeltaLogging {
 
   /**
    * Check if a table has credentials available.
-   * Unity Catalog tables may lack credentials when accessed without proper permissions.
-   * UC injects credentials as table properties, see:
-   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   * UC injects credentials as table properties with "option.fs.*" prefix for filesystem configs.
+   * See: CredPropsUtil in UCSingleCatalog.
    */
   private def hasCredentials(table: Table): Boolean = {
-    // Check table properties for credential information
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+    val keys = properties.keySet()
+    val iter = keys.iterator()
+    while (iter.hasNext) {
+      if (iter.next().startsWith("option.fs.")) {
+        return true
+      }
+    }
+    false
   }
 }
 
@@ -332,11 +324,20 @@ class ServerSidePlannedScan(
 
   // Only pass projection if columns are actually pruned (not SELECT *)
   // Extract field names for planning client (server only needs names, not types)
+  // Use Spark's SchemaUtils.explodeNestedFieldNames to flatten and escape field names,
+  // then filter out parent structs by keeping only fields that have no children.
+  // For example, for schema STRUCT<a: STRUCT<b.c: STRING>>:
+  //   - explodeNestedFieldNames returns: ["a", "a.`b.c`"]
+  //   - We filter to leaf fields only: ["a.`b.c`"]
+  // This ensures projections only include actual data columns, not parent containers.
   private val projectionColumnNames: Option[Seq[String]] = {
     if (requiredSchema.fieldNames.toSet == tableSchema.fieldNames.toSet) {
       None
     } else {
-      Some(requiredSchema.fieldNames.toSeq)
+      val allFields = SchemaUtils.explodeNestedFieldNames(requiredSchema)
+      Some(allFields.filter { field =>
+        !allFields.exists(other => other.startsWith(field + "."))
+      })
     }
   }
 
@@ -401,20 +402,29 @@ class ServerSidePlannedFilePartitionReaderFactory(
   private val hadoopConf = {
     val conf = spark.sessionState.newHadoopConf()
 
-    // Inject temporary credentials from IRC server response
+    // Inject temporary credentials from IRC server response.
+    // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
+    // (avoids AccessDenied when temp creds expire and a cached FS is reused).
+    // Aligns with CredPropsUtil in the Unity Catalog connector.
     credentials.foreach { creds =>
       creds match {
         case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
+          conf.set("fs.s3a.path.style.access", "true")
+          conf.set("fs.s3.impl.disable.cache", "true")
+          conf.set("fs.s3a.impl.disable.cache", "true")
           conf.set("fs.s3a.access.key", accessKeyId)
           conf.set("fs.s3a.secret.key", secretAccessKey)
           conf.set("fs.s3a.session.token", sessionToken)
 
         case AzureCredentials(accountName, sasToken, containerName) =>
+          conf.set("fs.abfs.impl.disable.cache", "true")
+          conf.set("fs.abfss.impl.disable.cache", "true")
           // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
           val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
           conf.set(sasKey, sasToken)
 
         case GcsCredentials(oauth2Token) =>
+          conf.set("fs.gs.impl.disable.cache", "true")
           conf.set("fs.gs.auth.access.token", oauth2Token)
       }
     }

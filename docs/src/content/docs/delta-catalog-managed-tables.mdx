@@ -1,0 +1,72 @@
+---
+title: Use catalog-managed tables
+description: Learn how to enable and use catalog-managed commits in Delta Lake.
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+<Aside type="note">
+  This feature is available in Delta Lake 4.0.1 and above.
+</Aside>
+
+[Catalog-Managed Tables](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#catalog-managed-tables) introduce a `catalogManaged` reader-writer table feature that changes how Delta Lake discovers and accesses tables. With this feature enabled, the catalog coordinates commit atomicity, allowing for features like multi-table transactions that are difficult to achieve with filesystem-only primitives.
+
+## Overview
+
+By default, Delta Lake relies entirely on the filesystem for read-time discovery and write-time commit atomicity. Each table manages its own transaction logs and conflict detection independently. Catalog-managed tables shift this responsibility to the managing catalog, which allows the catalog to orchestrate commits across multiple tables within a single transaction boundary while maintaining Delta Lake's ACID guarantees.
+
+<Aside type="caution" title="Important">
+Filesystem-based access to catalog-managed tables is not supported. Delta clients must discover and access these tables through the managing catalog, not by direct path-based access. This ensures consistency across distributed environments. Users can use any catalog implementation that supports the Delta Catalog-Managed Table protocol.
+</Aside>
+
+## Requirements
+
+- Catalog-managed tables requires the following Delta protocols:
+    - Reader version 3 or above.
+    - Writer version 7 or above.
+- The [In-Commit Timestamps](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#in-commit-timestamps) table feature must be enabled, as commit publishing can occur asynchronously and file modification timestamps may not reflect actual commit times.
+- The [VACUUM Protocol Check](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#vacuum-protocol-check) table feature must be enabled to provide proper vacuum operations on catalog-managed tables.
+
+## Enable catalog-managed commits
+
+You can enable catalog-managed commits for new tables when using a catalog that supports this feature, such as [Unity Catalog](https://www.unitycatalog.io/).
+
+### Enable catalog-managed commits for new tables
+
+Enable the `catalogManaged` table feature by setting the following table property when creating a table:
+
+<Tabs>
+  <TabItem label="SQL">
+    ```sql
+    CREATE TABLE sales_data (
+      sale_id BIGINT,
+      amount DECIMAL(10,2),
+      sale_date DATE
+    )
+    TBLPROPERTIES ('delta.feature.catalogManaged' = 'supported');
+    ```
+  </TabItem>
+</Tabs>
+
+<Aside type="caution" title="Warning">
+When you enable catalog-managed commits, the table protocol version is upgraded. After upgrading, the table will not be readable by Delta Lake clients that do not support catalog-managed tables.
+</Aside>
+
+## Check if catalog-managed commits are enabled
+
+To verify whether a table has catalog-managed commits enabled:
+
+<Tabs>
+  <TabItem label="SQL">
+    ```sql
+    DESCRIBE DETAIL sales_data;
+    ```
+  </TabItem>
+</Tabs>
+
+If enabled, `catalogManaged` appears in the `tableFeatures` column.
+
+## Limitations
+
+- Catalog-managed tables cannot be enabled on existing tables. Once enabled, the feature cannot be disabled.
+- `CREATE OR REPLACE TABLE` is not supported for tables with catalog-managed commits enabled.

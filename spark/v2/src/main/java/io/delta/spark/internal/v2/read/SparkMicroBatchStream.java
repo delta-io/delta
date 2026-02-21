@@ -122,6 +122,12 @@ public class SparkMicroBatchStream
   private DeltaStreamUtils.SchemaReadOptions schemaReadOptions;
 
   /**
+   * A global flag to mark whether we have done a per-stream start check for column mapping schema
+   * changes (rename / drop).
+   */
+  private volatile boolean hasCheckedReadIncompatibleSchemaChangesOnStreamStart = false;
+
+  /**
    * When AvailableNow is used, this offset will be the upper bound where this run of the query will
    * process up. We may run multiple micro batches, but the query will stop itself when it reaches
    * this offset.
@@ -198,69 +204,19 @@ public class SparkMicroBatchStream
             (Boolean)
                 spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
             "shouldValidateOffsets is null");
-    this.schemaReadOptions =
-        Objects.requireNonNull(constructSchemaReadOptions(), "schemaReadOptions is null");
-  }
 
-  private DeltaStreamUtils.SchemaReadOptions constructSchemaReadOptions() {
-    boolean allowUnsafeStreamingReadOnColumnMappingSchemaChanges =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(
-                    DeltaSQLConf
-                        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES());
-    boolean allowUnsafeStreamingReadOnPartitionColumnChanges =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_UNSAFE_READ_ON_PARTITION_COLUMN_CHANGE());
-    boolean forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(
-                    DeltaSQLConf
-                        .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_SCHEMA_CHANGES_DURING_STREAM_START());
-    boolean forceEnableUnsafeReadOnNullabilityChange =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAM_UNSAFE_READ_ON_NULLABILITY_CHANGE());
     boolean isStreamingFromColumnMappingTable =
-        ColumnMapping.getColumnMappingMode(snapshotAtSourceInit.getMetadata().getConfiguration())
+        ColumnMapping.getColumnMappingMode(
+                this.snapshotAtSourceInit.getMetadata().getConfiguration())
             != ColumnMapping.ColumnMappingMode.NONE;
-    boolean typeWideningEnabled =
-        (Boolean)
-                spark
-                    .sessionState()
-                    .conf()
-                    .getConf(DeltaSQLConf.DELTA_ALLOW_TYPE_WIDENING_STREAMING_SOURCE())
-            && (this.snapshotAtSourceInit
-                    .getProtocol()
-                    .supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
-                || this.snapshotAtSourceInit
-                    .getProtocol()
-                    .supportsFeature(TYPE_WIDENING_RW_FEATURE));
-    boolean enableSchemaTrackingForTypeWidening =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING());
-
-    return new DeltaStreamUtils.SchemaReadOptions(
-        /* allowUnsafeStreamingReadOnColumnMappingSchemaChanges= */ allowUnsafeStreamingReadOnColumnMappingSchemaChanges,
-        /* allowUnsafeStreamingReadOnPartitionColumnChanges= */ allowUnsafeStreamingReadOnPartitionColumnChanges,
-        /* forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart= */ forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart,
-        /* forceEnableUnsafeReadOnNullabilityChange= */ forceEnableUnsafeReadOnNullabilityChange,
-        /* isStreamingFromColumnMappingTable= */ isStreamingFromColumnMappingTable,
-        /* typeWideningEnabled= */ typeWideningEnabled,
-        /* enableSchemaTrackingForTypeWidening= */ enableSchemaTrackingForTypeWidening);
+    boolean isTypeWideningSupportedInProtocol =
+        this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
+            || this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_FEATURE);
+    this.schemaReadOptions =
+        Objects.requireNonNull(
+            DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
+                spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
+            "schemaReadOptions is null");
   }
 
   @Override
@@ -406,7 +362,11 @@ public class SparkMicroBatchStream
       }
       return Optional.of(previousOffset);
     }
-    // TODO(#5318): Check read-incompatible schema changes during stream start
+    // Block latestOffset() from generating an invalid offset by proactively
+    // verifying incompatible schema changes under column mapping. See more details in the
+    // method java doc.
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        previousOffset.reservoirVersion(), /* batchEndVersion= */ null);
     IndexedFile lastFile = lastFileChange.get();
     return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
@@ -802,8 +762,10 @@ public class SparkMicroBatchStream
    *
    * @param commit the CommitActions representing a single commit
    * @param version the commit version
+   * @param batchStartVersion Starting version of the batch being processed
    * @param tablePath the path to the Delta table
    * @param endOffsetOpt optional end offset for boundary checking
+   * @param verifyMetadataAction Whether to verify metadata action compatibility
    * @throws RuntimeException if the commit is invalid.
    */
   private void validateCommit(
@@ -841,6 +803,11 @@ public class SparkMicroBatchStream
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
             Metadata metadata = metadataOpt.get();
+            Preconditions.checkArgument(
+                metadataAction == null,
+                "Should not encounter two metadata actions in the same commit of version %d",
+                version);
+            metadataAction = metadata;
             Long batchEndVersion =
                 endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
             if (verifyMetadataAction) {
@@ -848,14 +815,9 @@ public class SparkMicroBatchStream
                   metadata,
                   version,
                   batchStartVersion,
-                  batchEndVersion, /* validatedDuringStreamStart */
-                  false);
+                  batchEndVersion,
+                  /* validatedDuringStreamStart */ false);
             }
-            Preconditions.checkArgument(
-                metadataAction == null,
-                "Should not encounter two metadata actions in the same commit of version %d",
-                version);
-            metadataAction = metadata;
           }
         }
       }
@@ -961,6 +923,91 @@ public class SparkMicroBatchStream
                 options.containsStartingVersionOrTimestamp());
       }
     }
+  }
+
+  /**
+   * Check read-incompatible schema changes during stream (re)start so we could fail fast.
+   *
+   * <p>This is called ONCE during the first latestOffset call to catch edge cases that normal
+   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
+   *
+   * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
+   * starts at version 1 with the latest version is version 3 and there is a schema change at
+   * version 2, validateCommits only validates version 2's schema against version 3 (SAME, passes).
+   * But version 1 files may have an incompatible older schema that was never checked since version
+   * 1 has no metadata action.
+   *
+   * <p>This method explicitly loads and validates the snapshot in the scan range, regardless of
+   * whether it has a metadata action, catching such incompatibilities before planInputPartitions
+   *
+   * <p>Skipped if schema tracking log is already initialized.
+   *
+   * @param batchStartVersion Start version we want to verify read compatibility against
+   * @param batchEndVersion Optionally, if we are checking against an existing constructed batch
+   *     during streaming initialization, we would also like to verify all schema changes in between
+   *     as well before we can lazily initialize the schema log if needed.
+   */
+  private void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+      long batchStartVersion, Long batchEndVersion) {
+    // TODO(#5319): skip if enable schema tracking log
+
+    if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
+
+    SnapshotImpl startVersionSnapshot = null;
+    Exception err = null;
+    try {
+      startVersionSnapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(batchStartVersion);
+    } catch (Exception e) {
+      err = e;
+    }
+
+    // Cannot perfectly verify column mapping schema changes if we cannot compute a start snapshot.
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()
+        && schemaReadOptions.isStreamingFromColumnMappingTable()
+        && (err != null)) {
+      throw (RuntimeException)
+          DeltaErrors.failedToGetSnapshotDuringColumnMappingStreamingReadCheck(err);
+    }
+
+    // Perform schema check if we need to, considering all escape flags.
+    if (!schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()
+        || schemaReadOptions.typeWideningEnabled()
+        || !schemaReadOptions
+            .forceEnableStreamingReadOnReadIncompatibleSchemaChangesDuringStreamStart()) {
+      if (startVersionSnapshot != null) {
+        checkReadIncompatibleSchemaChanges(
+            startVersionSnapshot.getMetadata(),
+            startVersionSnapshot.getVersion(),
+            batchStartVersion,
+            batchEndVersion,
+            /* validatedDuringStreamStart= */ true);
+        // If end version is defined (i.e. we have a pending batch), let's also eagerly check all
+        // intermediate schema changes against the stream read schema to capture corners cases such
+        // as rename and rename back.
+        if (batchEndVersion != null) {
+          for (Map.Entry<Long, Metadata> entry :
+              StreamingHelper.collectMetadataActionsFromRangeUnsafe(
+                      batchStartVersion,
+                      Optional.of(batchEndVersion),
+                      snapshotManager,
+                      engine,
+                      snapshotAtSourceInit.getPath())
+                  .entrySet()) {
+            long version = entry.getKey();
+            Metadata metadata = entry.getValue();
+            checkReadIncompatibleSchemaChanges(
+                metadata,
+                version,
+                batchStartVersion,
+                batchEndVersion,
+                /* validatedDuringStreamStart= */ true);
+          }
+        }
+      }
+    }
+
+    // Mark as checked
+    hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
   }
 
   /**
@@ -1190,10 +1237,9 @@ public class SparkMicroBatchStream
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
-        ColumnarBatch batch = filteredBatch.getData();
 
-        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
+        for (int rowId = 0; rowId < filteredBatch.getData().getSize(); rowId++) {
+          Optional<AddFile> addOpt = StreamingHelper.getAddFile(filteredBatch, rowId);
           addOpt.ifPresent(add -> sparkRows.add(addFileToSparkRow(add)));
         }
       }

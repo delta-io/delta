@@ -220,12 +220,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
-      // respect third party catalogs. Note: only handle CREATE TABLE for now, we
-      // should support CTAS later.
+      // respect third party catalogs.
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
-      createTableFunc = Option.when(isUnityCatalog && sourceQuery.isEmpty) {
+      createTableFunc = Option.when(isUnityCatalog) {
         v1Table => {
           val t = V1Table(v1Table)
           super.createTable(ident, t.columns(), t.partitioning, t.properties)
