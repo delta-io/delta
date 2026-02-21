@@ -19,14 +19,19 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -40,23 +45,23 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   private final UCCatalogManagedClient ucCatalogManagedClient;
   private final String tableId;
   private final String tablePath;
-  private final Engine engine;
+  private final Engine kernelEngine;
 
   /**
    * Creates a new UCManagedTableSnapshotManager.
    *
    * @param ucCatalogManagedClient the UC client for catalog-managed operations
    * @param tableInfo the UC table information (tableId, tablePath, etc.)
-   * @param engine the Kernel engine for table operations
+   * @param kernelEngine the Kernel engine for table operations
    */
   public UCManagedTableSnapshotManager(
-      UCCatalogManagedClient ucCatalogManagedClient, UCTableInfo tableInfo, Engine engine) {
+      UCCatalogManagedClient ucCatalogManagedClient, UCTableInfo tableInfo, Engine kernelEngine) {
     this.ucCatalogManagedClient =
         requireNonNull(ucCatalogManagedClient, "ucCatalogManagedClient is null");
     requireNonNull(tableInfo, "tableInfo is null");
     this.tableId = tableInfo.getTableId();
     this.tablePath = tableInfo.getTablePath();
-    this.engine = requireNonNull(engine, "engine is null");
+    this.kernelEngine = requireNonNull(kernelEngine, "kernelEngine is null");
   }
 
   /**
@@ -67,7 +72,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   @Override
   public Snapshot loadLatestSnapshot() {
     return ucCatalogManagedClient.loadSnapshot(
-        engine,
+        kernelEngine,
         tableId,
         tablePath,
         Optional.empty() /* versionOpt */,
@@ -77,7 +82,11 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   @Override
   public Snapshot loadSnapshotAt(long version) {
     return ucCatalogManagedClient.loadSnapshot(
-        engine, tableId, tablePath, Optional.of(version), Optional.empty() /* timestampOpt */);
+        kernelEngine,
+        tableId,
+        tablePath,
+        Optional.of(version),
+        Optional.empty() /* timestampOpt */);
   }
 
   /**
@@ -104,7 +113,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     SnapshotImpl snapshot = (SnapshotImpl) loadLatestSnapshot();
     List<ParsedCatalogCommitData> catalogCommits = snapshot.getLogSegment().getAllCatalogCommits();
     return DeltaHistoryManager.getActiveCommitAtTimestamp(
-        engine,
+        kernelEngine,
         snapshot,
         snapshot.getLogPath(),
         timestampMillis,
@@ -149,9 +158,9 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     long earliestVersion =
         mustBeRecreatable
             ? DeltaHistoryManager.getEarliestRecreatableCommit(
-                engine, snapshot.getLogPath(), earliestCatalogCommitVersion)
+                kernelEngine, snapshot.getLogPath(), earliestCatalogCommitVersion)
             : DeltaHistoryManager.getEarliestDeltaFile(
-                engine, snapshot.getLogPath(), earliestCatalogCommitVersion);
+                kernelEngine, snapshot.getLogPath(), earliestCatalogCommitVersion);
 
     if (version < earliestVersion) {
       throw new VersionNotFoundException(version, earliestVersion, latestSnapshotVersion);
@@ -167,14 +176,33 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    * @return a CommitRange representing the specified range of commits
    */
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(
+      Engine kernelEngine, long startVersion, Optional<Long> endVersion) {
     return ucCatalogManagedClient.loadCommitRange(
-        engine,
+        kernelEngine,
         tableId,
         tablePath,
         Optional.of(startVersion) /* startVersionOpt */,
         Optional.empty() /* startTimestampOpt */,
         endVersion /* endVersionOpt */,
         Optional.empty() /* endTimestampOpt */);
+  }
+
+  @Override
+  public Transaction buildCreateTableTransaction(
+      StructType kernelSchema,
+      Map<String, String> tableProperties,
+      Optional<DataLayoutSpec> dataLayoutSpec,
+      String engineInfo) {
+    CreateTableTransactionBuilder builder =
+        ucCatalogManagedClient.buildCreateTableTransaction(
+            tableId, tablePath, kernelSchema, engineInfo);
+    if (!tableProperties.isEmpty()) {
+      builder = builder.withTableProperties(tableProperties);
+    }
+    if (dataLayoutSpec.isPresent()) {
+      builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
+    }
+    return builder.build(kernelEngine);
   }
 }

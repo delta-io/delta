@@ -21,6 +21,7 @@ import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotMa
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
@@ -44,14 +45,14 @@ public final class SnapshotManagerFactory {
   private SnapshotManagerFactory() {}
 
   /**
-   * Creates a snapshot manager for the given table.
+   * Creates a snapshot manager for an existing Delta table.
    *
-   * @param tablePath the filesystem path to the Delta table
+   * @param tablePath the filesystem path to the existing Delta table
    * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
    * @param catalogTable optional Spark catalog table metadata
    * @return a {@link DeltaSnapshotManager} appropriate for the table type
    */
-  public static DeltaSnapshotManager create(
+  public static DeltaSnapshotManager forExistingTable(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {
@@ -64,6 +65,30 @@ public final class SnapshotManagerFactory {
     }
 
     // Default: path-based snapshot manager for non-UC tables
+    return new PathBasedSnapshotManager(tablePath, kernelEngine);
+  }
+
+  /**
+   * Creates a snapshot manager for CREATE TABLE flows where a catalog table does not exist yet.
+   *
+   * @param tablePath resolved table path for the new table
+   * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
+   * @param properties create-table properties (including UC metadata for managed tables)
+   * @param catalogName Spark catalog name used to resolve UC configuration
+   * @param spark Spark session used for UC config resolution
+   * @return a {@link DeltaSnapshotManager} appropriate for the new table type
+   */
+  public static DeltaSnapshotManager forCreateTable(
+      String tablePath,
+      Engine kernelEngine,
+      Map<String, String> properties,
+      String catalogName,
+      SparkSession spark) {
+    Optional<UCTableInfo> ucTableInfo =
+        UCUtils.extractTableInfoForCreate(tablePath, properties, catalogName, spark);
+    if (ucTableInfo.isPresent()) {
+      return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
+    }
     return new PathBasedSnapshotManager(tablePath, kernelEngine);
   }
 
