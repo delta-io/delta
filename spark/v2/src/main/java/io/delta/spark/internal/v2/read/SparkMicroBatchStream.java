@@ -27,6 +27,7 @@ import io.delta.kernel.data.FilteredColumnarBatch;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
+import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
@@ -43,18 +44,21 @@ import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
+import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
+import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
@@ -70,6 +74,7 @@ import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Option;
 import scala.Some;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
@@ -468,9 +473,16 @@ public class SparkMicroBatchStream
     if (cachedStartingVersion != null) {
       return cachedStartingVersion;
     }
+    // Note: returning a version beyond latest snapshot version won't be a problem as callers
+    // of this function won't use the version to retrieve snapshot(refer to
+    // [[getStartingOffset]]).
+    boolean allowOutOfRange =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
 
-    // TODO(#5319): DeltaSource.scala uses `allowOutOfRange` parameter from
-    // DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP.
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
       if (startingVersion instanceof StartingVersionLatest$) {
@@ -492,10 +504,58 @@ public class SparkMicroBatchStream
         cachedStartingVersion = Optional.of(version);
         return cachedStartingVersion;
       }
+    } else if (options.startingTimestamp().isDefined()) {
+      Timestamp timestamp =
+          new DeltaTimeTravelSpec(
+                  /* timestamp= */ options.startingTimestamp().map(Literal$.MODULE$::apply),
+                  /* version= */ Option.empty(),
+                  /* creationSource= */ Some.apply("sparkMicroBatchStream"),
+                  /* enforceRetention= */ true)
+              .getTimestamp(spark.sessionState().conf());
+      long startingVersion =
+          getStartingVersionFromTimestamp(
+              spark, snapshotManager, engine, timestamp, allowOutOfRange);
+      cachedStartingVersion = Optional.of(startingVersion);
+      return cachedStartingVersion;
     }
-    // TODO(#5319): Implement startingTimestamp support
     cachedStartingVersion = Optional.empty();
     return cachedStartingVersion;
+  }
+
+  /**
+   * Returns the earliest commit version whose timestamp is >= the provided timestamp.
+   *
+   * <p>This method fetches the commit at the given timestamp via
+   * [[DeltaSnapshotManager.getActiveCommitAtTime]], computes the starting version using
+   * [[DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp]], and validates the protocol at the
+   * returned version.
+   */
+  private static long getStartingVersionFromTimestamp(
+      SparkSession spark,
+      DeltaSnapshotManager snapshotManager,
+      Engine engine,
+      Timestamp timestamp,
+      boolean canExceedLatest) {
+    // TODO(#5999): optimize duplicate loadLatestSnapshot calls
+    DeltaHistoryManager.Commit commit =
+        snapshotManager.getActiveCommitAtTime(
+            timestamp.getTime(),
+            /* canReturnLastCommit= */ true,
+            /* mustBeRecreatable= */ false,
+            /* canReturnEarliestCommit= */ true);
+    long latestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+    long startingVersion =
+        DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
+            /* timeZone= */ spark.sessionState().conf().sessionLocalTimeZone(),
+            /* commitTimestamp= */ commit.getTimestamp(),
+            /* commitVersion= */ commit.getVersion(),
+            /* latestVersion= */ latestVersion,
+            /* timestamp= */ timestamp,
+            /* canExceedLatest= */ canExceedLatest);
+    if (startingVersion <= latestVersion) {
+      validateProtocolAt(spark, snapshotManager, engine, startingVersion);
+    }
+    return startingVersion;
   }
 
   /**
