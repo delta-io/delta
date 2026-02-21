@@ -264,13 +264,14 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    repo = extra_maven_repo if extra_maven_repo else ""
 
     # Build Maven coordinate with the variant's suffix
     # e.g., "io.delta:delta-spark_2.13:4.0.0" or "io.delta:delta-spark_4.0_2.13:4.0.0"
     artifact_name = get_artifact_name(version)
     package = "io.delta:delta-%s%s_2.13:%s" % (artifact_name, suffix, version)
     print("Package: %s" % package)
+
+    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
 
     for test_file in test_files:
         if test_name is not None and test_name not in test_file:
@@ -279,8 +280,7 @@ def run_python_integration_tests(root_dir, version, test_name, extra_maven_repo,
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--repositories", repo, test_file]
+                   "--packages", package] + repo_args + [test_file]
             print("\nRunning Python tests in %s%s\n=============" % (test_file, label))
             print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
@@ -474,7 +474,6 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
 
     python_root_dir = path.join(root_dir, "python")
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
-    repo = extra_maven_repo if extra_maven_repo else ""
 
     artifact_name = get_artifact_name(version)
 
@@ -491,12 +490,13 @@ def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_mave
 
     print("Package: %s" % package)
 
+    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
+
     for test_file in test_files:
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
-                   "--packages", package,
-                   "--repositories", repo, test_file]
+                   "--packages", package] + repo_args + [test_file]
             print("\nRunning Iceberg tests in %s%s\n=============" % (test_file, label))
             print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
@@ -529,7 +529,6 @@ def run_uniform_hudi_integration_tests(root_dir, version, hudi_version, extra_ma
     extra_class_path = path.join(python_root_dir, path.join("delta", "testing"))
     # The hudi assembly JAR path uses name.value (no suffix), not moduleName
     jars = path.join(root_dir, "hudi/target/scala-2.13/delta-hudi-assembly_2.13-%s.jar" % (version))
-    repo = extra_maven_repo if extra_maven_repo else ""
 
     artifact_name = get_artifact_name(version)
 
@@ -546,13 +545,14 @@ def run_uniform_hudi_integration_tests(root_dir, version, hudi_version, extra_ma
 
     print("Package: %s" % package)
 
+    repo_args = ["--repositories", extra_maven_repo] if extra_maven_repo else []
+
     for test_file in test_files:
         try:
             cmd = ["spark-submit",
                    "--driver-class-path=%s" % extra_class_path,  # for less verbose logging
                    "--packages", package,
-                   "--jars", jars,
-                   "--repositories", repo, test_file]
+                   "--jars", jars] + repo_args + [test_file]
             print("\nRunning Uniform Hudi tests in %s%s\n=============" % (test_file, label))
             print("Command: %s" % " ".join(cmd))
             run_cmd(cmd, stream_output=True)
@@ -832,7 +832,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hudi-version",
         required=False,
-        default="0.15.0",
+        default="1.1.1",
         help="Hudi library version"
     )
     parser.add_argument(
