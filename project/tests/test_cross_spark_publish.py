@@ -35,8 +35,6 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-client{suffix}_2.13-{version}.jar",
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
-    "delta-contribs{suffix}_2.13-{version}.jar",
-    "delta-hudi{suffix}_2.13-{version}.jar",
 ]
 
 # Iceberg-related modules - only built for Spark versions with supportIceberg=true
@@ -45,15 +43,21 @@ DELTA_ICEBERG_JAR_TEMPLATES = [
     "delta-iceberg_2.13-{version}.jar",
 ]
 
+# Hudi-related modules - only built for Spark versions with supportHudi=true
+# delta-hudi has no Spark suffix (always delta-hudi_2.13)
+DELTA_HUDI_JAR_TEMPLATES = [
+    "delta-hudi_2.13-{version}.jar",
+]
+
 # Non-spark-related modules (built once, same for all Spark versions)
 # Template format: {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
 NON_SPARK_RELATED_JAR_TEMPLATES = [
-    # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",
     "delta-kernel-api-{version}.jar",
     "delta-kernel-defaults-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
-    "delta-kernel-unitycatalog-{version}.jar"
+    "delta-kernel-unitycatalog-{version}.jar",
+    "delta-contribs_2.13-{version}.jar",
 ]
 
 
@@ -65,6 +69,7 @@ class SparkVersionSpec:
     """
     suffix: str  # e.g., "" for default, "_X.Y" for other versions
     support_iceberg: bool = False  # Whether this Spark version supports iceberg integration
+    support_hudi: bool = True  # Whether this Spark version supports hudi integration
 
     def __post_init__(self):
         """Generate JAR templates with the suffix applied."""
@@ -80,13 +85,19 @@ class SparkVersionSpec:
         else:
             self.iceberg_jars = []
 
+        # Hudi JARs have no Spark suffix (always delta-hudi_2.13)
+        if self.support_hudi:
+            self.hudi_jars = list(DELTA_HUDI_JAR_TEMPLATES)
+        else:
+            self.hudi_jars = []
+
         # Non-Spark-related JAR templates are the same for all Spark versions
         self.non_spark_related_jars = list(NON_SPARK_RELATED_JAR_TEMPLATES)
 
     @property
     def all_jars(self) -> List[str]:
-        """All JAR templates for this Spark version (Spark-related + non-Spark-related + iceberg if supported)."""
-        return self.spark_related_jars + self.non_spark_related_jars + self.iceberg_jars
+        """All JAR templates for this Spark version."""
+        return self.spark_related_jars + self.non_spark_related_jars + self.iceberg_jars + self.hudi_jars
 
 
 # Spark versions to test (key = full version string, value = spec with suffix)
@@ -94,8 +105,8 @@ class SparkVersionSpec:
 # skipSparkSuffix=true removes the suffix (used during release for backward compat)
 # These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True),
-    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=False)
+    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
+    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=False, support_hudi=True)
 }
 
 # The default Spark version
@@ -223,7 +234,7 @@ class CrossSparkPublishTest:
         # Create a spec without suffix for backward compatibility
         # Uses the same iceberg support as the default Spark version
         default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
-        spark_spec_no_suffix = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg)
+        spark_spec_no_suffix = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg, support_hudi=default_spark_spec.support_hudi)
 
         print("\n" + "="*70)
         print(f"TEST: skipSparkSuffix=true (backward compatibility - no suffix)")
@@ -271,12 +282,12 @@ class CrossSparkPublishTest:
         # Build expected JARs:
         # 1. All modules WITHOUT suffix (from Step 1 - backward compat)
         # 2. Spark-dependent modules WITH suffix for each non-master version (from Step 2)
-        # 3. Iceberg JARs for supported versions (with suffix only)
+        # 3. Iceberg/Hudi JARs for supported versions (no Spark suffix)
         expected = set()
 
         # Step 1: All modules without suffix (uses default Spark version's iceberg support)
         default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
-        no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg)
+        no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg, support_hudi=default_spark_spec.support_hudi)
         expected.update(substitute_xversion(no_suffix_spec.all_jars, self.delta_version))
 
         # Step 2: Spark-dependent modules WITH suffix for each non-master version
@@ -286,6 +297,7 @@ class CrossSparkPublishTest:
 
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
             expected.update(substitute_xversion(spark_spec.iceberg_jars, self.delta_version))
+            expected.update(substitute_xversion(spark_spec.hudi_jars, self.delta_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
 

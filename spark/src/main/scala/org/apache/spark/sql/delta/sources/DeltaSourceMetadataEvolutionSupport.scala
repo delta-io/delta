@@ -94,7 +94,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * legacy mode), we will ignore the schema log.
    */
   protected def trackingMetadataChange: Boolean =
-    !allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
+    !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
       metadataTrackingLog.flatMap(_.getCurrentTrackedMetadata).nonEmpty
 
   /**
@@ -103,7 +103,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
    * should not rely on this state any more.
    */
   protected def readyToInitializeMetadataTrackingEagerly: Boolean =
-    !allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
+    !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges &&
       metadataTrackingLog.exists { log =>
         log.getCurrentTrackedMetadata.isEmpty && log.initMetadataLogEagerly
       }
