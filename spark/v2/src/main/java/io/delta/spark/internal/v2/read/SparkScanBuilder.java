@@ -17,16 +17,21 @@ package io.delta.spark.internal.v2.read;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.ExpressionUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.connector.read.ScanBuilder;
-import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
+import org.apache.spark.sql.delta.stats.DistributedScanHelper;
+import org.apache.spark.sql.internal.connector.SupportsPushDownCatalystFilters;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
@@ -37,7 +42,7 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * use Delta Kernel for reading Delta tables.
  */
 public class SparkScanBuilder
-    implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
+    implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownCatalystFilters {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final Snapshot initialSnapshot;
@@ -49,11 +54,13 @@ public class SparkScanBuilder
   private StructType requiredDataSchema;
   // pushedKernelPredicates: Predicates that have been pushed down to the Delta Kernel for
   // evaluation.
-  // pushedSparkFilters: The same pushed predicates, but represented using Spark’s {@link Filter}
-  // API (needed because Spark operates on Filter objects while the Kernel uses Predicate)
+  // pushedSparkFilters: The same pushed predicates, represented as V1 Filter for SparkScan.
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
+
+  // All Catalyst expressions received from Spark's optimizer (for distributed data-skipping path).
+  private Expression[] allCatalystExpressions;
 
   /**
    * Creates a SparkScanBuilder with the given snapshot and configuration.
@@ -84,7 +91,9 @@ public class SparkScanBuilder
             .map(f -> f.name().toLowerCase(Locale.ROOT))
             .collect(Collectors.toSet());
     this.pushedKernelPredicates = new Predicate[0];
+    this.pushedSparkFilters = new Filter[0];
     this.dataFilters = new Filter[0];
+    this.allCatalystExpressions = new Expression[0];
   }
 
   @Override
@@ -97,23 +106,49 @@ public class SparkScanBuilder
                 .toArray(StructField[]::new));
   }
 
+  /**
+   * Receives resolved Catalyst expressions directly from Spark's optimizer via {@link
+   * SupportsPushDownCatalystFilters}. This avoids the lossy {@code Expression → sources.Filter →
+   * Expression} round-trip.
+   *
+   * <ul>
+   *   <li>Stores raw expressions for the distributed data-skipping path.
+   *   <li>Translates each expression to a V1 {@link Filter} (via Spark's {@code
+   *       DataSourceStrategy.translateFilter}) for kernel-native classification.
+   * </ul>
+   */
   @Override
-  public Filter[] pushFilters(Filter[] filters) {
+  public scala.collection.immutable.Seq<Expression> pushFilters(
+      scala.collection.immutable.Seq<Expression> filters) {
+    List<Expression> exprList =
+        new ArrayList<>(scala.jdk.javaapi.CollectionConverters.asJava(filters));
+
+    // Store all catalyst expressions for the distributed path
+    this.allCatalystExpressions = exprList.toArray(new Expression[0]);
+
     List<Filter> kernelSupportedFilters = new ArrayList<>();
     List<Predicate> convertedKernelPredicates = new ArrayList<>();
     List<Filter> dataFilterList = new ArrayList<>();
-    List<Filter> postScanFilters = new ArrayList<>();
+    List<Expression> postScanExpressions = new ArrayList<>();
 
-    for (Filter filter : filters) {
+    for (Expression expr : exprList) {
+      // Convert Catalyst expression → V1 Filter using Spark's DataSourceStrategy
+      Optional<Filter> filterOpt = DistributedScanHelper.catalystToFilter(expr);
+
+      if (!filterOpt.isPresent()) {
+        // Untranslatable expression — must evaluate after scan
+        postScanExpressions.add(expr);
+        continue;
+      }
+
+      Filter filter = filterOpt.get();
       ExpressionUtils.FilterClassificationResult classification =
           ExpressionUtils.classifyFilter(filter, partitionColumnSet);
+
       // Collect kernel predicates if supported
       if (classification.isKernelSupported) {
         convertedKernelPredicates.add(classification.kernelPredicate.get());
         if (!classification.isPartialConversion) {
-          // Add filter to kernelSupportedFilters if it is fully converted
-          // TODO: add partially converted Spark filter as well
-          // right now we only have the partially converted kernel predicate
           kernelSupportedFilters.add(filter);
         }
       }
@@ -123,21 +158,11 @@ public class SparkScanBuilder
         dataFilterList.add(filter);
       }
 
-      // Collect post-scan filters
-      // Filters with the following characteristics need to be evaluated after delta kernel scan:
-      // 1. filters that are not supported by delta kernel, thus kernel cannot apply them during
-      // scan
-      // 2. filters that are not fully converted to kernel predicates, thus the unconverted part
-      // needs to be evaluated after scan
-      // 3. filters that are data filters, as kernel only evaluate data filter based on min/max
-      // stats, thus need to be evaluated with actual data after scan
-      //
-      // Fully converted partition filters are used to prune partitions during scan. Only the
-      // partitions that satisfy the filters will be scanned, so no need for post-scan evaluation.
+      // Post-scan: unsupported / partial / data filters
       if (!classification.isKernelSupported
           || classification.isPartialConversion
           || classification.isDataFilter) {
-        postScanFilters.add(filter);
+        postScanExpressions.add(expr);
       }
     }
 
@@ -148,16 +173,29 @@ public class SparkScanBuilder
       this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
     }
     this.dataFilters = dataFilterList.toArray(new Filter[0]);
-    return postScanFilters.toArray(new Filter[0]);
+    return scala.jdk.javaapi.CollectionConverters.asScala(postScanExpressions).toList();
   }
 
+  /**
+   * Returns the pushed-down filters as V2 {@link
+   * org.apache.spark.sql.connector.expressions.filter.Predicate}s (required by {@link
+   * SupportsPushDownCatalystFilters}).
+   */
   @Override
-  public Filter[] pushedFilters() {
-    return this.pushedSparkFilters;
+  public org.apache.spark.sql.connector.expressions.filter.Predicate[] pushedFilters() {
+    return DistributedScanHelper.filtersToV2Predicates(this.pushedSparkFilters);
   }
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
+    // Determine kernel Scan: use distributed data skipping when enabled
+    Scan kernelScan;
+    if (isDistributedScanEnabled()) {
+      kernelScan = buildDistributedScan();
+    } else {
+      kernelScan = kernelScanBuilder.build();
+    }
+
     return new SparkScan(
         snapshotManager,
         initialSnapshot,
@@ -166,8 +204,39 @@ public class SparkScanBuilder
         requiredDataSchema,
         pushedKernelPredicates,
         dataFilters,
-        kernelScanBuilder.build(),
+        kernelScan,
         options);
+  }
+
+  /**
+   * Uses {@link DistributedScanBuilder} to build a Kernel Scan with Spark-level data skipping. The
+   * distributed builder reads checkpoint + delta log files via Spark DataFrames and delegates to V1
+   * shared components for filter planning and scan execution.
+   */
+  private Scan buildDistributedScan() {
+    SparkSession spark = SparkSession.active();
+    int numPartitions = spark.sessionState().conf().numShufflePartitions();
+
+    // Build read schema for Kernel delegation
+    io.delta.kernel.types.StructType kernelReadSchema =
+        SchemaUtils.convertSparkSchemaToKernelSchema(requiredDataSchema);
+
+    DistributedScanBuilder distributedBuilder =
+        new DistributedScanBuilder(spark, initialSnapshot, numPartitions);
+    // Pass raw Catalyst expressions — no Filter→Expression conversion needed
+    distributedBuilder
+        .withPushdownExpressions(allCatalystExpressions)
+        .withReadSchema(kernelReadSchema);
+
+    return distributedBuilder.build();
+  }
+
+  /**
+   * Returns true if distributed data skipping is enabled via configuration. Default: false (use
+   * Kernel-native scan).
+   */
+  private boolean isDistributedScanEnabled() {
+    return true;
   }
 
   CaseInsensitiveStringMap getOptions() {
