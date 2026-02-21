@@ -3888,10 +3888,10 @@ trait DeltaErrorsBase
     case other => other.simpleString
   }
 
-  def deltaCannotVacuumManagedTable(): Throwable = {
+  def operationBlockedOnCatalogManagedTable(operation: String): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
-      messageParameters = Array.empty)
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+      messageParameters = Array(operation))
   }
 
   def deltaCannotCreateCatalogManagedTable(): Throwable = {

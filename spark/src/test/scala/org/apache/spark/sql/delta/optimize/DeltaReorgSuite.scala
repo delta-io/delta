@@ -16,11 +16,11 @@
 
 package org.apache.spark.sql.delta.optimize
 
-import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog}
+import org.apache.spark.sql.delta.{DeletionVectorsTestUtils, DeltaColumnMapping, DeltaLog, DeltaUnsupportedOperationException}
 import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.commands.VacuumCommand.generateCandidateFileMap
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.util.DeltaFileOperations
 import io.delta.tables.DeltaTable
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -34,6 +34,7 @@ import org.apache.spark.util.SerializableConfiguration
 class DeltaReorgSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest
+  with DeltaSQLTestUtils
   with DeletionVectorsTestUtils {
 
   import testImplicits._
@@ -297,6 +298,18 @@ class DeltaReorgSuite extends QueryTest
         // changed in parquet file level
         assert(fields.toArray.map { _.toString }.contains("optional int64 id_before_rename = 2"))
       }
+    }
+  }
+
+  test("reorg on a catalog owned managed table should fail") {
+    withCatalogManagedTable() { tableName =>
+      checkError(
+        intercept[DeltaUnsupportedOperationException] {
+          spark.sql(s"REORG TABLE $tableName APPLY (PURGE)")
+        },
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "OPTIMIZE")
+      )
     }
   }
 }
