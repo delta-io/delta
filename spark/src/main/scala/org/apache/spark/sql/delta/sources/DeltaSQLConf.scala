@@ -2838,6 +2838,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .bytesConf(ByteUnit.MiB)
       .createWithDefault(512)
 
+  val DELTA_OPTIMIZE_WRITE_USE_SHUFFLE_MANAGER =
+    buildConf("optimizeWrite.useShuffleManager")
+      .doc("When true, uses ShuffleManager.getReader() API for reading shuffle data, " +
+        "which is compatible with remote shuffle services like Apache Celeborn and Uniffle. " +
+        "In this mode, shuffle partitions are never split across bins to avoid reading " +
+        "duplicate data - small partitions are bin-packed together, while large partitions " +
+        "(exceeding binSize) each get their own bin and may produce larger output files. " +
+        "When false (default), uses ShuffleBlockFetcherIterator for optimal performance with " +
+        "local shuffle, allowing individual blocks to be bin-packed for precise file sizes.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE =
   buildConf("optimize.clustering.mergeStrategy.minCubeSize.threshold")
     .internal()
