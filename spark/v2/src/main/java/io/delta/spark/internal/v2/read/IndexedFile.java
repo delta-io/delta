@@ -26,16 +26,38 @@ import org.apache.spark.sql.delta.sources.AdmittableFile;
  * <p>File: represents a data file in Delta.
  *
  * <p>Indexed: refers to the index in DeltaSourceOffset, assigned by the streaming engine.
+ *
+ * <p>For CDC reads, this class also holds:
+ *
+ * <ul>
+ *   <li>changeType (e.g., "insert") — assigned by the streaming engine for initial snapshot files
+ *   <li>commitTimestamp (milliseconds since epoch)
+ * </ul>
  */
 public class IndexedFile implements AdmittableFile {
   private final long version;
   private final long index;
   private final AddFile addFile;
+  private final String changeType;
+  private final long commitTimestamp;
 
+  /** Constructor for non-CDC AddFile actions. */
   public IndexedFile(long version, long index, AddFile addFile) {
     this.version = version;
     this.index = index;
     this.addFile = addFile;
+    this.changeType = null;
+    this.commitTimestamp = -1;
+  }
+
+  /** Constructor for CDC - inferred from AddFile (e.g., initial snapshot "insert"). */
+  public IndexedFile(
+      long version, long index, AddFile addFile, String changeType, long commitTimestamp) {
+    this.version = version;
+    this.index = index;
+    this.addFile = addFile;
+    this.changeType = changeType;
+    this.commitTimestamp = commitTimestamp;
   }
 
   public long getVersion() {
@@ -48,6 +70,19 @@ public class IndexedFile implements AdmittableFile {
 
   public AddFile getAddFile() {
     return addFile;
+  }
+
+  public String getChangeType() {
+    return changeType;
+  }
+
+  public long getCommitTimestamp() {
+    return commitTimestamp;
+  }
+
+  /** Returns true if this IndexedFile is for CDC (has changeType set). */
+  public boolean isCDC() {
+    return changeType != null;
   }
 
   @Override
@@ -67,7 +102,15 @@ public class IndexedFile implements AdmittableFile {
     sb.append("IndexedFile{");
     sb.append("version=").append(version);
     sb.append(", index=").append(index);
-    sb.append(", addFile=").append(addFile);
+    if (addFile != null) {
+      sb.append(", addFile=").append(addFile);
+    }
+    if (changeType != null) {
+      sb.append(", changeType='").append(changeType).append('\'');
+    }
+    if (commitTimestamp >= 0) {
+      sb.append(", commitTimestamp=").append(commitTimestamp);
+    }
     sb.append('}');
     return sb.toString();
   }
