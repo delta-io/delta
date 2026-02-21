@@ -21,10 +21,11 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.FileAlreadyExistsException
 
+import scala.collection.JavaConverters._
+
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkConf
 import org.apache.spark.annotation.Unstable
 
 /**
@@ -44,8 +45,8 @@ import org.apache.spark.annotation.Unstable
  *       See https://docs.delta.io/latest/delta-storage.html for details.
  */
 @Unstable
-class IBMCOSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
-  extends org.apache.spark.sql.delta.storage.HadoopFileSystemLogStore(sparkConf, initHadoopConf) {
+class IBMCOSLogStore(initHadoopConf: Configuration)
+  extends HadoopFileSystemLogStore(initHadoopConf) {
   val preconditionFailedExceptionMessage =
     "At least one of the preconditions you specified did not hold"
 
@@ -53,14 +54,10 @@ class IBMCOSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
     "'fs.cos.atomic.write' must be set to true to use IBMCOSLogStore " +
       "in order to enable atomic write")
 
-  override def write(path: Path, actions: Iterator[String], overwrite: Boolean = false): Unit = {
-    write(path, actions, overwrite, getHadoopConfiguration)
-  }
-
   override def write(
       path: Path,
-      actions: Iterator[String],
-      overwrite: Boolean,
+      actions: java.util.Iterator[String],
+      overwrite: java.lang.Boolean,
       hadoopConf: Configuration): Unit = {
     val fs = path.getFileSystem(hadoopConf)
 
@@ -71,7 +68,7 @@ class IBMCOSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
       // write is atomic when overwrite == false
       val stream = fs.create(path, overwrite)
       try {
-        actions.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
+        actions.asScala.map(_ + "\n").map(_.getBytes(UTF_8)).foreach(stream.write)
         stream.close()
       } catch {
         case e: IOException if isPreconditionFailure(e) =>
@@ -94,9 +91,6 @@ class IBMCOSLogStore(sparkConf: SparkConf, initHadoopConf: Configuration)
       .isPresent;
   }
 
-  override def invalidateCache(): Unit = {}
-
-  override def isPartialWriteVisible(path: Path): Boolean = false
-
-  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): Boolean = false
+  override def isPartialWriteVisible(path: Path, hadoopConf: Configuration): java.lang.Boolean =
+    false
 }
