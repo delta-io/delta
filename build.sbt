@@ -1059,6 +1059,7 @@ lazy val storage = (project in file("storage"))
         ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
       ),
 
+      "software.amazon.awssdk" % "s3" % "2.18.40",
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
@@ -1084,7 +1085,7 @@ lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))
     // Test / publishArtifact := true,
 
     libraryDependencies ++= Seq(
-      "com.amazonaws" % "aws-java-sdk" % "1.12.262" % "provided",
+      "software.amazon.awssdk" % "dynamodb" % "2.18.40",
 
       // Test Deps
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "test", // RemoteFileChangedException
