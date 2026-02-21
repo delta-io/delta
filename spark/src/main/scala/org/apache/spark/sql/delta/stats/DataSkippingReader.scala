@@ -1086,27 +1086,46 @@ trait DataSkippingReaderBase
       // Filter out non-leaf columns -- they lack stats so skipping predicates can't use them.
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
-        case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
-          // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
-          // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
-          // records that differ only in microsecond precision. (For example, a file containing only
-          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
-          // to contain the range from 01:02:03.456 to 01:02:03.457.)
+        case (statCol, TimestampType, _) if pathToStatType.head == MIN =>
+          // Delta Spark 3.2.x/3.3.x wrote timestamp stats to JSON with timezone offsets
+          // truncated to minute resolution (e.g. +00:53:28 became +00:53). When parsed back,
+          // these values can be off by up to 59 seconds from the true instant, which causes
+          // incorrect data skipping (files pruned even though they contain matching rows).
+          // See https://github.com/delta-io/delta/issues/5249
           //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
+          // To avoid data loss when reading tables written by older versions, we widen the
+          // min bound by subtracting 59 seconds.
+          Column(Cast(TimestampAdd(
+            "SECOND",
+            new Literal(-59L, LongType),
+            statCol.expr), TimestampType))
+        case (statCol, TimestampNTZType, _) if pathToStatType.head == MIN =>
+          // Apply the same timezone-offset widening to TimestampNTZ min stats.
+          Column(Cast(TimestampAdd(
+            "SECOND",
+            new Literal(-59L, LongType),
+            statCol.expr), TimestampNTZType))
+        case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
+          // SC-22824: JSON serialization truncates timestamps to milliseconds, so we adjust
+          // max stats upward by 1 millisecond. (For example, a file containing only
+          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must
+          // consider it to contain the range up to 01:02:03.457.)
+          //
+          // Additionally, Delta Spark 3.2.x/3.3.x truncated timezone offsets to minute
+          // resolution in JSON stats, which can shift the recorded max by up to 59 seconds.
+          // See https://github.com/delta-io/delta/issues/5249
+          //
+          // We combine both adjustments: +1ms (millisecond truncation) + +59s (tz offset
+          // truncation) to correctly read stats written by old versions.
           Column(Cast(TimestampAdd(
             "MILLISECOND",
-            new Literal(1L, LongType),
+            new Literal(59001L, LongType), // 59 seconds + 1 millisecond
             statCol.expr), TimestampType))
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
-          // We also apply the same adjustment of max stats that was applied to Timestamp
-          // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
+          // Apply the same combined adjustment to TimestampNTZ max stats.
           Column(Cast(TimestampAdd(
             "MILLISECOND",
-            new Literal(1L, LongType),
+            new Literal(59001L, LongType), // 59 seconds + 1 millisecond
             statCol.expr), TimestampNTZType))
         case (statCol, _, _) =>
           statCol

@@ -1707,6 +1707,157 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
+  // Tests for https://github.com/delta-io/delta/issues/5249
+  // Delta Spark 3.2.x/3.3.x wrote timestamp stats with timezone offsets truncated to minute
+  // resolution (e.g. +00:53:28 -> +00:53). The reader-side widening must prevent data skipping
+  // from pruning files that actually contain matching rows.
+
+  test("data skipping - truncated tz offset: equality predicate (issue 5249)") {
+    // Simulate stats shifted +30 seconds from the actual value (within the 59s window).
+    // An equality predicate on the true timestamp must NOT skip the file.
+    withTempDir { dir =>
+      import testImplicits._
+      val ts = java.sql.Timestamp.valueOf("2019-09-09 01:02:03.456789")
+      Seq(ts).toDF("ts").write.format("delta").save(dir.getCanonicalPath)
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = txn.filterFiles(Nil).head
+
+      // Stats shifted +30 seconds from the actual value.
+      val fakeStats =
+        """{"numRecords":1,""" +
+        """"minValues":{"ts":"2019-09-09T01:02:33.456"},""" +
+        """"maxValues":{"ts":"2019-09-09T01:02:33.456"},""" +
+        """"nullCount":{"ts":0}}"""
+      txn.commit(
+        Seq(addFile.copy(stats = fakeStats)), DeltaOperations.ComputeStats(Nil))
+      log.update()
+
+      assert(filesRead(log, """ts = TIMESTAMP '2019-09-09 01:02:03.456789'""") == 1,
+        "File should not be skipped when stats are shifted by +30s")
+    }
+  }
+
+  test("data skipping - truncated tz offset: range predicates (issue 5249)") {
+    // With stats shifted +30s, range predicates near the actual value must still hit.
+    withTempDir { dir =>
+      import testImplicits._
+      val ts = java.sql.Timestamp.valueOf("2019-09-09 01:02:03.456789")
+      Seq(ts).toDF("ts").write.format("delta").save(dir.getCanonicalPath)
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = txn.filterFiles(Nil).head
+
+      // Stats shifted +30 seconds from the actual value.
+      val fakeStats =
+        """{"numRecords":1,""" +
+        """"minValues":{"ts":"2019-09-09T01:02:33.456"},""" +
+        """"maxValues":{"ts":"2019-09-09T01:02:33.456"},""" +
+        """"nullCount":{"ts":0}}"""
+      txn.commit(
+        Seq(addFile.copy(stats = fakeStats)), DeltaOperations.ComputeStats(Nil))
+      log.update()
+
+      // Less-than: the actual value (01:02:03) is less than the fake min (01:02:33).
+      // Without widening, the reader would think the file only has values >= 01:02:33
+      // and skip it for ts < 01:02:10. With -59s widening on min, it should not skip.
+      assert(filesRead(log, """ts < TIMESTAMP '2019-09-09 01:02:10'""") == 1,
+        "File should not be skipped for ts < value close to fake min")
+
+      // Greater-than: the actual value should still be found.
+      assert(filesRead(log, """ts > TIMESTAMP '2019-09-09 01:02:00'""") == 1,
+        "File should not be skipped for ts > value before actual data")
+
+      // BETWEEN: range that covers the actual value but not the fake stats.
+      assert(filesRead(log,
+        """ts BETWEEN TIMESTAMP '2019-09-09 01:02:00' AND """ +
+        """TIMESTAMP '2019-09-09 01:02:10'""") == 1,
+        "File should not be skipped for BETWEEN range containing actual data")
+    }
+  }
+
+  test("data skipping - truncated tz offset: stats shifted earlier (negative offset, issue 5249)") {
+    // Simulate stats shifted -30 seconds from the actual value.
+    // This tests the MAX widening path.
+    withTempDir { dir =>
+      import testImplicits._
+      val ts = java.sql.Timestamp.valueOf("2019-09-09 01:02:33.456789")
+      Seq(ts).toDF("ts").write.format("delta").save(dir.getCanonicalPath)
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = txn.filterFiles(Nil).head
+
+      // Stats shifted -30 seconds (earlier) from the actual value.
+      val fakeStats =
+        """{"numRecords":1,""" +
+        """"minValues":{"ts":"2019-09-09T01:02:03.456"},""" +
+        """"maxValues":{"ts":"2019-09-09T01:02:03.456"},""" +
+        """"nullCount":{"ts":0}}"""
+      txn.commit(
+        Seq(addFile.copy(stats = fakeStats)), DeltaOperations.ComputeStats(Nil))
+      log.update()
+
+      assert(filesRead(log, """ts = TIMESTAMP '2019-09-09 01:02:33.456789'""") == 1,
+        "File should not be skipped when stats are shifted by -30s (MAX widening)")
+    }
+  }
+
+  test("data skipping - truncated tz offset: 59s boundary (issue 5249)") {
+    // Test at exactly 59 seconds offset - the boundary of the widening window.
+    withTempDir { dir =>
+      import testImplicits._
+      val ts = java.sql.Timestamp.valueOf("2019-09-09 01:02:03.456789")
+      Seq(ts).toDF("ts").write.format("delta").save(dir.getCanonicalPath)
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = txn.filterFiles(Nil).head
+
+      // Stats shifted exactly +59 seconds from the actual value.
+      val fakeStats =
+        """{"numRecords":1,""" +
+        """"minValues":{"ts":"2019-09-09T01:03:02.456"},""" +
+        """"maxValues":{"ts":"2019-09-09T01:03:02.456"},""" +
+        """"nullCount":{"ts":0}}"""
+      txn.commit(
+        Seq(addFile.copy(stats = fakeStats)), DeltaOperations.ComputeStats(Nil))
+      log.update()
+
+      assert(filesRead(log, """ts = TIMESTAMP '2019-09-09 01:02:03.456789'""") == 1,
+        "File should not be skipped at exactly 59s offset boundary")
+    }
+  }
+
+  test("data skipping - truncated tz offset: beyond 59s should still skip (issue 5249)") {
+    // Stats shifted by more than 59 seconds - data skipping SHOULD skip this file
+    // since the widening window only covers up to 59 seconds.
+    withTempDir { dir =>
+      import testImplicits._
+      val ts = java.sql.Timestamp.valueOf("2019-09-09 01:02:03.456789")
+      Seq(ts).toDF("ts").write.format("delta").save(dir.getCanonicalPath)
+
+      val log = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val txn = log.startTransaction()
+      val addFile = txn.filterFiles(Nil).head
+
+      // Stats shifted +120 seconds (2 minutes) - well beyond the 59s window.
+      val fakeStats =
+        """{"numRecords":1,""" +
+        """"minValues":{"ts":"2019-09-09T01:04:03.456"},""" +
+        """"maxValues":{"ts":"2019-09-09T01:04:03.456"},""" +
+        """"nullCount":{"ts":0}}"""
+      txn.commit(
+        Seq(addFile.copy(stats = fakeStats)), DeltaOperations.ComputeStats(Nil))
+      log.update()
+
+      assert(filesRead(log, """ts = TIMESTAMP '2019-09-09 01:02:03.456789'""") == 0,
+        "File should be skipped when stats are shifted beyond 59s window")
+    }
+  }
+
   test("Ensure that we don't reuse scans when tables are different") {
     withTempDir { dir =>
       val table1 = new File(dir, "tbl1")
