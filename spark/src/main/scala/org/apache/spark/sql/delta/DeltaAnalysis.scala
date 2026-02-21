@@ -55,6 +55,7 @@ import org.apache.spark.sql.catalyst.parser.ParseException
 import org.apache.spark.sql.catalyst.plans.logical._
 import org.apache.spark.sql.catalyst.plans.logical.CloneTableStatement
 import org.apache.spark.sql.catalyst.plans.logical.RestoreTableStatement
+import org.apache.spark.sql.catalyst.plans.logical.ShowPartitions
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.catalyst.streaming.WriteToStream
 import org.apache.spark.sql.catalyst.trees.TreeNodeTag
@@ -85,6 +86,15 @@ class DeltaAnalysis(session: SparkSession)
   type CastFunction = (Expression, DataType, String) => Expression
 
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperatorsDown {
+    // Intercept SHOW PARTITIONS for Delta tables
+    // Spark's ShowPartitions command requires SUPPORTS_PARTITION_MANAGEMENT capability,
+    // but Delta manages partitions through the transaction log, not the metastore.
+    // We intercept and replace with our custom command that reads from the Delta log.
+    case ShowPartitions(
+        r @ ResolvedTable(_, _, table: DeltaTableV2, _), partSpec, _) =>
+      // TODO: Convert Spark's PartitionSpec to Map[String, String] for filtering support
+      ShowDeltaPartitionsCommand(r, None)
+
     // INSERT INTO by ordinal and df.insertInto()
     case a @ AppendDelta(r, d) if !a.isByName &&
         needsSchemaAdjustmentByOrdinal(d, a.query, r.schema, a.writeOptions) =>
