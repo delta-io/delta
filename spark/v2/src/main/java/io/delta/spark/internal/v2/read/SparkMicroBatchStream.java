@@ -20,18 +20,20 @@ import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING
 
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
-import io.delta.kernel.Scan;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.FilteredColumnarBatch;
+import io.delta.kernel.data.MapValue;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
@@ -41,6 +43,7 @@ import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.utils.SnapshotScanHelper;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.time.ZoneId;
@@ -48,6 +51,14 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.Dependency;
+import org.apache.spark.Partition;
+import org.apache.spark.SparkContext;
+import org.apache.spark.TaskContext;
+import org.apache.spark.rdd.RDD;
+import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
@@ -68,6 +79,7 @@ import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.storage.StorageLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Some;
@@ -140,21 +152,25 @@ public class SparkMicroBatchStream
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
 
-  // Cache for the initial snapshot files to avoid re-sorting on repeated access.
+  // Cache for the initial snapshot: stores the sorted DataFrame (persisted in Spark's managed
+  // memory/disk) instead of a List<IndexedFile> in JVM heap. Each call to getSnapshotFiles()
+  // creates a fresh iterator via toLocalIterator(). Mirrors DSv1's DeltaSourceSnapshot pattern.
   private static class InitialSnapshotCache {
-    final Long version;
-    final List<IndexedFile> files;
+    final long version;
+    final Dataset<Row> sortedAddFiles;
 
-    InitialSnapshotCache(Long version, List<IndexedFile> files) {
+    InitialSnapshotCache(long version, Dataset<Row> sortedAddFiles) {
       this.version = version;
-      this.files = files;
+      this.sortedAddFiles = sortedAddFiles;
+    }
+
+    void close() {
+      sortedAddFiles.unpersist();
     }
   }
 
   private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
       new AtomicReference<>(null);
-
-  private final int maxInitialSnapshotFiles;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -198,12 +214,6 @@ public class SparkMicroBatchStream
             (Boolean)
                 spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
             "shouldValidateOffsets is null");
-    this.maxInitialSnapshotFiles =
-        (Integer)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
@@ -1044,74 +1054,272 @@ public class SparkMicroBatchStream
   private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
     InitialSnapshotCache cache = cachedInitialSnapshot.get();
 
-    if (cache != null && cache.version != null && cache.version == version) {
-      return Utils.toCloseableIterator(cache.files.iterator());
+    if (cache == null || cache.version != version) {
+      // Unpersist the old cached DataFrame if present
+      if (cache != null) {
+        cache.close();
+      }
+      cache = loadAndCacheSnapshot(version);
+      cachedInitialSnapshot.set(cache);
     }
 
-    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version);
-
-    cachedInitialSnapshot.set(
-        new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
-
-    return Utils.toCloseableIterator(indexedFiles.iterator());
+    // Stream from the cached DataFrame — no List<IndexedFile> in JVM heap.
+    return snapshotDataFrameToIndexedFiles(cache.version, cache.sortedAddFiles);
   }
 
-  /** Loads snapshot files at the specified version. */
-  private List<IndexedFile> loadAndValidateSnapshot(long version) {
-    Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+  /**
+   * Convert a cached sorted DataFrame to a CloseableIterator of IndexedFile, with BEGIN/END
+   * sentinels and sequential indices. Each call creates a fresh iterator via toLocalIterator().
+   */
+  private static CloseableIterator<IndexedFile> snapshotDataFrameToIndexedFiles(
+      long version, Dataset<Row> sortedDf) {
+    Iterator<Row> sparkIter = sortedDf.toLocalIterator();
 
-    Scan scan = snapshot.getScanBuilder().build();
+    // Wrap with sentinels and sequential index assignment
+    Iterator<IndexedFile> indexedIter =
+        new Iterator<IndexedFile>() {
+          private boolean sentBegin = false;
+          private boolean sentEnd = false;
+          private long idx = 0;
 
-    List<AddFile> addFiles = new ArrayList<>();
-    try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
-      while (filesIter.hasNext()) {
-        FilteredColumnarBatch filteredBatch = filesIter.next();
+          @Override
+          public boolean hasNext() {
+            return !sentBegin || sparkIter.hasNext() || !sentEnd;
+          }
 
-        // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
-        // (checkpoint files) files. StreamingHelper.getAddFile respects the selection vector
-        // to filter out duplicate files (e.g., stats re-collection re-adds files with updated
-        // stats).
-        for (int rowId = 0; rowId < filteredBatch.getData().getSize(); rowId++) {
-          Optional<AddFile> addOpt = StreamingHelper.getAddFile(filteredBatch, rowId);
-          if (addOpt.isPresent()) {
-            addFiles.add(addOpt.get());
-
-            // Basic memory protection: each IndexedFile is ~1-2KB (path, stats, partition values,
-            // etc.).
-            // This limit aims to prevent OOM for large tables.
-            // TODO(#5318): support large tables and remove this limit.
-            if (addFiles.size() > maxInitialSnapshotFiles) {
-              throw (RuntimeException)
-                  DeltaErrors.initialSnapshotTooLargeForStreaming(
-                      version, addFiles.size(), maxInitialSnapshotFiles, tablePath);
+          @Override
+          public IndexedFile next() {
+            if (!sentBegin) {
+              sentBegin = true;
+              return new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null);
             }
+            if (sparkIter.hasNext()) {
+              AddFile addFile = sparkRowToAddFile(sparkIter.next());
+              return new IndexedFile(version, idx++, addFile);
+            }
+            if (!sentEnd) {
+              sentEnd = true;
+              return new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null);
+            }
+            throw new NoSuchElementException();
+          }
+        };
+
+    return Utils.toCloseableIterator(indexedIter);
+  }
+
+  //////////////////////////////////////////////////////////////////////////////
+  // DataFrame-based external sorting infrastructure.
+  // Uses a fully serializable RDD that reconstructs LogReplay from serialized
+  // LogSegment data, so it works in both local and cluster mode.
+  //////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * A serializable single-partition RDD that lazily streams Kernel scan files into Spark Rows.
+   * Holds a {@link SnapshotScanHelper.SerializableScanData} which captures everything needed to
+   * reconstruct a {@link io.delta.kernel.internal.replay.LogReplay} on any executor.
+   */
+  @SuppressWarnings("unchecked")
+  private static class ScanFileRDD extends RDD<Row> {
+    private final SnapshotScanHelper.SerializableScanData scanData;
+
+    ScanFileRDD(SparkContext sc, SnapshotScanHelper.SerializableScanData scanData) {
+      super(
+          sc,
+          (scala.collection.immutable.Seq<Dependency<?>>)
+              (scala.collection.immutable.Seq<?>) scala.collection.immutable.Nil$.MODULE$,
+          scala.reflect.ClassTag$.MODULE$.apply(Row.class));
+      this.scanData = scanData;
+    }
+
+    @Override
+    public Partition[] getPartitions() {
+      return new Partition[] {
+        new Partition() {
+          @Override
+          public int index() {
+            return 0;
           }
         }
+      };
+    }
+
+    @Override
+    public scala.collection.Iterator<Row> compute(Partition split, TaskContext context) {
+      CloseableIterator<FilteredColumnarBatch> filesIter =
+          SnapshotScanHelper.rebuildScanFilesIterator(scanData);
+
+      if (context != null) {
+        context.addTaskCompletionListener(
+            taskCtx -> {
+              try {
+                filesIter.close();
+              } catch (IOException e) {
+                /* best-effort */
+              }
+            });
       }
-    } catch (IOException e) {
-      throw new RuntimeException(
-          String.format("Failed to read snapshot files at version %d", version), e);
+
+      Iterator<Row> javaIter =
+          new Iterator<Row>() {
+            private FilteredColumnarBatch currentBatch = null;
+            private int currentRowId = 0;
+            private int currentBatchSize = 0;
+            private Row nextRow = null;
+
+            @Override
+            public boolean hasNext() {
+              while (nextRow == null) {
+                if (currentBatch != null && currentRowId < currentBatchSize) {
+                  Optional<AddFile> addOpt = StreamingHelper.getAddFile(currentBatch, currentRowId);
+                  currentRowId++;
+                  if (addOpt.isPresent()) {
+                    nextRow = addFileToSparkRow(addOpt.get());
+                  }
+                } else if (filesIter.hasNext()) {
+                  currentBatch = filesIter.next();
+                  currentRowId = 0;
+                  currentBatchSize = currentBatch.getData().getSize();
+                } else {
+                  return false;
+                }
+              }
+              return true;
+            }
+
+            @Override
+            public Row next() {
+              if (!hasNext()) {
+                throw new NoSuchElementException();
+              }
+              Row row = nextRow;
+              nextRow = null;
+              return row;
+            }
+          };
+
+      return scala.jdk.javaapi.CollectionConverters.asScala(javaIter);
+    }
+  }
+
+  /** Convert a Kernel {@link AddFile} to a Spark {@link Row}. */
+  @SuppressWarnings("unchecked")
+  private static Row addFileToSparkRow(AddFile addFile) {
+    // Spark catalyst expects scala.collection.Map for MapType columns, not java.util.Map.
+    scala.collection.Map<String, String> partitionValues =
+        scala.jdk.javaapi.CollectionConverters.asScala(
+            VectorUtils.toJavaMap(addFile.getPartitionValues()));
+
+    Row dvRow = null;
+    Optional<DeletionVectorDescriptor> dvOpt = addFile.getDeletionVector();
+    if (dvOpt.isPresent()) {
+      DeletionVectorDescriptor dv = dvOpt.get();
+      dvRow =
+          RowFactory.create(
+              dv.getStorageType(),
+              dv.getPathOrInlineDv(),
+              dv.getOffset().orElse(null),
+              dv.getSizeInBytes(),
+              dv.getCardinality());
     }
 
-    // TODO(#5318): For large snapshots, consider external sorting.
-    // CRITICAL: Sort by modificationTime, then path for deterministic ordering
-    addFiles.sort(
-        Comparator.comparing(AddFile::getModificationTime).thenComparing(AddFile::getPath));
+    scala.collection.Map<String, String> tags =
+        addFile
+            .getTags()
+            .map(
+                t ->
+                    (scala.collection.Map<String, String>)
+                        scala.jdk.javaapi.CollectionConverters.asScala(
+                            (Map<String, String>) (Map<?, ?>) VectorUtils.toJavaMap(t)))
+            .orElse(null);
 
-    // Build IndexedFile list with sentinels
-    List<IndexedFile> indexedFiles = new ArrayList<>();
+    return RowFactory.create(
+        addFile.getPath(),
+        partitionValues,
+        addFile.getSize(),
+        addFile.getModificationTime(),
+        addFile.getDataChange(),
+        dvRow,
+        tags,
+        addFile.getBaseRowId().orElse(null),
+        addFile.getDefaultRowCommitVersion().orElse(null));
+  }
 
-    // Add BEGIN sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null));
+  /** Convert a Spark {@link Row} back to a Kernel {@link AddFile}. */
+  private static AddFile sparkRowToAddFile(Row row) {
+    String path = row.getString(0);
+    Map<String, String> partitionValues = row.getJavaMap(1);
+    long size = row.getLong(2);
+    long modificationTime = row.getLong(3);
+    boolean dataChange = row.getBoolean(4);
 
-    // Add data files with sequential indices starting from 0
-    for (int i = 0; i < addFiles.size(); i++) {
-      indexedFiles.add(new IndexedFile(version, i, addFiles.get(i)));
+    Optional<DeletionVectorDescriptor> dvOpt = Optional.empty();
+    if (!row.isNullAt(5)) {
+      Row dvRow = row.getStruct(5);
+      dvOpt =
+          Optional.of(
+              new DeletionVectorDescriptor(
+                  dvRow.getString(0),
+                  dvRow.getString(1),
+                  dvRow.isNullAt(2) ? Optional.empty() : Optional.of(dvRow.getInt(2)),
+                  dvRow.getInt(3),
+                  dvRow.getLong(4)));
     }
 
-    // Add END sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
+    Optional<Map<String, String>> tagsOpt = Optional.empty();
+    if (!row.isNullAt(6)) {
+      tagsOpt = Optional.of(row.getJavaMap(6));
+    }
 
-    return indexedFiles;
+    Optional<Long> baseRowId = row.isNullAt(7) ? Optional.empty() : Optional.of(row.getLong(7));
+    Optional<Long> defaultRowCommitVersion =
+        row.isNullAt(8) ? Optional.empty() : Optional.of(row.getLong(8));
+
+    MapValue kernelPartVals = VectorUtils.stringStringMapValue(partitionValues);
+    Optional<MapValue> kernelTags = tagsOpt.map(VectorUtils::stringStringMapValue);
+
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("path"), path);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("partitionValues"), kernelPartVals);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("size"), size);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("modificationTime"), modificationTime);
+    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("dataChange"), dataChange);
+    dvOpt.ifPresent(
+        dv -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector"), dv.toRow()));
+    kernelTags.ifPresent(t -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("tags"), t));
+    baseRowId.ifPresent(id -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("baseRowId"), id));
+    defaultRowCommitVersion.ifPresent(
+        v -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("defaultRowCommitVersion"), v));
+
+    return new AddFile(new GenericRow(AddFile.SCHEMA_WITHOUT_STATS, fieldMap));
+  }
+
+  /**
+   * Loads snapshot files at the specified version, sorts them via Spark DataFrame, and persists the
+   * sorted result. The persisted DataFrame lives in Spark's managed memory (off-heap, can spill to
+   * disk), not in JVM heap. Mirrors DSv1's {@code DeltaSourceSnapshot} caching pattern.
+   *
+   * <p>Uses a {@link ScanFileRDD} that holds a fully serializable {@link
+   * SnapshotScanHelper.SerializableScanData}, allowing it to reconstruct a {@link
+   * io.delta.kernel.internal.replay.LogReplay} on any executor (works in both local and cluster
+   * mode). The only I/O is the normal log replay which is identical to {@code Scan.getScanFiles()}.
+   */
+  private InitialSnapshotCache loadAndCacheSnapshot(long version) {
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    SnapshotScanHelper.SerializableScanData scanData =
+        SnapshotScanHelper.extractScanData(snapshot, hadoopConf);
+
+    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), scanData);
+
+    Dataset<Row> sortedDf =
+        spark
+            .createDataFrame(
+                rdd, SchemaUtils.convertKernelSchemaToSparkSchema(AddFile.SCHEMA_WITHOUT_STATS))
+            .sortWithinPartitions("modificationTime", "path")
+            .persist(StorageLevel.MEMORY_AND_DISK());
+
+    sortedDf.count();
+
+    return new InitialSnapshotCache(version, sortedDf);
   }
 }

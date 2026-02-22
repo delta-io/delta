@@ -2819,9 +2819,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testMemoryProtection_initialSnapshotTooLarge(@TempDir File tempDir) throws Exception {
+  public void testLargeInitialSnapshot_handledByDataFrame(@TempDir File tempDir) throws Exception {
     String testTablePath = tempDir.getAbsolutePath();
-    String testTableName = "test_memory_protection_" + System.nanoTime();
+    String testTableName = "test_large_initial_snapshot_" + System.nanoTime();
     createEmptyTestTable(testTablePath, testTableName);
 
     // At version 5, there will be at least 25 files.
@@ -2831,6 +2831,8 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         /* rowsPerVersion= */ 5,
         /* includeEmptyVersion= */ false);
 
+    // Even with a low maxFiles config, the DataFrame-based approach should handle this
+    // without error (Spark can spill to disk for sorting/caching).
     String configKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
     spark.conf().set(configKey, "5");
 
@@ -2845,23 +2847,17 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       long fromIndex = DeltaSourceOffset.BASE_INDEX();
       boolean isInitialSnapshot = true;
 
-      RuntimeException exception =
-          assertThrows(
-              RuntimeException.class,
-              () -> {
-                try (CloseableIterator<IndexedFile> iter =
-                    stream.getFileChanges(
-                        version, fromIndex, isInitialSnapshot, Optional.empty())) {
-                  while (iter.hasNext()) {
-                    iter.next();
-                  }
-                }
-              });
-
-      String errorMessage = exception.getMessage();
-      assertTrue(errorMessage.contains("DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE"));
+      int count = 0;
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          iter.next();
+          count++;
+        }
+      }
+      // Should have BEGIN sentinel + actual files + END sentinel
       assertTrue(
-          errorMessage.contains("initial snapshot") || errorMessage.contains("Initial snapshot"));
+          count >= 3, "Expected at least 3 IndexedFiles (BEGIN + files + END), got " + count);
     } finally {
       spark.conf().unset(configKey);
     }
