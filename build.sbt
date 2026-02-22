@@ -1386,7 +1386,7 @@ lazy val flink = (project in file("flink"))
   .settings(
     name := "delta-flink",
     commonSettings,
-    skipReleaseSettings,
+    releaseSettings,
     javafmtCheckSettings(),
     publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
@@ -1418,6 +1418,10 @@ lazy val flink = (project in file("flink"))
     Test / javaOptions ++= Seq(
       "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
     ),
+    inConfig(Test)(AssemblyPlugin.baseAssemblySettings),
+    Test / assembly / fullClasspath := (Test / fullClasspath).value,
+    Test / assembly / assemblyJarName := s"delta-flink-test-$flinkVersion-${version.value}.jar",
+    Test / assembly / test := {},
     crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" % "flink-core" % flinkVersion % "provided",
@@ -1442,7 +1446,8 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-runtime" % flinkVersion % Test,
       "org.apache.flink" % "flink-test-utils-junit" % flinkVersion  % Test,
       "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
-      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
+      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test,
+      "com.databricks" %% "databricks-connect" % "18.0.0" % Test,
     ),
     // Use jupiter
     excludeDependencies ++= Seq(

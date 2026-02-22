@@ -21,6 +21,7 @@ import java.io.Serializable;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 /**
  * A {@code Catalog} abstracts interaction with an external table catalog or metadata service.
@@ -76,11 +77,16 @@ public interface DeltaCatalog extends Serializable {
    *     indicates an unpartitioned table.
    * @param properties A map of table properties for configuration and metadata; may be empty but
    *     must not be {@code null}.
+   * @param callback for the caller to init the table when the storage URI is allocated.
    * @throws ExceptionUtils.ResourceAlreadyExistException If a table with the same identifier
    *     already exists in the catalog.
    */
   void createTable(
-      String tableId, StructType schema, List<String> partitions, Map<String, String> properties);
+      String tableId,
+      StructType schema,
+      List<String> partitions,
+      Map<String, String> properties,
+      Consumer<TableDescriptor> callback);
 
   /**
    * Returns the credentials or configuration properties required to access the table identified by
@@ -104,12 +110,20 @@ public interface DeltaCatalog extends Serializable {
   class TableDescriptor {
 
     /** The logical identifier used to resolve the table. */
-    String tableId;
+    public String tableId;
 
     /** A stable UUID that uniquely identifies the table. */
-    String uuid;
+    public String uuid;
 
     /** The normalized physical location of the table. */
-    URI tablePath;
+    public URI tablePath;
+
+    public TableDescriptor() {}
+
+    public TableDescriptor(String tableId, String uuid, URI tablePath) {
+      this.tableId = tableId;
+      this.uuid = uuid;
+      this.tablePath = tablePath;
+    }
   }
 }
