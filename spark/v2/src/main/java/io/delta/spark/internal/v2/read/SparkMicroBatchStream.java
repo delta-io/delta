@@ -1103,31 +1103,6 @@ public class SparkMicroBatchStream
   // Mirrors Kernel's AddFile.SCHEMA_WITHOUT_STATS but in Spark types.
   //////////////////////////////////////////////////////////////////////////////
 
-  private static final org.apache.spark.sql.types.StructType DV_SPARK_SCHEMA =
-      new org.apache.spark.sql.types.StructType()
-          .add("storageType", org.apache.spark.sql.types.DataTypes.StringType, false)
-          .add("pathOrInlineDv", org.apache.spark.sql.types.DataTypes.StringType, false)
-          .add("offset", org.apache.spark.sql.types.DataTypes.IntegerType, true)
-          .add("sizeInBytes", org.apache.spark.sql.types.DataTypes.IntegerType, false)
-          .add("cardinality", org.apache.spark.sql.types.DataTypes.LongType, false);
-
-  private static final org.apache.spark.sql.types.DataType STRING_STRING_MAP =
-      org.apache.spark.sql.types.DataTypes.createMapType(
-          org.apache.spark.sql.types.DataTypes.StringType,
-          org.apache.spark.sql.types.DataTypes.StringType);
-
-  private static final org.apache.spark.sql.types.StructType ADD_FILE_SPARK_SCHEMA =
-      new org.apache.spark.sql.types.StructType()
-          .add("path", org.apache.spark.sql.types.DataTypes.StringType, false)
-          .add("partitionValues", STRING_STRING_MAP, false)
-          .add("size", org.apache.spark.sql.types.DataTypes.LongType, false)
-          .add("modificationTime", org.apache.spark.sql.types.DataTypes.LongType, false)
-          .add("dataChange", org.apache.spark.sql.types.DataTypes.BooleanType, false)
-          .add("deletionVector", DV_SPARK_SCHEMA, true)
-          .add("tags", STRING_STRING_MAP, true)
-          .add("baseRowId", org.apache.spark.sql.types.DataTypes.LongType, true)
-          .add("defaultRowCommitVersion", org.apache.spark.sql.types.DataTypes.LongType, true);
-
   /** Convert a Kernel {@link AddFile} to a Spark {@link org.apache.spark.sql.Row}. */
   @SuppressWarnings("unchecked")
   private static org.apache.spark.sql.Row addFileToSparkRow(AddFile addFile) {
@@ -1252,7 +1227,9 @@ public class SparkMicroBatchStream
     // After persist() + count(), data lives in Spark's managed memory/disk and sparkRows can GC.
     Dataset<org.apache.spark.sql.Row> sortedDf =
         spark
-            .createDataFrame(sparkRows, ADD_FILE_SPARK_SCHEMA)
+            .createDataFrame(
+                sparkRows,
+                SchemaUtils.convertKernelSchemaToSparkSchema(AddFile.SCHEMA_WITHOUT_STATS))
             .repartitionByRange(
                 org.apache.spark.sql.functions.col("modificationTime"),
                 org.apache.spark.sql.functions.col("path"))
