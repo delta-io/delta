@@ -109,6 +109,78 @@ public class ExpressionUtilsTest {
     assertEquals(2, nonNullResult.get().getChildren().size());
   }
 
+  @Test
+  public void testInFilter_BasicConversion() {
+    In filter = new In("city", new Object[] {"hz", "sh", "bj"});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "In filter should be converted");
+    assertFalse(result.isPartial(), "In filter should be fully converted");
+    assertEquals("IN", result.get().getName());
+    // Children: column + 3 literals
+    assertEquals(4, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testInFilter_SingleValue() {
+    In filter = new In("id", new Object[] {42});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "In filter with single value should be converted");
+    assertFalse(result.isPartial(), "In filter should be fully converted");
+    assertEquals("IN", result.get().getName());
+    // Children: column + 1 literal
+    assertEquals(2, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testInFilter_EmptyValues() {
+    In filter = new In("city", new Object[] {});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with empty values should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_WithNullValue() {
+    // null in the values array makes the IN expression unsafe to push down (SQL null semantics)
+    In filter = new In("city", new Object[] {"hz", null, "bj"});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with null value should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_WithUnsupportedType() {
+    In filter = new In("col", new Object[] {42, new Object()});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with unconvertible value should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_InAndFilter() {
+    // AND(In(...), EqualTo(...)) — both convertible, should be fully pushed down
+    In inFilter = new In("city", new Object[] {"hz", "sh"});
+    EqualTo eqFilter = new EqualTo("part", 1);
+    org.apache.spark.sql.sources.And andFilter =
+        new org.apache.spark.sql.sources.And(inFilter, eqFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+
+    assertTrue(result.isPresent(), "AND(In, EqualTo) should be converted");
+    assertFalse(result.isPartial(), "AND(In, EqualTo) should be fully converted");
+    assertTrue(
+        result.get() instanceof io.delta.kernel.expressions.And,
+        "Result should be an AND predicate");
+  }
+
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(

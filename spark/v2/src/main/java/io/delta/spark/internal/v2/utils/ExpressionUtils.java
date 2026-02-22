@@ -57,6 +57,7 @@ public final class ExpressionUtils {
    *   <li>Null tests: IsNull, IsNotNull
    *   <li>Null-safe comparison: EqualNullSafe
    *   <li>Logical operators: And, Or, Not
+   *   <li>Set membership: In
    * </ul>
    *
    * @param filter the Spark SQL filter to convert
@@ -129,6 +130,26 @@ public final class ExpressionUtils {
       IsNotNull f = (IsNotNull) filter;
       return new ConvertedPredicate(
           Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute()))));
+    }
+    if (filter instanceof In) {
+      In f = (In) filter;
+      // An empty IN list can never match; skip pushdown rather than pushing ALWAYS_FALSE so
+      // that Spark still evaluates the filter and returns the correct empty result.
+      if (f.values().length == 0) {
+        return new ConvertedPredicate(Optional.empty());
+      }
+      List<io.delta.kernel.expressions.Expression> children = new ArrayList<>();
+      children.add(kernelColumn(f.attribute()));
+      for (Object value : f.values()) {
+        Optional<Literal> lit = convertValueToKernelLiteral(value);
+        if (!lit.isPresent()) {
+          // A value that can't be converted (e.g. null, unsupported type) makes the whole
+          // IN expression unsafe to push down; return empty to keep it for post-scan evaluation.
+          return new ConvertedPredicate(Optional.empty());
+        }
+        children.add(lit.get());
+      }
+      return new ConvertedPredicate(Optional.of(new Predicate("IN", children)));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
