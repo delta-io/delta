@@ -109,6 +109,62 @@ public class ExpressionUtilsTest {
     assertEquals(2, nonNullResult.get().getChildren().size());
   }
 
+  @Test
+  public void testStringStartsWithFilter() {
+    StringStartsWith filter = new StringStartsWith("name", "Al");
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "StringStartsWith filter should be converted");
+    assertFalse(result.isPartial(), "StringStartsWith filter should be fully converted");
+    assertEquals("STARTS_WITH", result.get().getName());
+    // Children: column + string literal
+    assertEquals(2, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testStringStartsWithFilter_EmptyPrefix() {
+    // An empty prefix matches everything — still a valid predicate to push down
+    StringStartsWith filter = new StringStartsWith("name", "");
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "StringStartsWith with empty prefix should be converted");
+    assertEquals("STARTS_WITH", result.get().getName());
+  }
+
+  @Test
+  public void testStringStartsWithFilter_InAndFilter() {
+    // AND(StringStartsWith(...), EqualTo(...)) — both convertible, fully pushed down
+    StringStartsWith startsWithFilter = new StringStartsWith("name", "Al");
+    EqualTo eqFilter = new EqualTo("city", "hz");
+    org.apache.spark.sql.sources.And andFilter =
+        new org.apache.spark.sql.sources.And(startsWithFilter, eqFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+
+    assertTrue(result.isPresent(), "AND(StringStartsWith, EqualTo) should be converted");
+    assertFalse(result.isPartial(), "AND(StringStartsWith, EqualTo) should be fully converted");
+    assertTrue(
+        result.get() instanceof io.delta.kernel.expressions.And,
+        "Result should be an AND predicate");
+  }
+
+  @Test
+  public void testStringStartsWithFilter_NotFilter() {
+    // NOT(StringStartsWith(...)) — should be converted since child is convertible
+    StringStartsWith startsWithFilter = new StringStartsWith("name", "Al");
+    Not notFilter = new Not(startsWithFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
+
+    assertTrue(result.isPresent(), "NOT(StringStartsWith) should be converted");
+    assertFalse(result.isPartial(), "NOT(StringStartsWith) should be fully converted");
+    assertEquals("NOT", result.get().getName());
+  }
+
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(

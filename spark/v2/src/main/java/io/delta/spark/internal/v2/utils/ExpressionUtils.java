@@ -57,6 +57,7 @@ public final class ExpressionUtils {
    *   <li>Null tests: IsNull, IsNotNull
    *   <li>Null-safe comparison: EqualNullSafe
    *   <li>Logical operators: And, Or, Not
+   *   <li>String prefix: StringStartsWith
    * </ul>
    *
    * @param filter the Spark SQL filter to convert
@@ -129,6 +130,13 @@ public final class ExpressionUtils {
       IsNotNull f = (IsNotNull) filter;
       return new ConvertedPredicate(
           Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute()))));
+    }
+    if (filter instanceof StringStartsWith) {
+      StringStartsWith f = (StringStartsWith) filter;
+      return new ConvertedPredicate(
+          Optional.of(
+              new Predicate(
+                  "STARTS_WITH", kernelColumn(f.attribute()), Literal.ofString(f.value()))));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
