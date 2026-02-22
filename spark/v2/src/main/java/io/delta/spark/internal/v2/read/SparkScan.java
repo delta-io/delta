@@ -23,6 +23,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
@@ -105,6 +106,12 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
+  private long totalRows = 0L;
+  // true iff every AddFile in the scan had numRecords in its stats JSON
+  private boolean rowCountKnown = false;
+  // per-file row counts, keyed by filePath; populated during planning for use after runtime
+  // filtering
+  private Map<String, Long> fileRowCounts = new HashMap<>();
   // Estimated size in bytes accounting for column projection, used for query optimizer cost
   // estimation
   private long estimatedSizeInBytes = 0L;
@@ -215,8 +222,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown at planning time.
-        return OptionalLong.empty();
+        return rowCountKnown ? OptionalLong.of(totalRows) : OptionalLong.empty();
       }
     };
   }
@@ -280,7 +286,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
-    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    // Request stats to be included so we can populate numRows in estimateStatistics().
+    // ScanImpl.getScanFiles(engine, includeStats=true) reads the stats JSON field from the
+    // transaction log alongside the regular AddFile fields.
+    final Iterator<FilteredColumnarBatch> scanFileBatches;
+    if (kernelScan instanceof ScanImpl) {
+      scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
+      rowCountKnown = true; // assume all files have stats; set to false on first miss
+    } else {
+      // Fallback: stats will not be available, numRows() will return empty.
+      rowCountKnown = false;
+      scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    }
 
     final String[] locations = new String[0];
     final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
@@ -299,6 +316,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
+
+          Optional<Long> numRecords = addFile.getNumRecords();
+          if (numRecords.isPresent()) {
+            totalRows += numRecords.get();
+            fileRowCounts.put(partitionedFile.filePath().toString(), numRecords.get());
+          } else {
+            rowCountKnown = false;
+          }
         }
       } catch (IOException e) {
         throw new RuntimeException(e);
@@ -338,13 +363,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         }
       }
 
-      // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is
-      // filtered out
+      // Update partitionedFiles, totalBytes, totalRows, and estimatedSizeInBytes if any partition
+      // is filtered out
       if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
         this.partitionedFiles = runtimeFilteredPartitionedFiles;
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
+        if (rowCountKnown) {
+          this.totalRows =
+              runtimeFilteredPartitionedFiles.stream()
+                  .mapToLong(pf -> fileRowCounts.getOrDefault(pf.filePath().toString(), 0L))
+                  .sum();
+        }
       }
     }
   }

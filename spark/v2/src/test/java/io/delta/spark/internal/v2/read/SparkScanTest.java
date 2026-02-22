@@ -281,6 +281,65 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (long) field.get(scan);
   }
 
+  private static long getTotalRows(SparkScan scan) throws Exception {
+    scan.estimateStatistics(); // ensurePlanned
+    Field field = SparkScan.class.getDeclaredField("totalRows");
+    field.setAccessible(true);
+    return (long) field.get(scan);
+  }
+
+  private static boolean isRowCountKnown(SparkScan scan) throws Exception {
+    scan.estimateStatistics(); // ensurePlanned
+    Field field = SparkScan.class.getDeclaredField("rowCountKnown");
+    field.setAccessible(true);
+    return (boolean) field.get(scan);
+  }
+
+  // ================================================================================================
+  // Tests for numRows statistics
+  // ================================================================================================
+
+  @Test
+  public void testNumRowsInStatistics() throws Exception {
+    // Table has 5 rows inserted as 5 separate partitions (1 row each), all with stats.
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
+    assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
+    assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+    assertEquals(5L, scan.estimateStatistics().numRows().getAsLong());
+  }
+
+  @Test
+  public void testNumRowsAfterRuntimeFiltering() throws Exception {
+    // city=hz matches 2 partitions: (date=20180520, city=hz) and (date=20180718, city=hz)
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
+
+    scan.filter(new Predicate[] {cityPredicate}); // city=hz
+
+    assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+    assertEquals(
+        2L, scan.estimateStatistics().numRows().getAsLong(), "2 rows after city=hz filter");
+  }
+
+  @Test
+  public void testNumRowsZeroAfterFilteringOutAllFiles() throws Exception {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
+
+    assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+    assertEquals(
+        0L,
+        scan.estimateStatistics().numRows().getAsLong(),
+        "0 rows after filtering out all files");
+  }
+
   // ================================================================================================
   // Tests for streaming options validation
   // ================================================================================================
