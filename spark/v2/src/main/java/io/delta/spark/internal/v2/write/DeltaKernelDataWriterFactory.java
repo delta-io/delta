@@ -27,29 +27,36 @@ import org.apache.spark.sql.types.StructType;
 
 /**
  * Serializable factory that creates {@link DeltaKernelDataWriter} instances on executors. Carries
- * table path, Hadoop config, serialized transaction state, write schema, and partition column
- * names.
+ * table path, Hadoop config (as a serializable map; see {@link HadoopConfSerialization}),
+ * serialized transaction state, table schema (for Kernel nullability match), and partition columns.
+ *
+ * <p>POC: We store Hadoop config as {@code Map<String,String>} instead of {@link Configuration}
+ * because Configuration is not Serializable and this factory is sent to executors.
  */
 public class DeltaKernelDataWriterFactory implements DataWriterFactory, Serializable {
 
   private final String tablePath;
-  private final Configuration hadoopConf;
+  /** Serializable copy of Hadoop config; reconstructed to Configuration on the executor. */
+  private final Map<String, String> hadoopConfMap;
+
   private final SerializableKernelRowWrapper serializedTxnState;
-  private final StructType writeSchema;
+  /** Table schema (from snapshot); used for Kernel so data schema nullability matches table. */
+  private final StructType tableSchema;
+
   private final List<String> partitionColumnNames;
   private final Map<String, String> options;
 
   public DeltaKernelDataWriterFactory(
       String tablePath,
-      Configuration hadoopConf,
+      Map<String, String> hadoopConfMap,
       SerializableKernelRowWrapper serializedTxnState,
-      StructType writeSchema,
+      StructType tableSchema,
       List<String> partitionColumnNames,
       Map<String, String> options) {
     this.tablePath = tablePath;
-    this.hadoopConf = hadoopConf;
+    this.hadoopConfMap = hadoopConfMap != null ? hadoopConfMap : java.util.Collections.emptyMap();
     this.serializedTxnState = serializedTxnState;
-    this.writeSchema = writeSchema;
+    this.tableSchema = tableSchema;
     this.partitionColumnNames =
         partitionColumnNames != null ? partitionColumnNames : java.util.Collections.emptyList();
     this.options = options != null ? options : java.util.Collections.emptyMap();
@@ -57,11 +64,12 @@ public class DeltaKernelDataWriterFactory implements DataWriterFactory, Serializ
 
   @Override
   public DataWriter<InternalRow> createWriter(int partitionId, long taskId) {
+    Configuration hadoopConf = HadoopConfSerialization.fromMap(hadoopConfMap);
     return new DeltaKernelDataWriter(
         tablePath,
         hadoopConf,
         serializedTxnState,
-        writeSchema,
+        tableSchema,
         partitionColumnNames,
         options,
         partitionId,

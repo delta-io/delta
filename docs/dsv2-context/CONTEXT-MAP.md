@@ -20,6 +20,9 @@ This document ties together all context needed to implement **SupportsWrite** (a
 | Where SparkTable lives, current capabilities, what to add | [03-spark-table-and-target.md](03-spark-table-and-target.md) |
 | How DeltaTableV2 does writes today (V1 path, options, overwrite) | [04-delta-v1-write-reference.md](04-delta-v1-write-reference.md) |
 | PoC reference (huan233usc/delta PR #24) – learn from it; not golden truth | [05-poc-reference-huan233usc-pr24.md](05-poc-reference-huan233usc-pr24.md) |
+| Kernel Parquet vs. Spark/Delta Parquet (design choice) | [06-write-path-design-kernel-vs-spark-parquet.md](06-write-path-design-kernel-vs-spark-parquet.md) |
+| E2E todo and run instructions for "Append: basic append" | [07-e2e-todo.md](07-e2e-todo.md) |
+| POC implementation decisions and shortcuts (config serialization, schema, cut corners) | [08-poc-decisions-and-shortcuts.md](08-poc-decisions-and-shortcuts.md) |
 | External design docs (Google/Atlassian) | [00-README.md](00-README.md) (links only; require sign-in) |
 
 ---
@@ -107,8 +110,9 @@ This document ties together all context needed to implement **SupportsWrite** (a
 | Write builder | New: e.g. `spark/v2/.../write/DeltaKernelWriteBuilder.java` |
 | Batch write | New: e.g. `spark/v2/.../write/DeltaKernelBatchWrite.java` |
 | Writer factory / writer | New: e.g. `DeltaKernelDataWriterFactory.java`, `DeltaKernelDataWriter.java` |
+| Hadoop config (serializable) | New: `HadoopConfSerialization.java` – POC: copy config to Map for executor (see [08](08-poc-decisions-and-shortcuts.md)) |
 | Commit message | New or reuse: a type that holds serialized Delta log actions (e.g. byte[] or list of Row bytes) |
-| Tests | Un-skip or add tests in `DataFrameWriterV2WithV2ConnectorSuite`; add unit/integration tests for append |
+| Tests | "Append: basic append" in `DataFrameWriterV2WithV2ConnectorSuite` is enabled and **passes**; other write tests still in shouldFail (see [07](07-e2e-todo.md), [08](08-poc-decisions-and-shortcuts.md)) |
 
 ---
 

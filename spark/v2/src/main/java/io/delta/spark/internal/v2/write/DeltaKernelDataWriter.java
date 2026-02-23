@@ -44,13 +44,19 @@ import org.apache.spark.sql.connector.write.WriterCommitMessage;
  * Per-task writer that buffers Spark {@link InternalRow}s, converts them to Kernel format, runs
  * transformLogicalData → writeParquetFiles → generateAppendActions, and returns a commit message
  * with the serialized Delta log actions.
+ *
+ * <p>Uses table schema (not LogicalWriteInfo schema) for Kernel so nullability matches the table;
+ * the query schema can have different nullability (e.g. non-null id) and Kernel requires exact
+ * match. Column order is assumed to match between InternalRow and table schema.
  */
 public class DeltaKernelDataWriter implements DataWriter<InternalRow> {
 
   private final String tablePath;
   private final Configuration hadoopConf;
   private final SerializableKernelRowWrapper serializedTxnState;
-  private final org.apache.spark.sql.types.StructType writeSchema;
+  /** Table schema; used for Kernel and adapter so nullability matches table. */
+  private final org.apache.spark.sql.types.StructType tableSchema;
+
   private final List<String> partitionColumnNames;
   private final Map<String, String> options;
   private final int partitionId;
@@ -63,7 +69,7 @@ public class DeltaKernelDataWriter implements DataWriter<InternalRow> {
       String tablePath,
       Configuration hadoopConf,
       SerializableKernelRowWrapper serializedTxnState,
-      org.apache.spark.sql.types.StructType writeSchema,
+      org.apache.spark.sql.types.StructType tableSchema,
       List<String> partitionColumnNames,
       Map<String, String> options,
       int partitionId,
@@ -71,13 +77,13 @@ public class DeltaKernelDataWriter implements DataWriter<InternalRow> {
     this.tablePath = tablePath;
     this.hadoopConf = hadoopConf;
     this.serializedTxnState = serializedTxnState;
-    this.writeSchema = writeSchema;
+    this.tableSchema = tableSchema;
     this.partitionColumnNames =
         partitionColumnNames != null ? partitionColumnNames : Collections.emptyList();
     this.options = options != null ? options : Collections.emptyMap();
     this.partitionId = partitionId;
     this.taskId = taskId;
-    this.kernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(writeSchema);
+    this.kernelSchema = SchemaUtils.convertSparkSchemaToKernelSchema(tableSchema);
   }
 
   @Override
@@ -94,10 +100,10 @@ public class DeltaKernelDataWriter implements DataWriter<InternalRow> {
     Engine engine = DefaultEngine.create(hadoopConf);
     Row txnState = serializedTxnState.getRow();
 
-    // Convert buffered InternalRows to Kernel Rows
+    // Convert buffered InternalRows to Kernel Rows (table schema so nullability matches)
     List<Row> kernelRows = new ArrayList<>(rowBuffer.size());
     for (InternalRow internalRow : rowBuffer) {
-      kernelRows.add(new InternalRowToKernelRowAdapter(internalRow, writeSchema, kernelSchema));
+      kernelRows.add(new InternalRowToKernelRowAdapter(internalRow, tableSchema, kernelSchema));
     }
 
     // Single partition (unpartitioned) for first version

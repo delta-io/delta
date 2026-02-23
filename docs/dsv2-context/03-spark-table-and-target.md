@@ -13,12 +13,12 @@ There is a **kernel-spark** module in the repo (build artifacts under `kernel-sp
 
 ## Current SparkTable behavior
 
-- **Implements:** `Table`, `SupportsRead` (only).
-- **Does not implement:** `SupportsWrite`.
-- **Capabilities:** `TableCapability.BATCH_READ`, `TableCapability.MICRO_BATCH_READ`.
+- **Implements:** `Table`, `SupportsRead`, **`SupportsWrite`** (POC: append-only batch write).
+- **Capabilities:** `TableCapability.BATCH_READ`, `TableCapability.MICRO_BATCH_READ`, **`TableCapability.BATCH_WRITE`**.
 - **Read path:** Uses Delta Kernel (Snapshot, Scan, etc.) via `SparkScanBuilder` and micro-batch streaming; see `spark/v2/README.md`.
+- **Write path (POC):** In STRICT mode, `writeTo(...).append()` uses `DeltaKernelWriteBuilder` → `DeltaKernelBatchWrite` → `DeltaKernelDataWriter`; see [07-e2e-todo.md](07-e2e-todo.md) and [08-poc-decisions-and-shortcuts.md](08-poc-decisions-and-shortcuts.md). Append-only; unpartitioned; overwrite/truncate not supported.
 
-So today the V2 connector is **read-only**. Writes to the same table identifier go through the legacy Delta source (DeltaTableV2 / V1 write) when the table is resolved as a non–Kernel table, or they fail if only the Kernel table is used.
+When the catalog returns SparkTable (e.g. V2_ENABLE_MODE=STRICT), writes go through this Kernel write path. Otherwise they use the legacy Delta source (DeltaTableV2 / V1 write).
 
 ## Relevant fields and dependencies (existing)
 
@@ -45,13 +45,11 @@ All of these will be useful for the write path: we need table path, options, sch
 
 Overwrite/truncate/dynamic overwrite require extra Kernel or Delta protocol support (e.g. overwrite by filter, or truncate); the first milestone can be **append-only** and still be useful.
 
-## Tests that currently “fail” without write support
+## Tests in DataFrameWriterV2WithV2ConnectorSuite
 
-In `spark-unified/src/test/scala/org/apache/spark/sql/delta/DataFrameWriterV2WithV2ConnectorSuite.scala`, several tests are marked as expected to fail because they require write operations:
+In `spark-unified/.../DataFrameWriterV2WithV2ConnectorSuite.scala`, several tests remain in `shouldFail` (Overwrite, Replace, CreateOrReplace, some Create tests).
 
-- Append, Overwrite, OverwritePartitions, Replace, CreateOrReplace, and some Create tests.
-
-Once SparkTable implements `SupportsWrite` and a correct BatchWrite, those tests can be re-enabled or adapted (and new tests added for the Kernel write path).
+**"Append: basic append"** is now enabled and passes (e2e Kernel write path). Other write tests remain in `shouldFail`. See [07-e2e-todo.md](07-e2e-todo.md) and [08-poc-decisions-and-shortcuts.md](08-poc-decisions-and-shortcuts.md).
 
 ## Summary
 

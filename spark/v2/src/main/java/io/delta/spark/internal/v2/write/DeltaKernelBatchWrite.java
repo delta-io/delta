@@ -23,6 +23,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.util.ArrayList;
 import java.util.List;
@@ -80,8 +81,21 @@ public class DeltaKernelBatchWrite implements BatchWrite {
 
   @Override
   public DataWriterFactory createBatchWriterFactory(PhysicalWriteInfo physicalWriteInfo) {
+    // Serialize Hadoop config as Map so the factory can be sent to executors (Configuration is not
+    // Serializable). See HadoopConfSerialization and DeltaKernelDataWriterFactory.
+    java.util.Map<String, String> hadoopConfMap =
+        io.delta.spark.internal.v2.write.HadoopConfSerialization.toMap(hadoopConf);
+    // Use table schema (from snapshot) for Kernel so nullability matches; LogicalWriteInfo schema
+    // can differ (e.g. id nullable=false in query vs nullable=true in table). See docs (07-e2e).
+    StructType tableSchemaSpark =
+        SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
     return new DeltaKernelDataWriterFactory(
-        tablePath, hadoopConf, serializedTxnState, writeSchema, partitionColumnNames, options);
+        tablePath,
+        hadoopConfMap,
+        serializedTxnState,
+        tableSchemaSpark,
+        partitionColumnNames,
+        options);
   }
 
   @Override
