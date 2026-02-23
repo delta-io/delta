@@ -3,11 +3,17 @@
 Collect per-suite test durations from CI and write project/test-durations.csv.
 
 Usage:
-    # Update test-durations.csv from last 5 successful runs on master:
+    # Update test-durations.csv from last 30 successful runs on master (default):
     python3 project/scripts/collect_test_durations.py
 
     # Use more runs for averaging:
-    python3 project/scripts/collect_test_durations.py --last-n-runs 10
+    python3 project/scripts/collect_test_durations.py --last-n-runs 50
+
+    # Time-bound the run to 5 minutes (stops downloading more artifacts after the limit):
+    python3 project/scripts/collect_test_durations.py --max-minutes 5
+
+    # Disable the time limit (process all --last-n-runs runs unconditionally):
+    python3 project/scripts/collect_test_durations.py --max-minutes 0
 
 Requirements:
     - gh CLI authenticated with access to delta-io/delta
@@ -21,6 +27,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from collections import defaultdict
 from xml.etree import ElementTree
@@ -28,8 +35,9 @@ from xml.etree import ElementTree
 
 REPO = "delta-io/delta"
 CSV_FILE = "project/test-durations.csv"
-DEFAULT_LAST_N_RUNS = 5
+DEFAULT_LAST_N_RUNS = 30
 DEFAULT_TOP_N = 200
+DEFAULT_MAX_MINUTES = 5
 
 
 def run_gh(args):
@@ -159,16 +167,24 @@ def main():
                         help=f"Number of runs to average (default: {DEFAULT_LAST_N_RUNS})")
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N,
                         help=f"Number of slowest suites to keep (default: {DEFAULT_TOP_N})")
+    parser.add_argument("--max-minutes", type=float, default=DEFAULT_MAX_MINUTES,
+                        help=f"Stop downloading after this many minutes (default: {DEFAULT_MAX_MINUTES},"
+                             " 0 = no limit)")
     args = parser.parse_args()
 
     # Fetch run IDs
     print("Finding recent successful runs on master...")
     run_ids = get_run_ids(args.last_n_runs)
 
+    deadline = time.monotonic() + args.max_minutes * 60 if args.max_minutes > 0 else None
+
     # Collect durations from each run
     all_durations = defaultdict(list)
     with tempfile.TemporaryDirectory() as tmpdir:
         for i, run_id in enumerate(run_ids):
+            if deadline is not None and time.monotonic() >= deadline:
+                print(f"\nTime limit reached after {i} run(s); stopping early.")
+                break
             print(f"\nRun {i + 1}/{len(run_ids)}: {run_id}")
             for name, dur in collect_from_run(run_id, tmpdir).items():
                 all_durations[name].append(dur)
@@ -180,6 +196,11 @@ def main():
     }
     sorted_suites = sorted(averaged.items(), key=lambda x: -x[1])[:args.top_n]
 
+    if not sorted_suites:
+        print("\nNo test-report artifacts found. Has the JUnit XML upload been enabled on master?")
+        print(f"{CSV_FILE} was NOT modified.")
+        sys.exit(1)
+
     # Write CSV
     with open(CSV_FILE, 'w') as f:
         f.write("suite_name,duration_minutes\n")
@@ -187,12 +208,9 @@ def main():
             f.write(f"{name},{dur}\n")
 
     print(f"\nWrote {len(sorted_suites)} suites to {CSV_FILE}")
-    if sorted_suites:
-        print(f"Total duration: {sum(d for _, d in sorted_suites):.1f} min")
-        print(f"Slowest: {sorted_suites[0][0]} ({sorted_suites[0][1]} min)")
-        print(f"Fastest included: {sorted_suites[-1][0]} ({sorted_suites[-1][1]} min)")
-    else:
-        print("No test-report artifacts found. Has the JUnit XML upload been enabled on master?")
+    print(f"Total duration: {sum(d for _, d in sorted_suites):.1f} min")
+    print(f"Slowest: {sorted_suites[0][0]} ({sorted_suites[0][1]} min)")
+    print(f"Fastest included: {sorted_suites[-1][0]} ({sorted_suites[-1][1]} min)")
 
 
 if __name__ == "__main__":
