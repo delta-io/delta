@@ -200,7 +200,8 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
-    return new io.delta.spark.internal.v2.write.DeltaKernelWriteBuilder(this, info);
+    // Option B POC: use Spark Parquet writer; Kernel only for commit. See docs 06, 08.
+    return new io.delta.spark.internal.v2.write.DeltaSparkParquetWriteBuilder(this, info);
   }
 
   /**
