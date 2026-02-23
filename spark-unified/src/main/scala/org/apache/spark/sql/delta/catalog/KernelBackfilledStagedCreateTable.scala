@@ -77,6 +77,13 @@ class KernelBackfilledStagedCreateTable(
       baseTableProperties,
       writeOptions,
       spark)
+    // Use the original staged properties (including UC-issued filesystem credentials) for the
+    // Kernel engine setup, while still recording only non-credential table properties in v0
+    // metadata/protocol. CreateTableCommitCoordinator will filter out fs/dfs options from the
+    // committed table properties.
+    val commitProperties = new util.HashMap[String, String]()
+    commitProperties.putAll(properties)
+    tableProperties.foreach { case (k, v) => commitProperties.put(k, v) }
 
     val dataActions = asSelectQuery match {
       case Some(df) =>
@@ -97,7 +104,7 @@ class KernelBackfilledStagedCreateTable(
       ident,
       schema,
       partitions,
-      tableProperties.asJava,
+      commitProperties,
       spark,
       catalogName,
       engineInfo,

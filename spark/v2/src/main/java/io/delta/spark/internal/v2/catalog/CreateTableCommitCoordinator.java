@@ -111,9 +111,17 @@ public final class CreateTableCommitCoordinator {
   private static Engine createKernelEngine(SparkSession spark, Map<String, String> properties) {
     Map<String, String> fsOptions = new HashMap<>();
     for (Map.Entry<String, String> entry : properties.entrySet()) {
+      String key = entry.getKey();
+      // Spark V2 catalogs may pass Hadoop conf options both with and without `option.` prefix.
+      // `newHadoopConfWithOptions` expects raw Hadoop keys (e.g. `fs.s3a.*`), so strip `option.`
+      // when present.
+      String effectiveKey =
+          key.startsWith(TableCatalog.OPTION_PREFIX)
+              ? key.substring(TableCatalog.OPTION_PREFIX.length())
+              : key;
       if (DeltaTableUtils.validDeltaTableHadoopPrefixes()
-          .exists(prefix -> entry.getKey().startsWith(prefix))) {
-        fsOptions.put(entry.getKey(), entry.getValue());
+          .exists(prefix -> effectiveKey.startsWith(prefix))) {
+        fsOptions.put(effectiveKey, entry.getValue());
       }
     }
     Configuration hadoopConf =
