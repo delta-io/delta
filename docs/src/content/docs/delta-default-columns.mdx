@@ -1,0 +1,59 @@
+---
+title: Delta default column values
+description: Learn about default column values in Delta.
+---
+
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+
+<Aside type="note">
+  This feature is available in Delta Lake 3.1.0 and above and is enabled using
+  the `allowColumnDefaults` writer [table
+  feature](/versioning/#what-are-table-features).
+</Aside>
+
+Delta enables the specification of [default expressions](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#default-columns) for columns in Delta tables. When users write to these tables without explicitly providing values for certain columns, or when they explicitly use the DEFAULT SQL keyword for a column, Delta automatically generates default values for those columns.
+
+This information is stored in the [StructField](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#struct-field) corresponding to the column of interest.
+
+## How to enable Delta Lake default column values
+
+<Aside
+  type="caution"
+  title="Important"
+>
+  Enabling default column values for a Delta table will upgrade its [protocol
+  version](/versioning/#what-is-a-protocol-version) to support [table
+  features](/versioning/#what-are-table-features). This protocol upgrade is
+  irreversible. Tables with default column values enabled can only be written to
+  in Delta Lake 3.1 and above.
+</Aside>
+
+You can enable default column values for a table by setting `delta.feature.allowColumnDefaults` to `enabled`:
+
+<Tabs>
+  <TabItem label="SQL">
+    ```sql
+    ALTER TABLE <table_name> SET TBLPROPERTIES (
+      'delta.feature.allowColumnDefaults' = 'enabled'
+    )
+    ```
+  </TabItem>
+</Tabs>
+
+## How to use default columns in SQL commands
+
+- For SQL commands that perform table writes, such as `INSERT`, `UPDATE`, and `MERGE` commands, the `DEFAULT` keyword resolves to the most recently assigned default value for the corresponding column (or NULL if no default value exists). For instance, the following SQL command will use the default value for the second column in the table: `INSERT INTO t VALUES (16, DEFAULT);`
+
+- It is also possible for INSERT commands to specify lists of fewer columns than the target table, in which case the engine will assign default values for the remaining columns (or NULL for any columns where no defaults yet exist).
+
+<Aside
+  type="caution"
+  title="Important"
+>
+  The metadata discussed here apply solely to write operations, not read
+  operations.
+</Aside>
+
+- The `ALTER TABLE ... ADD COLUMN` command that introduces a new column to an existing table may not specify a default value for the new column. For instance, the following SQL command is not supported in Delta Lake: `ALTER TABLE t ADD COLUMN c INT DEFAULT 16;`
+
+- It is permissible, however, to assign or update default values for columns that were created in previous commands. For example, the following SQL command is valid: `ALTER TABLE t ALTER COLUMN c SET DEFAULT 16;`
