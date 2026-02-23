@@ -83,6 +83,9 @@ class KernelBackfilledStagedCreateTable(
     // committed table properties.
     val commitProperties = new util.HashMap[String, String]()
     commitProperties.putAll(properties)
+    // Keep CTAS aligned with metadata-only create while also carrying any fs.* options surfaced
+    // through LogicalWriteInfo.
+    writeOptions.foreach { case (k, v) => commitProperties.put(k, v) }
     tableProperties.foreach { case (k, v) => commitProperties.put(k, v) }
 
     val dataActions = asSelectQuery match {
