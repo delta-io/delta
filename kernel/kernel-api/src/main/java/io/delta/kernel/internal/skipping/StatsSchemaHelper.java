@@ -242,8 +242,8 @@ public class StatsSchemaHelper {
   }
 
   /**
-   * Geo stats are stored as WKT POINT strings (e.g. "POINT (xmin ymin)") in the
-   * standard minValues / maxValues statistics sections.
+   * Geo stats are stored as WKT POINT strings (e.g. "POINT (xmin ymin)") in the standard minValues
+   * / maxValues statistics sections.
    */
   public boolean isGeoSkippingEligibleColumn(Column column) {
     return isSkippingEligibleMinMaxColumn(column)
