@@ -49,7 +49,7 @@ trait ActionUtils extends VectorTestUtils {
       "engineInfo",
       "operation",
       Collections.emptyMap(), // operationParameters
-      false, // isBlindAppend
+      Optional.of(false), // isBlindAppend
       "txnId",
       Collections.emptyMap() // operationMetrics
     )
