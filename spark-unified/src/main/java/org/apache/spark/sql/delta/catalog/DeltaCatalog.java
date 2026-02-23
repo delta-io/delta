@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.function.Supplier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaV2Mode;
@@ -133,6 +134,29 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       return loadTable(ident);
     }
     return loadPathTable(ident);
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!(mode.shouldUseKernelCtasPoc(properties)
+        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+        && isPathIdentifier(ident))) {
+      return super.stageCreate(ident, schema, partitions, properties);
+    }
+    return new KernelBackfilledStagedCreateTable(
+        ident,
+        schema,
+        partitions,
+        properties,
+        spark(),
+        name(),
+        ENGINE_INFO,
+        true);
   }
 
   /**

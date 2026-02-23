@@ -3106,6 +3106,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
 
+  val V2_CTAS_USE_V1_WRITER_POC_ENABLED =
+    buildConf("v2.ctas.useV1WriterPoc.enabled")
+      .internal()
+      .doc(
+        """POC-only gate for CTAS through the v2 staged-table path.
+          |When enabled, STRICT mode can use DSv1 file writing to produce AddFile actions and then
+          |commit CREATE TABLE version 0 via Kernel.""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
     buildConf("streaming.initialSnapshotMaxFiles")
       .internal()

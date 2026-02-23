@@ -144,6 +144,22 @@ public class DeltaV2Mode {
   }
 
   /**
+   * Determines if CTAS POC should route through DSv2 staged CREATE and use DSv1 writer fallback
+   * for data-file generation.
+   *
+   * <p>POC policy:
+   * <ul>
+   *   <li>STRICT mode only</li>
+   *   <li>and SQL conf {@code spark.databricks.delta.v2.ctas.useV1WriterPoc.enabled=true}</li>
+   * </ul>
+   */
+  public boolean shouldUseKernelCtasPoc(Map<String, String> properties) {
+    return STRICT.equals(mode())
+        && (Boolean)
+            sqlConf.getConf(DeltaSQLConf$.MODULE$.V2_CTAS_USE_V1_WRITER_POC_ENABLED());
+  }
+
+  /**
    * Gets the current mode string (for logging/debugging).
    */
   public String getMode() {
