@@ -458,6 +458,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
 
+  val DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION =
+    buildConf("conflictChecker.enforceConcurrentFeatureEnablement.enabled")
+      .internal()
+      .doc("When enabled, the conflict checker will enforce that features that are marked " +
+        "as failing concurrent transactions at upgrade, will fail any conflicting commits with " +
+        "their enablement protocol changes.")
+      .booleanConf
+      .createWithDefault(false)
+
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
       .internal()
