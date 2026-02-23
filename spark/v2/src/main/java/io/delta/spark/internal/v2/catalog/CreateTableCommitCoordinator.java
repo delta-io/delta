@@ -84,9 +84,7 @@ public final class CreateTableCommitCoordinator {
         .entrySet()
         .removeIf(
             entry -> {
-              String key = entry.getKey();
-              String effectiveKey =
-                  key.startsWith("option.") ? key.substring("option.".length()) : key;
+              String effectiveKey = normalizeToHadoopKey(entry.getKey());
               return DeltaTableUtils.validDeltaTableHadoopPrefixes()
                   .exists(prefix -> effectiveKey.startsWith(prefix));
             });
@@ -111,9 +109,10 @@ public final class CreateTableCommitCoordinator {
   private static Engine createKernelEngine(SparkSession spark, Map<String, String> properties) {
     Map<String, String> fsOptions = new HashMap<>();
     for (Map.Entry<String, String> entry : properties.entrySet()) {
+      String effectiveKey = normalizeToHadoopKey(entry.getKey());
       if (DeltaTableUtils.validDeltaTableHadoopPrefixes()
-          .exists(prefix -> entry.getKey().startsWith(prefix))) {
-        fsOptions.put(entry.getKey(), entry.getValue());
+          .exists(prefix -> effectiveKey.startsWith(prefix))) {
+        fsOptions.put(effectiveKey, entry.getValue());
       }
     }
     Configuration hadoopConf =
@@ -150,12 +149,21 @@ public final class CreateTableCommitCoordinator {
         .entrySet()
         .removeIf(
             entry -> {
-              String key = entry.getKey();
-              String effectiveKey =
-                  key.startsWith("option.") ? key.substring("option.".length()) : key;
+              String effectiveKey = normalizeToHadoopKey(entry.getKey());
               return DeltaTableUtils.validDeltaTableHadoopPrefixes()
                   .exists(prefix -> effectiveKey.startsWith(prefix));
             });
     return filtered;
+  }
+
+  private static String normalizeToHadoopKey(String key) {
+    String normalized = key;
+    if (normalized.startsWith(TableCatalog.OPTION_PREFIX)) {
+      normalized = normalized.substring(TableCatalog.OPTION_PREFIX.length());
+    }
+    if (normalized.startsWith("spark.hadoop.")) {
+      normalized = normalized.substring("spark.hadoop.".length());
+    }
+    return normalized;
   }
 }
