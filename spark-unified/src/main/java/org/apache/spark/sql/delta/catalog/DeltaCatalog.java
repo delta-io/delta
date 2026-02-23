@@ -21,6 +21,7 @@ import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.kernel.utils.CloseableIterable;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
@@ -29,6 +30,7 @@ import org.apache.spark.sql.connector.catalog.Table;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaV2Mode;
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -102,11 +104,18 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       return super.createTable(ident, schema, partitions, properties);
     }
     boolean isPathTable = isPathIdentifier(ident);
+    Map<String, String> effectiveProperties = new HashMap<>(properties);
+    if (isUnityCatalog()
+        && CatalogTableUtils.isUnityCatalogManagedTableFromProperties(effectiveProperties)) {
+      // Temporary workaround for testing: explicitly enable vacuumProtocolCheck for UC-managed
+      // tables created via the Kernel path.
+      effectiveProperties.putIfAbsent("delta.feature.vacuumProtocolCheck", "supported");
+    }
     CreateTableCommitCoordinator.commitCreateTableVersion0(
         ident,
         schema,
         partitions,
-        properties,
+        effectiveProperties,
         spark(),
         name(),
         ENGINE_INFO,
@@ -130,7 +139,7 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
           ident,
           schema,
           partitions,
-          CreateTableCommitCoordinator.filterCredentialProperties(properties));
+          CreateTableCommitCoordinator.filterCredentialProperties(effectiveProperties));
       return loadTable(ident);
     }
     return loadPathTable(ident);
@@ -143,20 +152,39 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
       Transform[] partitions,
       Map<String, String> properties) {
     DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    boolean isPathTable = isPathIdentifier(ident);
+    boolean isUcManagedTable =
+        isUnityCatalog() && CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
     if (!(mode.shouldUseKernelCtasPoc(properties)
         && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
-        && isPathIdentifier(ident))) {
+        && (isPathTable || isUcManagedTable))) {
       return super.stageCreate(ident, schema, partitions, properties);
+    }
+    Map<String, String> effectiveProperties = new HashMap<>(properties);
+    if (isUcManagedTable) {
+      // Temporary workaround for testing: Kernel does not yet model vacuumProtocolCheck as a
+      // required dependency of catalogManaged, but Spark expects the dependency for UC-managed
+      // tables. Explicitly enabling it avoids protocol/metadata mismatches.
+      effectiveProperties.putIfAbsent("delta.feature.vacuumProtocolCheck", "supported");
+    }
+    Consumer<Map<String, String>> catalogRegistrar = null;
+    if (isUcManagedTable) {
+      catalogRegistrar =
+          filteredProps -> {
+            // Register/finalize the staged UC table after the v0 commit succeeds.
+            createCatalogTable(ident, schema, partitions, filteredProps);
+          };
     }
     return new KernelBackfilledStagedCreateTable(
         ident,
         schema,
         partitions,
-        properties,
+        effectiveProperties,
         spark(),
         name(),
         ENGINE_INFO,
-        true);
+        isPathTable,
+        catalogRegistrar);
   }
 
   /**

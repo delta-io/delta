@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 import java.util.Locale
+import java.util.function.Consumer
 
 import scala.collection.JavaConverters._
 
@@ -58,7 +59,8 @@ class KernelBackfilledStagedCreateTable(
     spark: SparkSession,
     catalogName: String,
     engineInfo: String,
-    isPathIdentifier: Boolean) extends StagedTable with SupportsWrite {
+    isPathIdentifier: Boolean,
+    catalogRegistrar: Consumer[util.Map[String, String]]) extends StagedTable with SupportsWrite {
 
   private var asSelectQuery: Option[DataFrame] = None
   private var writeOptions: Map[String, String] = Map.empty
@@ -101,6 +103,13 @@ class KernelBackfilledStagedCreateTable(
       engineInfo,
       isPathIdentifier,
       dataActions)
+
+    if (catalogRegistrar != null && !isPathIdentifier) {
+      val propsForCatalog = new util.HashMap[String, String]()
+      propsForCatalog.putAll(properties)
+      val filteredProps = CreateTableCommitCoordinator.filterCredentialProperties(propsForCatalog)
+      catalogRegistrar.accept(filteredProps)
+    }
   }
 
   override def name(): String = ident.name()

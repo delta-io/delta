@@ -25,6 +25,10 @@ import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
+import java.io.File;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -751,6 +755,53 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             // read raw S3 files without additional credential plumbing.
           });
     } finally {
+      spark().conf().set("spark.databricks.delta.v2.enableMode", "AUTO");
+    }
+  }
+
+  /** Tests UC-managed CTAS with DSv2 STRICT mode and CTAS POC gate enabled. */
+  @org.junit.jupiter.api.Test
+  public void testStrictModeManagedCtas() throws Exception {
+    spark().conf().set("spark.databricks.delta.v2.enableMode", "STRICT");
+    spark().conf().set("spark.databricks.delta.v2.ctas.useV1WriterPoc.enabled", "true");
+    try {
+      UnityCatalogInfo uc = unityCatalogInfo();
+      String fullTableName =
+          String.format("%s.%s.strict_managed_ctas", uc.catalogName(), uc.schemaName());
+
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+      sql(
+          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS i, 'a' AS s",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      tablesToCleanUp.add(fullTableName);
+
+      // Verify the table is readable and DESCRIBE EXTENDED does not hit protocol/metadata mismatch.
+      check(fullTableName, List.of(List.of("1", "a")));
+      sql("DESC EXTENDED %s", fullTableName);
+
+      // Verify UC API sees the schema for the created table.
+      TablesApi tablesApi = new TablesApi(uc.createApiClient());
+      TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
+      List<ColumnInfo> columns = tableInfo.getColumns();
+      assertThat(columns).hasSize(2);
+      Map<String, String> colTypes =
+          columns.stream()
+              .collect(Collectors.toMap(ColumnInfo::getName, c -> c.getTypeName().name()));
+      assertThat(colTypes).containsEntry("i", "INT");
+      assertThat(colTypes).containsEntry("s", "STRING");
+
+      // Verify kernel engineInfo for local (OSS) UC where storage is file://.
+      String storageLocation = tableInfo.getStorageLocation();
+      if (storageLocation != null && storageLocation.startsWith("file:")) {
+        URI locationUri = URI.create(storageLocation);
+        File commitFile =
+            Paths.get(locationUri).resolve("_delta_log/00000000000000000000.json").toFile();
+        assertThat(commitFile.exists()).isTrue();
+        String commitJson = new String(Files.readAllBytes(commitFile.toPath()));
+        assertThat(commitJson).contains("kernel-spark-dsv2");
+      }
+    } finally {
+      spark().conf().set("spark.databricks.delta.v2.ctas.useV1WriterPoc.enabled", "false");
       spark().conf().set("spark.databricks.delta.v2.enableMode", "AUTO");
     }
   }

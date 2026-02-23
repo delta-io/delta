@@ -412,13 +412,59 @@ public class UCCatalogManagedClient {
               }
             });
 
+    final GetCommitsResponse normalizedResponse = normalizeGetCommitsResponse(ucTableId, response);
+
     logger.info(
         "[{}] Number of ratified commits: {}, Max ratified version in UC: {}",
         ucTableId,
-        response.getCommits().size(),
-        response.getLatestTableVersion());
+        normalizedResponse.getCommits().size(),
+        normalizedResponse.getLatestTableVersion());
 
-    return response;
+    return normalizedResponse;
+  }
+
+  /**
+   * Normalizes {@link GetCommitsResponse} to satisfy Kernel invariants.
+   *
+   * <p>Some UC implementations return {@code latestTableVersion=-1} when there are no ratified
+   * commits yet. Kernel snapshot/commit-range builders require a non-negative max catalog version.
+   * In that case, we treat the latest version as 0 (new table) so that Kernel can still load the
+   * table from filesystem state (e.g. 000.json exists) while catalog commit history is empty.
+   *
+   * <p>If {@code latestTableVersion} is smaller than the max version present in the returned commit
+   * list, we also lift it to the max commit version (defensive against inconsistent responses).
+   */
+  private static GetCommitsResponse normalizeGetCommitsResponse(
+      String ucTableId, GetCommitsResponse response) {
+    final List<Commit> commits = response.getCommits();
+    final long latestFromUc = response.getLatestTableVersion();
+    final long maxCommitVersion = commits.stream().mapToLong(Commit::getVersion).max().orElse(-1L);
+
+    long normalizedLatest = latestFromUc;
+    if (normalizedLatest < 0) {
+      normalizedLatest = Math.max(0L, maxCommitVersion);
+      logger.warn(
+          "[{}] UC returned latestTableVersion={}, normalizing to {} (commitsReturned={})",
+          ucTableId,
+          latestFromUc,
+          normalizedLatest,
+          commits.size());
+    }
+    if (maxCommitVersion > normalizedLatest) {
+      logger.warn(
+          "[{}] UC returned latestTableVersion={} but max commit version in response is {}. "
+              + "Normalizing latestTableVersion to {}.",
+          ucTableId,
+          latestFromUc,
+          maxCommitVersion,
+          maxCommitVersion);
+      normalizedLatest = maxCommitVersion;
+    }
+
+    if (normalizedLatest == latestFromUc) {
+      return response;
+    }
+    return new GetCommitsResponse(commits, normalizedLatest);
   }
 
   private void validateTimeTravelVersionNotPastMax(
