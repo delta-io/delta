@@ -28,6 +28,7 @@ import org.apache.spark.sql.types.StructType
  * writer (no InternalRow→Kernel conversion). Still passes hadoopConfMap and txn state
  * so the writer can call Kernel's generateAppendActions after writing files.
  */
+// Option B: Spark Parquet write path
 class DeltaSparkParquetDataWriterFactory(
     val targetDirectory: String,
     val hadoopConfMap: java.util.Map[String, String],
