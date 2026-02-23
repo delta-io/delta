@@ -137,7 +137,7 @@ public class DeltaV2Mode {
       case STRICT:
         return true;
       case AUTO:
-        return CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+        return CatalogTableUtils.isCatalogManagedFromProperties(properties);
       default:
         return false;
     }
@@ -162,7 +162,7 @@ public class DeltaV2Mode {
       case STRICT:
         return true;
       case AUTO:
-        return CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+        return CatalogTableUtils.isCatalogManagedFromProperties(properties);
       default:
         return false;
     }

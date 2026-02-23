@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 import org.apache.spark.sql.delta.util.CatalogTableUtils;
@@ -94,7 +95,7 @@ public final class UCUtils {
       return Optional.empty();
     }
 
-    String ucTableId = properties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    String ucTableId = extractUCTableIdFromProperties(properties);
     if (ucTableId == null || ucTableId.isEmpty()) {
       throw new IllegalArgumentException("Cannot extract ucTableId from create table properties");
     }
@@ -134,6 +135,23 @@ public final class UCUtils {
     if (ucTableId == null || ucTableId.isEmpty()) {
       throw new IllegalArgumentException(
           "Cannot extract ucTableId from table " + catalogTable.identifier());
+    }
+    return ucTableId;
+  }
+
+  private static String extractUCTableIdFromProperties(Map<String, String> properties) {
+    String ucTableId = properties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      ucTableId =
+          properties.get(TableCatalog.OPTION_PREFIX + UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    }
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      ucTableId = properties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    }
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      ucTableId =
+          properties.get(
+              TableCatalog.OPTION_PREFIX + UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
     }
     return ucTableId;
   }
