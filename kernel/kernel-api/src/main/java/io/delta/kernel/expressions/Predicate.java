@@ -215,17 +215,7 @@ public class Predicate extends ScalarExpression {
   }
 
   private static final Set<String> BINARY_OPERATORS =
-      Stream.of(
-              "<",
-              "<=",
-              ">",
-              ">=",
-              "=",
-              "AND",
-              "OR",
-              "IS NOT DISTINCT FROM",
-              "STARTS_WITH",
-              "ST_INTERSECT_BOXES")
+      Stream.of("<", "<=", ">", ">=", "=", "AND", "OR", "IS NOT DISTINCT FROM", "STARTS_WITH")
           .collect(Collectors.toSet());
 
   /** Operators that can have multiple children (more than 2). */

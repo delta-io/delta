@@ -150,14 +150,20 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     @Override
     ExpressionTransformResult visitSTIntersectBoxes(Predicate predicate) {
-      ExpressionTransformResult leftResult = visit(getLeft(predicate));
-      ExpressionTransformResult rightResult = visit(getRight(predicate));
-      Expression left = leftResult.expression;
-      Expression right = rightResult.expression;
-
+      // ST_INTERSECT_BOXES is a data-skipping-only predicate. It must be translated to
+      // ST_INTERSECT_BOXES_ON_STATS via DataSkippingUtils before any evaluation occurs.
       return new ExpressionTransformResult(
-          STIntersectBoxesEvaluator.validateAndTransform(
-              predicate, left, leftResult.outputType, right, rightResult.outputType),
+          STIntersectBoxesEvaluator.validateAndTransformSTIntersectBoxes(predicate),
+          BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitSTIntersectBoxesOnStats(Predicate predicate) {
+      ExpressionTransformResult minResult = visit(predicate.getChildren().get(0));
+      ExpressionTransformResult maxResult = visit(predicate.getChildren().get(1));
+      return new ExpressionTransformResult(
+          STIntersectBoxesEvaluator.validateAndTransformSTIntersectBoxesOnStats(
+              predicate, minResult.outputType, maxResult.outputType),
           BooleanType.BOOLEAN);
     }
 
@@ -554,14 +560,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
 
     @Override
     ColumnVector visitSTIntersectBoxes(Predicate predicate) {
-      ColumnVector left = visit(getLeft(predicate));
-      ColumnVector right = visit(getRight(predicate));
-      checkArgument(
-          left.getSize() == right.getSize(),
-          "Left and right operand returned different results: left=%d, right=%d",
-          left.getSize(),
-          right.getSize());
-      return STIntersectBoxesEvaluator.eval(left, right);
+      // ST_INTERSECT_BOXES is a data-skipping-only predicate and must never be evaluated against
+      // row data. This indicates it was incorrectly used as a row filter.
+      throw new UnsupportedOperationException(
+          "ST_INTERSECT_BOXES cannot be evaluated against row data. "
+              + "It must be translated to ST_INTERSECT_BOXES_ON_STATS for data skipping.");
+    }
+
+    @Override
+    ColumnVector visitSTIntersectBoxesOnStats(Predicate predicate) {
+      ColumnVector minVector = visit(predicate.getChildren().get(0));
+      ColumnVector maxVector = visit(predicate.getChildren().get(1));
+      return STIntersectBoxesEvaluator.evalOnStats(minVector, maxVector, predicate);
     }
 
     @Override

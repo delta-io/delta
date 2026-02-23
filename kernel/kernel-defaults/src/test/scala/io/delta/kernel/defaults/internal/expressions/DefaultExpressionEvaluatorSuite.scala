@@ -2058,234 +2058,217 @@ class DefaultExpressionEvaluatorSuite extends AnyFunSuite with ExpressionSuiteBa
     }
   }
 
-  // Helper to create a bounding box struct type
-  private def boundingBoxType: StructType = {
-    new StructType()
-      .add("xmin", DoubleType.DOUBLE)
-      .add("ymin", DoubleType.DOUBLE)
-      .add("xmax", DoubleType.DOUBLE)
-      .add("ymax", DoubleType.DOUBLE)
+  // Helper to create a non-nullable string column vector (for geo stats POINT strings)
+  private def createPointVector(pointStrings: Array[String]): ColumnVector = {
+    import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+    DefaultGenericVector.fromArray(StringType.STRING, pointStrings.asInstanceOf[Array[AnyRef]])
   }
 
-  // Helper to create a bounding box column vector
-  private def createBoundingBoxVector(
-      numRows: Int,
-      xminValues: Array[Double],
-      yminValues: Array[Double],
-      xmaxValues: Array[Double],
-      ymaxValues: Array[Double],
-      nullability: Optional[Array[Boolean]] = Optional.empty()): ColumnVector = {
-    import io.delta.kernel.defaults.internal.data.vector.{DefaultDoubleVector, DefaultStructVector}
+  // Helper to create a nullable string column vector (for geo stats POINT strings)
+  private def createNullablePointVector(
+      pointStrings: Array[String],
+      nullFlags: Array[Boolean]): ColumnVector = {
+    import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector
+    val numRows = pointStrings.length
+    val values: Array[AnyRef] = (0 until numRows).map { i =>
+      if (nullFlags(i)) null else pointStrings(i): AnyRef
+    }.toArray
+    DefaultGenericVector.fromArray(StringType.STRING, values)
+  }
 
-    val xminVector = new DefaultDoubleVector(numRows, Optional.empty(), xminValues)
-    val yminVector = new DefaultDoubleVector(numRows, Optional.empty(), yminValues)
-    val xmaxVector = new DefaultDoubleVector(numRows, Optional.empty(), xmaxValues)
-    val ymaxVector = new DefaultDoubleVector(numRows, Optional.empty(), ymaxValues)
+  test("STIntersectBoxes: construction - valid args") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    val pred = new STIntersectBoxes(new Column("geo_col"), 1.0, 2.0, 3.0, 4.0)
+    assert(pred.getName === STIntersectBoxes.NAME)
+    assert(pred.getGeoColumn === new Column("geo_col"))
+    assert(pred.getQueryXmin === 1.0)
+    assert(pred.getQueryYmin === 2.0)
+    assert(pred.getQueryXmax === 3.0)
+    assert(pred.getQueryYmax === 4.0)
+  }
 
-    new DefaultStructVector(
+  test("STIntersectBoxes: any predicate named ST_INTERSECT_BOXES is rejected as row filter") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    // Even a raw Predicate with the ST_INTERSECT_BOXES name (not an STIntersectBoxes instance)
+    // is rejected by the evaluator — the name alone triggers the data-skipping-only guard.
+    val schema = new StructType().add("geo_col", StringType.STRING)
+    val rawPred = new Predicate(
+      STIntersectBoxes.NAME,
+      java.util.Arrays.asList[Expression](
+        new Column("geo_col"),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(10.0),
+        Literal.ofDouble(10.0)))
+    val ex = intercept[UnsupportedOperationException] {
+      evaluator(schema, rawPred, BooleanType.BOOLEAN)
+    }
+    assert(ex.getMessage.contains("ST_INTERSECT_BOXES is a data-skipping-only predicate"))
+  }
+
+  test("STIntersectBoxes: throws when evaluated as row filter") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    val schema = new StructType().add("geo_col", StringType.STRING)
+    val pred = new STIntersectBoxes(new Column("geo_col"), 0.0, 0.0, 10.0, 10.0)
+    val ex = intercept[UnsupportedOperationException] {
+      evaluator(schema, pred, BooleanType.BOOLEAN)
+    }
+    assert(ex.getMessage.contains("ST_INTERSECT_BOXES is a data-skipping-only predicate"))
+  }
+
+  test("ST_INTERSECT_BOXES_ON_STATS: basic intersection tests") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    // Each row is a file's geo bbox stored as separate minValues/maxValues WKT POINT stats.
+    // Query bbox is [0, 0, 10, 10].
+    // Row 0: file=[0,0,10,10]   → intersects (identical)
+    // Row 1: file=[5,5,15,15]   → intersects (overlap)
+    // Row 2: file=[11,11,20,20] → no intersect
+    // Row 3: file=[10,0,20,10]  → touching on edge → intersects
+    // Row 4: file=[0,10,10,20]  → touching on edge → intersects
+    // Row 5: file=[0,0,3,3]     → contained → intersects
+    // Row 6: file=[5,11,15,20]  → X overlap, no Y → no intersect
+    val minStrings = Array(
+      "POINT (0.0 0.0)",
+      "POINT (5.0 5.0)",
+      "POINT (11.0 11.0)",
+      "POINT (10.0 0.0)",
+      "POINT (0.0 10.0)",
+      "POINT (0.0 0.0)",
+      "POINT (5.0 11.0)")
+    val maxStrings = Array(
+      "POINT (10.0 10.0)",
+      "POINT (15.0 15.0)",
+      "POINT (20.0 20.0)",
+      "POINT (20.0 10.0)",
+      "POINT (10.0 20.0)",
+      "POINT (3.0 3.0)",
+      "POINT (15.0 20.0)")
+    val numRows = minStrings.length
+
+    val schema = new StructType()
+      .add("minStats", StringType.STRING)
+      .add("maxStats", StringType.STRING)
+    val batch = new DefaultColumnarBatch(
       numRows,
-      boundingBoxType,
-      nullability,
-      Array(xminVector, yminVector, xmaxVector, ymaxVector))
-  }
+      schema,
+      Array(createPointVector(minStrings), createPointVector(maxStrings)))
 
-  test("ST_INTERSECT_BOXES: basic intersection tests") {
-    val numRows = 8
+    val pred = new Predicate(
+      STIntersectBoxes.STATS_NAME,
+      java.util.Arrays.asList[Expression](
+        new Column("minStats"),
+        new Column("maxStats"),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(10.0),
+        Literal.ofDouble(10.0)))
 
-    // Test cases: each row has a different intersection scenario
-    // Row 0: boxes intersect (overlap)
-    // Row 1: boxes intersect (one inside another)
-    // Row 2: boxes don't intersect (no overlap)
-    // Row 3: boxes touch on edge (min edge of box1 == max edge of box2)
-    // Row 4: boxes touch at corner
-    // Row 5: boxes are identical
-    // Row 6: boxes overlap on X but not Y
-    // Row 7: boxes overlap on Y but not X
-
-    val leftXmin = Array(0.0, 5.0, 0.0, 10.0, 0.0, 0.0, 0.0, 0.0)
-    val leftYmin = Array(0.0, 5.0, 0.0, 10.0, 0.0, 0.0, 0.0, 10.0)
-    val leftXmax = Array(10.0, 15.0, 10.0, 20.0, 10.0, 10.0, 10.0, 10.0)
-    val leftYmax = Array(10.0, 15.0, 10.0, 20.0, 10.0, 10.0, 5.0, 20.0)
-
-    val rightXmin = Array(5.0, 7.0, 11.0, 20.0, 10.0, 0.0, 5.0, 11.0)
-    val rightYmin = Array(5.0, 7.0, 11.0, 20.0, 10.0, 0.0, 10.0, 5.0)
-    val rightXmax = Array(15.0, 13.0, 20.0, 30.0, 20.0, 10.0, 15.0, 20.0)
-    val rightYmax = Array(15.0, 13.0, 20.0, 30.0, 20.0, 10.0, 15.0, 15.0)
-
-    val expectedResults = Array(
-      true, // Row 0: overlap
-      true, // Row 1: one inside another
-      false, // Row 2: no overlap
-      true, // Row 3: touching on edge (should intersect)
-      true, // Row 4: touching at corner (should intersect)
-      true, // Row 5: identical boxes
-      false, // Row 6: overlap on X but not Y
-      false // Row 7: overlap on Y but not X
-    )
-
-    val leftVector = createBoundingBoxVector(numRows, leftXmin, leftYmin, leftXmax, leftYmax)
-    val rightVector = createBoundingBoxVector(numRows, rightXmin, rightYmin, rightXmax, rightYmax)
-
-    val batchSchema = new StructType()
-      .add("bbox1", boundingBoxType)
-      .add("bbox2", boundingBoxType)
-    val batch = new DefaultColumnarBatch(numRows, batchSchema, Array(leftVector, rightVector))
-
-    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
-    val outputVector = evaluator(batchSchema, expression, BooleanType.BOOLEAN).eval(batch)
-
-    assert(outputVector.getSize === numRows)
-    assert(outputVector.getDataType === BooleanType.BOOLEAN)
-
-    for (rowId <- 0 until numRows) {
-      assert(
-        !outputVector.isNullAt(rowId),
-        s"Row $rowId should not be null")
-      assert(
-        outputVector.getBoolean(rowId) === expectedResults(rowId),
-        s"Row $rowId: expected ${expectedResults(rowId)} but got ${outputVector.getBoolean(rowId)}")
+    val out = evaluator(schema, pred, BooleanType.BOOLEAN).eval(batch)
+    assert(out.getSize === numRows)
+    val expected = Array(true, true, false, true, true, true, false)
+    for (i <- 0 until numRows) {
+      assert(!out.isNullAt(i), s"Row $i should not be null")
+      assert(out.getBoolean(i) === expected(i), s"Row $i: expected ${expected(i)}")
     }
   }
 
-  test("ST_INTERSECT_BOXES: null handling") {
-    import io.delta.kernel.defaults.internal.data.vector.{DefaultDoubleVector, DefaultStructVector}
+  test("ST_INTERSECT_BOXES_ON_STATS: null stats yields null result") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    // Row 0: non-null min and max → result is non-null true
+    // Row 1: null minStats → result is null
+    // Row 2: non-null min and max → result is non-null true
+    val numRows = 3
+    val minStrings = Array("POINT (0.0 0.0)", null, "POINT (5.0 5.0)")
+    val maxStrings = Array("POINT (10.0 10.0)", "POINT (10.0 10.0)", "POINT (15.0 15.0)")
+    val nullFlags = Array(false, true, false)
 
-    val numRows = 4
-
-    // Test cases for null handling:
-    // Row 0: both boxes are valid
-    // Row 1: left box is null
-    // Row 2: right box is null
-    // Row 3: both boxes have null coordinates (xmin is null)
-
-    val leftXmin = Array(0.0, 0.0, 0.0, Double.NaN) // NaN represents null for row 3
-    val leftYmin = Array(0.0, 0.0, 0.0, 0.0)
-    val leftXmax = Array(10.0, 10.0, 10.0, 10.0)
-    val leftYmax = Array(10.0, 10.0, 10.0, 10.0)
-
-    val rightXmin = Array(5.0, 5.0, 5.0, 5.0)
-    val rightYmin = Array(5.0, 5.0, 5.0, 5.0)
-    val rightXmax = Array(15.0, 15.0, 15.0, 15.0)
-    val rightYmax = Array(15.0, 15.0, 15.0, 15.0)
-
-    // Create vectors with nullability for boxes
-    val leftBoxNullability = Array(false, true, false, false)
-    val rightBoxNullability = Array(false, false, true, false)
-
-    // Create coordinate vectors with nullability for row 3
-    val xminNullability = Array(false, false, false, true)
-    val xminVector = new DefaultDoubleVector(numRows, Optional.of(xminNullability), leftXmin)
-    val yminVector = new DefaultDoubleVector(numRows, Optional.empty(), leftYmin)
-    val xmaxVector = new DefaultDoubleVector(numRows, Optional.empty(), leftXmax)
-    val ymaxVector = new DefaultDoubleVector(numRows, Optional.empty(), leftYmax)
-
-    val leftVector = new DefaultStructVector(
+    val schema = new StructType()
+      .add("minStats", StringType.STRING)
+      .add("maxStats", StringType.STRING)
+    val batch = new DefaultColumnarBatch(
       numRows,
-      boundingBoxType,
-      Optional.of(leftBoxNullability),
-      Array(xminVector, yminVector, xmaxVector, ymaxVector))
+      schema,
+      Array(
+        createNullablePointVector(minStrings, nullFlags),
+        createPointVector(maxStrings)))
 
-    val rightVector = createBoundingBoxVector(
+    val pred = new Predicate(
+      STIntersectBoxes.STATS_NAME,
+      java.util.Arrays.asList[Expression](
+        new Column("minStats"),
+        new Column("maxStats"),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(10.0),
+        Literal.ofDouble(10.0)))
+
+    val out = evaluator(schema, pred, BooleanType.BOOLEAN).eval(batch)
+    assert(!out.isNullAt(0) && out.getBoolean(0) === true)
+    assert(out.isNullAt(1), "Row 1 (null minStats) should be null")
+    assert(!out.isNullAt(2) && out.getBoolean(2) === true)
+  }
+
+  test("ST_INTERSECT_BOXES_ON_STATS: rejects non-string min stat column") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    val schema = new StructType()
+      .add("minStats", DoubleType.DOUBLE) // wrong type
+      .add("maxStats", StringType.STRING)
+
+    val pred = new Predicate(
+      STIntersectBoxes.STATS_NAME,
+      java.util.Arrays.asList[Expression](
+        new Column("minStats"),
+        new Column("maxStats"),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(10.0),
+        Literal.ofDouble(10.0)))
+
+    val ex = intercept[UnsupportedOperationException] {
+      evaluator(schema, pred, BooleanType.BOOLEAN)
+    }
+    assert(ex.getMessage.contains("first argument (min stat column) must be StringType"))
+  }
+
+  test("ST_INTERSECT_BOXES_ON_STATS: WKT POINT variants parsed correctly") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+    // Verify that POINT Z, POINT M, POINT ZM formats parse correctly (z/m dims ignored)
+    // All files have bbox [0,0,5,5]; query bbox [0,0,10,10] → all intersect
+    val minStrings = Array(
+      "POINT (1.0 1.0)", // plain POINT
+      "POINT Z (1.0 1.0 100.0)", // POINT Z — z ignored
+      "POINT M (1.0 1.0 99.0)", // POINT M — m ignored
+      "POINT ZM (1.0 1.0 100.0 99.0)"
+    ) // POINT ZM — z and m ignored
+    val maxStrings = Array(
+      "POINT (5.0 5.0)",
+      "POINT Z (5.0 5.0 100.0)",
+      "POINT M (5.0 5.0 99.0)",
+      "POINT ZM (5.0 5.0 100.0 99.0)")
+    val numRows = minStrings.length
+
+    val schema = new StructType()
+      .add("minStats", StringType.STRING)
+      .add("maxStats", StringType.STRING)
+    val batch = new DefaultColumnarBatch(
       numRows,
-      rightXmin,
-      rightYmin,
-      rightXmax,
-      rightYmax,
-      Optional.of(rightBoxNullability))
+      schema,
+      Array(createPointVector(minStrings), createPointVector(maxStrings)))
 
-    val batchSchema = new StructType()
-      .add("bbox1", boundingBoxType)
-      .add("bbox2", boundingBoxType)
-    val batch = new DefaultColumnarBatch(numRows, batchSchema, Array(leftVector, rightVector))
+    val pred = new Predicate(
+      STIntersectBoxes.STATS_NAME,
+      java.util.Arrays.asList[Expression](
+        new Column("minStats"),
+        new Column("maxStats"),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(0.0),
+        Literal.ofDouble(10.0),
+        Literal.ofDouble(10.0)))
 
-    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
-    val outputVector = evaluator(batchSchema, expression, BooleanType.BOOLEAN).eval(batch)
-
-    assert(outputVector.getSize === numRows)
-    assert(outputVector.getDataType === BooleanType.BOOLEAN)
-
-    // Row 0: both valid, should intersect
-    assert(!outputVector.isNullAt(0), "Row 0 should not be null")
-    assert(outputVector.getBoolean(0) === true, "Row 0 should intersect")
-
-    // Row 1: left box is null, result should be null
-    assert(outputVector.isNullAt(1), "Row 1 should be null (left box is null)")
-
-    // Row 2: right box is null, result should be null
-    assert(outputVector.isNullAt(2), "Row 2 should be null (right box is null)")
-
-    // Row 3: coordinate is null, result should be null
-    assert(outputVector.isNullAt(3), "Row 3 should be null (coordinate is null)")
-  }
-
-  test("ST_INTERSECT_BOXES: validation errors - invalid field types") {
-    val invalidBboxType = new StructType()
-      .add("xmin", IntegerType.INTEGER) // should be double
-      .add("ymin", DoubleType.DOUBLE)
-      .add("xmax", DoubleType.DOUBLE)
-      .add("ymax", DoubleType.DOUBLE)
-
-    val batchSchema = new StructType()
-      .add("bbox1", invalidBboxType)
-      .add("bbox2", boundingBoxType)
-
-    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
-
-    val exception = intercept[UnsupportedOperationException] {
-      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
+    val out = evaluator(schema, pred, BooleanType.BOOLEAN).eval(batch)
+    for (i <- 0 until numRows) {
+      assert(!out.isNullAt(i), s"Row $i should not be null")
+      assert(out.getBoolean(i), s"Row $i should intersect")
     }
-    assert(exception.getMessage.contains("ST_INTERSECT_BOXES expects double type"))
-  }
-
-  test("ST_INTERSECT_BOXES: validation errors - invalid field names") {
-    val invalidBboxType = new StructType()
-      .add("x_min", DoubleType.DOUBLE) // wrong name
-      .add("ymin", DoubleType.DOUBLE)
-      .add("xmax", DoubleType.DOUBLE)
-      .add("ymax", DoubleType.DOUBLE)
-
-    val batchSchema = new StructType()
-      .add("bbox1", invalidBboxType)
-      .add("bbox2", boundingBoxType)
-
-    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
-
-    val exception = intercept[UnsupportedOperationException] {
-      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
-    }
-    assert(exception.getMessage.contains("ST_INTERSECT_BOXES expects bounding box field 'xmin'"))
-  }
-
-  test("ST_INTERSECT_BOXES: validation errors - wrong number of fields") {
-    val invalidBboxType = new StructType()
-      .add("xmin", DoubleType.DOUBLE)
-      .add("ymin", DoubleType.DOUBLE)
-      .add("xmax", DoubleType.DOUBLE)
-    // missing ymax
-
-    val batchSchema = new StructType()
-      .add("bbox1", invalidBboxType)
-      .add("bbox2", boundingBoxType)
-
-    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
-
-    val exception = intercept[UnsupportedOperationException] {
-      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
-    }
-    assert(
-      exception.getMessage.contains("ST_INTERSECT_BOXES expects bounding box struct with 4 fields"))
-  }
-
-  test("ST_INTERSECT_BOXES: validation errors - non-struct type") {
-    val batchSchema = new StructType()
-      .add("bbox1", StringType.STRING) // should be struct
-      .add("bbox2", boundingBoxType)
-
-    val expression = new Predicate("ST_INTERSECT_BOXES", new Column("bbox1"), new Column("bbox2"))
-
-    val exception = intercept[UnsupportedOperationException] {
-      evaluator(batchSchema, expression, BooleanType.BOOLEAN)
-    }
-    assert(exception.getMessage.contains("ST_INTERSECT_BOXES expects struct type inputs"))
   }
 }

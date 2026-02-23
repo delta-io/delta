@@ -19,56 +19,130 @@ import static io.delta.kernel.defaults.internal.DefaultEngineErrors.unsupportedE
 import static java.lang.String.format;
 
 import io.delta.kernel.data.ColumnVector;
-import io.delta.kernel.expressions.Expression;
+import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.types.BooleanType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.StructType;
+import io.delta.kernel.types.DoubleType;
+import io.delta.kernel.types.StringType;
+import java.util.List;
 
-/** Utility methods to evaluate {@code ST_INTERSECT_BOXES} expression. */
+/**
+ * Evaluator utilities for {@code ST_INTERSECT_BOXES} and {@code ST_INTERSECT_BOXES_ON_STATS}.
+ *
+ * <p>{@code ST_INTERSECT_BOXES(geoCol, xmin, ymin, xmax, ymax)} is the user-facing predicate. It is
+ * <em>not</em> evaluable against row data; attempting to do so throws an exception.
+ *
+ * <p>{@code ST_INTERSECT_BOXES_ON_STATS(minStatCol, maxStatCol, xmin, ymin, xmax, ymax)} is the
+ * internal stats-evaluation form.
+ *
+ * <ul>
+ *   <li>{@code minStatCol} — string column whose per-file value is a WKT POINT representing the min
+ *       bounding-box corner, e.g. {@code "POINT (xmin ymin)"}
+ *   <li>{@code maxStatCol} — string column whose per-file value is a WKT POINT representing the max
+ *       bounding-box corner, e.g. {@code "POINT (xmax ymax)"}
+ *   <li>The 4 double literals are the query bounding box extracted from {@code ST_INTERSECT_BOXES}
+ * </ul>
+ *
+ * <p>Supported POINT formats (WKT):
+ *
+ * <ul>
+ *   <li>{@code POINT (x y)}
+ *   <li>{@code POINT Z (x y z)} — z ignored
+ *   <li>{@code POINT M (x y m)} — m ignored
+ *   <li>{@code POINT ZM (x y z m)} — z and m ignored
+ * </ul>
+ */
 class STIntersectBoxesEvaluator {
   private STIntersectBoxesEvaluator() {}
 
+  // -------------------------------------------------------------------------
+  // ST_INTERSECT_BOXES — user-facing, must NOT be evaluated against row data
+  // -------------------------------------------------------------------------
+
   /**
-   * Validate and transform the {@code ST_INTERSECT_BOXES} expression with given validated and
-   * transformed inputs.
+   * Throws because {@code ST_INTERSECT_BOXES} must be translated to {@code
+   * ST_INTERSECT_BOXES_ON_STATS} before evaluation. If this is called it means the predicate was
+   * incorrectly passed as a row filter.
    */
-  static Predicate validateAndTransform(
-      Predicate predicate,
-      Expression left,
-      DataType leftType,
-      Expression right,
-      DataType rightType) {
+  static Predicate validateAndTransformSTIntersectBoxes(Predicate predicate) {
+    throw unsupportedExpressionException(
+        predicate,
+        "ST_INTERSECT_BOXES is a data-skipping-only predicate and cannot be evaluated against"
+            + " row data. Translate it to ST_INTERSECT_BOXES_ON_STATS via"
+            + " DataSkippingUtils.constructDataSkippingFilter before evaluation.");
+  }
 
-    // Validate that both operands are struct types with the expected bounding box schema
-    validateBoundingBoxType(leftType, predicate, "left");
-    validateBoundingBoxType(rightType, predicate, "right");
+  // -------------------------------------------------------------------------
+  // ST_INTERSECT_BOXES_ON_STATS — internal stats-evaluation form
+  // -------------------------------------------------------------------------
 
-    return new Predicate(predicate.getName(), left, right);
+  /**
+   * Validate and transform {@code ST_INTERSECT_BOXES_ON_STATS}. Expects:
+   *
+   * <ul>
+   *   <li>children[0]: resolved to {@link StringType} (minValues stat column — WKT POINT)
+   *   <li>children[1]: resolved to {@link StringType} (maxValues stat column — WKT POINT)
+   *   <li>children[2..5]: each a {@link Literal} of type {@link DoubleType} (query bbox)
+   * </ul>
+   */
+  static Predicate validateAndTransformSTIntersectBoxesOnStats(
+      Predicate predicate, DataType minColType, DataType maxColType) {
+
+    List<?> children = predicate.getChildren();
+    if (children.size() != 6) {
+      throw unsupportedExpressionException(
+          predicate,
+          format(
+              "ST_INTERSECT_BOXES_ON_STATS requires exactly 6 arguments"
+                  + " (minStatCol, maxStatCol, xmin, ymin, xmax, ymax), but got %d",
+              children.size()));
+    }
+    if (!(minColType instanceof StringType)) {
+      throw unsupportedExpressionException(
+          predicate,
+          format(
+              "ST_INTERSECT_BOXES_ON_STATS: first argument (min stat column) must be"
+                  + " StringType, but got %s",
+              minColType));
+    }
+    if (!(maxColType instanceof StringType)) {
+      throw unsupportedExpressionException(
+          predicate,
+          format(
+              "ST_INTERSECT_BOXES_ON_STATS: second argument (max stat column) must be"
+                  + " StringType, but got %s",
+              maxColType));
+    }
+    for (int i = 2; i <= 5; i++) {
+      Object arg = children.get(i);
+      if (!(arg instanceof Literal) || !(((Literal) arg).getDataType() instanceof DoubleType)) {
+        throw unsupportedExpressionException(
+            predicate,
+            format(
+                "ST_INTERSECT_BOXES_ON_STATS: argument %d must be a double Literal, but got %s",
+                i, arg));
+      }
+    }
+    return new Predicate(predicate.getName(), predicate.getChildren());
   }
 
   /**
-   * Utility method to evaluate the {@code ST_INTERSECT_BOXES} on given bounding box vectors.
+   * Evaluate {@code ST_INTERSECT_BOXES_ON_STATS} against a stats batch.
    *
-   * @param leftVector {@link ColumnVector} of bounding box struct type (xmin, ymin, xmax, ymax).
-   * @param rightVector {@link ColumnVector} of bounding box struct type (xmin, ymin, xmax, ymax).
-   * @return result {@link ColumnVector} containing boolean intersection results.
+   * @param minVector string {@link ColumnVector} of WKT POINT min-corner values per file
+   * @param maxVector string {@link ColumnVector} of WKT POINT max-corner values per file
+   * @param predicate carries the 4 query-bbox literals as children[2..5]
    */
-  static ColumnVector eval(ColumnVector leftVector, ColumnVector rightVector) {
-    // Extract child column vectors once (outside the row loop for efficiency)
-    // Each struct has 4 children: xmin, ymin, xmax, ymax (all doubles)
-    ColumnVector leftXmin = leftVector.getChild(0);
-    ColumnVector leftYmin = leftVector.getChild(1);
-    ColumnVector leftXmax = leftVector.getChild(2);
-    ColumnVector leftYmax = leftVector.getChild(3);
+  static ColumnVector evalOnStats(
+      ColumnVector minVector, ColumnVector maxVector, Predicate predicate) {
+    List<?> children = predicate.getChildren();
+    double qXmin = (Double) ((Literal) children.get(2)).getValue();
+    double qYmin = (Double) ((Literal) children.get(3)).getValue();
+    double qXmax = (Double) ((Literal) children.get(4)).getValue();
+    double qYmax = (Double) ((Literal) children.get(5)).getValue();
 
-    ColumnVector rightXmin = rightVector.getChild(0);
-    ColumnVector rightYmin = rightVector.getChild(1);
-    ColumnVector rightXmax = rightVector.getChild(2);
-    ColumnVector rightYmax = rightVector.getChild(3);
-
-    // Create a wrapper ColumnVector that lazily evaluates the intersection for each row
     return new ColumnVector() {
       @Override
       public DataType getDataType() {
@@ -77,94 +151,70 @@ class STIntersectBoxesEvaluator {
 
       @Override
       public int getSize() {
-        return leftVector.getSize();
+        return minVector.getSize();
       }
 
       @Override
       public void close() {
-        Utils.closeCloseables(leftVector, rightVector);
+        Utils.closeCloseables(minVector, maxVector);
       }
 
       @Override
       public boolean isNullAt(int rowId) {
-        // Result is null if either bounding box is null
-        if (leftVector.isNullAt(rowId) || rightVector.isNullAt(rowId)) {
-          return true;
-        }
-
-        // Result is null if any coordinate is null
-        return leftXmin.isNullAt(rowId)
-            || leftYmin.isNullAt(rowId)
-            || leftXmax.isNullAt(rowId)
-            || leftYmax.isNullAt(rowId)
-            || rightXmin.isNullAt(rowId)
-            || rightYmin.isNullAt(rowId)
-            || rightXmax.isNullAt(rowId)
-            || rightYmax.isNullAt(rowId);
+        return minVector.isNullAt(rowId) || maxVector.isNullAt(rowId);
       }
 
       @Override
       public boolean getBoolean(int rowId) {
-        // Extract double values for this row
-        double xmin1 = leftXmin.getDouble(rowId);
-        double ymin1 = leftYmin.getDouble(rowId);
-        double xmax1 = leftXmax.getDouble(rowId);
-        double ymax1 = leftYmax.getDouble(rowId);
-
-        double xmin2 = rightXmin.getDouble(rowId);
-        double ymin2 = rightYmin.getDouble(rowId);
-        double xmax2 = rightXmax.getDouble(rowId);
-        double ymax2 = rightYmax.getDouble(rowId);
-
-        // Two bounding boxes intersect if they overlap on both X and Y axes
-        boolean xOverlap = xmin1 <= xmax2 && xmax1 >= xmin2;
-        boolean yOverlap = ymin1 <= ymax2 && ymax1 >= ymin2;
-
-        return xOverlap && yOverlap;
+        double[] minXY = parsePointXY(minVector.getString(rowId));
+        double[] maxXY = parsePointXY(maxVector.getString(rowId));
+        double sXmin = minXY[0], sYmin = minXY[1];
+        double sXmax = maxXY[0], sYmax = maxXY[1];
+        return (sXmin <= qXmax && sXmax >= qXmin) && (sYmin <= qYmax && sYmax >= qYmin);
       }
     };
   }
 
-  private static void validateBoundingBoxType(DataType dataType, Predicate predicate, String side) {
-    if (!(dataType instanceof StructType)) {
-      String msg =
-          format(
-              "ST_INTERSECT_BOXES expects struct type inputs for %s operand, but got %s",
-              side, dataType);
-      throw unsupportedExpressionException(predicate, msg);
-    }
+  // -------------------------------------------------------------------------
+  // Private helpers
+  // -------------------------------------------------------------------------
 
-    StructType structType = (StructType) dataType;
-    // Expect struct with fields: xmin, ymin, xmax, ymax (all doubles)
-    if (structType.length() != 4) {
-      String msg =
-          format(
-              "ST_INTERSECT_BOXES expects bounding box struct with 4 fields "
-                  + "(xmin, ymin, xmax, ymax) for %s operand, but got %d fields",
-              side, structType.length());
-      throw unsupportedExpressionException(predicate, msg);
+  /**
+   * Parse a WKT POINT string and return {@code [x, y]}.
+   *
+   * <p>Supported formats (case-sensitive {@code "POINT"} prefix):
+   *
+   * <pre>
+   *   POINT (x y)
+   *   POINT Z (x y z)    — z ignored
+   *   POINT M (x y m)    — m ignored
+   *   POINT ZM (x y z m) — z and m ignored
+   * </pre>
+   *
+   * <p>No geometry library is required; this is purely string tokenization.
+   */
+  static double[] parsePointXY(String wkt) {
+    if (wkt == null || !wkt.startsWith("POINT")) {
+      throw new IllegalArgumentException(
+          format("Cannot parse geo stats POINT. Expected WKT POINT format, got: %s", wkt));
     }
-
-    // Validate field names and types
-    String[] expectedFields = {"xmin", "ymin", "xmax", "ymax"};
-    for (int i = 0; i < expectedFields.length; i++) {
-      io.delta.kernel.types.StructField field = structType.at(i);
-      if (!field.getName().equals(expectedFields[i])) {
-        String msg =
-            format(
-                "ST_INTERSECT_BOXES expects bounding box field '%s' at position %d "
-                    + "for %s operand, but got '%s'",
-                expectedFields[i], i, side, field.getName());
-        throw unsupportedExpressionException(predicate, msg);
-      }
-      if (!(field.getDataType() instanceof io.delta.kernel.types.DoubleType)) {
-        String msg =
-            format(
-                "ST_INTERSECT_BOXES expects double type for field '%s' "
-                    + "for %s operand, but got %s",
-                field.getName(), side, field.getDataType());
-        throw unsupportedExpressionException(predicate, msg);
-      }
+    int parenStart = wkt.indexOf('(');
+    int parenEnd = wkt.lastIndexOf(')');
+    if (parenStart < 0 || parenEnd <= parenStart) {
+      throw new IllegalArgumentException(
+          format("Cannot parse geo stats POINT — missing parentheses: %s", wkt));
+    }
+    String inner = wkt.substring(parenStart + 1, parenEnd).trim();
+    String[] parts = inner.split("\\s+");
+    if (parts.length < 2) {
+      throw new IllegalArgumentException(
+          format("Cannot parse geo stats POINT — need at least x and y coordinates: %s", wkt));
+    }
+    try {
+      return new double[] {Double.parseDouble(parts[0]), Double.parseDouble(parts[1])};
+    } catch (NumberFormatException e) {
+      throw new IllegalArgumentException(
+          format("Cannot parse geo stats POINT coordinates: %s", wkt), e);
     }
   }
 }
