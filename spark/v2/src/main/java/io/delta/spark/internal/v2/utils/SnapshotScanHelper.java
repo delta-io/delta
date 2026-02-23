@@ -26,11 +26,7 @@ import io.delta.kernel.internal.metrics.ScanMetrics;
 import io.delta.kernel.internal.replay.LogReplay;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.kernel.utils.FileStatus;
-import java.io.Serializable;
-import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.util.SerializableConfiguration;
 
@@ -42,80 +38,6 @@ import org.apache.spark.util.SerializableConfiguration;
 public class SnapshotScanHelper {
 
   private SnapshotScanHelper() {}
-
-  /** Serializable wrapper for Kernel's {@link FileStatus}. */
-  public static class SerializableFileStatus implements Serializable {
-    private static final long serialVersionUID = 1L;
-
-    private final String path;
-    private final long size;
-    private final long modificationTime;
-
-    private SerializableFileStatus(String path, long size, long modificationTime) {
-      this.path = path;
-      this.size = size;
-      this.modificationTime = modificationTime;
-    }
-
-    public static SerializableFileStatus from(FileStatus fs) {
-      return new SerializableFileStatus(fs.getPath(), fs.getSize(), fs.getModificationTime());
-    }
-
-    public FileStatus toFileStatus() {
-      return FileStatus.of(path, size, modificationTime);
-    }
-
-    public static List<SerializableFileStatus> fromList(List<FileStatus> list) {
-      return list.stream().map(SerializableFileStatus::from).collect(Collectors.toList());
-    }
-
-    public static List<FileStatus> toFileStatusList(List<SerializableFileStatus> list) {
-      return list.stream().map(SerializableFileStatus::toFileStatus).collect(Collectors.toList());
-    }
-  }
-
-  /**
-   * Fully serializable bundle of everything needed to reconstruct a {@link LogReplay} and call
-   * {@code getAddFilesAsColumnarBatches}. Extracted from an existing {@link SnapshotImpl} on the
-   * driver with zero additional I/O.
-   */
-  public static class SerializableScanData implements Serializable {
-    private static final long serialVersionUID = 1L;
-
-    private final String dataPath;
-    private final String logPath;
-    private final long version;
-    private final List<SerializableFileStatus> deltas;
-    private final List<SerializableFileStatus> compactions;
-    private final List<SerializableFileStatus> checkpoints;
-    private final SerializableFileStatus deltaAtEndVersion;
-    private final SerializableFileStatus lastSeenChecksum; // nullable
-    private final Long maxPublishedDeltaVersion; // nullable
-    private final SerializableConfiguration hadoopConf;
-
-    SerializableScanData(
-        String dataPath,
-        String logPath,
-        long version,
-        List<SerializableFileStatus> deltas,
-        List<SerializableFileStatus> compactions,
-        List<SerializableFileStatus> checkpoints,
-        SerializableFileStatus deltaAtEndVersion,
-        SerializableFileStatus lastSeenChecksum,
-        Long maxPublishedDeltaVersion,
-        SerializableConfiguration hadoopConf) {
-      this.dataPath = dataPath;
-      this.logPath = logPath;
-      this.version = version;
-      this.deltas = deltas;
-      this.compactions = compactions;
-      this.checkpoints = checkpoints;
-      this.deltaAtEndVersion = deltaAtEndVersion;
-      this.lastSeenChecksum = lastSeenChecksum;
-      this.maxPublishedDeltaVersion = maxPublishedDeltaVersion;
-      this.hadoopConf = hadoopConf;
-    }
-  }
 
   /**
    * Extracts a {@link SerializableScanData} from an existing snapshot. This is a pure in-memory

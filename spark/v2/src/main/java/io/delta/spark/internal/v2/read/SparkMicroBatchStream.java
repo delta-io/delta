@@ -22,18 +22,14 @@ import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.FilteredColumnarBatch;
-import io.delta.kernel.data.MapValue;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.exceptions.UnsupportedTableFeatureException;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
-import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
-import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
@@ -43,6 +39,7 @@ import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.utils.SerializableScanData;
 import io.delta.spark.internal.v2.utils.SnapshotScanHelper;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
@@ -51,14 +48,8 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.Dependency;
-import org.apache.spark.Partition;
-import org.apache.spark.SparkContext;
-import org.apache.spark.TaskContext;
-import org.apache.spark.rdd.RDD;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
-import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
@@ -151,23 +142,6 @@ public class SparkMicroBatchStream
   // Cached starting version to ensure idempotent behavior for "latest" starting version.
   // getStartingVersion() must return the same value across multiple calls.
   private volatile Optional<Long> cachedStartingVersion = null;
-
-  // Cache for the initial snapshot: stores the sorted DataFrame (persisted in Spark's managed
-  // memory/disk) instead of a List<IndexedFile> in JVM heap. Each call to getSnapshotFiles()
-  // creates a fresh iterator via toLocalIterator(). Mirrors DSv1's DeltaSourceSnapshot pattern.
-  private static class InitialSnapshotCache {
-    final long version;
-    final Dataset<Row> sortedAddFiles;
-
-    InitialSnapshotCache(long version, Dataset<Row> sortedAddFiles) {
-      this.version = version;
-      this.sortedAddFiles = sortedAddFiles;
-    }
-
-    void close() {
-      sortedAddFiles.unpersist();
-    }
-  }
 
   private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
       new AtomicReference<>(null);
@@ -1094,7 +1068,7 @@ public class SparkMicroBatchStream
               return new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null);
             }
             if (sparkIter.hasNext()) {
-              AddFile addFile = sparkRowToAddFile(sparkIter.next());
+              AddFile addFile = ScanFileRDD.sparkRowToAddFile(sparkIter.next());
               return new IndexedFile(version, idx++, addFile);
             }
             if (!sentEnd) {
@@ -1108,206 +1082,19 @@ public class SparkMicroBatchStream
     return Utils.toCloseableIterator(indexedIter);
   }
 
-  //////////////////////////////////////////////////////////////////////////////
-  // DataFrame-based external sorting infrastructure.
-  // Uses a fully serializable RDD that reconstructs LogReplay from serialized
-  // LogSegment data, so it works in both local and cluster mode.
-  //////////////////////////////////////////////////////////////////////////////
-
-  /**
-   * A serializable single-partition RDD that lazily streams Kernel scan files into Spark Rows.
-   * Holds a {@link SnapshotScanHelper.SerializableScanData} which captures everything needed to
-   * reconstruct a {@link io.delta.kernel.internal.replay.LogReplay} on any executor.
-   */
-  @SuppressWarnings("unchecked")
-  private static class ScanFileRDD extends RDD<Row> {
-    private final SnapshotScanHelper.SerializableScanData scanData;
-
-    ScanFileRDD(SparkContext sc, SnapshotScanHelper.SerializableScanData scanData) {
-      super(
-          sc,
-          (scala.collection.immutable.Seq<Dependency<?>>)
-              (scala.collection.immutable.Seq<?>) scala.collection.immutable.Nil$.MODULE$,
-          scala.reflect.ClassTag$.MODULE$.apply(Row.class));
-      this.scanData = scanData;
-    }
-
-    @Override
-    public Partition[] getPartitions() {
-      return new Partition[] {
-        new Partition() {
-          @Override
-          public int index() {
-            return 0;
-          }
-        }
-      };
-    }
-
-    @Override
-    public scala.collection.Iterator<Row> compute(Partition split, TaskContext context) {
-      CloseableIterator<FilteredColumnarBatch> filesIter =
-          SnapshotScanHelper.rebuildScanFilesIterator(scanData);
-
-      if (context != null) {
-        context.addTaskCompletionListener(
-            taskCtx -> {
-              try {
-                filesIter.close();
-              } catch (IOException e) {
-                /* best-effort */
-              }
-            });
-      }
-
-      Iterator<Row> javaIter =
-          new Iterator<Row>() {
-            private FilteredColumnarBatch currentBatch = null;
-            private int currentRowId = 0;
-            private int currentBatchSize = 0;
-            private Row nextRow = null;
-
-            @Override
-            public boolean hasNext() {
-              while (nextRow == null) {
-                if (currentBatch != null && currentRowId < currentBatchSize) {
-                  Optional<AddFile> addOpt = StreamingHelper.getAddFile(currentBatch, currentRowId);
-                  currentRowId++;
-                  if (addOpt.isPresent()) {
-                    nextRow = addFileToSparkRow(addOpt.get());
-                  }
-                } else if (filesIter.hasNext()) {
-                  currentBatch = filesIter.next();
-                  currentRowId = 0;
-                  currentBatchSize = currentBatch.getData().getSize();
-                } else {
-                  return false;
-                }
-              }
-              return true;
-            }
-
-            @Override
-            public Row next() {
-              if (!hasNext()) {
-                throw new NoSuchElementException();
-              }
-              Row row = nextRow;
-              nextRow = null;
-              return row;
-            }
-          };
-
-      return scala.jdk.javaapi.CollectionConverters.asScala(javaIter);
-    }
-  }
-
-  /** Convert a Kernel {@link AddFile} to a Spark {@link Row}. */
-  @SuppressWarnings("unchecked")
-  private static Row addFileToSparkRow(AddFile addFile) {
-    // Spark catalyst expects scala.collection.Map for MapType columns, not java.util.Map.
-    scala.collection.Map<String, String> partitionValues =
-        scala.jdk.javaapi.CollectionConverters.asScala(
-            VectorUtils.toJavaMap(addFile.getPartitionValues()));
-
-    Row dvRow = null;
-    Optional<DeletionVectorDescriptor> dvOpt = addFile.getDeletionVector();
-    if (dvOpt.isPresent()) {
-      DeletionVectorDescriptor dv = dvOpt.get();
-      dvRow =
-          RowFactory.create(
-              dv.getStorageType(),
-              dv.getPathOrInlineDv(),
-              dv.getOffset().orElse(null),
-              dv.getSizeInBytes(),
-              dv.getCardinality());
-    }
-
-    scala.collection.Map<String, String> tags =
-        addFile
-            .getTags()
-            .map(
-                t ->
-                    (scala.collection.Map<String, String>)
-                        scala.jdk.javaapi.CollectionConverters.asScala(
-                            (Map<String, String>) (Map<?, ?>) VectorUtils.toJavaMap(t)))
-            .orElse(null);
-
-    return RowFactory.create(
-        addFile.getPath(),
-        partitionValues,
-        addFile.getSize(),
-        addFile.getModificationTime(),
-        addFile.getDataChange(),
-        dvRow,
-        tags,
-        addFile.getBaseRowId().orElse(null),
-        addFile.getDefaultRowCommitVersion().orElse(null));
-  }
-
-  /** Convert a Spark {@link Row} back to a Kernel {@link AddFile}. */
-  private static AddFile sparkRowToAddFile(Row row) {
-    String path = row.getString(0);
-    Map<String, String> partitionValues = row.getJavaMap(1);
-    long size = row.getLong(2);
-    long modificationTime = row.getLong(3);
-    boolean dataChange = row.getBoolean(4);
-
-    Optional<DeletionVectorDescriptor> dvOpt = Optional.empty();
-    if (!row.isNullAt(5)) {
-      Row dvRow = row.getStruct(5);
-      dvOpt =
-          Optional.of(
-              new DeletionVectorDescriptor(
-                  dvRow.getString(0),
-                  dvRow.getString(1),
-                  dvRow.isNullAt(2) ? Optional.empty() : Optional.of(dvRow.getInt(2)),
-                  dvRow.getInt(3),
-                  dvRow.getLong(4)));
-    }
-
-    Optional<Map<String, String>> tagsOpt = Optional.empty();
-    if (!row.isNullAt(6)) {
-      tagsOpt = Optional.of(row.getJavaMap(6));
-    }
-
-    Optional<Long> baseRowId = row.isNullAt(7) ? Optional.empty() : Optional.of(row.getLong(7));
-    Optional<Long> defaultRowCommitVersion =
-        row.isNullAt(8) ? Optional.empty() : Optional.of(row.getLong(8));
-
-    MapValue kernelPartVals = VectorUtils.stringStringMapValue(partitionValues);
-    Optional<MapValue> kernelTags = tagsOpt.map(VectorUtils::stringStringMapValue);
-
-    Map<Integer, Object> fieldMap = new HashMap<>();
-    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("path"), path);
-    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("partitionValues"), kernelPartVals);
-    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("size"), size);
-    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("modificationTime"), modificationTime);
-    fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("dataChange"), dataChange);
-    dvOpt.ifPresent(
-        dv -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("deletionVector"), dv.toRow()));
-    kernelTags.ifPresent(t -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("tags"), t));
-    baseRowId.ifPresent(id -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("baseRowId"), id));
-    defaultRowCommitVersion.ifPresent(
-        v -> fieldMap.put(AddFile.SCHEMA_WITHOUT_STATS.indexOf("defaultRowCommitVersion"), v));
-
-    return new AddFile(new GenericRow(AddFile.SCHEMA_WITHOUT_STATS, fieldMap));
-  }
-
   /**
    * Loads snapshot files at the specified version, sorts them via Spark DataFrame, and persists the
    * sorted result. The persisted DataFrame lives in Spark's managed memory (off-heap, can spill to
    * disk), not in JVM heap. Mirrors DSv1's {@code DeltaSourceSnapshot} caching pattern.
    *
-   * <p>Uses a {@link ScanFileRDD} that holds a fully serializable {@link
-   * SnapshotScanHelper.SerializableScanData}, allowing it to reconstruct a {@link
-   * io.delta.kernel.internal.replay.LogReplay} on any executor (works in both local and cluster
-   * mode). The only I/O is the normal log replay which is identical to {@code Scan.getScanFiles()}.
+   * <p>Uses a {@link ScanFileRDD} that holds a fully serializable {@link SerializableScanData},
+   * allowing it to reconstruct a {@link io.delta.kernel.internal.replay.LogReplay} on any executor
+   * (works in both local and cluster mode). The only I/O is the normal log replay which is
+   * identical to {@code Scan.getScanFiles()}.
    */
   private InitialSnapshotCache loadAndCacheSnapshot(long version) {
     SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
-    SnapshotScanHelper.SerializableScanData scanData =
-        SnapshotScanHelper.extractScanData(snapshot, hadoopConf);
+    SerializableScanData scanData = SnapshotScanHelper.extractScanData(snapshot, hadoopConf);
 
     ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), scanData);
 
