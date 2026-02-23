@@ -20,7 +20,7 @@ import java.util.Collections
 
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper
 import org.apache.spark.sql.catalyst.InternalRow
-import org.apache.spark.sql.connector.write.{DataWriterFactory, WriterCommitMessage}
+import org.apache.spark.sql.connector.write.{DataWriter, DataWriterFactory}
 import org.apache.spark.sql.types.StructType
 
 /**
