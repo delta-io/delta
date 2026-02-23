@@ -149,14 +149,23 @@ public class DeltaV2Mode {
    *
    * <p>POC policy:
    * <ul>
-   *   <li>STRICT mode only</li>
+   *   <li>STRICT: enabled for all tables</li>
+   *   <li>AUTO: enabled only for Unity Catalog managed tables</li>
    *   <li>and SQL conf {@code spark.databricks.delta.v2.ctas.useV1WriterPoc.enabled=true}</li>
    * </ul>
    */
   public boolean shouldUseKernelCtasPoc(Map<String, String> properties) {
-    return STRICT.equals(mode())
-        && (Boolean)
-            sqlConf.getConf(DeltaSQLConf$.MODULE$.V2_CTAS_USE_V1_WRITER_POC_ENABLED());
+    if (!((Boolean) sqlConf.getConf(DeltaSQLConf$.MODULE$.V2_CTAS_USE_V1_WRITER_POC_ENABLED()))) {
+      return false;
+    }
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        return CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+      default:
+        return false;
+    }
   }
 
   /**
