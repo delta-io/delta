@@ -20,7 +20,6 @@ import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -76,18 +75,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       List<DynamicTest> tests = new ArrayList<>();
       for (TableType tableType : ALL_TABLE_TYPES) {
         String testName = String.format("%s(%s)", method.getName(), tableType);
-        tests.add(
-            DynamicTest.dynamicTest(
-                testName,
-                () -> {
-                  try {
-                    method.invoke(this, tableType);
-                  } catch (InvocationTargetException e) {
-                    // Unwrap to propagate JUnit control flow exceptions (e.g. assumptions) and
-                    // preserve the original failure stack trace.
-                    throw e.getCause();
-                  }
-                }));
+        tests.add(DynamicTest.dynamicTest(testName, () -> method.invoke(this, tableType)));
       }
       containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
     }

@@ -25,10 +25,6 @@ import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
-import java.io.File;
-import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -46,7 +42,6 @@ import lombok.experimental.Accessors;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.log4j.Logger;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 
 /** Test suite for creating UC Delta Tables. */
@@ -58,19 +53,15 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   private static final String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
   private static final String UC_TABLE_ID_KEY_OLD = "ucTableId";
   private static final String DELTA_CATALOG_MANAGED_KEY = "delta.feature.catalogManaged";
-  private static final String DELTA_VACUUM_PROTOCOL_CHECK_KEY = "delta.feature.vacuumProtocolCheck";
   private static final String SUPPORTED = "supported";
   private static final String MANAGED_TBLPROPERTIES_CLAUSE =
-      String.format(
-          "TBLPROPERTIES ('%s'='%s', '%s'='%s', 'Foo'='Bar')",
-          DELTA_CATALOG_MANAGED_KEY, SUPPORTED, DELTA_VACUUM_PROTOCOL_CHECK_KEY, SUPPORTED);
+      String.format("TBLPROPERTIES ('%s'='%s', 'Foo'='Bar')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
   // In the table REPLACE test, a slightly different table property clause will be used to create
   // the first table. Then the REPLACE command would use TBLPROPERTIES_CLAUSE. This is to make sure
   // that the table properties are properly updated in the REPLACE command.
   private static final String MANAGED_TBLPROPERTIES_CLAUSE_OTHER =
       String.format(
-          "TBLPROPERTIES ('%s'='%s', '%s'='%s', 'Foo2'='Bar2')",
-          DELTA_CATALOG_MANAGED_KEY, SUPPORTED, DELTA_VACUUM_PROTOCOL_CHECK_KEY, SUPPORTED);
+          "TBLPROPERTIES ('%s'='%s', 'Foo2'='Bar2')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
 
   // Expected table features to be enabled for managed tables
   private static final List<String> EXPECTED_MANAGED_TABLE_FEATURES =
@@ -729,12 +720,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   /** Tests CREATE TABLE with DSv2 STRICT mode enabled for both managed and external UC tables. */
   @TestAllTableTypes
   public void testStrictModeCreateTable(TableType tableType) throws Exception {
-    if (!isUCRemoteConfigured() && tableType == TableType.MANAGED) {
-      Assumptions.assumeTrue(
-          false,
-          "Skipping STRICT UC-managed CREATE TABLE on local OSS UC: UC may return latestTableVersion=-1 "
-              + "when there are no ratified commits yet.");
-    }
     spark().conf().set("spark.databricks.delta.v2.enableMode", "STRICT");
     try {
       withNewTable(
@@ -766,59 +751,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             // read raw S3 files without additional credential plumbing.
           });
     } finally {
-      spark().conf().set("spark.databricks.delta.v2.enableMode", "AUTO");
-    }
-  }
-
-  /** Tests UC-managed CTAS with DSv2 STRICT mode and CTAS POC gate enabled. */
-  @org.junit.jupiter.api.Test
-  public void testStrictModeManagedCtas() throws Exception {
-    if (!isUCRemoteConfigured()) {
-      Assumptions.assumeTrue(
-          false,
-          "Skipping STRICT UC-managed CTAS on local OSS UC: UC may return latestTableVersion=-1 "
-              + "when there are no ratified commits yet.");
-    }
-    spark().conf().set("spark.databricks.delta.v2.enableMode", "STRICT");
-    spark().conf().set("spark.databricks.delta.v2.ctas.useV1WriterPoc.enabled", "true");
-    try {
-      UnityCatalogInfo uc = unityCatalogInfo();
-      String fullTableName =
-          String.format("%s.%s.strict_managed_ctas", uc.catalogName(), uc.schemaName());
-
-      sql("DROP TABLE IF EXISTS %s", fullTableName);
-      sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS i, 'a' AS s",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
-      tablesToCleanUp.add(fullTableName);
-
-      // Verify the table is readable and DESCRIBE EXTENDED does not hit protocol/metadata mismatch.
-      check(fullTableName, List.of(List.of("1", "a")));
-      sql("DESC EXTENDED %s", fullTableName);
-
-      // Verify UC API sees the schema for the created table.
-      TablesApi tablesApi = new TablesApi(uc.createApiClient());
-      TableInfo tableInfo = tablesApi.getTable(fullTableName, false, false);
-      List<ColumnInfo> columns = tableInfo.getColumns();
-      assertThat(columns).hasSize(2);
-      Map<String, String> colTypes =
-          columns.stream()
-              .collect(Collectors.toMap(ColumnInfo::getName, c -> c.getTypeName().name()));
-      assertThat(colTypes).containsEntry("i", "INT");
-      assertThat(colTypes).containsEntry("s", "STRING");
-
-      // Verify kernel engineInfo for local (OSS) UC where storage is file://.
-      String storageLocation = tableInfo.getStorageLocation();
-      if (storageLocation != null && storageLocation.startsWith("file:")) {
-        URI locationUri = URI.create(storageLocation);
-        File commitFile =
-            Paths.get(locationUri).resolve("_delta_log/00000000000000000000.json").toFile();
-        assertThat(commitFile.exists()).isTrue();
-        String commitJson = new String(Files.readAllBytes(commitFile.toPath()));
-        assertThat(commitJson).contains("kernel-spark-dsv2");
-      }
-    } finally {
-      spark().conf().set("spark.databricks.delta.v2.ctas.useV1WriterPoc.enabled", "false");
       spark().conf().set("spark.databricks.delta.v2.enableMode", "AUTO");
     }
   }
