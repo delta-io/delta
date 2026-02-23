@@ -124,10 +124,12 @@ public class DeltaV2Mode {
    * <p>Mode behavior:
    *
    * <ul>
-   *   <li>STRICT: enabled for all tables
-   *   <li>AUTO: enabled only for Unity Catalog managed tables
+   *   <li>STRICT: enabled
+   *   <li>AUTO: enabled
    *   <li>NONE (default): disabled
    * </ul>
+   *
+   * <p>Additional narrowing checks (provider, catalog, identifier type) are applied by callers.
    *
    * @param properties CREATE TABLE properties map
    * @return true if metadata-only CREATE should use Kernel commit path
@@ -135,9 +137,8 @@ public class DeltaV2Mode {
   public boolean shouldUseKernelMetadataOnlyCreate(Map<String, String> properties) {
     switch (mode()) {
       case STRICT:
-        return true;
       case AUTO:
-        return CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+        return true;
       default:
         return false;
     }
