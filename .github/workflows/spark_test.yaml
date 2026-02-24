@@ -36,7 +36,7 @@ jobs:
 
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
-    runs-on: ${{ contains(github.event.pull_request.labels.*.name, 'faster-tests') && fromJson('{"group":"delta-spark-tests-runner-group","labels":["ubuntu-24.04"]}') || 'ubuntu-24.04' }}
+    runs-on: ${{ contains(github.event.pull_request.labels.*.name, 'faster-tests') && 'delta-spark-tests-8-core-runners' || 'ubuntu-24.04' }}
     needs: generate-matrix
     strategy:
       fail-fast: false
