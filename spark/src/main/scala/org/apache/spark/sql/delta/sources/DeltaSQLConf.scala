@@ -223,6 +223,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_EMPTY_FILE_CHECK_THROW_ENABLED =
+    buildConf("emptyFileCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions " +
+        "referencing parquet files with size 0 bytes. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
     buildConf("nullPartitionCheck.throwEnabled")
       .internal()
