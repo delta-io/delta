@@ -110,6 +110,7 @@
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
 - [Appendix](#appendix)
+  - [Supported Data Types](#supported-data-types)
   - [Valid Feature Names in Table Features](#valid-feature-names-in-table-features)
   - [Deletion Vector Format](#deletion-vector-format)
     - [Deletion Vector File Storage Format](#deletion-vector-file-storage-format)
@@ -117,6 +118,7 @@
   - [Partition Value Serialization](#partition-value-serialization)
   - [Schema Serialization Format](#schema-serialization-format)
     - [Primitive Types](#primitive-types)
+    - [Character types (CHAR/VARCHAR)](#character-types-charvarchar)
     - [Struct Type](#struct-type)
     - [Struct Field](#struct-field)
     - [Array Type](#array-type)
@@ -2436,6 +2438,32 @@ Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - W
 
 # Appendix
 
+## Supported Data Types
+
+Delta Lake supports the following data types. For schema serialization and Parquet storage details, see [Schema Serialization Format](#schema-serialization-format) and [Delta Data Type to Parquet Type Mappings](#delta-data-type-to-parquet-type-mappings).
+
+| Type | Description |
+|-|-|
+| boolean | True or false |
+| byte | 1-byte signed integer |
+| short | 2-byte signed integer |
+| int / integer | 4-byte signed integer |
+| long | 8-byte signed integer |
+| float | 4-byte single-precision floating-point |
+| double | 8-byte double-precision floating-point |
+| decimal | Fixed precision and scale (up to 38 digits) |
+| string | UTF-8 encoded string |
+| char(n) | Fixed-length character (serialized as string with metadata) |
+| varchar(n) | Variable-length character with max length n (serialized as string with metadata) |
+| binary | Sequence of bytes |
+| date | Calendar date (year-month-day) |
+| timestamp | Microsecond timestamp (UTC) |
+| timestamp without time zone | Microsecond timestamp (no timezone) |
+| array | Ordered list of elements of one type |
+| map | Key-value pairs |
+| struct | Named fields, each with a type |
+| variant | Semi-structured data (requires `variantType` table feature) |
+
 ## Valid Feature Names in Table Features
 
 Feature | Name | Readers or Writers?
@@ -2609,6 +2637,15 @@ See Parquet [timestamp type](https://github.com/apache/parquet-format/blob/maste
 
 Note: Existing tables may have `void` data type columns. Behavior is undefined for `void` data type columns but it is recommended to drop any `void` data type columns on reads (as is implemented by the Spark connector).
 
+### Character types (CHAR/VARCHAR)
+
+Delta supports character types with a maximum length: `CHAR(n)` and `VARCHAR(n)`. In the schema they are serialized as the primitive type `string` with column metadata (see [Column Metadata](#column-metadata)) indicating the logical type.
+
+- **CHAR(n)**: Fixed-length character type. Values are padded with spaces to length n when written; readers may expose padding. Stored in Parquet the same as string (`binary`, UTF-8).
+- **VARCHAR(n)**: Variable-length character type with maximum length n. Writers must enforce that the character length does not exceed n; inserting a longer value is an error. Stored in Parquet the same as string (`binary`, UTF-8).
+
+The metadata key `__CHAR_VARCHAR_TYPE_STRING` stores the type string, e.g. `"char(10)"` or `"varchar(20)"`. Engines that do not support CHAR/VARCHAR may treat these columns as plain string and ignore the length constraint.
+
 ### Struct Type
 
 A struct is used to represent both the top-level schema of the table as well as struct columns that contain nested columns. A struct is encoded as a JSON object with the following fields:
@@ -2667,6 +2704,7 @@ delta.identity.*| These keys are for defining identity columns. See [Identity Co
 delta.invariants| JSON string contains SQL expression information. See [Column Invariants](#column-invariants) for details.
 delta.generationExpression| SQL expression string. See [Generated Columns](#generated-columns) for details.
 delta.typeChanges| JSON string containing information about previous type changes applied to this column. See [Type Change Metadata](#type-change-metadata) for details.
+__CHAR_VARCHAR_TYPE_STRING| For character types: the type string `"char(n)"` or `"varchar(n)"` where n is the maximum length. When present, writers must enforce the length (VARCHAR: reject values longer than n; CHAR: pad or truncate to n). See [Character types (CHAR/VARCHAR)](#character-types-charvarchar).
 
 ### Example
 
@@ -2965,7 +3003,9 @@ float| `float` |
 double| `double` |
 decimal| `int32`, `int64` or `fixed_length_binary` | `DECIMAL(scale, precision)`
 string| `binary` | `string (UTF-8)`
+char(n), varchar(n)| `binary` | `string (UTF-8)`. Same physical representation as string; length is logical only and stored in column metadata. See [Character types (CHAR/VARCHAR)](#character-types-charvarchar).
 binary| `binary` |
 array| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#lists) for further details | `LIST`
 map| either as `2-level` or `3-level` representation. Refer to [Parquet documentation](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps) for further details | `MAP`
 struct| `group` |
+variant| struct with required fields `value` (binary) and `metadata` (binary). See [Parquet documentation](#variant-data-in-parquet). | Requires table feature `variantType`.
