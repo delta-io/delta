@@ -50,7 +50,6 @@ public class Metadata implements Serializable {
 
     final String schemaJson =
         requireNonNull(vector.getChild(4), rowId, "schemaString").getString(rowId);
-    StructType schema = DataTypeJsonSerDe.deserializeStructType(schemaJson);
 
     return new Metadata(
         requireNonNull(vector.getChild(0), rowId, "id").getString(rowId),
@@ -60,7 +59,12 @@ public class Metadata implements Serializable {
             vector.getChild(2).isNullAt(rowId) ? null : vector.getChild(2).getString(rowId)),
         Format.fromColumnVector(requireNonNull(vector.getChild(3), rowId, "format"), rowId),
         schemaJson,
-        schema,
+        new Lazy<>(
+            () -> {
+              StructType s = DataTypeJsonSerDe.deserializeStructType(schemaJson);
+              ensureNoMetadataColumns(s);
+              return s;
+            }),
         vector.getChild(5).getArray(rowId),
         Optional.ofNullable(
             vector.getChild(6).isNullAt(rowId) ? null : vector.getChild(6).getLong(rowId)),
@@ -89,7 +93,7 @@ public class Metadata implements Serializable {
   private final Optional<String> description;
   private final Format format;
   private final String schemaString;
-  private final StructType schema;
+  private final Lazy<StructType> schema;
   private final ArrayValue partitionColumns;
   private final Optional<Long> createdTime;
   private final MapValue configurationMapValue;
@@ -110,13 +114,12 @@ public class Metadata implements Serializable {
       Optional<Long> createdTime,
       MapValue configurationMapValue) {
     ensureNoMetadataColumns(schema);
-
     this.id = requireNonNull(id, "id is null");
     this.name = name;
     this.description = requireNonNull(description, "description is null");
     this.format = requireNonNull(format, "format is null");
     this.schemaString = requireNonNull(schemaString, "schemaString is null");
-    this.schema = schema;
+    this.schema = new Lazy<>(() -> schema);
     this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
     this.createdTime = createdTime;
     this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
@@ -126,7 +129,41 @@ public class Metadata implements Serializable {
         new Lazy<>(
             () ->
                 new StructType(
-                    schema.fields().stream()
+                    getSchema().fields().stream()
+                        .filter(
+                            field ->
+                                !partitionColNames
+                                    .get()
+                                    .contains(field.getName().toLowerCase(Locale.ROOT)))
+                        .collect(Collectors.toList())));
+  }
+
+  private Metadata(
+      String id,
+      Optional<String> name,
+      Optional<String> description,
+      Format format,
+      String schemaString,
+      Lazy<StructType> lazySchema,
+      ArrayValue partitionColumns,
+      Optional<Long> createdTime,
+      MapValue configurationMapValue) {
+    this.id = requireNonNull(id, "id is null");
+    this.name = name;
+    this.description = requireNonNull(description, "description is null");
+    this.format = requireNonNull(format, "format is null");
+    this.schemaString = requireNonNull(schemaString, "schemaString is null");
+    this.schema = lazySchema;
+    this.partitionColumns = requireNonNull(partitionColumns, "partitionColumns is null");
+    this.createdTime = createdTime;
+    this.configurationMapValue = requireNonNull(configurationMapValue, "configuration is null");
+    this.configuration = new Lazy<>(() -> VectorUtils.toJavaMap(configurationMapValue));
+    this.partitionColNames = new Lazy<>(this::loadPartitionColNames);
+    this.dataSchema =
+        new Lazy<>(
+            () ->
+                new StructType(
+                    getSchema().fields().stream()
                         .filter(
                             field ->
                                 !partitionColNames
@@ -168,7 +205,7 @@ public class Metadata implements Serializable {
         this.description,
         this.format,
         this.schemaString,
-        this.schema,
+        this.schema, // propagate Lazy<StructType> without forcing
         this.partitionColumns,
         this.createdTime,
         VectorUtils.stringStringMapValue(newConfiguration));
@@ -226,7 +263,7 @@ public class Metadata implements Serializable {
   }
 
   public StructType getSchema() {
-    return schema;
+    return schema.get();
   }
 
   public ArrayValue getPartitionColumns() {
@@ -280,7 +317,7 @@ public class Metadata implements Serializable {
   public StructType getPhysicalSchema() {
     ColumnMapping.ColumnMappingMode mappingMode =
         ColumnMapping.getColumnMappingMode(getConfiguration());
-    return ColumnMapping.convertToPhysicalSchema(schema, schema, mappingMode);
+    return ColumnMapping.convertToPhysicalSchema(getSchema(), getSchema(), mappingMode);
   }
 
   /**
@@ -325,7 +362,7 @@ public class Metadata implements Serializable {
         name,
         description,
         format,
-        schema,
+        schemaString,
         partitionColNames.get(),
         createdTime,
         configuration.get());
@@ -341,7 +378,7 @@ public class Metadata implements Serializable {
         && name.equals(other.name)
         && description.equals(other.description)
         && format.equals(other.format)
-        && schema.equals(other.schema)
+        && schemaString.equals(other.schemaString)
         && partitionColNames.get().equals(other.partitionColNames.get())
         && createdTime.equals(other.createdTime)
         && configuration.get().equals(other.configuration.get());
@@ -364,7 +401,7 @@ public class Metadata implements Serializable {
   }
 
   /** Helper method to ensure that a table schema never contains metadata columns. */
-  private void ensureNoMetadataColumns(StructType schema) {
+  private static void ensureNoMetadataColumns(StructType schema) {
     for (StructField field : schema.fields()) {
       if (field.isMetadataColumn()) {
         throw new IllegalArgumentException(
