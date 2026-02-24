@@ -2495,7 +2495,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("restarting a query should pick up latest table schema and recover") {
+  test("add column: restarting with new DataFrame should recover") {
     withTempDir { inputDir =>
       withTempDir { checkpointDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
@@ -2538,7 +2538,47 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
+  test("add column: restarting with stale DataFrame should fail") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 2).foreach { i =>
+          val v = Seq(i.toString).toDF("id")
+          v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        // First run: stream detects schema change and fails
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer("0", "1"),
+          Execute { _ =>
+            withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+            Seq(("2", "a")).toDF("id", "newcol")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          },
+          ExpectFailure[DeltaIllegalStateException](t =>
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          }
+        )
+
+        // Restarting with the same DataFrame cannot recover from column addition because the
+        // plan's read schema is fixed at analysis time. User must create a new DataFrame.
+        // TODO(#5319): Assert the specific error class once V1 and V2 are aligned.
+        intercept[StreamingQueryException] {
+          val q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+          try q.processAllAvailable() finally q.stop()
+        }
+      }
+    }
+  }
+
   test("handling nullability schema changes") {
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>

@@ -55,7 +55,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "Delta sources don't write offsets with null json",
 
     // === Schema Evolution ===
-    "restarting a query should pick up latest table schema and recover",
+    "add column: restarting with new DataFrame should recover",
+    "add column: restarting with stale DataFrame should fail",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
 
