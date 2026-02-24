@@ -25,7 +25,7 @@ import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import io.delta.spark.internal.v2.write.DeltaSparkParquetWriteBuilder;
+import io.delta.spark.internal.v2.write.SparkParquetWriteBuilder;
 import java.util.*;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -242,7 +242,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    return new DeltaSparkParquetWriteBuilder(
+    return new SparkParquetWriteBuilder(
         tablePath,
         hadoopConf,
         initialSnapshot,
