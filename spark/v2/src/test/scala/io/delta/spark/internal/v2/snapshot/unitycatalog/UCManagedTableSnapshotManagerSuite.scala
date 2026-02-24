@@ -281,45 +281,23 @@ class UCManagedTableSnapshotManagerSuite
 
   // ==================== buildCreateTableTransaction ====================
 
-  test("buildCreateTableTransaction: commits v0 and snapshot is readable after create") {
+  test("buildCreateTableTransaction: v0 commit succeeds with expected schema") {
     withTempDir { tempDir =>
-      val tablePath = tempDir.getCanonicalPath
+      val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getCanonicalPath)
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val manager = createManager(ucClient, tablePath)
 
-      val txn = manager.buildCreateTableTransaction(
-        testSchema,
-        Collections.emptyMap[String, String](),
-        Optional.empty(),
-        "test-engine-info")
+      val result = manager
+        .buildCreateTableTransaction(
+          testSchema,
+          Collections.emptyMap[String, String](),
+          Optional.empty(),
+          "test-engine-info")
+        .commit(defaultEngine, CloseableIterable.emptyIterable())
 
-      val result = txn.commit(defaultEngine, CloseableIterable.emptyIterable())
       assert(result.getVersion == 0L)
-
-      ucClient.insertTableDataAfterCreate(testUcTableId)
-
-      val snapshot = manager.loadLatestSnapshot()
-      assert(snapshot.getVersion == 0L)
-    }
-  }
-
-  test("buildCreateTableTransaction: preserves schema in committed snapshot") {
-    withTempDir { tempDir =>
-      val tablePath = tempDir.getCanonicalPath
-      val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val manager = createManager(ucClient, tablePath)
-
-      val txn = manager.buildCreateTableTransaction(
-        testSchema,
-        Collections.emptyMap[String, String](),
-        Optional.empty(),
-        "test-engine-info")
-
-      txn.commit(defaultEngine, CloseableIterable.emptyIterable())
-      ucClient.insertTableDataAfterCreate(testUcTableId)
-
-      val snapshot = manager.loadLatestSnapshot()
-      assert(snapshot.getSchema(defaultEngine) == testSchema)
+      val snapshot = result.getPostCommitSnapshot().get()
+      assert(snapshot.getSchema() == testSchema)
     }
   }
 

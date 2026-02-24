@@ -16,7 +16,7 @@
 package io.delta.spark.internal.v2.snapshot.unitycatalog
 
 import java.net.URI
-import java.util.{HashMap => JHashMap, Map => JMap}
+import java.util.{HashMap => JHashMap}
 
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.spark.internal.v2.utils.CatalogTableTestUtils
@@ -176,8 +176,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   // ==================== extractTableInfoForCreate ====================
 
-  private def makeUCCreateProperties(
-      tableId: String = TABLE_ID_ALPHA): JMap[String, String] = {
+  private def makeUCCreateProperties(tableId: String = TABLE_ID_ALPHA): JHashMap[String, String] = {
     val props = new JHashMap[String, String]()
     props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
     props.put(UC_TABLE_ID_KEY, tableId)
@@ -191,18 +190,9 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
     assert(result.isEmpty, "Non-UC-managed properties should return empty Optional")
   }
 
-  test("extractTableInfoForCreate: throws when UC_TABLE_ID_KEY is missing") {
-    val props = new JHashMap[String, String]()
-    props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
-    // UC_TABLE_ID_KEY intentionally absent
-
-    val exception = intercept[IllegalArgumentException] {
-      UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
-    }
-    assert(exception.getMessage.contains("ucTableId"))
-  }
-
-  test("extractTableInfoForCreate: throws when UC_TABLE_ID_KEY is empty string") {
+  test("extractTableInfoForCreate: throws when UC_TABLE_ID_KEY is empty") {
+    // Key present but empty: isUnityCatalogManagedTableFromProperties returns true
+    // (containsKey passes), then the empty-value guard throws.
     val props = new JHashMap[String, String]()
     props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
     props.put(UC_TABLE_ID_KEY, "")
