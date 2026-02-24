@@ -65,7 +65,9 @@ public class StatsSchemaHelper {
         ||
         // DecimalType is eligible but since its string includes scale + precision it needs to
         // be matched separately
-        dataType instanceof DecimalType;
+        dataType instanceof DecimalType
+        || dataType instanceof GeometryType
+        || dataType instanceof GeographyType;
   }
 
   /**

@@ -21,9 +21,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.PointVal;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.internal.util.InternalUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -124,6 +126,11 @@ public class DefaultJsonRow implements Row {
   @Override
   public MapValue getMap(int ordinal) {
     return (MapValue) parsedValues[ordinal];
+  }
+
+  @Override
+  public PointVal getPoint(int ordinal) {
+    return (PointVal) parsedValues[ordinal];
   }
 
   private static void throwIfTypeMismatch(String expType, boolean hasExpType, JsonNode jsonNode) {
@@ -348,6 +355,11 @@ public class DefaultJsonRow implements Row {
           return DefaultGenericVector.fromList(mapType.getValueType(), values);
         }
       };
+    }
+
+    if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
+      throwIfTypeMismatch("point", jsonValue.isTextual(), jsonValue);
+      return GeometryUtils.parsePoint(jsonValue.asText());
     }
 
     throw new UnsupportedOperationException(

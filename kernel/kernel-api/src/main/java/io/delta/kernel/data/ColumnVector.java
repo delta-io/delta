@@ -179,4 +179,12 @@ public interface ColumnVector extends AutoCloseable {
     throw new UnsupportedOperationException(
         "Child vectors are not available for vector of type " + getDataType());
   }
+
+  /**
+   * Returns the point value at {@code rowId} for geometry/geography columns. Returns null if the
+   * slot for {@code rowId} is null.
+   */
+  default PointVal getPoint(int rowId) {
+    throw new UnsupportedOperationException("Invalid value request for data type");
+  }
 }

@@ -18,6 +18,8 @@ package io.delta.kernel.expressions;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.annotation.Evolving;
+import io.delta.kernel.data.PointVal;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.Collections;
@@ -194,6 +196,18 @@ public final class Literal implements Expression {
   }
 
   /**
+   * Create a geometry literal by parsing a WKT POINT string. The parsed {@link PointVal} is stored
+   * as the value with {@link GeometryType} as the data type.
+   *
+   * @param wkt WKT POINT string, e.g. {@code "POINT (1.0 2.0)"} or {@code "POINT ZM(1 2 3 4)"}
+   * @return a {@link Literal} of type {@link GeometryType} whose value is a {@link PointVal}
+   * @throws IllegalArgumentException if the string is not a valid WKT POINT
+   */
+  public static Literal ofPointWKT(String wkt) {
+    return new Literal(GeometryUtils.parsePoint(wkt), new GeometryType());
+  }
+
+  /**
    * Create {@code null} value literal.
    *
    * @param dataType {@link DataType} of the null literal.
@@ -232,6 +246,7 @@ public final class Literal implements Expression {
    *   <li>TIMESTAMP: {@link Long} represents the microseconds since epoch in UTC
    *   <li>TIMESTAMP_NTZ: {@link Long} represents the microseconds since epoch with no timezone
    *   <li>DECIMAL: {@link BigDecimal}.Use {@link #getDataType()} to find the precision and scale
+   *   <li>GEOMETRY: {@link PointVal} (from {@link #ofPointWKT})
    * </ul>
    *
    * @return Literal value.

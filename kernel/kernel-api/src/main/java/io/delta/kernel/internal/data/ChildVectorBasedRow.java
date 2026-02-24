@@ -18,6 +18,7 @@ package io.delta.kernel.internal.data;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.PointVal;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.StructType;
 import java.math.BigDecimal;
@@ -106,6 +107,11 @@ public abstract class ChildVectorBasedRow implements Row {
   @Override
   public MapValue getMap(int ordinal) {
     return getChild(ordinal).getMap(rowId);
+  }
+
+  @Override
+  public PointVal getPoint(int ordinal) {
+    return getChild(ordinal).getPoint(rowId);
   }
 
   protected abstract ColumnVector getChild(int ordinal);

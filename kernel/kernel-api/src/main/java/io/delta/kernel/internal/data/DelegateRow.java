@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.PointVal;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -190,6 +191,19 @@ public class DelegateRow implements Row {
       return (MapValue) overrides.get(ordinal);
     }
     return row.getMap(ordinal);
+  }
+
+  @Override
+  public PointVal getPoint(int ordinal) {
+    if (overrides.containsKey(ordinal)) {
+      DataType actual = row.getSchema().at(ordinal).getDataType();
+      if (!(actual instanceof GeometryType) && !(actual instanceof GeographyType)) {
+        throw new UnsupportedOperationException(
+            String.format("Fail to access a 'point' value from a field of type '%s'", actual));
+      }
+      return (PointVal) overrides.get(ordinal);
+    }
+    return row.getPoint(ordinal);
   }
 
   private void throwIfUnsafeAccess(
