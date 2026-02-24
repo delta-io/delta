@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -53,8 +53,8 @@ public class DeltaSparkParquetWriteBuilder implements WriteBuilder {
   }
 
   @Override
-  public DeltaSparkParquetBatchWrite buildForBatch() {
-    return new DeltaSparkParquetBatchWrite(
+  public SparkParquetBatchWrite buildForBatch() {
+    return new SparkParquetBatchWrite(
         tablePath,
         hadoopConf,
         initialSnapshot,

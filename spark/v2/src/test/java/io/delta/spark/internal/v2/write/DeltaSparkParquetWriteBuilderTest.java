@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -69,7 +69,7 @@ public class DeltaSparkParquetWriteBuilderTest extends DeltaV2TestBase {
             options,
             partitionColumnNames);
 
-    DeltaSparkParquetBatchWrite batchWrite = builder.buildForBatch();
+    SparkParquetBatchWrite batchWrite = builder.buildForBatch();
     assertEquals(tablePath, batchWrite.getTablePath());
     assertEquals(hadoopConf, batchWrite.getHadoopConf());
     assertEquals(initialSnapshot, batchWrite.getInitialSnapshot());
@@ -93,8 +93,8 @@ public class DeltaSparkParquetWriteBuilderTest extends DeltaV2TestBase {
     Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
     StructType writeSchema = new StructType().add("id", DataTypes.IntegerType);
 
-    DeltaSparkParquetBatchWrite batchWrite =
-        new DeltaSparkParquetBatchWrite(
+    SparkParquetBatchWrite batchWrite =
+        new SparkParquetBatchWrite(
             tablePath,
             hadoopConf,
             initialSnapshot,
