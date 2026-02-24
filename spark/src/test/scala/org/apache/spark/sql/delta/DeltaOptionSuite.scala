@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta
 import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
+import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+
 import org.apache.spark.sql.delta.DeltaOptions.{OVERWRITE_SCHEMA_OPTION, PARTITION_OVERWRITE_MODE_OPTION}
 import org.apache.spark.sql.delta.actions.{Action, FileAction}
+import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -36,7 +39,8 @@ import org.apache.spark.util.Utils
 
 class DeltaOptionSuite extends QueryTest
   with SharedSparkSession
-  with DeltaSQLCommandTest {
+  with DeltaSQLCommandTest
+  with WriteOptionsTestBase {
 
   import testImplicits._
 
@@ -432,6 +436,72 @@ class DeltaOptionSuite extends QueryTest
         .saveAsTable("temp")
       assert(spark.read.format("delta").table("temp").count() == 2,
         "Table should keep the original partition with DPO mode enabled.")
+    }
+  }
+
+  override def executePathWriteTest(
+      write: String => Unit)(assertions: WriteOptionsAssertion): Unit = {
+    withTempDir { tempDir =>
+      val path = createPartitionedTable(tempDir)
+      executeAndValidateWriteOptions(write(path), assertions)
+    }
+  }
+
+  override def executeTableWriteTest(
+      write: String => Unit)(assertions: WriteOptionsAssertion): Unit = {
+    withTable("test_table") {
+      // Create initial partitioned table
+      Seq((1, 1, "event1"), (2, 2, "event2"), (3, 1, "event3"))
+        .toDF("id", "part", "event_name")
+        .write.format("delta").partitionBy("part").saveAsTable("test_table")
+
+      executeAndValidateWriteOptions(write("test_table"), assertions)
+    }
+  }
+
+  private def executeAndValidateWriteOptions(
+    writeOp: => Unit,
+    assertions: WriteOptionsAssertion
+  ): Unit = {
+    val events = Log4jUsageLogger.track {
+      writeOp
+    }
+    val usageLog = getWriteOptionsEvents(events).lastOption
+      .getOrElse(fail("No usage log event found"))
+
+    // Validate the usage log contains correct write options
+    assertWriteOptionsInCommitStats(
+      usageLog.blob,
+      assertions
+    )
+  }
+
+  protected def getWriteOptionsEvents(events: Seq[UsageRecord]): Seq[UsageRecord] = {
+    events.filter { e =>
+      e.metric == MetricDefinitions.EVENT_TAHOE.name &&
+        e.tags.get("opType").contains(DeltaLogging.DELTA_COMMIT_STATS_OPTYPE)
+    }
+  }
+
+  private def assertWriteOptionsInCommitStats(
+    blob: String,
+    assertions: WriteOptionsAssertion
+  ): Unit = {
+    def assertContainsWithOptionalParens(field: String, value: Option[String]): Unit = {
+      val plainValue = value.map(s => "\"" + s + "\"").getOrElse("")
+      val valueWithParens = value.map(s => "\"(" + s + ")\"").getOrElse("")
+      assert(blob.contains(s""""$field":$plainValue""") ||
+        blob.contains(s""""$field":$valueWithParens"""))
+    }
+
+    if (assertions.mode != "") assert(blob.contains(s"""mode":"${assertions.mode}"""))
+    if (assertions.canOverwriteSchema) assert(blob.contains("\"canOverwriteSchema\":true"))
+    if (assertions.canMergeSchema) assert(blob.contains("\"canMergeSchema\":true"))
+    if (assertions.isDynamicPartitionOverwrite) {
+      assert(blob.contains("\"isDynamicPartitionOverwrite\":true"))
+    }
+    assertions.predicate.foreach { pred =>
+      assertContainsWithOptionalParens("predicate", Some(pred))
     }
   }
 }
