@@ -138,8 +138,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   }
 
   @Override
-  public CommitRange getTableChanges(
-      Engine kernelEngine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
     CommitRangeBuilder builder =
         TableManager.loadCommitRange(
             tablePath, CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
@@ -149,7 +148,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
           builder.withEndBoundary(CommitRangeBuilder.CommitBoundary.atVersion(endVersion.get()));
     }
 
-    return builder.build(kernelEngine);
+    return builder.build(engine);
   }
 
   @Override
@@ -160,12 +159,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
       String engineInfo) {
     CreateTableTransactionBuilder builder =
         TableManager.buildCreateTableTransaction(tablePath, kernelSchema, engineInfo);
-    if (!tableProperties.isEmpty()) {
-      builder = builder.withTableProperties(tableProperties);
-    }
-    if (dataLayoutSpec.isPresent()) {
-      builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
-    }
-    return builder.build(kernelEngine);
+    return DeltaSnapshotManager.configureAndBuildTransaction(
+        builder, tableProperties, dataLayoutSpec, kernelEngine);
   }
 }

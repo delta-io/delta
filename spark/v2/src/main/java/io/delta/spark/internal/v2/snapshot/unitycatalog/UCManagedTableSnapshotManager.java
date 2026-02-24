@@ -170,7 +170,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
   /**
    * Gets a range of table changes (commits) between start and end versions.
    *
-   * @param engine the engine implementation for executing operations
+   * @param kernelEngine the engine implementation for executing operations
    * @param startVersion the starting version (inclusive)
    * @param endVersion optional ending version (inclusive); if not provided, extends to latest
    * @return a CommitRange representing the specified range of commits
@@ -197,12 +197,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     CreateTableTransactionBuilder builder =
         ucCatalogManagedClient.buildCreateTableTransaction(
             tableId, tablePath, kernelSchema, engineInfo);
-    if (!tableProperties.isEmpty()) {
-      builder = builder.withTableProperties(tableProperties);
-    }
-    if (dataLayoutSpec.isPresent()) {
-      builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
-    }
-    return builder.build(kernelEngine);
+    return DeltaSnapshotManager.configureAndBuildTransaction(
+        builder, tableProperties, dataLayoutSpec, kernelEngine);
   }
 }

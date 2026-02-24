@@ -16,7 +16,7 @@
 package io.delta.spark.internal.v2.snapshot.unitycatalog
 
 import java.net.URI
-import java.util.{HashMap => JHashMap}
+import java.util.{HashMap => JHashMap, Map => JMap}
 
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.spark.internal.v2.utils.CatalogTableTestUtils
@@ -172,6 +172,76 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
         configMap.get("token") == UC_TOKEN_ALPHA,
         s"UC token mismatch: got ${configMap.get("token")}")
     }
+  }
+
+  // ==================== extractTableInfoForCreate ====================
+
+  private def makeUCCreateProperties(
+      tableId: String = TABLE_ID_ALPHA): JMap[String, String] = {
+    val props = new JHashMap[String, String]()
+    props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    props.put(UC_TABLE_ID_KEY, tableId)
+    props
+  }
+
+  test("extractTableInfoForCreate: returns empty for non-UC-managed properties") {
+    val props = new JHashMap[String, String]()
+    // No FEATURE_CATALOG_MANAGED key - not a UC managed table
+    val result = UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
+    assert(result.isEmpty, "Non-UC-managed properties should return empty Optional")
+  }
+
+  test("extractTableInfoForCreate: throws when UC_TABLE_ID_KEY is missing") {
+    val props = new JHashMap[String, String]()
+    props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    // UC_TABLE_ID_KEY intentionally absent
+
+    val exception = intercept[IllegalArgumentException] {
+      UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
+    }
+    assert(exception.getMessage.contains("ucTableId"))
+  }
+
+  test("extractTableInfoForCreate: throws when UC_TABLE_ID_KEY is empty string") {
+    val props = new JHashMap[String, String]()
+    props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    props.put(UC_TABLE_ID_KEY, "")
+
+    val exception = intercept[IllegalArgumentException] {
+      UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
+    }
+    assert(exception.getMessage.contains("ucTableId"))
+  }
+
+  test("extractTableInfoForCreate: happy path extracts correct table info") {
+    val props = makeUCCreateProperties(TABLE_ID_ALPHA)
+
+    withUCCatalogConfig(CATALOG_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA) {
+      val result =
+        UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
+
+      assert(result.isPresent, "Should return table info for UC-managed create properties")
+      val info = result.get()
+      assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
+      assert(
+        info.getTablePath == TABLE_PATH_ALPHA,
+        s"Table path mismatch: got ${info.getTablePath}")
+      assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
+      val configMap = info.getAuthConfig
+      assert(configMap.get("type") == "static", s"Auth type mismatch: got ${configMap.get("type")}")
+      assert(
+        configMap.get("token") == UC_TOKEN_ALPHA,
+        s"Token mismatch: got ${configMap.get("token")}")
+    }
+  }
+
+  test("extractTableInfoForCreate: throws when catalog config is not found") {
+    val props = makeUCCreateProperties()
+
+    val exception = intercept[IllegalArgumentException] {
+      UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, "nonexistent_catalog", spark)
+    }
+    assert(exception.getMessage.contains("Unity Catalog configuration not found"))
   }
 
   test("selects correct catalog when multiple catalogs configured") {
