@@ -26,6 +26,7 @@ import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
@@ -1646,6 +1647,183 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             "Same version (3 to 3)"));
   }
 
+  // ================================================================================================
+  // Tests for planInputPartitions with excludeRegex
+  // ================================================================================================
+
+  /**
+   * Parameterized test that verifies planInputPartitions correctly applies the excludeRegex read
+   * option.
+   *
+   * <p>Uses a partitioned table so file paths contain partition directory names (e.g.
+   * "category=alpha/..."), making it straightforward to craft regex patterns that target specific
+   * subsets of files.
+   *
+   * <p>Verifies correctness by extracting the {@code id} column (always at ordinal 0) from the
+   * reader output and comparing the resulting set of IDs against the expected set.
+   */
+  @ParameterizedTest
+  @MethodSource("excludeRegexPlanInputPartitionsParameters")
+  public void testPlanInputPartitions_excludeRegex(
+      String excludeRegexPattern,
+      long fromVersion,
+      long toVersion,
+      int[] expectedIds,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_exclude_regex_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+
+    // Create table partitioned by category with 4 versions of data.
+    // Version 0: CREATE TABLE (empty)
+    // Version 1: ids {1,2} in category=alpha
+    // Version 2: ids {3,4} in category=beta
+    // Version 3: ids {5,6} in category=alpha
+    // Version 4: ids {7,8} in category=gamma
+    sql(
+        "CREATE TABLE %s (id INT, name STRING, category STRING) "
+            + "USING delta LOCATION '%s' PARTITIONED BY (category)",
+        testTableName, testTablePath);
+    sql("INSERT INTO %s VALUES (1, 'Alice', 'alpha'), (2, 'Bob', 'alpha')", testTableName);
+    sql("INSERT INTO %s VALUES (3, 'Charlie', 'beta'), (4, 'David', 'beta')", testTableName);
+    sql("INSERT INTO %s VALUES (5, 'Eve', 'alpha'), (6, 'Frank', 'alpha')", testTableName);
+    sql("INSERT INTO %s VALUES (7, 'Grace', 'gamma'), (8, 'Harry', 'gamma')", testTableName);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(
+            deltaLog.tableId(),
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false);
+    DeltaSourceOffset endOffset =
+        new DeltaSourceOffset(
+            deltaLog.tableId(),
+            toVersion,
+            DeltaSourceOffset.END_INDEX(),
+            /* isInitialSnapshot= */ false);
+
+    DeltaOptions options = createDeltaOptionsWithExcludeRegex(excludeRegexPattern);
+
+    // DSv2: planInputPartitions + createReaderFactory
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
+    StructType dataSchema = deltaSnapshot.metadata().schema();
+    StructType partitionSchema = deltaSnapshot.metadata().partitionSchema();
+
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            spark.sessionState().newHadoopConf(),
+            spark,
+            options,
+            testTablePath,
+            dataSchema,
+            partitionSchema,
+            dataSchema,
+            new org.apache.spark.sql.sources.Filter[0],
+            Map$.MODULE$.empty());
+
+    InputPartition[] partitions = stream.planInputPartitions(startOffset, endOffset);
+    PartitionReaderFactory readerFactory = stream.createReaderFactory();
+
+    // Extract IDs (column ordinal 0) from reader output.
+    // We read only the id to avoid schema complications with partitioned tables where
+    // the vectorized reader may not include partition columns in the InternalRow.
+    List<Integer> dsv2Ids = new ArrayList<>();
+    for (InputPartition partition : partitions) {
+      if (readerFactory.supportColumnarReads(partition)) {
+        PartitionReader<org.apache.spark.sql.vectorized.ColumnarBatch> reader =
+            readerFactory.createColumnarReader(partition);
+        while (reader.next()) {
+          org.apache.spark.sql.vectorized.ColumnarBatch batch = reader.get();
+          for (int rowId = 0; rowId < batch.numRows(); rowId++) {
+            dsv2Ids.add(batch.getRow(rowId).getInt(0));
+          }
+        }
+        reader.close();
+      } else {
+        PartitionReader<InternalRow> reader = readerFactory.createReader(partition);
+        while (reader.next()) {
+          dsv2Ids.add(reader.get().getInt(0));
+        }
+        reader.close();
+      }
+    }
+
+    List<Integer> expected =
+        Arrays.stream(expectedIds).sorted().boxed().collect(Collectors.toList());
+    Collections.sort(dsv2Ids);
+
+    assertEquals(
+        expected,
+        dsv2Ids,
+        String.format("[%s] ID mismatch: expected=%s, got=%s", testDescription, expected, dsv2Ids));
+  }
+
+  /** Provides test parameters for the excludeRegex planInputPartitions test. */
+  private static Stream<Arguments> excludeRegexPlanInputPartitionsParameters() {
+    return Stream.of(
+        Arguments.of(
+            /* excludeRegexPattern= */ (String) null,
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            "No excludeRegex - all versions"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=alpha",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {3, 4, 7, 8},
+            "Exclude alpha category"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=beta",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 5, 6, 7, 8},
+            "Exclude beta category"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=gamma",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6},
+            "Exclude gamma category"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=(alpha|beta)",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {7, 8},
+            "Exclude alpha and beta categories"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "nonexistent_xyz_pattern",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            "Regex matching no files"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {},
+            "Regex matching all files"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=alpha",
+            /* fromVersion= */ 2L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {3, 4, 7, 8},
+            "Exclude alpha versions 2 to 4"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=beta",
+            /* fromVersion= */ 2L,
+            /* toVersion= */ 2L,
+            /* expectedIds= */ new int[] {},
+            "Exclude beta version 2 only"));
+  }
+
   /**
    * Helper method to convert InternalRow to Row for comparison.
    *
@@ -2754,6 +2932,16 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         /* readDataSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
+  }
+
+  /** Helper method to create DeltaOptions with excludeRegex for testing. */
+  private DeltaOptions createDeltaOptionsWithExcludeRegex(String excludeRegexPattern) {
+    if (excludeRegexPattern == null) {
+      return emptyDeltaOptions();
+    }
+    scala.collection.immutable.Map<String, String> scalaMap =
+        Map$.MODULE$.<String, String>empty().updated("excludeRegex", excludeRegexPattern);
+    return new DeltaOptions(scalaMap, spark.sessionState().conf());
   }
 
   /** Helper method to create DeltaOptions with startingVersion for testing. */
