@@ -384,9 +384,9 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   }
 
   /**
-   * Box 1 wiring for DSv2 batch write entrypoint.
+   * TODO: Implement the production batch-write builder in follow-up changes.
    *
-   * <p>Box 2 will replace this placeholder with the production batch write builder.
+   * <p>This placeholder wires the DSv2 write entrypoint so the table can expose write capability.
    */
   private static class DeferredBatchWriteBuilder implements WriteBuilder {
     @Override
