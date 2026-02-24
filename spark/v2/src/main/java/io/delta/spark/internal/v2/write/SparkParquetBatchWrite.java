@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ import org.apache.spark.sql.types.StructType;
  *
  * <p>Subsequent changes will implement factory creation and commit behavior.
  */
-public class DeltaSparkParquetBatchWrite implements BatchWrite {
+public class SparkParquetBatchWrite implements BatchWrite {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
@@ -42,7 +42,7 @@ public class DeltaSparkParquetBatchWrite implements BatchWrite {
   private final Map<String, String> options;
   private final List<String> partitionColumnNames;
 
-  public DeltaSparkParquetBatchWrite(
+  public SparkParquetBatchWrite(
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
