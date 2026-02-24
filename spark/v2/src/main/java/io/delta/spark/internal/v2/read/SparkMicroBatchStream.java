@@ -430,8 +430,9 @@ public class SparkMicroBatchStream
           continue;
         }
         AddFile addFile = indexedFile.getAddFile();
+        // TODO(#5319): Apply excludeRegex to RemoveFile/AddCDCFile when CDC is supported
         if (excludeRegex.isPresent()
-            && !excludeRegex.get().findFirstIn(addFile.getPath()).isEmpty()) {
+            && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
           continue;
         }
         PartitionedFile partitionedFile =
