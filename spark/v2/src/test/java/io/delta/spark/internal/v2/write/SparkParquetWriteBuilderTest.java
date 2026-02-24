@@ -36,7 +36,7 @@ import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class DeltaSparkParquetWriteBuilderTest extends DeltaV2TestBase {
+public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
 
   @Test
   public void testBuildForBatchCarriesAllConstructionInputs(@TempDir File tempDir)
@@ -59,8 +59,8 @@ public class DeltaSparkParquetWriteBuilderTest extends DeltaV2TestBase {
     options.put("compression", "snappy");
     List<String> partitionColumnNames = Arrays.asList("id");
 
-    DeltaSparkParquetWriteBuilder builder =
-        new DeltaSparkParquetWriteBuilder(
+    SparkParquetWriteBuilder builder =
+        new SparkParquetWriteBuilder(
             tablePath,
             hadoopConf,
             initialSnapshot,

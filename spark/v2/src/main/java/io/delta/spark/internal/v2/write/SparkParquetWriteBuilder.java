@@ -25,7 +25,7 @@ import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.types.StructType;
 
 /** WriteBuilder that prepares batch-write construction inputs for the DSv2 path. */
-public class DeltaSparkParquetWriteBuilder implements WriteBuilder {
+public class SparkParquetWriteBuilder implements WriteBuilder {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
@@ -34,7 +34,7 @@ public class DeltaSparkParquetWriteBuilder implements WriteBuilder {
   private final Map<String, String> options;
   private final List<String> partitionColumnNames;
 
-  public DeltaSparkParquetWriteBuilder(
+  public SparkParquetWriteBuilder(
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
