@@ -107,12 +107,12 @@ public interface DeltaSnapshotManager {
    * <p><b>Use Case:</b> Use this method for streaming queries, incremental processing, or CDC
    * scenarios where you need to process changes between versions.
    *
-   * @param kernelEngine the engine implementation for executing operations
+   * @param engine the engine implementation for executing operations
    * @param startVersion the starting version (inclusive)
    * @param endVersion optional ending version (inclusive); if not provided, extends to latest
    * @return a CommitRange representing the specified range of commits
    */
-  CommitRange getTableChanges(Engine kernelEngine, long startVersion, Optional<Long> endVersion);
+  CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion);
 
   /**
    * Builds a create-table transaction for version 0 commits.
