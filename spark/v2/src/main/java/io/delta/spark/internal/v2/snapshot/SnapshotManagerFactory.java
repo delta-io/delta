@@ -28,6 +28,7 @@ import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
 
 /**
  * Factory for creating {@link DeltaSnapshotManager} instances.
@@ -80,8 +81,17 @@ public final class SnapshotManagerFactory {
   public static DeltaSnapshotManager forCreateTable(
       String tablePath, Engine kernelEngine, Optional<UCTableInfo> ucTableInfo) {
     if (ucTableInfo.isPresent()) {
+      System.err.println(
+          "[KernelCTASDebug] SnapshotManagerFactory.forCreateTable -> UC manager tableId="
+              + ucTableInfo.get().getTableId()
+              + ", tablePath="
+              + ucTableInfo.get().getTablePath());
       return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
     }
+    System.err.println(
+        "[KernelCTASDebug] SnapshotManagerFactory.forCreateTable -> PathBased manager. "
+            + "CatalogTableUtils.isUnityCatalogManagedTableFromProperties="
+            + CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties));
     return new PathBasedSnapshotManager(tablePath, kernelEngine);
   }
 

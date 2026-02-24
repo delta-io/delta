@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.util.CatalogTableUtils;
  * created without Spark if table info is provided directly via {@link UCTableInfo}.
  */
 public final class UCUtils {
+  private static final String OPTION_PREFIX = "option.";
 
   // Utility class - no instances
   private UCUtils() {}
@@ -79,7 +80,14 @@ public final class UCUtils {
     requireNonNull(catalogName, "catalogName is null");
     requireNonNull(spark, "spark is null");
 
-    if (!CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)) {
+    boolean isUCManaged = CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+    if (!isUCManaged) {
+      System.err.println(
+          "[KernelCTASDebug] UCUtils.extractTableInfoForCreate -> not UC managed from properties");
+      debugProperty(properties, "delta.feature.catalogManaged");
+      debugProperty(properties, "delta.feature.catalogOwned-preview");
+      debugProperty(properties, UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+      debugProperty(properties, UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
       return Optional.empty();
     }
 
@@ -92,6 +100,16 @@ public final class UCUtils {
     }
 
     UCCatalogConfig config = resolveCatalogConfig(catalogName, spark);
+    System.err.println(
+        "[KernelCTASDebug] UCUtils.extractTableInfoForCreate -> resolved UC table info. "
+            + "tableId="
+            + ucTableId
+            + ", catalogName="
+            + catalogName
+            + ", tablePath="
+            + tablePath
+            + ", ucUri="
+            + config.uri());
     return Optional.of(
         new UCTableInfo(ucTableId, tablePath, config.uri(), asJava(config.authConfig())));
   }
@@ -148,5 +166,18 @@ public final class UCUtils {
           "Cannot extract table path: location is null for table " + catalogTable.identifier());
     }
     return catalogTable.location().toString();
+  }
+
+  private static void debugProperty(Map<String, String> properties, String key) {
+    String optionKey = OPTION_PREFIX + key;
+    System.err.println(
+        "[KernelCTASDebug] "
+            + key
+            + "="
+            + properties.get(key)
+            + ", "
+            + optionKey
+            + "="
+            + properties.get(optionKey));
   }
 }

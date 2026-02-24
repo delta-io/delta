@@ -20,7 +20,10 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.data.GenericColumnVector;
 import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
@@ -37,6 +40,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaTableUtils;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -72,6 +76,54 @@ public final class CreateTableCommitCoordinator {
         snapshotManager.buildCreateTableTransaction(
             kernelSchema, tableProperties, dataLayoutSpec, engineInfo);
     txn.commit(engine, dataActions);
+  }
+
+  /**
+   * Commits CREATE TABLE version 0 using pre-generated data action JSON from the legacy writer.
+   *
+   * <p>The JSON entries must be Delta log action lines (single-action JSON objects). This method
+   * parses them into Kernel single-action rows and commits them alongside metadata/protocol built
+   * by the CREATE TABLE transaction.
+   */
+  public static void commitCreateTableVersion0FromLegacyWriterActions(
+      String location,
+      StructType schema,
+      List<String> partitionColumns,
+      Map<String, String> properties,
+      SparkSession spark,
+      String catalogName,
+      String engineInfo,
+      List<String> dataActionJson) {
+    if (location == null || location.isEmpty()) {
+      throw new IllegalArgumentException("Unable to resolve location for CREATE TABLE");
+    }
+
+    Map<String, String> createProperties = new HashMap<>(properties);
+    createProperties.putIfAbsent(TableCatalog.PROP_LOCATION, location);
+    debugCreateProperties("CTAS legacy->Kernel createProperties", createProperties);
+    System.err.println(
+        "[KernelCTASDebug] isUnityCatalogManagedTableFromProperties="
+            + CatalogTableUtils.isUnityCatalogManagedTableFromProperties(createProperties));
+
+    Map<String, String> tableProperties = filterDsv2Properties(createProperties);
+    System.err.println(
+        "[KernelCTASDebug] tableProperties.delta.feature.catalogManaged="
+            + getProperty(tableProperties, "delta.feature.catalogManaged"));
+    io.delta.kernel.types.StructType kernelSchema =
+        SchemaUtils.convertSparkSchemaToKernelSchema(schema);
+    Engine engine = createKernelEngine(spark, createProperties);
+    DeltaSnapshotManager snapshotManager =
+        SnapshotManagerFactory.forCreateTable(
+            location, engine, createProperties, catalogName, spark);
+    System.err.println(
+        "[KernelCTASDebug] snapshotManagerClass=" + snapshotManager.getClass().getName());
+    Optional<DataLayoutSpec> dataLayoutSpec = toDataLayoutSpec(partitionColumns);
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            kernelSchema, tableProperties, dataLayoutSpec, engineInfo);
+    System.err.println(
+        "[KernelCTASDebug] txnCommitterClass=" + txn.getCommitter().getClass().getName());
+    txn.commit(engine, toDataActionRows(engine, dataActionJson));
   }
 
   /**
@@ -111,9 +163,13 @@ public final class CreateTableCommitCoordinator {
   private static Engine createKernelEngine(SparkSession spark, Map<String, String> properties) {
     Map<String, String> fsOptions = new HashMap<>();
     for (Map.Entry<String, String> entry : properties.entrySet()) {
+      String effectiveKey =
+          entry.getKey().startsWith("option.")
+              ? entry.getKey().substring("option.".length())
+              : entry.getKey();
       if (DeltaTableUtils.validDeltaTableHadoopPrefixes()
-          .exists(prefix -> entry.getKey().startsWith(prefix))) {
-        fsOptions.put(entry.getKey(), entry.getValue());
+          .exists(prefix -> effectiveKey.startsWith(prefix))) {
+        fsOptions.put(effectiveKey, entry.getValue());
       }
     }
     Configuration hadoopConf =
@@ -132,6 +188,34 @@ public final class CreateTableCommitCoordinator {
       return Optional.empty();
     }
     return Optional.of(DataLayoutSpec.partitioned(partitionColumns));
+  }
+
+  private static Optional<DataLayoutSpec> toDataLayoutSpec(List<String> partitionColumns) {
+    if (partitionColumns == null || partitionColumns.isEmpty()) {
+      return Optional.empty();
+    }
+    List<Column> kernelPartitionColumns = new ArrayList<>();
+    for (String partitionColumn : partitionColumns) {
+      if (partitionColumn != null && !partitionColumn.isEmpty()) {
+        kernelPartitionColumns.add(new Column(partitionColumn));
+      }
+    }
+    if (kernelPartitionColumns.isEmpty()) {
+      return Optional.empty();
+    }
+    return Optional.of(DataLayoutSpec.partitioned(kernelPartitionColumns));
+  }
+
+  private static CloseableIterable<Row> toDataActionRows(
+      Engine engine, List<String> dataActionJson) {
+    if (dataActionJson == null || dataActionJson.isEmpty()) {
+      return CloseableIterable.emptyIterable();
+    }
+
+    GenericColumnVector jsonVector = new GenericColumnVector(dataActionJson, StringType.STRING);
+    io.delta.kernel.data.ColumnarBatch parsedActions =
+        engine.getJsonHandler().parseJson(jsonVector, SingleAction.FULL_SCHEMA, Optional.empty());
+    return CloseableIterable.inMemoryIterable(parsedActions.getRows());
   }
 
   /** Filters out DSv2-specific keys and filesystem options that are not Delta table properties. */
@@ -157,5 +241,32 @@ public final class CreateTableCommitCoordinator {
                   .exists(prefix -> effectiveKey.startsWith(prefix));
             });
     return filtered;
+  }
+
+  private static void debugCreateProperties(String label, Map<String, String> properties) {
+    System.err.println("[KernelCTASDebug] " + label);
+    debugProperty(properties, TableCatalog.PROP_LOCATION);
+    debugProperty(properties, "delta.feature.catalogManaged");
+    debugProperty(properties, "delta.feature.catalogOwned-preview");
+    debugProperty(properties, "io.unitycatalog.tableId");
+    debugProperty(properties, "ucTableId");
+  }
+
+  private static void debugProperty(Map<String, String> properties, String key) {
+    String optionKey = "option." + key;
+    System.err.println(
+        "[KernelCTASDebug] "
+            + key
+            + "="
+            + properties.get(key)
+            + ", "
+            + optionKey
+            + "="
+            + properties.get(optionKey));
+  }
+
+  private static String getProperty(Map<String, String> properties, String key) {
+    String value = properties.get(key);
+    return value != null ? value : properties.get("option." + key);
   }
 }

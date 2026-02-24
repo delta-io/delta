@@ -193,7 +193,15 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     CreateTableTransactionBuilder builder =
         ucCatalogManagedClient.buildCreateTableTransaction(
             tableId, tablePath, kernelSchema, engineInfo);
-    return SnapshotManagerUtils.configureAndBuildTransaction(
-        builder, tableProperties, dataLayoutSpec, engine);
+    Transaction txn =
+        SnapshotManagerUtils.configureAndBuildTransaction(
+            builder, tableProperties, dataLayoutSpec, engine);
+    System.err.println(
+        "[KernelCTASDebug] UCManagedTableSnapshotManager.buildCreateTableTransaction -> "
+            + "txnCommitterClass="
+            + txn.getCommitter().getClass().getName()
+            + ", tableId="
+            + tableId);
+    return txn;
   }
 }
