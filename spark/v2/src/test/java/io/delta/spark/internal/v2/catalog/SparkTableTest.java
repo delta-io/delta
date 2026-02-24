@@ -16,6 +16,7 @@
 package io.delta.spark.internal.v2.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
+import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -39,6 +40,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.types.DataTypes;
@@ -167,6 +169,8 @@ public class SparkTableTest extends DeltaV2TestBase {
 
     // ===== Test capabilities =====
     assertTrue(kernelTable.capabilities().contains(BATCH_READ));
+    assertTrue(kernelTable.capabilities().contains(BATCH_WRITE));
+    assertTrue(kernelTable instanceof SupportsWrite);
 
     // ===== Test getCatalogTable based on construction method =====
     Optional<CatalogTable> retrievedCatalogTable = kernelTable.getCatalogTable();

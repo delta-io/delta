@@ -35,17 +35,23 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.write.BatchWrite;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead {
+public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
-          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
+          EnumSet.of(
+              TableCapability.BATCH_READ,
+              TableCapability.MICRO_BATCH_READ,
+              TableCapability.BATCH_WRITE));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -225,6 +231,12 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   @Override
+  public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
+    requireNonNull(info, "write info is null");
+    return new DeferredBatchWriteBuilder();
+  }
+
+  @Override
   public String toString() {
     return "SparkTable{identifier=" + identifier + '}';
   }
@@ -368,6 +380,19 @@ public class SparkTable implements Table, SupportsRead {
 
     Transform[] getPartitionTransforms() {
       return withInit(() -> partitionTransforms);
+    }
+  }
+
+  /**
+   * Box 1 wiring for DSv2 batch write entrypoint.
+   *
+   * <p>Box 2 will replace this placeholder with the production batch write builder.
+   */
+  private static class DeferredBatchWriteBuilder implements WriteBuilder {
+    @Override
+    public BatchWrite buildForBatch() {
+      throw new UnsupportedOperationException(
+          "DSv2 batch write builder wiring is in place; implementation is added in Box 2");
     }
   }
 }
