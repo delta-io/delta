@@ -8,6 +8,9 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This ensures the workflow always uses the versions defined in the build
@@ -44,12 +47,12 @@ jobs:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       SPARK_VERSION: ${{ matrix.spark_version }}
       # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 10
+      NUM_SHARDS: 8
     steps:
       - uses: actions/checkout@v3
       - name: Get Spark version details
