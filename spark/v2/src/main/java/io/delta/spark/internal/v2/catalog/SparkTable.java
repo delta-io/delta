@@ -392,7 +392,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     @Override
     public BatchWrite buildForBatch() {
       throw new UnsupportedOperationException(
-          "DSv2 batch write builder wiring is in place; implementation is added in Box 2");
+          "DSv2 batch write wiring is in place; batch write implementation is pending");
     }
   }
 }
