@@ -72,7 +72,9 @@ public final class UCUtils {
     // Get UC endpoint and token from Spark configs
     scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
         UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+
     scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
+
     if (configOpt.isEmpty()) {
       throw new IllegalArgumentException(
           "Cannot create UC client for table "
@@ -81,9 +83,11 @@ public final class UCUtils {
               + catalogName
               + "'.");
     }
+
     UCCatalogConfig config = configOpt.get();
-    return Optional.of(
-        new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig())));
+    String ucUri = config.uri();
+
+    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
   }
 
   /**
