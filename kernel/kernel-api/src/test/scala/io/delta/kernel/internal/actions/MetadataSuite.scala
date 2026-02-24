@@ -78,8 +78,9 @@ class MetadataSuite extends AnyFunSuite with TestUtils {
   }
 
   test("schema parsing is lazy - void type does not block non-schema access") {
-    val voidSchemaJson =
-      """{"type":"struct","fields":[{"name":"x","type":"integer","nullable":true,"metadata":{}},{"name":"y","type":"void","nullable":true,"metadata":{}}]}"""
+    val voidSchemaJson = """{"type":"struct","fields":[""" +
+      """{"name":"x","type":"integer","nullable":true,"metadata":{}},""" +
+      """{"name":"y","type":"void","nullable":true,"metadata":{}}]}"""
 
     val metadata = testMetadata(schemaString = voidSchemaJson)
 
