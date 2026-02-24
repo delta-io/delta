@@ -404,7 +404,7 @@ public class SparkMicroBatchStream
         }
         AddFile addFile = indexedFile.getAddFile();
         if (excludeRegex.isPresent()
-            && !excludeRegex.get().findFirstIn(addFile.getPath()).isEmpty()) {
+            && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
           continue;
         }
         PartitionedFile partitionedFile =

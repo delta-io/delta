@@ -1669,6 +1669,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       long fromVersion,
       long toVersion,
       int[] expectedIds,
+      boolean isInitialSnapshot,
       String testDescription,
       @TempDir File tempDir)
       throws Exception {
@@ -1694,16 +1695,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSourceOffset startOffset =
         new DeltaSourceOffset(
-            deltaLog.tableId(),
-            fromVersion,
-            DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ false);
+            deltaLog.tableId(), fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
     DeltaSourceOffset endOffset =
         new DeltaSourceOffset(
-            deltaLog.tableId(),
-            toVersion,
-            DeltaSourceOffset.END_INDEX(),
-            /* isInitialSnapshot= */ false);
+            deltaLog.tableId(), toVersion, DeltaSourceOffset.END_INDEX(), isInitialSnapshot);
 
     DeltaOptions options = createDeltaOptionsWithExcludeRegex(excludeRegexPattern);
 
@@ -1773,55 +1768,78 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ false,
             "No excludeRegex - all versions"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=alpha",
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {3, 4, 7, 8},
+            /* isInitialSnapshot= */ false,
             "Exclude alpha category"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=beta",
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {1, 2, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ false,
             "Exclude beta category"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=gamma",
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6},
+            /* isInitialSnapshot= */ false,
             "Exclude gamma category"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=(alpha|beta)",
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {7, 8},
+            /* isInitialSnapshot= */ false,
             "Exclude alpha and beta categories"),
         Arguments.of(
             /* excludeRegexPattern= */ "nonexistent_xyz_pattern",
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ false,
             "Regex matching no files"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=",
             /* fromVersion= */ 1L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {},
+            /* isInitialSnapshot= */ false,
             "Regex matching all files"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=alpha",
             /* fromVersion= */ 2L,
             /* toVersion= */ 4L,
             /* expectedIds= */ new int[] {3, 4, 7, 8},
+            /* isInitialSnapshot= */ false,
             "Exclude alpha versions 2 to 4"),
         Arguments.of(
             /* excludeRegexPattern= */ "category=beta",
             /* fromVersion= */ 2L,
             /* toVersion= */ 2L,
             /* expectedIds= */ new int[] {},
-            "Exclude beta version 2 only"));
+            /* isInitialSnapshot= */ false,
+            "Exclude beta version 2 only"),
+        Arguments.of(
+            /* excludeRegexPattern= */ (String) null,
+            /* fromVersion= */ 0L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ true,
+            "Initial snapshot - no excludeRegex"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=alpha",
+            /* fromVersion= */ 0L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {3, 4, 7, 8},
+            /* isInitialSnapshot= */ true,
+            "Initial snapshot - exclude alpha"));
   }
 
   /**
