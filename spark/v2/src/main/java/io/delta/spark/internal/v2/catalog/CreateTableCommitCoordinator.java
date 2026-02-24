@@ -40,7 +40,6 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaTableUtils;
-import org.apache.spark.sql.delta.util.CatalogTableUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -100,29 +99,17 @@ public final class CreateTableCommitCoordinator {
 
     Map<String, String> createProperties = new HashMap<>(properties);
     createProperties.putIfAbsent(TableCatalog.PROP_LOCATION, location);
-    debugCreateProperties("CTAS legacy->Kernel createProperties", createProperties);
-    System.err.println(
-        "[KernelCTASDebug] isUnityCatalogManagedTableFromProperties="
-            + CatalogTableUtils.isUnityCatalogManagedTableFromProperties(createProperties));
-
     Map<String, String> tableProperties = filterDsv2Properties(createProperties);
-    System.err.println(
-        "[KernelCTASDebug] tableProperties.delta.feature.catalogManaged="
-            + getProperty(tableProperties, "delta.feature.catalogManaged"));
     io.delta.kernel.types.StructType kernelSchema =
         SchemaUtils.convertSparkSchemaToKernelSchema(schema);
     Engine engine = createKernelEngine(spark, createProperties);
     DeltaSnapshotManager snapshotManager =
         SnapshotManagerFactory.forCreateTable(
             location, engine, createProperties, catalogName, spark);
-    System.err.println(
-        "[KernelCTASDebug] snapshotManagerClass=" + snapshotManager.getClass().getName());
     Optional<DataLayoutSpec> dataLayoutSpec = toDataLayoutSpec(partitionColumns);
     Transaction txn =
         snapshotManager.buildCreateTableTransaction(
             kernelSchema, tableProperties, dataLayoutSpec, engineInfo);
-    System.err.println(
-        "[KernelCTASDebug] txnCommitterClass=" + txn.getCommitter().getClass().getName());
     txn.commit(engine, toDataActionRows(engine, dataActionJson));
   }
 
@@ -241,32 +228,5 @@ public final class CreateTableCommitCoordinator {
                   .exists(prefix -> effectiveKey.startsWith(prefix));
             });
     return filtered;
-  }
-
-  private static void debugCreateProperties(String label, Map<String, String> properties) {
-    System.err.println("[KernelCTASDebug] " + label);
-    debugProperty(properties, TableCatalog.PROP_LOCATION);
-    debugProperty(properties, "delta.feature.catalogManaged");
-    debugProperty(properties, "delta.feature.catalogOwned-preview");
-    debugProperty(properties, "io.unitycatalog.tableId");
-    debugProperty(properties, "ucTableId");
-  }
-
-  private static void debugProperty(Map<String, String> properties, String key) {
-    String optionKey = "option." + key;
-    System.err.println(
-        "[KernelCTASDebug] "
-            + key
-            + "="
-            + properties.get(key)
-            + ", "
-            + optionKey
-            + "="
-            + properties.get(optionKey));
-  }
-
-  private static String getProperty(Map<String, String> properties, String key) {
-    String value = properties.get(key);
-    return value != null ? value : properties.get("option." + key);
   }
 }
