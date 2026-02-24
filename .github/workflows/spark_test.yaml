@@ -19,8 +19,27 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
+      use_faster_tests: ${{ steps.check-faster-tests.outputs.use_faster_tests }}
     steps:
       - uses: actions/checkout@v3
+      - name: Check faster-tests label authorization
+        id: check-faster-tests
+        if: contains(github.event.pull_request.labels.*.name, 'faster-tests')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALLOWED_USERS: '["tdas"]'
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          LABELER=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/timeline" \
+            --jq '[.[] | select(.event == "labeled" and .label.name == "faster-tests")] | last | .actor.login')
+          echo "faster-tests label was added by: $LABELER"
+          if echo "$ALLOWED_USERS" | jq -e --arg user "$LABELER" 'index($user) != null' > /dev/null 2>&1; then
+            echo "User $LABELER is authorized to use faster-tests"
+            echo "use_faster_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::User $LABELER is not authorized to use faster-tests. Falling back to standard runners."
+            echo "use_faster_tests=false" >> $GITHUB_OUTPUT
+          fi
       - name: install java
         uses: actions/setup-java@v3
         with:
@@ -36,7 +55,7 @@ jobs:
 
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
-    runs-on: ${{ contains(github.event.pull_request.labels.*.name, 'faster-tests') && fromJson('{"group":"delta-spark-tests-runner-group","labels":["delta-spark-tests-16-core-runners"]}') || 'ubuntu-24.04' }}
+    runs-on: ${{ needs.generate-matrix.outputs.use_faster_tests == 'true' && fromJson('{"group":"delta-spark-tests-runner-group","labels":["delta-spark-tests-16-core-runners"]}') || 'ubuntu-24.04' }}
     needs: generate-matrix
     strategy:
       fail-fast: false
@@ -47,12 +66,12 @@ jobs:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
         # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: ${{ fromJson(contains(github.event.pull_request.labels.*.name, 'faster-tests') && '[0,1,2,3,4,5,6,7]' || '[0,1,2,3]') }}
+        shard: ${{ fromJson(needs.generate-matrix.outputs.use_faster_tests == 'true' && '[0,1,2,3,4,5,6,7]' || '[0,1,2,3]') }}
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       SPARK_VERSION: ${{ matrix.spark_version }}
       # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: ${{ contains(github.event.pull_request.labels.*.name, 'faster-tests') && 8 || 4 }}
+      NUM_SHARDS: ${{ needs.generate-matrix.outputs.use_faster_tests == 'true' && 8 || 4 }}
     steps:
       - uses: actions/checkout@v3
       - name: Get Spark version details
@@ -131,7 +150,7 @@ jobs:
       - name: Run Scala/Java tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_python_test.yaml
         run: |
-          TEST_PARALLELISM_COUNT=${{ contains(github.event.pull_request.labels.*.name, 'faster-tests') && 12 || 4 }} pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
+          TEST_PARALLELISM_COUNT=${{ needs.generate-matrix.outputs.use_faster_tests == 'true' && 8 || 4 }} pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
