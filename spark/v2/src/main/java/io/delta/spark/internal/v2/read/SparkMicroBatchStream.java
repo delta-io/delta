@@ -505,6 +505,7 @@ public class SparkMicroBatchStream
         return cachedStartingVersion;
       }
     } else if (options.startingTimestamp().isDefined()) {
+      // Set enforceRetention to true to align with V1 connector
       Timestamp timestamp =
           new DeltaTimeTravelSpec(
                   /* timestamp= */ options.startingTimestamp().map(Literal$.MODULE$::apply),
