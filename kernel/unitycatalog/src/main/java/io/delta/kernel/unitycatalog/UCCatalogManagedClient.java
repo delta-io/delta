@@ -456,8 +456,6 @@ public class UCCatalogManagedClient {
     requiredProperties.put(
         TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
-    // Unity Catalog requires vacuumProtocolCheck on all catalog-managed tables to prevent
-    // legacy vacuum implementations from performing unsafe deletes.
     requiredProperties.put(
         TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE.getTableFeatureSupportKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
