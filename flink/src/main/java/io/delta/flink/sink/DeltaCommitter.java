@@ -1,17 +1,17 @@
 /*
- *  Copyright (2026) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package io.delta.flink.sink;
@@ -26,6 +26,7 @@ import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.flink.api.connector.sink2.Committer;
+import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.groups.SinkCommitterMetricGroup;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -71,6 +72,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
   private final DeltaTable deltaTable;
   private final DeltaSinkConf conf;
   private final SinkCommitterMetricGroup metricGroup;
+  private final Counter numActionsCommittedCounter;
+  private volatile long lastCommitDurationMs;
 
   private DeltaCommitter(
       String jobId,
@@ -85,6 +88,8 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
     this.deltaTable = deltaTable;
     this.conf = conf;
     this.metricGroup = metricGroup;
+    this.numActionsCommittedCounter = metricGroup.counter("numActionsCommitted");
+    metricGroup.gauge("lastCommitDurationMs", () -> lastCommitDurationMs);
   }
 
   @Override
@@ -107,6 +112,7 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
       return;
     }
     LOG.debug("Committing {} committables on checkpoint {}", committables.size(), checkpointId);
+    metricGroup.getNumCommittablesTotalCounter().inc(committables.size());
 
     deltaTable.refresh();
     StructType latestSchema = deltaTable.getSchema();
@@ -116,6 +122,12 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
           "Invalid schema evolution observed. Sink schema: {}, latest table schema: {}",
           conf.getSinkSchema(),
           latestSchema);
+      committables.forEach(
+          c -> {
+            c.signalFailedWithKnownReason(
+                new IllegalStateException("Invalid schema evolution observed"));
+            metricGroup.getNumCommittablesFailureCounter().inc();
+          });
       throw new IllegalStateException("Invalid schema evolution observed, aborting committing");
     }
 
@@ -137,6 +149,10 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
                   a[1] = Math.max(a[1], b[1]);
                   return a;
                 });
+
+    long numActions =
+        committables.stream().mapToLong(req -> req.getCommittable().getDeltaActions().size()).sum();
+
     final CloseableIterable<Row> dataActions =
         new CloseableIterable<Row>() {
           @Override
@@ -152,15 +168,28 @@ public class DeltaCommitter implements Committer<DeltaCommittable> {
             // Nothing to close
           }
         };
-    deltaTable.commit(
-        dataActions,
-        committerId,
-        checkpointId,
-        Map.of(
-            "flink.low-watermark",
-            String.valueOf(watermarks[0]),
-            "flink.high-watermark",
-            String.valueOf(watermarks[1])));
+
+    long startMs = System.currentTimeMillis();
+    try {
+      deltaTable.commit(
+          dataActions,
+          committerId,
+          checkpointId,
+          Map.of(
+              "flink.low-watermark",
+              String.valueOf(watermarks[0]),
+              "flink.high-watermark",
+              String.valueOf(watermarks[1])));
+      lastCommitDurationMs = System.currentTimeMillis() - startMs;
+
+      numActionsCommittedCounter.inc(numActions);
+      metricGroup.getNumCommittablesSuccessCounter().inc(committables.size());
+    } catch (Exception e) {
+      lastCommitDurationMs = System.currentTimeMillis() - startMs;
+      metricGroup.getNumCommittablesFailureCounter().inc(committables.size());
+      committables.forEach(c -> c.signalFailedWithKnownReason(e));
+      throw e;
+    }
   }
 
   private TreeMap<Long, List<CommitRequest<DeltaCommittable>>> sortCommittablesByCheckpointId(

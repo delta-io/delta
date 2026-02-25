@@ -1438,6 +1438,10 @@ lazy val flink = (project in file("flink"))
     Test / javaOptions ++= Seq(
       "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
     ),
+    inConfig(Test)(AssemblyPlugin.baseAssemblySettings),
+    Test / assembly / fullClasspath := (Test / fullClasspath).value,
+    Test / assembly / assemblyJarName := s"delta-flink-test-$flinkVersion-${version.value}.jar",
+    Test / assembly / test := {},
     crossPaths := false,
     libraryDependencies ++= Seq(
       "org.apache.flink" % "flink-core" % flinkVersion % "provided",
