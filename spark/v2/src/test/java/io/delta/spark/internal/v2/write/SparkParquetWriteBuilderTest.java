@@ -16,7 +16,9 @@
 package io.delta.spark.internal.v2.write;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
@@ -77,6 +79,13 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertEquals(queryId, batchWrite.getQueryId());
     assertEquals(options, batchWrite.getOptions());
     assertEquals(partitionColumnNames, batchWrite.getPartitionColumnNames());
+    assertNotNull(batchWrite.getEngine());
+    assertNotNull(batchWrite.getTransaction());
+    assertNotNull(batchWrite.getTxnState());
+    assertNotNull(batchWrite.getWriteContext());
+    assertTrue(
+        batchWrite.getTargetDirectory().contains(tablePath),
+        "Target directory should be under the table path");
   }
 
   @Test

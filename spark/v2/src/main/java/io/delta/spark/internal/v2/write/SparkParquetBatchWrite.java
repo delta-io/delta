@@ -17,8 +17,16 @@ package io.delta.spark.internal.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.DataWriteContext;
+import io.delta.kernel.Operation;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.defaults.engine.DefaultEngine;
+import io.delta.kernel.engine.Engine;
+import io.delta.kernel.expressions.Literal;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
@@ -34,6 +42,8 @@ import org.apache.spark.sql.types.StructType;
  * <p>Subsequent changes will implement factory creation and commit behavior.
  */
 public class SparkParquetBatchWrite implements BatchWrite {
+  private static final String ENGINE_INFO = "Spark-Delta-Kernel-DSv2";
+
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
@@ -41,6 +51,11 @@ public class SparkParquetBatchWrite implements BatchWrite {
   private final String queryId;
   private final Map<String, String> options;
   private final List<String> partitionColumnNames;
+  private final Engine engine;
+  private final Transaction transaction;
+  private final Row txnState;
+  private final DataWriteContext writeContext;
+  private final String targetDirectory;
 
   public SparkParquetBatchWrite(
       String tablePath,
@@ -59,6 +74,17 @@ public class SparkParquetBatchWrite implements BatchWrite {
     this.partitionColumnNames =
         Collections.unmodifiableList(
             requireNonNull(partitionColumnNames, "partition column names is null"));
+
+    this.engine = DefaultEngine.create(this.hadoopConf);
+    this.transaction =
+        this.initialSnapshot
+            .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
+            .build(this.engine);
+    this.txnState = transaction.getTransactionState(this.engine);
+    this.writeContext =
+        Transaction.getWriteContext(this.engine, this.txnState, new HashMap<String, Literal>());
+    this.targetDirectory =
+        requireNonNull(writeContext.getTargetDirectory(), "target directory is null");
   }
 
   @Override
@@ -101,5 +127,25 @@ public class SparkParquetBatchWrite implements BatchWrite {
 
   List<String> getPartitionColumnNames() {
     return partitionColumnNames;
+  }
+
+  Engine getEngine() {
+    return engine;
+  }
+
+  Transaction getTransaction() {
+    return transaction;
+  }
+
+  Row getTxnState() {
+    return txnState;
+  }
+
+  DataWriteContext getWriteContext() {
+    return writeContext;
+  }
+
+  String getTargetDirectory() {
+    return targetDirectory;
   }
 }
