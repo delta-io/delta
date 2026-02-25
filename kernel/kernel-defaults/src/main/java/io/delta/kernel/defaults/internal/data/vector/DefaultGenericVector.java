@@ -19,6 +19,7 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.*;
 import io.delta.kernel.types.*;
+import io.delta.kernel.data.PointVal;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.function.Function;
@@ -149,6 +150,13 @@ public class DefaultGenericVector implements ColumnVector {
     // TODO: not sufficient check, also need to check the element types
     throwIfUnsafeAccess(MapType.class, "map");
     return (MapValue) rowIdToValueAccessor.apply(rowId);
+  }
+
+  @Override
+  public PointVal getPoint(int rowId) {
+    assertValidRowId(rowId);
+    throwIfUnsafeAccess(GeometryType.class, GeographyType.class, "point");
+    return (PointVal) rowIdToValueAccessor.apply(rowId);
   }
 
   @Override
