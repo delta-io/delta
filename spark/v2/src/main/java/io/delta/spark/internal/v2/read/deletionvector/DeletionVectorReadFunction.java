@@ -99,8 +99,15 @@ public class DeletionVectorReadFunction
     // Cast needed: in vectorized mode Spark passes ColumnarBatch via type erasure as InternalRow.
     return (Iterator<InternalRow>)
         (Iterator<?>)
-            CloseableIterator.wrap((Iterator<ColumnarBatch>) (Iterator<?>) baseReadFunc.apply(file))
-                .mapCloseable(batch -> filterAndProjectBatch(batch, dvColumnIndex));
+            CloseableIterator.wrap((Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file))
+                .mapCloseable(
+                    item -> {
+                      if (item instanceof ColumnarBatch) {
+                        return filterAndProjectBatch((ColumnarBatch) item, dvColumnIndex);
+                      }
+                      throw new IllegalArgumentException(
+                          "Expected ColumnarBatch but got: " + item.getClass());
+                    });
   }
 
   /** Filter active rows and project out the DV column from a ColumnarBatch. */
