@@ -183,6 +183,26 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     return catalogTable;
   }
 
+  /** Returns the Hadoop configuration used for table I/O. */
+  public Configuration getHadoopConf() {
+    return hadoopConf;
+  }
+
+  /** Returns the snapshot loaded when this table was created. */
+  public Snapshot getInitialSnapshot() {
+    return initialSnapshot;
+  }
+
+  /** Returns the table options. */
+  public Map<String, String> getOptions() {
+    return options;
+  }
+
+  /** Returns partition column names in table order. */
+  public List<String> getPartitionColumnNames() {
+    return schemaProvider.getPartitionColumnNames();
+  }
+
   /**
    * Returns the Path to the Delta table root.
    *
@@ -259,17 +279,9 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         merged);
   }
 
-  /**
-   * Batch write for Delta tables via the DSv2 connector is not yet supported.
-   *
-   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
-   * follow-up changes land the full write implementation.
-   */
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
-    requireNonNull(info, "write info is null");
-    throw new UnsupportedOperationException(
-        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
+    return new io.delta.spark.internal.v2.write.DeltaKernelWriteBuilder(this, info);
   }
 
   @Override
@@ -420,6 +432,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     Transform[] getPartitionTransforms() {
       return withInit(() -> partitionTransforms);
+    }
+
+    List<String> getPartitionColumnNames() {
+      return withInit(() -> partColNames);
     }
   }
 }
