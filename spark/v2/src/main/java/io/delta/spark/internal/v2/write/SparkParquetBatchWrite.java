@@ -25,6 +25,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
+import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -54,6 +55,8 @@ public class SparkParquetBatchWrite implements BatchWrite {
   private final Engine engine;
   private final Transaction transaction;
   private final Row txnState;
+  private final SerializableKernelRowWrapper serializableTxnState;
+  private final SerializableHadoopConf serializableHadoopConf;
   private final DataWriteContext writeContext;
   private final String targetDirectory;
 
@@ -81,6 +84,10 @@ public class SparkParquetBatchWrite implements BatchWrite {
             .buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE)
             .build(this.engine);
     this.txnState = transaction.getTransactionState(this.engine);
+    this.serializableTxnState =
+        new SerializableKernelRowWrapper(
+            requireNonNull(this.txnState, "transaction state is null"));
+    this.serializableHadoopConf = new SerializableHadoopConf(this.hadoopConf);
     this.writeContext =
         Transaction.getWriteContext(this.engine, this.txnState, new HashMap<String, Literal>());
     this.targetDirectory =
@@ -139,6 +146,14 @@ public class SparkParquetBatchWrite implements BatchWrite {
 
   Row getTxnState() {
     return txnState;
+  }
+
+  SerializableKernelRowWrapper getSerializableTxnState() {
+    return serializableTxnState;
+  }
+
+  SerializableHadoopConf getSerializableHadoopConf() {
+    return serializableHadoopConf;
   }
 
   DataWriteContext getWriteContext() {
