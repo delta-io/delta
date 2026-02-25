@@ -120,31 +120,24 @@ public class DeletionVectorReadFunctionTest {
   }
 
   @Test
-  public void testBatchMultipleBatchesWithEmptyInBetween() {
+  public void testBatchMultipleBatchesWithDifferentBatch() {
     ColumnarBatch allDeleted = createBatch(new int[] {1, 2, 3}, new byte[] {1, 1, 1});
     ColumnarBatch mixed = createBatch(new int[] {4, 5, 6}, new byte[] {0, 1, 0});
     ColumnarBatch allLive = createBatch(new int[] {7}, new byte[] {0});
 
-    List<ColumnarBatch> result = runBatchRead(allDeleted, mixed, allLive);
+    // Ordering 1: allDeleted, mixed, allLive
+    List<ColumnarBatch> result1 = runBatchRead(allDeleted, mixed, allLive);
+    assertEquals(3, result1.size());
+    assertBatchRows(result1.get(0), new int[] {}, new String[] {});
+    assertBatchRows(result1.get(1), new int[] {4, 6}, new String[] {"name_0", "name_2"});
+    assertBatchRows(result1.get(2), new int[] {7}, new String[] {"name_0"});
 
-    assertEquals(3, result.size());
-    assertBatchRows(result.get(0), new int[] {}, new String[] {});
-    assertBatchRows(result.get(1), new int[] {4, 6}, new String[] {"name_0", "name_2"});
-    assertBatchRows(result.get(2), new int[] {7}, new String[] {"name_0"});
-  }
-
-  @Test
-  public void testBatchDifferentOrderings() {
-    ColumnarBatch allLive = createBatch(new int[] {1, 2}, new byte[] {0, 0});
-    ColumnarBatch allDeleted = createBatch(new int[] {3, 4}, new byte[] {1, 1});
-    ColumnarBatch mixed = createBatch(new int[] {5, 6, 7}, new byte[] {1, 0, 0});
-
-    List<ColumnarBatch> result = runBatchRead(allLive, allDeleted, mixed);
-
-    assertEquals(3, result.size());
-    assertBatchRows(result.get(0), new int[] {1, 2}, new String[] {"name_0", "name_1"});
-    assertBatchRows(result.get(1), new int[] {}, new String[] {});
-    assertBatchRows(result.get(2), new int[] {6, 7}, new String[] {"name_1", "name_2"});
+    // Ordering 2: allLive, allDeleted, mixed
+    List<ColumnarBatch> result2 = runBatchRead(allLive, allDeleted, mixed);
+    assertEquals(3, result2.size());
+    assertBatchRows(result2.get(0), new int[] {7}, new String[] {"name_0"});
+    assertBatchRows(result2.get(1), new int[] {}, new String[] {});
+    assertBatchRows(result2.get(2), new int[] {4, 6}, new String[] {"name_0", "name_2"});
   }
 
   private List<ColumnarBatch> runBatchRead(ColumnarBatch... inputBatches) {
