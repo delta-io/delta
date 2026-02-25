@@ -41,6 +41,7 @@ import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.util.SerializableConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -165,9 +166,9 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
             new HashMap<>(),
             Arrays.asList("id"));
 
-    SerializableHadoopConf roundTripped =
-        roundTrip(batchWrite.getSerializableHadoopConf(), SerializableHadoopConf.class);
-    Configuration reconstructed = roundTripped.toConfiguration();
+    SerializableConfiguration roundTripped =
+        roundTrip(batchWrite.getSerializableHadoopConf(), SerializableConfiguration.class);
+    Configuration reconstructed = roundTripped.value();
 
     assertEquals("spark-delta-value", reconstructed.get("spark.delta.test.key"));
     assertEquals("delta-value", reconstructed.get("delta.test.key"));
@@ -175,13 +176,6 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
         countEntries(batchWrite.getHadoopConf()),
         countEntries(reconstructed),
         "Reconstructed configuration should preserve all captured entries");
-  }
-
-  @Test
-  public void testSerializableHadoopConfValidatesRequiredInput() {
-    NullPointerException ex =
-        assertThrows(NullPointerException.class, () -> new SerializableHadoopConf(null));
-    assertEquals("configuration is null", ex.getMessage());
   }
 
   private SparkParquetBatchWrite createBatchWrite(File tempDir, String tableName) throws Exception {
