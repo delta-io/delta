@@ -114,6 +114,8 @@ lazy val commonSettings = Seq(
   },
 
   testOptions += Tests.Argument("-oF"),
+  // Generate JUnit XML test reports in target/test-reports/
+  Test / testOptions += Tests.Argument("-u", "target/test-reports"),
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
@@ -662,7 +664,10 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-contribs is only published as delta-contribs_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -1058,6 +1063,8 @@ lazy val storage = (project in file("storage"))
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
     ),
 
     // Unidoc settings
@@ -1134,7 +1141,10 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-iceberg is only published as delta-iceberg_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
     libraryDependencies ++= {
       if (supportIceberg) {
         Seq(
@@ -1148,7 +1158,9 @@ lazy val iceberg = (project in file("iceberg"))
           "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
           "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
-          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided"
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+          // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
+          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided"
         )
       } else {
         Seq.empty
@@ -1308,15 +1320,30 @@ lazy val hudi = (project in file("hudi"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    libraryDependencies ++= Seq(
-      "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
-        ExclusionRule(organization = "org.apache.hadoop"),
-        ExclusionRule(organization = "org.apache.zookeeper"),
-      ),
-      "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-      "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
-    ),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-hudi is only published as delta-hudi_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
+    libraryDependencies ++= {
+      if (supportHudi) {
+        Seq(
+          "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
+            ExclusionRule(organization = "org.apache.hadoop"),
+            ExclusionRule(organization = "org.apache.zookeeper"),
+          ),
+          "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+          "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
+        )
+      } else {
+        Seq.empty
+      }
+    },
+    // Skip compilation and publishing when supportHudi is false
+    Compile / skip := !supportHudi,
+    Test / skip := !supportHudi,
+    publish / skip := !supportHudi,
+    publishLocal / skip := !supportHudi,
+    publishM2 / skip := !supportHudi,
     assembly / assemblyJarName := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},

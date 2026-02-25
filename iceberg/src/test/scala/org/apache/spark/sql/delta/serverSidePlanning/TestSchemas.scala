@@ -62,12 +62,12 @@ private[serverSidePlanning] object TestSchemas {
     // Nested struct with field that has dots in its name (ID 15)
     // Tests escaping at nested level: parent.`child.name`
     Types.NestedField.required(15, "parent", Types.StructType.of(
-      Types.NestedField.required(121, "child.name", Types.StringType.get)
+      Types.NestedField.required(121, "`child.name`", Types.StringType.get)
     )),
 
     // Literal top-level column names with dots (IDs 16-17) - Test escaping
-    Types.NestedField.required(16, "address.city", Types.StringType.get),
-    Types.NestedField.required(17, "a.b.c", Types.StringType.get)
+    Types.NestedField.required(16, "`address.city`", Types.StringType.get),
+    Types.NestedField.required(17, "`a.b.c`", Types.StringType.get)
   )
 
   /**
@@ -98,11 +98,11 @@ private[serverSidePlanning] object TestSchemas {
     // Nested struct with field that has dots in its name
     // Tests escaping at nested level: parent.`child.name`
     StructField("parent", StructType(Seq(
-      StructField("child.name", StringType, nullable = false)
+      StructField("`child.name`", StringType, nullable = false)
     )), nullable = false),
     // Literal top-level column names with dots - Test escaping
-    StructField("address.city", StringType, nullable = false),
-    StructField("a.b.c", StringType, nullable = false)
+    StructField("`address.city`", StringType, nullable = false),
+    StructField("`a.b.c`", StringType, nullable = false)
   ))
 }
 

@@ -622,6 +622,25 @@ trait OptimisticTransactionImpl extends TransactionHelper
     }
 
     val protocolBeforeUpdate = protocol
+    // `readVersion == -1` indicates the current transaction is reading from a snapshot
+    // where the table has not existed yet.
+    // `isCreatingNewTable` will be true for commands like REPLACE and CREATE,
+    // this is just a double check since we only want to auto-enable QoL features
+    // when creating a new CatalogOwned table through CREATE.
+    if (CatalogOwnedTableUtils.shouldEnableCatalogOwned(
+        spark, propertyOverrides = newMetadataTmp.configuration) &&
+        isCreatingNewTable && this.readVersion == -1) {
+
+      // For CatalogOwned table, we add "quality of life" table features as a part of CCv2 table
+      // creation. Look for [[CatalogOwnedTableUtils.updateMetadataForQoLFeatures]] to see
+      // what features are in the list.
+      // Note that we need to add features here because features like `ColumnMapping` or
+      // `RowTracking` have their own validation/update logic below.
+      newMetadataTmp = CatalogOwnedTableUtils.updateMetadataForQoLFeatures(
+        spark,
+        metadata = newMetadataTmp
+        )
+    }
     // The `.schema` cannot be generated correctly unless the column mapping metadata is correctly
     // filled for all the fields. Therefore, the column mapping changes need to happen first.
     newMetadataTmp = DeltaColumnMapping.verifyAndUpdateMetadataChange(
@@ -1279,6 +1298,27 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Validates that an AddFile does not reference a zero-byte parquet file.
+   * Logs a delta event regardless of the flag; throws only when
+   * [[DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED]] is set.
+   */
+  protected def validateAddFileNotEmpty(addFile: AddFile): Unit = {
+    if (addFile.size == 0) {
+      recordDeltaEvent(
+        deltaLog,
+        "delta.sanityCheck.emptyParquetFile",
+        data = Map(
+          "addFile" -> addFile.json,
+          "stackTrace" -> Thread.currentThread().getStackTrace.take(20).mkString("\n")
+        ))
+      if (spark.conf.get(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED)) {
+        throw new IllegalStateException(
+          s"AddFile ${addFile.path} references a zero-byte (empty) parquet file")
+      }
+    }
+  }
+
+  /**
    * Validates that partition columns that have NOT NULL
    * constraints are not null in the AddFile action.
    *
@@ -1309,29 +1349,40 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns all the partition columns that have NOT NULL constraints.
+   * Returns the physical names of partition columns that have NOT NULL constraints.
+   * Physical names are used because AddFile.partitionValues keys use physical column names
+   * when column mapping is enabled.
    */
   protected def getNotNullPartitionCols(metadata: Metadata): Set[String] = {
     val notNullColumns = Invariants.getFromSchema(metadata.schema, spark)
       .collect { case Constraints.NotNull(cols) => cols.mkString(".") }
       .toSet
-    metadata.partitionColumns.filter(notNullColumns.contains).toSet
+    metadata.partitionSchema
+      .filter(f => notNullColumns.contains(f.name))
+      .map(DeltaColumnMapping.getPhysicalName)
+      .toSet
   }
 
   /**
-   * For any partition columns that have NOT NULL constraints,
-   * validate that the partition values in the AddFile actions are not null.
+   * Runs all AddFile sanity checks: empty-file detection and null-partition validation.
    */
-  protected def validateActionsForNullPartitions(
+  protected def validateAddFileInvariants(
+      addFile: AddFile,
+      notNullPartitionCols: Set[String]): Unit = {
+    validateAddFileNotEmpty(addFile)
+    validateAddFileForNullPartitions(addFile, notNullPartitionCols)
+  }
+
+  /**
+   * Iterates over all actions and validates AddFile invariants.
+   */
+  protected def validateActionsAddFileInvariants(
       actions: Seq[Action],
       metadata: Metadata): Unit = {
     val notNullPartitionCols = getNotNullPartitionCols(metadata)
-    if (notNullPartitionCols.nonEmpty) {
-      actions.foreach {
-        case a: AddFile =>
-          validateAddFileForNullPartitions(a, notNullPartitionCols)
-        case _ =>
-      }
+    actions.foreach {
+      case a: AddFile => validateAddFileInvariants(a, notNullPartitionCols)
+      case _ =>
     }
   }
 
@@ -1561,7 +1612,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           prepareCommit(finalActions, op)
         }
 
-      validateActionsForNullPartitions(preparedActions, metadata)
+      validateActionsAddFileInvariants(preparedActions, metadata)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1823,7 +1874,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         action match {
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
-            validateAddFileForNullPartitions(a, notNullPartitionCols)
+            validateAddFileInvariants(a, notNullPartitionCols)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",

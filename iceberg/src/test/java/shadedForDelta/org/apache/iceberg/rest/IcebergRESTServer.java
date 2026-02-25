@@ -205,6 +205,17 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Set test residual expression to inject into /plan responses.
+   * When set, all FileScanTasks in the response will have this residual expression
+   * instead of the default (alwaysTrue). Used for testing client-side residual validation.
+   *
+   * @param residual The residual expression to inject, or null to use the default
+   */
+  public void setTestResidual(shadedForDelta.org.apache.iceberg.expressions.Expression residual) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestResidual(residual);
+  }
+
+  /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {

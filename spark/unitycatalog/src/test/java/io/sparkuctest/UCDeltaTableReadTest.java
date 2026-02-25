@@ -123,9 +123,14 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
                 "For managed tables, path-based access should fail");
           } else {
             // For EXTERNAL tables, path-based access should work
-            check(
-                sql("SELECT * FROM delta.`%s` ORDER BY id", tablePath),
-                List.of(List.of("1"), List.of("2"), List.of("3")));
+            S3CredentialFileSystem.credentialCheckEnabled = false;
+            try {
+              check(
+                  sql("SELECT * FROM delta.`%s` ORDER BY id", tablePath),
+                  List.of(List.of("1"), List.of("2"), List.of("3")));
+            } finally {
+              S3CredentialFileSystem.credentialCheckEnabled = true;
+            }
           }
         });
   }

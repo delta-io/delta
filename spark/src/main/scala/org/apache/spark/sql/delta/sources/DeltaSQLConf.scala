@@ -223,6 +223,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_EMPTY_FILE_CHECK_THROW_ENABLED =
+    buildConf("emptyFileCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions " +
+        "referencing parquet files with size 0 bytes. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
     buildConf("nullPartitionCheck.throwEnabled")
       .internal()
@@ -457,6 +466,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
+
+  val DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION =
+    buildConf("conflictChecker.enforceConcurrentFeatureEnablement.enabled")
+      .internal()
+      .doc("When enabled, the conflict checker will enforce that features that are marked " +
+        "as failing concurrent transactions at upgrade, will fail any conflicting commits with " +
+        "their enablement protocol changes.")
+      .booleanConf
+      .createWithDefault(false)
 
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
