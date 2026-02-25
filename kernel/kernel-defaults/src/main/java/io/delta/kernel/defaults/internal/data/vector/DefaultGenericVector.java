@@ -18,6 +18,7 @@ package io.delta.kernel.defaults.internal.data.vector;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.*;
+import io.delta.kernel.data.PointVal;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.List;
@@ -149,6 +150,13 @@ public class DefaultGenericVector implements ColumnVector {
     // TODO: not sufficient check, also need to check the element types
     throwIfUnsafeAccess(MapType.class, "map");
     return (MapValue) rowIdToValueAccessor.apply(rowId);
+  }
+
+  @Override
+  public PointVal getPoint(int rowId) {
+    assertValidRowId(rowId);
+    throwIfUnsafeAccess(GeometryType.class, GeographyType.class, "point");
+    return (PointVal) rowIdToValueAccessor.apply(rowId);
   }
 
   @Override

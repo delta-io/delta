@@ -258,6 +258,12 @@ public class JsonUtils {
         }
         String textValue = valueNode.asText();
         return Literal.ofString(textValue);
+      } else if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
+        if (!valueNode.isTextual()) {
+          throw new KernelException(
+              String.format("Expected geometry as WKT string but got: %s", valueNode));
+        }
+        return Literal.ofPointWKT(valueNode.asText());
       } else {
         throw unsupportedStatsDataType(dataType);
       }

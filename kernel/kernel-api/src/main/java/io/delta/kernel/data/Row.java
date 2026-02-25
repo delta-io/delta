@@ -114,4 +114,10 @@ public interface Row {
    * given ordinal is not of map type,
    */
   MapValue getMap(int ordinal);
+
+  /**
+   * Return point value of the column located at the given ordinal. Throws error if the column at
+   * given ordinal is not of geometry or geography type.
+   */
+  PointVal getPoint(int ordinal);
 }

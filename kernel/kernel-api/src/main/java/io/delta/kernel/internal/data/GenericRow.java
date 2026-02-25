@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.PointVal;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
@@ -128,6 +129,16 @@ public class GenericRow implements Row {
     // TODO: not sufficient check, also need to check the element types
     throwIfUnsafeAccess(ordinal, MapType.class, "map");
     return (MapValue) getValue(ordinal);
+  }
+
+  @Override
+  public PointVal getPoint(int ordinal) {
+    DataType actual = dataType(ordinal);
+    if (!(actual instanceof GeometryType) && !(actual instanceof GeographyType)) {
+      throw new UnsupportedOperationException(
+          String.format("Trying to access a `point` value from vector of type `%s`", actual));
+    }
+    return (PointVal) getValue(ordinal);
   }
 
   private Object getValue(int ordinal) {
