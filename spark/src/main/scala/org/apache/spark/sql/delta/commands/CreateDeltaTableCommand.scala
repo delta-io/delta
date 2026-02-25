@@ -140,6 +140,17 @@ case class CreateDeltaTableCommand(
     }
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
       sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
+    // For Replace/CreateOrReplace on existing UC tables, the DeltaLog may be cached from the
+    // initial CREATE without CatalogTable context. Refresh the snapshot with the CatalogTable
+    // so that the commit coordinator can be resolved for catalog-managed tables.
+    val existingSnapshotOpt = if (deltaLog.tableExists && existingTableOpt.isDefined &&
+        existingTableOpt.flatMap(_.identifier.catalog).isDefined) {
+      Some(deltaLog.update(catalogTableOpt = existingTableOpt))
+    } else if (deltaLog.tableExists) {
+      Some(deltaLog.unsafeVolatileSnapshot)
+    } else {
+      None
+    }
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
@@ -147,8 +158,7 @@ case class CreateDeltaTableCommand(
       tableExists = deltaLog.tableExists,
       query = query,
       catalogTableProperties = tableWithLocation.properties,
-      existingTableSnapshotOpt =
-        if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
+      existingTableSnapshotOpt = existingSnapshotOpt)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
@@ -794,7 +804,10 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    // For Replace/CreateOrReplace on existing UC tables, pass the CatalogTable with catalog
+    // name so the commit coordinator can be resolved for catalog-managed tables.
+    val catalogTableForTxn = existingTableOpt.filter(_.identifier.catalog.isDefined)
+    val txn = deltaLog.startTransaction(catalogTableForTxn, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion

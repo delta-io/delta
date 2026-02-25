@@ -106,15 +106,26 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        if (createTableFunc.isEmpty) {
+          // Non-UC: use HMS-based update (existing behavior)
+          UpdateCatalogFactory.getUpdateCatalogHook(table, spark)
+            .updateSchema(spark, snapshot)
+        }
+        // For UC tables (createTableFunc.isDefined), managed table metadata
+        // (schema, properties, comment) is synced by coordinated commits.
+        // External table RTAS is not yet supported.
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        cleaned,
-        ignoreIfExists = false,
-        validateLocation = false)
+        if (createTableFunc.isDefined) {
+          createTableFunc.get.apply(cleaned)
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = false,
+            validateLocation = false)
+        }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)

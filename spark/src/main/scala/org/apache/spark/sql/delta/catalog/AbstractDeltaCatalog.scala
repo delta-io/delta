@@ -563,18 +563,40 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
-    val tableExists = catalog.tableExists(table)
-    if (tableExists) {
-      val oldTable = catalog.getTableMetadata(table)
-      if (oldTable.tableType == CatalogTableType.VIEW) {
-        throw DeltaErrors.cannotWriteIntoView(table)
+
+    if (isUnityCatalog) {
+      // For UC tables, use the V2 catalog path instead of Hive metastore
+      val ident = Identifier.of(table.database.toArray, table.table)
+      try {
+        super.loadTable(ident) match {
+          case v1: V1Table =>
+            val catalogTable = v1.catalogTable
+            if (catalogTable.tableType == CatalogTableType.VIEW) {
+              throw DeltaErrors.cannotWriteIntoView(table)
+            }
+            if (!DeltaSourceUtils.isDeltaTable(catalogTable.provider)) {
+              throw DeltaErrors.notADeltaTable(table.table)
+            }
+            Some(catalogTable)
+          case _ => None
+        }
+      } catch {
+        case _: NoSuchTableException => None
       }
-      if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
-        throw DeltaErrors.notADeltaTable(table.table)
-      }
-      Some(oldTable)
     } else {
-      None
+      val tableExists = catalog.tableExists(table)
+      if (tableExists) {
+        val oldTable = catalog.getTableMetadata(table)
+        if (oldTable.tableType == CatalogTableType.VIEW) {
+          throw DeltaErrors.cannotWriteIntoView(table)
+        }
+        if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
+          throw DeltaErrors.notADeltaTable(table.table)
+        }
+        Some(oldTable)
+      } else {
+        None
+      }
     }
   }
 

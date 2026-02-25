@@ -307,18 +307,27 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     String fullTableName = options.fullTableName();
     if (replaceTable) {
-      // First, create a different table to replace.
-      sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+      // First, create a different table to replace. Must match the target table type.
+      if (tableType == TableType.MANAGED) {
+        sql(
+            "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
+            fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+      } else {
+        sql(
+            "CREATE TABLE %s USING DELTA TBLPROPERTIES ('Foo2'='Bar2') LOCATION '%s'"
+                + " AS SELECT 0.1 AS col1",
+            fullTableName, options.getExternalTableLocation());
+      }
       tablesToCleanUp.add(fullTableName);
     }
 
-    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
-    if (replaceTable) {
+    // TODO: Remove this block when external table RTAS is supported.
+    if (replaceTable && tableType == TableType.EXTERNAL) {
       assertThatThrownBy(() -> sql(options.createTableSql()));
       return;
     }
+
+    // RTAS is supported for managed tables with atomic stageReplace/stageCreateOrReplace.
 
     // Create table
     sql(options.createTableSql());
@@ -334,7 +343,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // Verify that table information maintained at the uc server side are expected.
     // TODO: Remove the block when delta supports the CTAS in the correct way. Currently CTAS
     //  is missing AbstractDeltaCatalog.translateUCTableIdProperty
-    if (!withAsSelect || replaceTable) {
+    if (!withAsSelect && !replaceTable) {
       assertUCTableInfo(
           tableType,
           fullTableName,
@@ -344,6 +353,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           options.getExternalTableLocation(),
           withCluster,
           options.getClusterColumn());
+    }
+    if (replaceTable) {
+      // After REPLACE, verify the comment is synced to the UC server via coordinated commits.
+      TablesApi verifyApi = new TablesApi(unityCatalogInfo().createApiClient());
+      TableInfo tableInfo = verifyApi.getTable(fullTableName, false, false);
+      assertThat(tableInfo.getComment()).isEqualTo(comment);
     }
   }
 
@@ -396,6 +411,51 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                 DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
   }
 
+  @Test
+  public void testReplaceTableAtomicity() throws Exception {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = String.format("%s.%s.atomicity_test", uc.catalogName(), uc.schemaName());
+    try {
+      // Phase 0: Create initial managed table with known data
+      sql(
+          "CREATE TABLE %s (i INT, s STRING) USING DELTA %s",
+          tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      sql("INSERT INTO %s VALUES (1, 'hello'), (2, 'world')", tableName);
+
+      // Phase 1: Verify initial data exists
+      List<List<String>> initialRows = sql("SELECT * FROM %s ORDER BY 1", tableName);
+      System.out.println("[RTAS-ATOMICITY] Initial data verified: " + initialRows);
+      check(tableName, List.of(List.of("1", "hello"), List.of("2", "world")));
+
+      // Phase 2: Attempt REPLACE that FAILS mid-execution (division by zero)
+      assertThatThrownBy(
+              () ->
+                  sql(
+                      "REPLACE TABLE %s USING DELTA %s AS SELECT i, s, CAST(1/0 AS INT) AS bad FROM %s",
+                      tableName, MANAGED_TBLPROPERTIES_CLAUSE, tableName))
+          .satisfies(
+              e -> {
+                System.out.println(
+                    "[RTAS-ATOMICITY] REPLACE with bad query threw: " + e.getMessage());
+              });
+
+      // Phase 3: Verify original data survives (THE CRITICAL ASSERTION)
+      List<List<String>> postFailRows = sql("SELECT * FROM %s ORDER BY 1", tableName);
+      System.out.println("[RTAS-ATOMICITY] Post-failure data: " + postFailRows);
+      check(tableName, List.of(List.of("1", "hello"), List.of("2", "world")));
+
+      // Phase 4: Verify table is still usable — successful REPLACE works after failed one
+      sql(
+          "REPLACE TABLE %s USING DELTA %s AS SELECT 10 AS i, 'replaced' AS s",
+          tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      List<List<String>> finalRows = sql("SELECT * FROM %s ORDER BY 1", tableName);
+      System.out.println("[RTAS-ATOMICITY] Recovery REPLACE succeeded, final data: " + finalRows);
+      check(tableName, List.of(List.of("10", "replaced")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
   @TestAllTableTypes
   public void testCreateOrReplaceTable(TableType tableType) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
@@ -403,32 +463,20 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     withTempDir(
         (Path dir) -> {
           try {
-            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
-            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
-            // CREATE OR REPLACE with new schema
+            // CREATE OR REPLACE with new schema (table doesn't exist yet, creates it)
             if (tableType == TableType.MANAGED) {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
-                          tableName, MANAGED_TBLPROPERTIES_CLAUSE));
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
+                  tableName, MANAGED_TBLPROPERTIES_CLAUSE);
             } else {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-                          tableName, dir.toString()));
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+                  tableName, dir.toString());
             }
 
-            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
-
-            // Assert the unity catalog table information.
-            // assertUCTableInfo(
-            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
-
             // Insert data to verify new schema
-            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            // check(tableName, List.of(List.of("1", "Alice")));
+            sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+            check(tableName, List.of(List.of("1", "Alice")));
           } finally {
             sql("DROP TABLE IF EXISTS %s", tableName);
           }
