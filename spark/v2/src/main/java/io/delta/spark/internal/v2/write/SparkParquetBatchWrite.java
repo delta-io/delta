@@ -36,6 +36,7 @@ import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.util.SerializableConfiguration;
 
 /**
  * BatchWrite construction object for DSv2 batch append.
@@ -56,7 +57,7 @@ public class SparkParquetBatchWrite implements BatchWrite {
   private final Transaction transaction;
   private final Row txnState;
   private final SerializableKernelRowWrapper serializableTxnState;
-  private final SerializableHadoopConf serializableHadoopConf;
+  private final SerializableConfiguration serializableHadoopConf;
   private final DataWriteContext writeContext;
   private final String targetDirectory;
 
@@ -87,7 +88,7 @@ public class SparkParquetBatchWrite implements BatchWrite {
     this.serializableTxnState =
         new SerializableKernelRowWrapper(
             requireNonNull(this.txnState, "transaction state is null"));
-    this.serializableHadoopConf = new SerializableHadoopConf(this.hadoopConf);
+    this.serializableHadoopConf = new SerializableConfiguration(this.hadoopConf);
     this.writeContext =
         Transaction.getWriteContext(this.engine, this.txnState, new HashMap<String, Literal>());
     this.targetDirectory =
@@ -152,7 +153,7 @@ public class SparkParquetBatchWrite implements BatchWrite {
     return serializableTxnState;
   }
 
-  SerializableHadoopConf getSerializableHadoopConf() {
+  SerializableConfiguration getSerializableHadoopConf() {
     return serializableHadoopConf;
   }
 
