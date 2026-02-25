@@ -116,6 +116,15 @@ sealed abstract class TableFeature(
   def isRemovable: Boolean = this.isInstanceOf[RemovableFeature]
 
   /**
+   * True if the addition of this feature in the protocol is expected to fail concurrent
+   * transactions. This is desirable for features that are implicitly enabled by being present
+   * in the protocol, and also impose write-time requirements that need to be respected by all
+   * writers beyond the protocol upgrade. Note that features that do reconciliation at conflict
+   * checking time (e.g. RowTrackingFeature) should return false.
+   */
+  def failConcurrentTransactionsAtUpgrade: Boolean = true
+
+  /**
    * Set of table features that this table feature depends on. I.e. the set of features that need
    * to be enabled if this table feature is enabled.
    */
@@ -455,6 +464,18 @@ object TableFeature {
     oldFeatures -- newFeatures
   }
 
+  /**
+   * Extracts the added features by comparing new and old protocols.
+   * Returns None if there are no added features.
+   */
+  def getAddedFeatures(
+      newProtocol: Protocol,
+      oldProtocol: Protocol): Set[TableFeature] = {
+    val newFeatures = newProtocol.implicitlyAndExplicitlySupportedFeatures
+    val oldFeatures = oldProtocol.implicitlyAndExplicitlySupportedFeatures
+    newFeatures -- oldFeatures
+  }
+
   /** Identifies whether there was any feature removal between two protocols. */
   def isProtocolRemovingFeatures(newProtocol: Protocol, oldProtocol: Protocol): Boolean = {
     getDroppedFeatures(newProtocol = newProtocol, oldProtocol = oldProtocol).nonEmpty
@@ -520,6 +541,7 @@ object AppendOnlyTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.IS_APPEND_ONLY.fromMetaData(metadata)
   }
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 object InvariantsTableFeature
@@ -565,6 +587,7 @@ object ChangeDataFeedTableFeature
       spark: SparkSession): Boolean = {
     DeltaConfigs.CHANGE_DATA_FEED.fromMetaData(metadata)
   }
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 object GeneratedColumnsTableFeature
@@ -594,6 +617,8 @@ object ColumnMappingTableFeature
       case _ => true
     }
   }
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean = {
     val schemaHasNoColumnMappingMetadata =
@@ -631,6 +656,7 @@ object TimestampNTZTableFeature extends ReaderWriterFeature(name = "timestampNtz
       protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
     SchemaUtils.checkForTimestampNTZColumnsRecursively(metadata.schema)
   }
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 object RedirectReaderWriterFeature
@@ -795,6 +821,8 @@ object DeletionVectorsTableFeature
     DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.fromMetaData(metadata)
   }
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   /**
    * Validate whether all deletion vector traces are removed from the snapshot.
    *
@@ -837,6 +865,8 @@ object RowTrackingFeature extends WriterFeature(name = "rowTracking")
     DeltaConfigs.ROW_TRACKING_ENABLED.fromMetaData(metadata)
 
   override def requiredFeatures: Set[TableFeature] = Set(DomainMetadataTableFeature)
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   /**
    * When dropping row tracking we remove all relevant properties at downgrade commit.
@@ -949,6 +979,8 @@ object DomainMetadataTableFeature
     snapshot.domainMetadata.isEmpty
   }
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand = {
     DomainMetadataPreDowngradeCommand(table)
   }
@@ -962,6 +994,8 @@ object IcebergCompatV1TableFeature extends WriterFeature(name = "icebergCompatV1
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
+
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
       metadata: Metadata,
@@ -974,6 +1008,8 @@ object IcebergCompatV2TableFeature extends WriterFeature(name = "icebergCompatV2
   with FeatureAutomaticallyEnabledByMetadata {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
@@ -1033,6 +1069,13 @@ object MaterializePartitionColumnsTableFeature
     with RemovableFeature {
 
   override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
+
+  /**
+   * MaterializePartitionColumnsTableFeature is always enabled when present in the protocol.
+   * The Delta protocol does not require any metadata or domain metadata configs for this
+   * feature to be effective.
+   */
+  override def failConcurrentTransactionsAtUpgrade: Boolean = true
 
   override def metadataRequiresFeatureToBeEnabled(
       protocol: Protocol,
@@ -1176,6 +1219,8 @@ abstract class TypeWideningTableFeatureBase(name: String) extends ReaderWriterFe
 
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     TypeWideningPreDowngradeCommand(table)
+
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 }
 
 /**
@@ -1227,6 +1272,7 @@ object InCommitTimestampTableFeature
   override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
     InCommitTimestampsPreDowngradeCommand(table)
 
+  override def failConcurrentTransactionsAtUpgrade: Boolean = false
 
   /**
    * As per the spec, we can disable ICT by just setting
