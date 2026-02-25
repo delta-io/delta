@@ -82,12 +82,15 @@ public class DeletionVectorReadFunction
             CloseableIterator.wrap((Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file))
                 .filterCloseable(
                     item -> {
-                      if (item instanceof InternalRow) {
+                      if (item instanceof ColumnarBatch) {
+                        // Vectorized: noop (batch filtering done in map).
+                        return true;
+                      } else if (item instanceof InternalRow) {
                         // Row-based: filter deleted rows.
                         return ((InternalRow) item).getByte(dvColumnIndex) == ROW_NOT_DELETED;
                       } else {
-                        // Vectorized: noop (batch filtering done in map).
-                        return true;
+                        throw new IllegalArgumentException(
+                            "Unexpected item type: " + item.getClass());
                       }
                     })
                 .mapCloseable(
