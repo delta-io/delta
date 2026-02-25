@@ -50,7 +50,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "vacuumProtocolCheck",
     "variantType",
     "variantType-preview",
-    "variantShredding-preview")
+    "variantShredding-preview",
+    "geospatial")
 
   val writerOnlyFeatures = Seq(
     "allowColumnDefaults",
@@ -188,7 +189,10 @@ class TableFeaturesSuite extends AnyFunSuite {
     (
       "icebergWriterCompatV3",
       testMetadata(tblProps = Map("delta.enableIcebergWriterCompatV3" -> "false")),
-      false)).foreach({ case (feature, metadata, expected) =>
+      false),
+    ("geospatial", testMetadata(includeGeometryTypeCol = true), true),
+    ("geospatial", testMetadata(includeGeographyTypeCol = true), true),
+    ("geospatial", testMetadata(), false)).foreach({ case (feature, metadata, expected) =>
     test(s"metadataRequiresFeatureToBeEnabled - $feature - $metadata") {
       val tableFeature = TableFeatures.getTableFeature(feature)
       assert(tableFeature.isInstanceOf[FeatureAutoEnabledByMetadata])
@@ -244,7 +248,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "typeWidening-preview",
       "deletionVectors",
       "timestampNtz",
-      "vacuumProtocolCheck")
+      "vacuumProtocolCheck",
+      "geospatial")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -283,7 +288,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "clustering",
       "variantType-preview",
       "variantType",
-      "variantShredding-preview")
+      "variantShredding-preview",
+      "geospatial")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -1226,13 +1232,17 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
       includeIdentityColumn: Boolean = false,
+      includeGeometryTypeCol: Boolean = false,
+      includeGeographyTypeCol: Boolean = false,
       tblProps: Map[String, String] = Map.empty): Metadata = {
     val testSchema = createTestSchema(
       includeInvariant,
       includeTimestampNtzTypeCol,
       includeVariantTypeCol,
       includeGeneratedColumn,
-      includeIdentityColumn)
+      includeIdentityColumn,
+      includeGeometryTypeCol,
+      includeGeographyTypeCol)
     new Metadata(
       "id",
       Optional.of("name"),
@@ -1260,7 +1270,9 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeTimestampNtzTypeCol: Boolean = false,
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
-      includeIdentityColumn: Boolean = false): StructType = {
+      includeIdentityColumn: Boolean = false,
+      includeGeometryTypeCol: Boolean = false,
+      includeGeographyTypeCol: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)
@@ -1295,6 +1307,12 @@ class TableFeaturesSuite extends AnyFunSuite {
           .putLong("delta.identity.step", 2L)
           .putBoolean("delta.identity.allowExplicitInsert", true)
           .build())
+    }
+    if (includeGeometryTypeCol) {
+      structType = structType.add("c8", new GeometryType())
+    }
+    if (includeGeographyTypeCol) {
+      structType = structType.add("c9", new GeographyType())
     }
 
     structType
