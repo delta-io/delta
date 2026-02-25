@@ -363,12 +363,18 @@ object AllowedUserProvidedExpressions {
     // Date/time arithmetic expressions
     expression[DatetimeSub]("datetimesub"),
     // Date/time arithmetic with intervals
+    // TODO: Allowlist `TimestampAddInterval` once OSS does not build/test against
+    // Spark 4.0.
     expression[TimestampAddYMInterval]("timestampaddyminterval"),
     expression[DateAddInterval]("dateaddinterval"),
     expression[DateAddYMInterval]("dateaddyminterval"),
 
     // Comparison functions
     expression[ILike]("ilike"),
+    expression[LikeAny]("likeany"),
+    expression[NotLikeAny]("notlikeany"),
+    expression[LikeAll]("likeall"),
+    expression[NotLikeAll]("notlikeall"),
 
     // Try arithmetic functions
     expression[TryAdd]("try_add"),
@@ -379,6 +385,14 @@ object AllowedUserProvidedExpressions {
     // Try parsing/conversion functions
     expression[TryToBinary]("try_to_binary"),
     expression[TryToNumber]("try_to_number"),
-    expression[ToNumber]("to_number")
+    expression[ToNumber]("to_number"),
+
+
+    // Collection functions
+    expression[ArraySize]("array_size"),
+    expression[ArrayCompact]("array_compact"),
+    expression[ArrayAppend]("array_append"),
+    expression[ArrayPrepend]("array_prepend"),
+    expression[ArrayInsert]("array_insert")
   )
 }
