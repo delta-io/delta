@@ -147,8 +147,7 @@ abstract class ExpressionVisitor<R> {
           return visitIn(new In(children.get(0), children.subList(1, children.size())));
         }
       case "ST_INTERSECTS_BOXES_ON_STATS":
-        return visitStIntersectsBoxesOnStats(
-            createPredicate(name, children, collationIdentifier));
+        return visitStIntersectsBoxesOnStats(createPredicate(name, children, collationIdentifier));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));

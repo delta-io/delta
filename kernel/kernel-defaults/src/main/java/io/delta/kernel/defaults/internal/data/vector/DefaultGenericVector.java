@@ -18,8 +18,8 @@ package io.delta.kernel.defaults.internal.data.vector;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
 import io.delta.kernel.data.*;
-import io.delta.kernel.types.*;
 import io.delta.kernel.data.PointVal;
+import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.function.Function;
