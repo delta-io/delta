@@ -35,7 +35,6 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
-import org.apache.spark.sql.connector.write.BatchWrite;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
@@ -230,10 +229,17 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         merged);
   }
 
+  /**
+   * Batch write for Delta tables via the DSv2 connector is not yet supported.
+   *
+   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
+   * follow-up changes land the full write implementation.
+   */
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    return new DeferredBatchWriteBuilder();
+    throw new UnsupportedOperationException(
+        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
   }
 
   @Override
@@ -380,19 +386,6 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     Transform[] getPartitionTransforms() {
       return withInit(() -> partitionTransforms);
-    }
-  }
-
-  /**
-   * TODO: Implement the production batch-write builder in follow-up changes.
-   *
-   * <p>This placeholder wires the DSv2 write entrypoint so the table can expose write capability.
-   */
-  private static class DeferredBatchWriteBuilder implements WriteBuilder {
-    @Override
-    public BatchWrite buildForBatch() {
-      throw new UnsupportedOperationException(
-          "DSv2 batch write wiring is in place; batch write implementation is pending");
     }
   }
 }
