@@ -40,6 +40,10 @@ import scala.runtime.AbstractFunction1;
  *
  * <p>The returned iterator implements {@link java.io.Closeable} to ensure proper resource cleanup
  * of the underlying Parquet reader, even when the iterator is not fully consumed.
+ *
+ * <p>The reader mode (row-based vs vectorized) is determined once at scan planning time and does
+ * not change mid-stream. Use {@link #wrapRowReader} for row-based readers and {@link
+ * #wrapBatchReader} for vectorized readers.
  */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
@@ -51,61 +55,53 @@ public class DeletionVectorReadFunction
 
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
   private final DeletionVectorSchemaContext dvSchemaContext;
+  private final boolean isVectorizedReader;
 
   private DeletionVectorReadFunction(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DeletionVectorSchemaContext dvSchemaContext) {
+      DeletionVectorSchemaContext dvSchemaContext,
+      boolean isVectorizedReader) {
     this.baseReadFunc = baseReadFunc;
     this.dvSchemaContext = dvSchemaContext;
+    this.isVectorizedReader = isVectorizedReader;
   }
 
   @Override
   @SuppressWarnings("unchecked")
   public Iterator<InternalRow> apply(PartitionedFile file) {
+    if (isVectorizedReader) {
+      return applyBatch(file);
+    } else {
+      return applyRow(file);
+    }
+  }
+
+  /** Row-based: filter deleted rows and project out the DV column. */
+  private Iterator<InternalRow> applyRow(PartitionedFile file) {
     int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
-    // Use pre-computed ordinals from DeletionVectorSchemaContext.
     ProjectingInternalRow projection =
         ProjectingInternalRow.apply(
             dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());
 
-    // Filter: skip deleted rows (noop for vectorized - batch filtering done in map).
-    // Map: project row / filter batch.
-    //
-    // Double casts are needed due to Scala Iterator's invariant type parameter:
-    //   Inner: (Iterator<Object>) (Iterator<?>) - erase InternalRow to Object, because in
-    //     vectorized mode Spark passes ColumnarBatch via type erasure.
-    //   Outer: (Iterator<InternalRow>) (Iterator<?>) - erase Object back to InternalRow to
-    //     match the method's return type.
-    // Wrap in CloseableIterator to preserve close() through filter/map when partially consumed.
+    return CloseableIterator.wrap(baseReadFunc.apply(file))
+        .filterCloseable(row -> row.getByte(dvColumnIndex) == ROW_NOT_DELETED)
+        .mapCloseable(
+            row -> {
+              projection.project(row);
+              return (InternalRow) projection;
+            });
+  }
+
+  /** Vectorized: filter active rows and project out the DV column from each batch. */
+  @SuppressWarnings("unchecked")
+  private Iterator<InternalRow> applyBatch(PartitionedFile file) {
+    int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
+
+    // Cast needed: in vectorized mode Spark passes ColumnarBatch via type erasure as InternalRow.
     return (Iterator<InternalRow>)
         (Iterator<?>)
-            CloseableIterator.wrap((Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file))
-                .filterCloseable(
-                    item -> {
-                      if (item instanceof ColumnarBatch) {
-                        // Vectorized: noop (batch filtering done in map).
-                        return true;
-                      } else if (item instanceof InternalRow) {
-                        // Row-based: filter deleted rows.
-                        return ((InternalRow) item).getByte(dvColumnIndex) == ROW_NOT_DELETED;
-                      } else {
-                        throw new IllegalArgumentException(
-                            "Unexpected item type: " + item.getClass());
-                      }
-                    })
-                .mapCloseable(
-                    item -> {
-                      if (item instanceof ColumnarBatch) {
-                        return filterAndProjectBatch((ColumnarBatch) item, dvColumnIndex);
-                      } else if (item instanceof InternalRow) {
-                        // Row-based: project out DV column.
-                        projection.project((InternalRow) item);
-                        return projection;
-                      } else {
-                        throw new IllegalArgumentException(
-                            "Unexpected item type: " + item.getClass());
-                      }
-                    });
+            CloseableIterator.wrap((Iterator<ColumnarBatch>) (Iterator<?>) baseReadFunc.apply(file))
+                .mapCloseable(batch -> filterAndProjectBatch(batch, dvColumnIndex));
   }
 
   /** Filter active rows and project out the DV column from a ColumnarBatch. */
@@ -143,10 +139,17 @@ public class DeletionVectorReadFunction
     return Arrays.copyOf(temp, count);
   }
 
-  /** Factory method to wrap a reader function with DV filtering. */
-  public static DeletionVectorReadFunction wrap(
+  /** Factory method to wrap a row-based reader function with DV filtering. */
+  public static DeletionVectorReadFunction wrapRowReader(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
       DeletionVectorSchemaContext dvSchemaContext) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext);
+    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext, false);
+  }
+
+  /** Factory method to wrap a vectorized reader function with DV filtering. */
+  public static DeletionVectorReadFunction wrapBatchReader(
+      Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
+      DeletionVectorSchemaContext dvSchemaContext) {
+    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext, true);
   }
 }

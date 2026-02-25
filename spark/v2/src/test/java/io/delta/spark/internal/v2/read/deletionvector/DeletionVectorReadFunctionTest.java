@@ -49,7 +49,7 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorSchemaContext context =
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
-        DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
+        DeletionVectorReadFunction.wrapRowReader(mockReader(inputRows), context);
 
     List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
@@ -65,7 +65,7 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorSchemaContext context =
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
-        DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
+        DeletionVectorReadFunction.wrapRowReader(mockReader(inputRows), context);
 
     List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
@@ -80,7 +80,7 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorSchemaContext context =
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
-        DeletionVectorReadFunction.wrap(mockReader(inputRows), context);
+        DeletionVectorReadFunction.wrapRowReader(mockReader(inputRows), context);
 
     List<InternalRow> result = collectRows(readFunc.apply(/* file= */ null));
 
@@ -144,7 +144,7 @@ public class DeletionVectorReadFunctionTest {
     DeletionVectorSchemaContext context =
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
     DeletionVectorReadFunction readFunc =
-        DeletionVectorReadFunction.wrap(mockBatchReader(List.of(inputBatches)), context);
+        DeletionVectorReadFunction.wrapBatchReader(mockBatchReader(List.of(inputBatches)), context);
     return collectBatches(readFunc.apply(/* file= */ null));
   }
 
