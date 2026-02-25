@@ -2,8 +2,8 @@ name: "Integration Tests (Release Validation)"
 
 on:
   pull_request:
-    branches:
-      - 'branch-*'
+    #    branches:
+    #      - 'branch-*'
     paths-ignore:
       - '**.md'
       - '**.txt'
