@@ -123,6 +123,14 @@ public class ColumnVectorWithFilter extends ColumnVector {
     return delegate.getBinary(rowIdMapping[rowId]);
   }
 
+  /**
+   * Returns the child vector at the given ordinal, wrapped with the same row ID mapping.
+   *
+   * <p>Uses double-checked locking for thread-safe lazy initialization: the volatile {@code
+   * children} field allows lock-free reads after initialization, while the synchronized block
+   * ensures at-most-once creation. All children are created eagerly within the lock to avoid
+   * per-element races.
+   */
   @Override
   public ColumnVector getChild(int ordinal) {
     if (children == null) {

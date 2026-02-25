@@ -68,8 +68,8 @@ public class DeletionVectorReadFunction
         ProjectingInternalRow.apply(
             dvSchemaContext.getOutputSchema(), dvSchemaContext.getOutputColumnOrdinals());
 
-    // Filter: skip deleted rows (noop for vectorized - batch filtering done in map)
-    // Map: project row / filter batch
+    // Filter: skip deleted rows (noop for vectorized - batch filtering done in map).
+    // Map: project row / filter batch.
     //
     // Double casts are needed due to Scala Iterator's invariant type parameter:
     //   Inner: (Iterator<Object>) (Iterator<?>) - erase InternalRow to Object, because in
@@ -83,20 +83,24 @@ public class DeletionVectorReadFunction
                 .filterCloseable(
                     item -> {
                       if (item instanceof InternalRow) {
-                        // Row-based: filter deleted rows
+                        // Row-based: filter deleted rows.
                         return ((InternalRow) item).getByte(dvColumnIndex) == ROW_NOT_DELETED;
+                      } else {
+                        // Vectorized: noop (batch filtering done in map).
+                        return true;
                       }
-                      // Vectorized: noop (batch filtering done in map)
-                      return true;
                     })
                 .mapCloseable(
                     item -> {
                       if (item instanceof ColumnarBatch) {
                         return filterAndProjectBatch((ColumnarBatch) item, dvColumnIndex);
-                      } else {
-                        // Row-based: project out DV column
+                      } else if (item instanceof InternalRow) {
+                        // Row-based: project out DV column.
                         projection.project((InternalRow) item);
                         return projection;
+                      } else {
+                        throw new IllegalArgumentException(
+                            "Unexpected item type: " + item.getClass());
                       }
                     });
   }

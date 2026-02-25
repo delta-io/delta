@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.read.deletionvector;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import java.util.function.IntFunction;
 import org.apache.spark.sql.execution.vectorized.OnHeapColumnVector;
 import org.apache.spark.sql.execution.vectorized.WritableColumnVector;
 import org.apache.spark.sql.types.DataTypes;
@@ -34,8 +35,7 @@ public class ColumnVectorWithFilterTest {
       }
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
 
-      assertEquals(20, mappedVector.getInt(0));
-      assertEquals(40, mappedVector.getInt(1));
+      assertMappedValues(mappedVector::getInt, new Integer[] {20, 40});
     }
   }
 
@@ -47,8 +47,7 @@ public class ColumnVectorWithFilterTest {
       }
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      assertEquals(100L, mappedVector.getLong(0));
-      assertEquals(300L, mappedVector.getLong(1));
+      assertMappedValues(mappedVector::getLong, new Long[] {100L, 300L});
     }
   }
 
@@ -60,8 +59,7 @@ public class ColumnVectorWithFilterTest {
       delegate.putDouble(2, 3.3);
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      assertEquals(1.1, mappedVector.getDouble(0), 0.001);
-      assertEquals(3.3, mappedVector.getDouble(1), 0.001);
+      assertMappedValues(mappedVector::getDouble, new Double[] {1.1, 3.3});
     }
   }
 
@@ -74,8 +72,7 @@ public class ColumnVectorWithFilterTest {
       delegate.putBoolean(3, false);
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 2});
 
-      assertFalse(mappedVector.getBoolean(0));
-      assertTrue(mappedVector.getBoolean(1));
+      assertMappedValues(mappedVector::getBoolean, new Boolean[] {false, true});
     }
   }
 
@@ -87,7 +84,7 @@ public class ColumnVectorWithFilterTest {
       delegate.putByteArray(2, "charlie".getBytes());
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {2});
 
-      assertEquals("charlie", mappedVector.getUTF8String(0).toString());
+      assertMappedValues(i -> mappedVector.getUTF8String(i).toString(), new String[] {"charlie"});
     }
   }
 
@@ -107,15 +104,12 @@ public class ColumnVectorWithFilterTest {
 
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      // getChild should return ColumnVectorWithFilter with the same rowIdMapping
       ColumnVector mappedIdColumn = mappedVector.getChild(0);
       ColumnVector mappedNameColumn = mappedVector.getChild(1);
 
-      // filtered: row 0 -> original 0, row 1 -> original 2
-      assertEquals(1, mappedIdColumn.getInt(0));
-      assertEquals(3, mappedIdColumn.getInt(1));
-      assertEquals("a", mappedNameColumn.getUTF8String(0).toString());
-      assertEquals("c", mappedNameColumn.getUTF8String(1).toString());
+      assertMappedValues(mappedIdColumn::getInt, new Integer[] {1, 3});
+      assertMappedValues(
+          i -> mappedNameColumn.getUTF8String(i).toString(), new String[] {"a", "c"});
     }
   }
 
@@ -139,6 +133,19 @@ public class ColumnVectorWithFilterTest {
   }
 
   @Test
+  void testAllNullColumnVector() {
+    try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
+      delegate.putNull(0);
+      delegate.putNull(1);
+      delegate.putNull(2);
+      ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {2, 0});
+
+      assertTrue(mappedVector.isNullAt(0));
+      assertTrue(mappedVector.isNullAt(1));
+    }
+  }
+
+  @Test
   void testNoneSelectColumnVector() {
     try (WritableColumnVector delegate = new OnHeapColumnVector(3, DataTypes.IntegerType)) {
       delegate.putInt(0, 10);
@@ -157,12 +164,16 @@ public class ColumnVectorWithFilterTest {
       delegate.putInt(1, 20);
       delegate.putInt(2, 30);
 
-      // Identity mapping -> all select
+      // all select
       ColumnVectorWithFilter allRowsSelected =
           new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2});
-      assertEquals(10, allRowsSelected.getInt(0));
-      assertEquals(20, allRowsSelected.getInt(1));
-      assertEquals(30, allRowsSelected.getInt(2));
+      assertMappedValues(allRowsSelected::getInt, new Integer[] {10, 20, 30});
+    }
+  }
+
+  private static <T> void assertMappedValues(IntFunction<T> getter, T[] expected) {
+    for (int i = 0; i < expected.length; i++) {
+      assertEquals(expected[i], getter.apply(i), "Mismatch at mapped row " + i);
     }
   }
 }

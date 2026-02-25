@@ -133,6 +133,20 @@ public class DeletionVectorReadFunctionTest {
     assertBatchRows(result.get(2), new int[] {7}, new String[] {"name_0"});
   }
 
+  @Test
+  public void testBatchDifferentOrderings() {
+    ColumnarBatch allLive = createBatch(new int[] {1, 2}, new byte[] {0, 0});
+    ColumnarBatch allDeleted = createBatch(new int[] {3, 4}, new byte[] {1, 1});
+    ColumnarBatch mixed = createBatch(new int[] {5, 6, 7}, new byte[] {1, 0, 0});
+
+    List<ColumnarBatch> result = runBatchRead(allLive, allDeleted, mixed);
+
+    assertEquals(3, result.size());
+    assertBatchRows(result.get(0), new int[] {1, 2}, new String[] {"name_0", "name_1"});
+    assertBatchRows(result.get(1), new int[] {}, new String[] {});
+    assertBatchRows(result.get(2), new int[] {6, 7}, new String[] {"name_1", "name_2"});
+  }
+
   private List<ColumnarBatch> runBatchRead(ColumnarBatch... inputBatches) {
     DeletionVectorSchemaContext context =
         new DeletionVectorSchemaContext(DATA_SCHEMA, PARTITION_SCHEMA);
