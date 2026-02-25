@@ -105,8 +105,9 @@ public class DeletionVectorReadFunction
                       if (item instanceof ColumnarBatch) {
                         return filterAndProjectBatch((ColumnarBatch) item, dvColumnIndex);
                       }
-                      throw new IllegalArgumentException(
-                          "Expected ColumnarBatch but got: " + item.getClass());
+                      throw new IllegalStateException(
+                          "Expected ColumnarBatch when vectorized reader is enabled, but got: "
+                              + item.getClass());
                     });
   }
 
