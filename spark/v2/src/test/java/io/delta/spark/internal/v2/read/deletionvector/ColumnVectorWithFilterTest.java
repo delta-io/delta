@@ -35,7 +35,7 @@ public class ColumnVectorWithFilterTest {
       }
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 3});
 
-      assertMappedValues(mappedVector::getInt, new Integer[] {20, 40});
+      assertMappedValues(mappedVector, mappedVector::getInt, new Integer[] {20, 40});
     }
   }
 
@@ -47,7 +47,7 @@ public class ColumnVectorWithFilterTest {
       }
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      assertMappedValues(mappedVector::getLong, new Long[] {100L, 300L});
+      assertMappedValues(mappedVector, mappedVector::getLong, new Long[] {100L, 300L});
     }
   }
 
@@ -59,7 +59,7 @@ public class ColumnVectorWithFilterTest {
       delegate.putDouble(2, 3.3);
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {0, 2});
 
-      assertMappedValues(mappedVector::getDouble, new Double[] {1.1, 3.3});
+      assertMappedValues(mappedVector, mappedVector::getDouble, new Double[] {1.1, 3.3});
     }
   }
 
@@ -72,7 +72,7 @@ public class ColumnVectorWithFilterTest {
       delegate.putBoolean(3, false);
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {1, 2});
 
-      assertMappedValues(mappedVector::getBoolean, new Boolean[] {false, true});
+      assertMappedValues(mappedVector, mappedVector::getBoolean, new Boolean[] {false, true});
     }
   }
 
@@ -84,7 +84,8 @@ public class ColumnVectorWithFilterTest {
       delegate.putByteArray(2, "charlie".getBytes());
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {2});
 
-      assertMappedValues(i -> mappedVector.getUTF8String(i).toString(), new String[] {"charlie"});
+      assertMappedValues(
+          mappedVector, i -> mappedVector.getUTF8String(i).toString(), new String[] {"charlie"});
     }
   }
 
@@ -107,9 +108,11 @@ public class ColumnVectorWithFilterTest {
       ColumnVector mappedIdColumn = mappedVector.getChild(0);
       ColumnVector mappedNameColumn = mappedVector.getChild(1);
 
-      assertMappedValues(mappedIdColumn::getInt, new Integer[] {1, 3});
+      assertMappedValues(mappedIdColumn, mappedIdColumn::getInt, new Integer[] {1, 3});
       assertMappedValues(
-          i -> mappedNameColumn.getUTF8String(i).toString(), new String[] {"a", "c"});
+          mappedNameColumn,
+          i -> mappedNameColumn.getUTF8String(i).toString(),
+          new String[] {"a", "c"});
     }
   }
 
@@ -125,10 +128,7 @@ public class ColumnVectorWithFilterTest {
       ColumnVectorWithFilter mappedVector =
           new ColumnVectorWithFilter(delegate, new int[] {3, 0, 1});
 
-      assertTrue(mappedVector.isNullAt(0));
-      assertFalse(mappedVector.isNullAt(1));
-      assertEquals(10, mappedVector.getInt(1));
-      assertTrue(mappedVector.isNullAt(2));
+      assertMappedValues(mappedVector, mappedVector::getInt, new Integer[] {null, 10, null});
     }
   }
 
@@ -140,8 +140,7 @@ public class ColumnVectorWithFilterTest {
       delegate.putNull(2);
       ColumnVectorWithFilter mappedVector = new ColumnVectorWithFilter(delegate, new int[] {2, 0});
 
-      assertTrue(mappedVector.isNullAt(0));
-      assertTrue(mappedVector.isNullAt(1));
+      assertMappedValues(mappedVector, mappedVector::getInt, new Integer[] {null, null});
     }
   }
 
@@ -167,13 +166,19 @@ public class ColumnVectorWithFilterTest {
       // all select
       ColumnVectorWithFilter allRowsSelected =
           new ColumnVectorWithFilter(delegate, new int[] {0, 1, 2});
-      assertMappedValues(allRowsSelected::getInt, new Integer[] {10, 20, 30});
+      assertMappedValues(allRowsSelected, allRowsSelected::getInt, new Integer[] {10, 20, 30});
     }
   }
 
-  private static <T> void assertMappedValues(IntFunction<T> getter, T[] expected) {
+  private static <T> void assertMappedValues(
+      ColumnVector vector, IntFunction<T> getter, T[] expected) {
     for (int i = 0; i < expected.length; i++) {
-      assertEquals(expected[i], getter.apply(i), "Mismatch at mapped row " + i);
+      if (expected[i] == null) {
+        assertTrue(vector.isNullAt(i), "Expected null at mapped row " + i);
+      } else {
+        assertFalse(vector.isNullAt(i), "Expected non-null at mapped row " + i);
+        assertEquals(expected[i], getter.apply(i), "Mismatch at mapped row " + i);
+      }
     }
   }
 }
