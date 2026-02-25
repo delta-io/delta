@@ -23,14 +23,26 @@ import org.apache.spark.sql.test.SharedSparkSession
 
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils
 
-class DeltaStreamUtilsSuite extends SparkFunSuite with SharedSparkSession {
+class DeltaStreamUtilsSuite extends SparkFunSuite {
 
   // ========== getStartingVersionFromCommitAtTimestamp ==========
 
   test("getStartingVersionFromCommitAtTimestamp - " +
-    "commit at or after timestamp returns commitVersion") {
+    "commit at timestamp returns commitVersion") {
     val timeZone = "UTC"
     val commitTs = 1000L
+    val commitVersion = 2L
+    val latestVersion = 5L
+    val timestamp = new Timestamp(1000)
+    val result = DeltaStreamUtils.getStartingVersionFromCommitAtTimestamp(
+      timeZone, commitTs, commitVersion, latestVersion, timestamp)
+    assert(result == 2L)
+  }
+
+  test("getStartingVersionFromCommitAtTimestamp - " +
+    "commit after timestamp returns commitVersion") {
+    val timeZone = "UTC"
+    val commitTs = 2000L
     val commitVersion = 2L
     val latestVersion = 5L
     val timestamp = new Timestamp(1000)
