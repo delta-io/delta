@@ -154,11 +154,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
-    val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
-    }
+    // Attach the catalog name so downstream components (e.g. commit coordinator resolution) don't
+    // rely on the session's current catalog at execution time.
+    val id = TableIdentifier(ident.name(), ident.namespace().lastOption, Option(name()))
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    val existingTableOpt = loadCatalogTableIfExists(ident)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -556,6 +556,40 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       identifier = tableIdentWithDB,
       schema = schema,
       properties = validatedConfigurations)
+  }
+
+  /**
+   * Load a table's v1 catalog metadata from the underlying v2 catalog if it exists.
+   *
+   * Delta uses [[CatalogTable]] metadata (location, properties, etc.) for both CREATE and REPLACE.
+   * Using Spark's [[SessionCatalog]] directly does not work for custom DSv2 catalogs (e.g. Unity
+   * Catalog), because those tables are not registered in the session catalog.
+   */
+  private def loadCatalogTableIfExists(ident: Identifier): Option[CatalogTable] = {
+    // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
+    // will check the file system itself.
+    if (isPathIdentifier(ident)) return None
+
+    val tableOpt = try {
+      Option(super.loadTable(ident))
+    } catch {
+      case _: NoSuchDatabaseException | _: NoSuchNamespaceException | _: NoSuchTableException =>
+        None
+    }
+
+    tableOpt.flatMap {
+      case v1: V1Table =>
+        val oldTable = v1.catalogTable
+        if (oldTable.tableType == CatalogTableType.VIEW) {
+          throw DeltaErrors.cannotWriteIntoView(oldTable.identifier)
+        }
+        if (!DeltaSourceUtils.isDeltaTable(oldTable.provider)) {
+          throw DeltaErrors.notADeltaTable(oldTable.identifier.table)
+        }
+        Some(oldTable)
+      case _ =>
+        None
+    }
   }
 
   /** Checks if a table already exists for the provided identifier. */

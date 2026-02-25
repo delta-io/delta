@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.hooks
 import java.nio.charset.Charset
 import java.util.concurrent.atomic.AtomicInteger
 
-import scala.collection.JavaConverters._
 import scala.concurrent.{ExecutionContext, Future, TimeoutException}
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -34,12 +33,11 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 import org.apache.commons.lang3.exception.ExceptionUtils
 
-import org.apache.spark.internal.MDC
-import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.CatalogManager.SESSION_CATALOG_NAME
+import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog, TableChange}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.ThreadUtils
@@ -351,15 +349,64 @@ object UpdateCatalog {
     // having to be at the end of the schema, which Hive follows.
     val catalogName = table.identifier.catalog.getOrElse(
       spark.sessionState.catalogManager.currentCatalog.name())
-    if (
-      (catalogName == UpdateCatalog.HIVE_METASTORE_NAME
-        || catalogName == SESSION_CATALOG_NAME) &&
-      catalog.externalCatalog.tableExists(db, tblName)) {
-      catalog.externalCatalog.alterTableDataSchema(db, tblName, schema)
-    }
+    val newProperties = updatedProperties(snapshot) ++ additionalProperties
+    if (catalogName == UpdateCatalog.HIVE_METASTORE_NAME || catalogName == SESSION_CATALOG_NAME) {
+      if (catalog.externalCatalog.tableExists(db, tblName)) {
+        catalog.externalCatalog.alterTableDataSchema(db, tblName, schema)
+      }
 
-    // We have to update the properties anyway with the latest version/timestamp information
-    catalog.alterTable(table.copy(properties = updatedProperties(snapshot) ++ additionalProperties))
+      // We have to update the properties anyway with the latest version/timestamp information
+      catalog.alterTable(table.copy(properties = newProperties))
+    } else {
+      // For v2 catalogs (e.g. Unity Catalog), route the update to the owning catalog directly.
+      val tableCatalog =
+        spark.sessionState.catalogManager.catalog(catalogName).asInstanceOf[TableCatalog]
+      val ident = Identifier.of(Array(db), tblName)
+
+      // For v2 catalogs we send the full latest property set; the catalog implementation applies
+      // this as a replacement during metastore sync.
+      val latestPropertiesWithDefaults = table.properties
+        .get("delta.checkpointPolicy")
+        .filter(_ => !newProperties.contains("delta.checkpointPolicy"))
+        .map(v => newProperties + ("delta.checkpointPolicy" -> v))
+        .getOrElse(newProperties)
+      val latestProperties = {
+        val withoutComment = latestPropertiesWithDefaults - TableCatalog.PROP_COMMENT
+        if (table.tableType == CatalogTableType.MANAGED) {
+          var managedDefaults = withoutComment
+          if (!managedDefaults.contains("delta.checkpointPolicy")) {
+            managedDefaults += ("delta.checkpointPolicy" -> "v2")
+          }
+          if (!managedDefaults.contains("delta.enableDeletionVectors")) {
+            managedDefaults += ("delta.enableDeletionVectors" -> "true")
+          }
+          if (!managedDefaults.contains("delta.enableRowTracking")) {
+            managedDefaults += ("delta.enableRowTracking" -> "true")
+          }
+          managedDefaults
+        } else {
+          withoutComment
+        }
+      }
+      val setPropertyChanges = latestProperties.toSeq.map { case (k, v) =>
+        TableChange.setProperty(k, v)
+      }
+
+      // Comment is tracked separately from the properties map. Prefer the command/catalog table
+      // metadata, then snapshot metadata, then a possible "comment" property fallback.
+      val latestComment = table.comment
+        .orElse(Option(snapshot.metadata.description))
+        .orElse(table.properties.get(TableCatalog.PROP_COMMENT))
+        .orElse(newProperties.get(TableCatalog.PROP_COMMENT))
+      val commentChanges = latestComment
+        .map(c => Seq(TableChange.setProperty(TableCatalog.PROP_COMMENT, c)))
+        .getOrElse(Seq(TableChange.removeProperty(TableCatalog.PROP_COMMENT)))
+
+      val changes = setPropertyChanges ++ commentChanges
+      if (changes.nonEmpty) {
+        tableCatalog.alterTable(ident, changes: _*)
+      }
+    }
   }
 
   /** Updates our properties map with the version and timestamp information of the snapshot. */

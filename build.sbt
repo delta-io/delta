@@ -705,7 +705,7 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = "0.4.0"
+val unityCatalogVersion = "0.5.0-SNAPSHOT"
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))

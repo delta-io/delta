@@ -307,17 +307,18 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     String fullTableName = options.fullTableName();
     if (replaceTable) {
-      // First, create a different table to replace.
-      sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+      // First, create a different table to replace. Use the same table type so REPLACE doesn't
+      // fail due to location/type mismatch.
+      if (tableType == TableType.EXTERNAL) {
+        sql(
+            "CREATE TABLE %s USING DELTA %s LOCATION '%s' AS SELECT 0.1 AS col1",
+            fullTableName, EXTERNAL_TBLPROPERTIES_CLAUSE, options.getExternalTableLocation());
+      } else {
+        sql(
+            "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
+            fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+      }
       tablesToCleanUp.add(fullTableName);
-    }
-
-    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
-    if (replaceTable) {
-      assertThatThrownBy(() -> sql(options.createTableSql()));
-      return;
     }
 
     // Create table
@@ -343,7 +344,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           comment,
           options.getExternalTableLocation(),
           withCluster,
-          options.getClusterColumn());
+          options.getClusterColumn(),
+          replaceTable ? "1" : "0");
     }
   }
 
@@ -594,7 +596,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         comment,
         externalTableLocation,
         false,
-        Optional.empty());
+        Optional.empty(),
+        "0");
   }
 
   private void assertUCTableInfo(
@@ -605,7 +608,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String comment,
       String externalTableLocation,
       boolean withCluster,
-      Optional<String> clusterColumn)
+      Optional<String> clusterColumn,
+      String expectedLastUpdateVersion)
       throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
@@ -649,7 +653,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")
               .put("delta.enableRowTracking", "true")
-              .put("delta.lastUpdateVersion", "0")
+              .put("delta.lastUpdateVersion", expectedLastUpdateVersion)
               .put("delta.minReaderVersion", "3")
               .put("delta.minWriterVersion", "7")
               .put(UC_TABLE_ID_KEY, tableInfo.getTableId())

@@ -794,7 +794,9 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    // For catalog-owned tables (e.g. UC managed tables), commit coordinator resolution requires
+    // catalog context; passing None makes this look like path-based access and is rejected.
+    val txn = deltaLog.startTransaction(Option(tableWithLocation), snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion
