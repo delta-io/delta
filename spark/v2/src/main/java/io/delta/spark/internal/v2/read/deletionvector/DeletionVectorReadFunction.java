@@ -42,8 +42,7 @@ import scala.runtime.AbstractFunction1;
  * of the underlying Parquet reader, even when the iterator is not fully consumed.
  *
  * <p>The reader mode (row-based vs vectorized) is determined once at scan planning time and does
- * not change mid-stream. Use {@link #wrapRowReader} for row-based readers and {@link
- * #wrapBatchReader} for vectorized readers.
+ * not change mid-stream. See {@link #wrap}.
  */
 public class DeletionVectorReadFunction
     extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>> implements Serializable {
@@ -139,17 +138,11 @@ public class DeletionVectorReadFunction
     return Arrays.copyOf(temp, count);
   }
 
-  /** Factory method to wrap a row-based reader function with DV filtering. */
-  public static DeletionVectorReadFunction wrapRowReader(
+  /** Factory method to wrap a reader function with DV filtering. */
+  public static DeletionVectorReadFunction wrap(
       Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DeletionVectorSchemaContext dvSchemaContext) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext, false);
-  }
-
-  /** Factory method to wrap a vectorized reader function with DV filtering. */
-  public static DeletionVectorReadFunction wrapBatchReader(
-      Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc,
-      DeletionVectorSchemaContext dvSchemaContext) {
-    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext, true);
+      DeletionVectorSchemaContext dvSchemaContext,
+      boolean isVectorizedReader) {
+    return new DeletionVectorReadFunction(baseReadFunc, dvSchemaContext, isVectorizedReader);
   }
 }

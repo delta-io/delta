@@ -249,9 +249,7 @@ public class PartitionUtils {
     // Wrap reader to filter deleted rows and remove internal columns if DV is enabled.
     if (dvSchemaContext.isPresent()) {
       readFunc =
-          enableVectorizedReader
-              ? DeletionVectorReadFunction.wrapBatchReader(readFunc, dvSchemaContext.get())
-              : DeletionVectorReadFunction.wrapRowReader(readFunc, dvSchemaContext.get());
+          DeletionVectorReadFunction.wrap(readFunc, dvSchemaContext.get(), enableVectorizedReader);
     }
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
