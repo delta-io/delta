@@ -270,6 +270,23 @@ private[delta] class ConflictChecker(
       if (isWinnerDroppingFeatures) {
         throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
       }
+
+      if (spark.conf.get(
+          DeltaSQLConf.DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION)) {
+        // Check if the winning protocol adds features that should fail concurrent transactions at
+        // upgrade. These features are identified by the `failConcurrentTransactionsAtUpgrade`
+        // method returning true. These features impose write-time requirements that need to be
+        // respected by all writers beyond the protocol upgrade, and there's no custom feature
+        // specific conflict resolution logic below to be able to have the current transaction meet
+        // these requirements on-the-fly.
+        val winningTxnAddedFeatures = TableFeature.getAddedFeatures(winningProtocol, readProtocol)
+
+        val winningTxnUnsafeAddedFeatures = winningTxnAddedFeatures
+          .filter(_.failConcurrentTransactionsAtUpgrade)
+        if (winningTxnUnsafeAddedFeatures.nonEmpty) {
+          throw DeltaErrors.protocolChangedException(winningCommitSummary.commitInfo)
+        }
+      }
     }
     // When the winning transaction does not change the protocol but the losing txn is
     // a protocol downgrade, we re-validate the invariants of the removed feature.

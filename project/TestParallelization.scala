@@ -147,7 +147,7 @@ object TestParallelization {
 
     override def add(testDefinition: TestDefinition): GroupingStrategy = {
       val testSuiteName = testDefinition.name
-      val isHighDurationTest = TOP_50_HIGH_DURATION_TEST_SUITES.exists(_._1 == testSuiteName)
+      val isHighDurationTest = TOP_N_HIGH_DURATION_TEST_SUITES.exists(_._1 == testSuiteName)
 
       if (isHighDurationTest) {
         val highDurationTestGroupIndex =
@@ -156,7 +156,7 @@ object TestParallelization {
         if (highDurationTestGroupIndex >= 0) {
           // Case 1: this is a high duration test that was pre-computed in the optimal assignment to
           // belong to this shard. Assign it.
-          val duration = TOP_50_HIGH_DURATION_TEST_SUITES.find(_._1 == testSuiteName).get._2
+          val duration = TOP_N_HIGH_DURATION_TEST_SUITES.find(_._1 == testSuiteName).get._2
 
           val currentGroup = groups(highDurationTestGroupIndex)
           val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
@@ -178,7 +178,7 @@ object TestParallelization {
         val updatedGroup = currentGroup.withTests(currentGroup.tests :+ testDefinition)
         groups(minDurationGroupIndex) = updatedGroup
 
-        groupRuntimes(minDurationGroupIndex) += AVG_TEST_SUITE_DURATION_EXCLUDING_SLOWEST_50
+        groupRuntimes(minDurationGroupIndex) += AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N
 
         this
       } else {
@@ -206,61 +206,30 @@ object TestParallelization {
 
     val NUM_SHARDS = numShardsOpt.getOrElse(1)
 
-    val AVG_TEST_SUITE_DURATION_EXCLUDING_SLOWEST_50 = 0.71
+    val AVG_TEST_SUITE_DURATION_EXCLUDING_TOP_N = 0.83
 
-    /** 50 slowest test suites and their durations. */
-    val TOP_50_HIGH_DURATION_TEST_SUITES: List[(String, Double)] = List(
-      ("org.apache.spark.sql.delta.MergeIntoDVsWithPredicatePushdownCDCSuite", 36.09),
-      ("org.apache.spark.sql.delta.MergeIntoDVsSuite", 33.26),
-      ("org.apache.spark.sql.delta.MergeIntoDVsCDCSuite", 27.39),
-      ("org.apache.spark.sql.delta.cdc.MergeCDCSuite", 26.24),
-      ("org.apache.spark.sql.delta.MergeIntoDVsWithPredicatePushdownSuite", 23.58),
-      ("org.apache.spark.sql.delta.MergeIntoSQLSuite", 23.01),
-      ("org.apache.spark.sql.delta.MergeIntoScalaSuite", 16.67),
-      ("org.apache.spark.sql.delta.deletionvectors.DeletionVectorsSuite", 11.55),
-      ("org.apache.spark.sql.delta.stats.DataSkippingDeltaV1ParquetCheckpointV2Suite", 8.26),
-      ("org.apache.spark.sql.delta.DescribeDeltaHistorySuite", 7.16),
-      ("org.apache.spark.sql.delta.ImplicitMergeCastingSuite", 7.14),
-      ("org.apache.spark.sql.delta.stats.DataSkippingDeltaV1JsonCheckpointV2Suite", 7.0),
-      ("org.apache.spark.sql.delta.UpdateSQLWithDeletionVectorsSuite", 6.03),
-      ("org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillConflictsDVSuite", 5.97),
-      ("org.apache.spark.sql.delta.DeltaSourceSuite", 5.86),
-      ("org.apache.spark.sql.delta.cdc.UpdateCDCWithDeletionVectorsSuite", 5.67),
-      ("org.apache.spark.sql.delta.stats.DataSkippingDeltaV1Suite", 5.63),
-      ("org.apache.spark.sql.delta.DeltaSourceLargeLogSuite", 5.61),
-      ("org.apache.spark.sql.delta.stats.DataSkippingDeltaV1NameColumnMappingSuite", 5.43),
-      ("org.apache.spark.sql.delta.GenerateIdentityValuesSuite", 5.4),
-      ("org.apache.spark.sql.delta.commands.backfill.RowTrackingBackfillConflictsSuite", 5.02),
-      ("org.apache.spark.sql.delta.ImplicitStreamingMergeCastingSuite", 4.77),
-      ("org.apache.spark.sql.delta.DeltaVacuumWithCoordinatedCommitsBatch100Suite", 4.73),
-      ("org.apache.spark.sql.delta.CoordinatedCommitsBatchBackfill1DeltaLogSuite", 4.64),
-      ("org.apache.spark.sql.delta.DeltaLogSuite", 4.6),
-      ("org.apache.spark.sql.delta.IdentityColumnIngestionScalaSuite", 4.36),
-      ("org.apache.spark.sql.delta.DeltaVacuumSuite", 4.22),
-      ("org.apache.spark.sql.delta.columnmapping.RemoveColumnMappingCDCSuite", 4.12),
-      ("org.apache.spark.sql.delta.DeltaSuite", 4.05),
-      ("org.apache.spark.sql.delta.UpdateSQLSuite", 3.99),
-      ("org.apache.spark.sql.delta.typewidening.TypeWideningInsertSchemaEvolutionSuite", 3.92),
-      ("org.apache.spark.sql.delta.cdc.DeleteCDCSuite", 3.9),
-      ("org.apache.spark.sql.delta.CoordinatedCommitsBatchBackfill100DeltaLogSuite", 3.86),
-      ("org.apache.spark.sql.delta.rowid.UpdateWithRowTrackingCDCSuite", 3.83),
-      ("org.apache.spark.sql.delta.expressions.HilbertIndexSuite", 3.75),
-      ("org.apache.spark.sql.delta.DeltaProtocolVersionSuite", 3.71),
-      ("org.apache.spark.sql.delta.CoordinatedCommitsBatchBackfill2DeltaLogSuite", 3.68),
-      ("org.apache.spark.sql.delta.CheckpointsWithCoordinatedCommitsBatch100Suite", 3.59),
-      ("org.apache.spark.sql.delta.ConvertToDeltaScalaSuite", 3.59),
-      ("org.apache.spark.sql.delta.typewidening.TypeWideningTableFeatureSuite", 3.49),
-      ("org.apache.spark.sql.delta.cdc.UpdateCDCSuite", 3.42),
-      ("org.apache.spark.sql.delta.CloneTableScalaDeletionVectorSuite", 3.41),
-      ("org.apache.spark.sql.delta.IdentityColumnSyncScalaSuite", 3.33),
-      ("org.apache.spark.sql.delta.DeleteSQLSuite", 3.31),
-      ("org.apache.spark.sql.delta.CheckpointsWithCoordinatedCommitsBatch2Suite", 3.19),
-      ("org.apache.spark.sql.delta.DeltaSourceIdColumnMappingSuite", 3.18),
-      ("org.apache.spark.sql.delta.rowid.RowTrackingMergeCDFDVSuite", 3.18),
-      ("org.apache.spark.sql.delta.rowid.UpdateWithRowTrackingTableFeatureCDCSuite", 3.12),
-      ("org.apache.spark.sql.delta.UpdateSQLWithDeletionVectorsAndPredicatePushdownSuite", 3.01),
-      ("org.apache.spark.sql.delta.rowid.RowTrackingMergeDVSuite", 2.97)
-    )
+    /**
+     * High-duration test suites loaded from project/test-durations.csv.
+     *
+     * To update, run: python3 project/scripts/collect_test_durations.py
+     */
+    val TOP_N_HIGH_DURATION_TEST_SUITES: List[(String, Double)] = {
+      val csvFile = new java.io.File("project/test-durations.csv")
+      if (!csvFile.exists()) {
+        println(s"Warning: ${csvFile.getPath} not found, using empty test durations")
+        List.empty
+      } else {
+        val source = scala.io.Source.fromFile(csvFile)
+        try {
+          source.getLines().drop(1).filter(_.trim.nonEmpty).map { line =>
+            val idx = line.lastIndexOf(',')
+            (line.substring(0, idx), line.substring(idx + 1).toDouble)
+          }.toList
+        } finally {
+          source.close()
+        }
+      }
+    }
 
     /**
      * Generates the optimal test assignment across shards and groups for high duration test suites.
@@ -271,52 +240,42 @@ object TestParallelization {
      *
      * Here's a simple example using 3 shards and 2 groups per shard:
      *
-     * Test 1: MergeIntoDVsWithPredicatePushdownCDCSuite (36.09 mins) --> Shard 0, Group 0
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
+     * Test 1: DeltaRetentionWithCatalogOwnedBatch1Suite (22.66 mins) --> Shard 0, Group 0
+     * - Shard 0: Group 0 = 22.66 mins, Group 1 = 0.0 mins
      * - Shard 1: Group 0 = 0.0 mins, Group 1 = 0.0 mins
      * - Shard 2: Group 0 = 0.0 mins, Group 1 = 0.0 mins
      *
-     * Test 2: MergeIntoDVsSuite (33.26 mins) --> Shard 1, Group 0
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 0.0 mins
+     * Test 2: DeltaRetentionSuite (21.46 mins) --> Shard 1, Group 0
+     * - Shard 0: Group 0 = 22.66 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 21.46 mins, Group 1 = 0.0 mins
      * - Shard 2: Group 0 = 0.0 mins, Group 1 = 0.0 mins
      *
-     * Test 3: MergeIntoDVsCDCSuite (27.39 mins) --> Shard 2, Group 0
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 0.0 mins
-     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 0.0 mins
+     * Test 3: DeletionVectorsSuite (16.85 mins) --> Shard 2, Group 0
+     * - Shard 0: Group 0 = 22.66 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 21.46 mins, Group 1 = 0.0 mins
+     * - Shard 2: Group 0 = 16.85 mins, Group 1 = 0.0 mins
      *
-     * Test 4: MergeCDCSuite (26.24 mins) --> Shard 2, Group 1
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 0.0 mins
-     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     * Test 4: DataSkippingDeltaV1WithCatalogOwnedBatch100Suite (12.48 mins) --> Shard 2, Group 1
+     * - Shard 0: Group 0 = 22.66 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 21.46 mins, Group 1 = 0.0 mins
+     * - Shard 2: Group 0 = 16.85 mins, Group 1 = 12.48 mins
      *
-     * Test 5: MergeIntoDVsWithPredicatePushdownSuite (23.58 mins) -> Shard 1, Group 1
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 0.0 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 23.58 mins
-     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     * Test 5: DataSkippingDeltaV1WithCatalogOwnedBatch2Suite (11.68 mins) --> Shard 1, Group 1
+     * - Shard 0: Group 0 = 22.66 mins, Group 1 = 0.0 mins
+     * - Shard 1: Group 0 = 21.46 mins, Group 1 = 11.68 mins
+     * - Shard 2: Group 0 = 16.85 mins, Group 1 = 12.48 mins
      *
-     * Test 6: MergeIntoSQLSuite (23.01 mins) --> Shard 0, Group 1
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 23.01 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 23.58 mins
-     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
-     *
-     * Test 7: MergeIntoScalaSuite (16.67 mins) --> Shard 0, Group 1
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 39.68 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 23.58 mins
-     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
-     *
-     * Test 8: DeletionVectorsSuite (11.55 mins) --> Shard 1, Group 1
-     * - Shard 0: Group 0 = 36.09 mins, Group 1 = 39.68 mins
-     * - Shard 1: Group 0 = 33.26 mins, Group 1 = 35.13 mins
-     * - Shard 2: Group 0 = 27.39 mins, Group 1 = 26.24 mins
+     * Test 6: DeltaFastDropFeatureSuite (11.04 mins) --> Shard 0, Group 1
+     * - Shard 0: Group 0 = 22.66 mins, Group 1 = 11.04 mins
+     * - Shard 1: Group 0 = 21.46 mins, Group 1 = 11.68 mins
+     * - Shard 2: Group 0 = 16.85 mins, Group 1 = 12.48 mins
      */
     def highDurationOptimalAssignment(numGroups: Int):
         (Array[Array[Set[String]]], Array[Array[Double]]) = {
       val assignment = Array.fill(NUM_SHARDS)(Array.fill(numGroups)(List.empty[String]))
       val groupDurations = Array.fill(NUM_SHARDS)(Array.fill(numGroups)(0.0))
       val shardDurations = Array.fill(NUM_SHARDS)(0.0)
-      val sortedTestSuites = TOP_50_HIGH_DURATION_TEST_SUITES.sortBy(-_._2)
+      val sortedTestSuites = TOP_N_HIGH_DURATION_TEST_SUITES.sortBy(-_._2)
 
       sortedTestSuites.foreach { case (testSuiteName, duration) =>
         val (shardIdx, groupIdx) =
