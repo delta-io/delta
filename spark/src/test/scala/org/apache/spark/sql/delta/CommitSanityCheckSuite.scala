@@ -17,9 +17,9 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import com.databricks.spark.util.{Log4jUsageLogger, UsageRecord}
+import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.DeltaTestUtils.{filterUsageRecords, BOOLEAN_DOMAIN}
-import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -28,20 +28,27 @@ import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types._
 
 /**
- * Tests for null partition value validation during commit.
- * These tests verify that the sanity checks in OptimisticTransaction catch
- * AddFile actions with null partition values for columns that have NOT NULL constraints.
+ * Tests for AddFile sanity checks during commit:
+ * - Empty (0-byte) parquet file detection
+ * - Null partition value validation for NOT NULL columns
  */
-class ConstraintEnforcementOnCommitSuite extends QueryTest
+class CommitSanityCheckSuite extends QueryTest
     with SharedSparkSession
     with DeltaSQLCommandTest
     with DeltaSQLTestUtils {
 
   override protected def sparkConf: SparkConf = {
-    super.sparkConf.set(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED.key, "true")
+    super.sparkConf
+      .set(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED.key, "true")
+      .set(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED.key, "true")
+  }
+
+  private def createTable(tempDir: java.io.File): DeltaLog = {
+    sql(s"CREATE TABLE delta.`${tempDir.getCanonicalPath}` " +
+      s"(id Long, value String) USING delta")
+    DeltaLog.forTable(spark, tempDir.getCanonicalPath)
   }
 
   /**
@@ -70,7 +77,85 @@ class ConstraintEnforcementOnCommitSuite extends QueryTest
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Empty file checks
+  // ---------------------------------------------------------------------------
+
   BOOLEAN_DOMAIN.foreach { isCommitLarge =>
+    test(s"detect zero-byte AddFile [isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        val deltaLog = createTable(tempDir)
+
+        val addFile = AddFile(
+          path = "part-00000.parquet",
+          partitionValues = Map.empty,
+          size = 0,
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true,
+          stats = """{"numRecords": 0}"""
+        )
+
+        val e = intercept[IllegalStateException] {
+          commit(deltaLog, addFile, isCommitLarge)
+        }
+        assert(e.getMessage.contains("zero-byte"))
+        assert(e.getMessage.contains("part-00000.parquet"))
+      }
+    }
+
+    test(s"no error when file size is positive [isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        val deltaLog = createTable(tempDir)
+
+        val addFile = AddFile(
+          path = "part-00000.parquet",
+          partitionValues = Map.empty,
+          size = 100,
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true,
+          stats = """{"numRecords": 1}"""
+        )
+
+        // Should not throw
+        commit(deltaLog, addFile, isCommitLarge)
+      }
+    }
+
+    test(s"empty file check - only log when throw is disabled " +
+        s"[isCommitLarge: $isCommitLarge]") {
+      withTempDir { tempDir =>
+        withSQLConf(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED.key -> "false") {
+          val deltaLog = createTable(tempDir)
+
+          val addFile = AddFile(
+            path = "part-00000.parquet",
+            partitionValues = Map.empty,
+            size = 0,
+            modificationTime = System.currentTimeMillis(),
+            dataChange = true,
+            stats = """{"numRecords": 0}"""
+          )
+
+          // Should not throw when flag is disabled, only log
+          val events = Log4jUsageLogger.track {
+            commit(deltaLog, addFile, isCommitLarge)
+          }
+
+          val violationEvents =
+            filterUsageRecords(events, "delta.sanityCheck.emptyParquetFile")
+          assert(violationEvents.size == 1)
+
+          val eventBlob = JsonUtils.fromJson[Map[String, Any]](violationEvents.head.blob)
+          assert(eventBlob.contains("addFile"))
+          assert(eventBlob.contains("stackTrace"))
+        }
+      }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Null partition checks
+    // ---------------------------------------------------------------------------
+
     test(s"detect null partition value for NOT NULL column with column mapping " +
         s"[isCommitLarge: $isCommitLarge]") {
       withTempDir { tempDir =>
@@ -138,7 +223,8 @@ class ConstraintEnforcementOnCommitSuite extends QueryTest
       }
     }
 
-    test(s"only log when throw is disabled [isCommitLarge: $isCommitLarge]") {
+    test(s"null partition check - only log when throw is disabled " +
+        s"[isCommitLarge: $isCommitLarge]") {
       withTempDir { tempDir =>
         withSQLConf(DeltaSQLConf.DELTA_NULL_PARTITION_CHECK_THROW_ENABLED.key -> "false") {
           val deltaLog = createPartitionedTableWithNotNullColumn(tempDir)

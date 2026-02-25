@@ -1298,6 +1298,27 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
+   * Validates that an AddFile does not reference a zero-byte parquet file.
+   * Logs a delta event regardless of the flag; throws only when
+   * [[DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED]] is set.
+   */
+  protected def validateAddFileNotEmpty(addFile: AddFile): Unit = {
+    if (addFile.size == 0) {
+      recordDeltaEvent(
+        deltaLog,
+        "delta.sanityCheck.emptyParquetFile",
+        data = Map(
+          "addFile" -> addFile.json,
+          "stackTrace" -> Thread.currentThread().getStackTrace.take(20).mkString("\n")
+        ))
+      if (spark.conf.get(DeltaSQLConf.DELTA_EMPTY_FILE_CHECK_THROW_ENABLED)) {
+        throw new IllegalStateException(
+          s"AddFile ${addFile.path} references a zero-byte (empty) parquet file")
+      }
+    }
+  }
+
+  /**
    * Validates that partition columns that have NOT NULL
    * constraints are not null in the AddFile action.
    *
@@ -1343,19 +1364,25 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * For any partition columns that have NOT NULL constraints,
-   * validate that the partition values in the AddFile actions are not null.
+   * Runs all AddFile sanity checks: empty-file detection and null-partition validation.
    */
-  protected def validateActionsForNullPartitions(
+  protected def validateAddFileInvariants(
+      addFile: AddFile,
+      notNullPartitionCols: Set[String]): Unit = {
+    validateAddFileNotEmpty(addFile)
+    validateAddFileForNullPartitions(addFile, notNullPartitionCols)
+  }
+
+  /**
+   * Iterates over all actions and validates AddFile invariants.
+   */
+  protected def validateActionsAddFileInvariants(
       actions: Seq[Action],
       metadata: Metadata): Unit = {
     val notNullPartitionCols = getNotNullPartitionCols(metadata)
-    if (notNullPartitionCols.nonEmpty) {
-      actions.foreach {
-        case a: AddFile =>
-          validateAddFileForNullPartitions(a, notNullPartitionCols)
-        case _ =>
-      }
+    actions.foreach {
+      case a: AddFile => validateAddFileInvariants(a, notNullPartitionCols)
+      case _ =>
     }
   }
 
@@ -1585,7 +1612,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
           prepareCommit(finalActions, op)
         }
 
-      validateActionsForNullPartitions(preparedActions, metadata)
+      validateActionsAddFileInvariants(preparedActions, metadata)
 
       // Find the isolation level to use for this commit
       val isolationLevelToUse = getIsolationLevelToUse(preparedActions, op)
@@ -1847,7 +1874,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         action match {
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
-            validateAddFileForNullPartitions(a, notNullPartitionCols)
+            validateAddFileInvariants(a, notNullPartitionCols)
           case p: Protocol =>
             recordProtocolChanges(
               "delta.protocol.change",

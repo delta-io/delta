@@ -23,6 +23,7 @@ import java.util.Locale
 import scala.jdk.CollectionConverters._
 import scala.util.Try
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
@@ -77,6 +78,96 @@ class IcebergRESTCatalogPlanningClient(
 
   // Partition spec ID for unpartitioned tables
   private val UNPARTITIONED_SPEC_ID = 0
+
+  // IRC config key mappings for each credential type
+  private val S3_KEYS = Seq("s3.access-key-id", "s3.secret-access-key", "s3.session-token")
+  private val AZURE_SAS_TOKEN_KEY_PREFIX = "adls.sas-token."
+  private val GCS_TOKEN_KEY = "gcs.oauth2.token"
+  private val GCS_EXPIRY_KEY = "gcs.oauth2.token-expires-at"
+
+  private case class S3Credentials(
+      accessKeyId: String,
+      secretAccessKey: String,
+      sessionToken: String) extends ScanPlanStorageCredentials {
+    override def configure(conf: Configuration): Unit = {
+      conf.set("fs.s3a.path.style.access", "true")
+      conf.set("fs.s3.impl.disable.cache", "true")
+      conf.set("fs.s3a.impl.disable.cache", "true")
+      conf.set("fs.s3a.access.key", accessKeyId)
+      conf.set("fs.s3a.secret.key", secretAccessKey)
+      conf.set("fs.s3a.session.token", sessionToken)
+    }
+  }
+
+  private case class AzureCredentials(
+      accountName: String,
+      sasToken: String) extends ScanPlanStorageCredentials {
+    override def configure(conf: Configuration): Unit = {
+      val accountSuffix = s"$accountName.dfs.core.windows.net"
+      conf.set("fs.abfs.impl.disable.cache", "true")
+      conf.set("fs.abfss.impl.disable.cache", "true")
+      conf.set(s"fs.azure.account.auth.type.$accountSuffix", "SAS")
+      conf.set(s"fs.azure.sas.fixed.token.$accountSuffix", sasToken)
+    }
+  }
+
+  private case class GcsCredentials(
+      oauth2Token: String,
+      expirationEpochMs: Option[Long] = None) extends ScanPlanStorageCredentials {
+    override def configure(conf: Configuration): Unit = {
+      conf.set("fs.gs.impl.disable.cache", "true")
+      conf.set("fs.gs.auth.type", "ACCESS_TOKEN_PROVIDER")
+      conf.set("fs.gs.auth.access.token.provider.impl",
+        classOf[FixedGcsAccessTokenProvider].getName)
+      conf.set("fs.gs.auth.access.token", oauth2Token)
+      expirationEpochMs.foreach { ms =>
+        conf.set("fs.gs.auth.access.token.expiration.ms", ms.toString)
+      }
+    }
+  }
+
+  private def hasAzureKeys(config: Map[String, String]): Boolean =
+    config.keys.exists(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
+
+  private def buildAzureCredentials(config: Map[String, String]): AzureCredentials = {
+    val sasTokenKey = config.keys
+      .find(_.startsWith(AZURE_SAS_TOKEN_KEY_PREFIX))
+      .getOrElse(throw new IllegalStateException(
+        s"Missing Azure SAS token key starting with: $AZURE_SAS_TOKEN_KEY_PREFIX"))
+
+    val accountName = sasTokenKey
+      .stripPrefix(AZURE_SAS_TOKEN_KEY_PREFIX)
+      .stripSuffix(".dfs.core.windows.net")
+
+    val sasToken = config(sasTokenKey)
+
+    AzureCredentials(accountName = accountName, sasToken = sasToken)
+  }
+
+  private def fromConfig(config: Map[String, String]): ScanPlanStorageCredentials = {
+    def get(key: String): String =
+      config.getOrElse(key, throw new IllegalStateException(s"Missing required credential: $key"))
+
+    def hasAny(keys: Seq[String]): Boolean = keys.exists(config.contains)
+
+    if (hasAny(S3_KEYS)) {
+      S3Credentials(
+        get("s3.access-key-id"),
+        get("s3.secret-access-key"),
+        get("s3.session-token"))
+    } else if (hasAzureKeys(config)) {
+      buildAzureCredentials(config)
+    } else if (config.contains(GCS_TOKEN_KEY)) {
+      val token = get(GCS_TOKEN_KEY)
+      val expirationEpochMs = config.get(GCS_EXPIRY_KEY)
+        .flatMap(s => scala.util.Try(s.toLong).toOption)
+      GcsCredentials(token, expirationEpochMs)
+    } else {
+      throw new IllegalStateException(
+        "Unrecognized credential keys. " +
+          "Expected S3 (s3.*), Azure (adls.*), or GCS (gcs.*) properties.")
+    }
+  }
 
   /**
    * Lazily fetch the catalog configuration and construct the endpoint URI root.
@@ -397,7 +488,7 @@ class IcebergRESTCatalogPlanningClient(
     }
 
     // If config exists and is non-empty, use factory (throws on incomplete credentials)
-    config.filter(_.nonEmpty).map(ScanPlanStorageCredentials.fromConfig)
+    config.filter(_.nonEmpty).map(fromConfig)
   }
 
   /**
