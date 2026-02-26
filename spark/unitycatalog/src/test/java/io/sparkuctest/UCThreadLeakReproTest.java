@@ -40,7 +40,7 @@ public class UCThreadLeakReproTest extends UCDeltaTableIntegrationBaseTest {
     withNewTable(
         "thread_leak_repro",
         "id INT, payload STRING",
-        TableType.EXTERNAL,
+        TableType.MANAGED,
         tableName -> {
           // 1 row per parquet file -> 2000 files.
           sql("SET spark.sql.files.maxRecordsPerFile = 1");
