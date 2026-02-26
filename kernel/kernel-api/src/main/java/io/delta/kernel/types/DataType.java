@@ -17,7 +17,6 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
-import java.util.function.Predicate;
 
 /**
  * Base class for all data types.
@@ -61,17 +60,6 @@ public abstract class DataType {
    * <p>For example StructType, ArrayType, MapType are nested data types.
    */
   public abstract boolean isNested();
-
-  /**
-   * Returns {@code true} if the provided {@code predicate} matches this type or any of its nested
-   * child types.
-   *
-   * @param predicate the predicate to test this type (and recursively its children)
-   * @return the result of applying {@code predicate}
-   */
-  public boolean existsRecursively(Predicate<DataType> predicate) {
-    return predicate != null && predicate.test(this);
-  }
 
   @Override
   public abstract int hashCode();

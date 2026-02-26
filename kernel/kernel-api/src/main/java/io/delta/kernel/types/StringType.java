@@ -94,7 +94,12 @@ public class StringType extends BasePrimitiveType {
     return collationIdentifier.equals(that.collationIdentifier);
   }
 
-  /** @return string representation of the StringType. */
+  /**
+   * Override is needed because {@code toString()} may be used for schema serialization and similar
+   * contexts, so collation information must be included.
+   *
+   * @return string representation of the StringType.
+   */
   @Override
   public String toString() {
     if (isUTF8BinaryCollated()) {
