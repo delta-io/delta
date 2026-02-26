@@ -42,7 +42,7 @@ class CustomCatalogSuite extends QueryTest with SharedSparkSession
       val plan = spark.sql(sqlCmd).queryExecution.analyzed
       val catalogTable = plan match {
         case cmd: UnaryNode with DeltaCommand =>
-          cmd.getDeltaTable(cmd.child, "dummy").catalogTable
+          DeltaTableV2.extractFrom(cmd.child, "dummy").catalogTable
         case AppendData(DataSourceV2RelationShim(table: DeltaTableV2, _, _, _, _), _, _, _, _, _) =>
           table.catalogTable
         case cmd: DeleteCommand =>

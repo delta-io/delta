@@ -85,7 +85,8 @@ case class DescribeDeltaHistory(
     if (limit.exists(_ > Int.MaxValue - 8)) {
       throw DeltaErrors.maxArraySizeExceeded()
     }
-    val deltaTableV2: DeltaTableV2 = getDeltaTable(child, DescribeDeltaHistory.COMMAND_NAME)
+    val deltaTableV2: DeltaTableV2 = DeltaTableV2.extractFrom(child,
+      DescribeDeltaHistory.COMMAND_NAME)
     DescribeDeltaHistoryCommand(table = deltaTableV2, limit = limit, output = output)
   }
 }
