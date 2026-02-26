@@ -34,6 +34,22 @@ class TypeWideningConstraintsSuite
 
 trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin =>
 
+  private def checkDependentTypeEvolutionError(body: => Unit, parameters: Map[String, String])
+    : Unit =
+    if (spark.conf.get(DeltaSQLConf.DELTA_DML_USE_DSV2_SCHEMA_EVOLUTION)) {
+      checkError(
+        intercept[DeltaAnalysisException] { body },
+        "DELTA_CONSTRAINT_DEPENDENT_COLUMN_CHANGE",
+        parameters = parameters.filterNot(p => Set("columnType", "dataType").contains(p._1))
+      )
+    } else {
+      checkError(
+        intercept[DeltaAnalysisException] { body },
+        "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        parameters = parameters
+      )
+    }
+
   test("not null constraint with type change") {
     withTable("t") {
       sql("CREATE TABLE t (a byte NOT NULL) USING DELTA")
@@ -138,11 +154,8 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
       checkAnswer(sql("SELECT hash(a) FROM t"), Row(1765031574))
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-        checkError(
-          intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t VALUES (200)")
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        checkDependentTypeEvolutionError(
+          sql("INSERT INTO t VALUES (200)"),
           parameters = Map(
             "columnName" -> "a",
             "columnType" -> "TINYINT",
@@ -161,11 +174,8 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
       checkAnswer(sql("SELECT hash(a.x) FROM t"), Row(1765031574))
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-        checkError(
-          intercept[DeltaAnalysisException] {
-            sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))")
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        checkDependentTypeEvolutionError(
+          sql("INSERT INTO t (a) VALUES (named_struct('x', 200, 'y', CAST(5 AS byte)))"),
           parameters = Map(
             "columnName" -> "a.x",
             "columnType" -> "TINYINT",
@@ -190,17 +200,14 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
       checkAnswer(sql("SELECT hash(a.x.z) FROM t"), Row(1765031574))
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-        checkError(
-          intercept[DeltaAnalysisException] {
-            sql(
-              s"""
-                 | INSERT INTO t (a) VALUES (
-                 |   named_struct('x', named_struct('z', 200, 'h', 3), 'y', 4)
-                 | )
-                 |""".stripMargin
-            )
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        checkDependentTypeEvolutionError(
+          sql(
+            s"""
+               | INSERT INTO t (a) VALUES (
+               |   named_struct('x', named_struct('z', 200, 'h', 3), 'y', 4)
+               | )
+               |""".stripMargin
+          ),
           parameters = Map(
             "columnName" -> "a.x.z",
             "columnType" -> "TINYINT",
@@ -232,14 +239,11 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
 
       withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
         // Insert by name is not supported by type evolution.
-        checkError(
-          intercept[DeltaAnalysisException] {
-            // Migrate map's key to int type.
-            spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(999999 -> 1, 3 -> 3))))))
-              .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<int,tinyint>>>"))
-              .write.format("delta").mode("append").saveAsTable("t")
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        checkDependentTypeEvolutionError(
+          // Migrate map's key to int type.
+          spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(999999 -> 1, 3 -> 3))))))
+            .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<int,tinyint>>>"))
+            .write.format("delta").mode("append").saveAsTable("t"),
           parameters = Map(
             "columnName" -> "s.arr.element.key",
             "columnType" -> "TINYINT",
@@ -247,14 +251,11 @@ trait TypeWideningConstraintsTests { self: QueryTest with TypeWideningTestMixin 
             "constraints" -> "delta.constraints.ck -> s . arr [ 0 ] [ 3 ] = 3"
           )
         )
-        checkError(
-          intercept[DeltaAnalysisException] {
-            // Migrate map's value to int type.
-            spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(1 -> 999999, 3 -> 3))))))
-              .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<tinyint,int>>>"))
-              .write.format("delta").mode("append").saveAsTable("t")
-          },
-          "DELTA_CONSTRAINT_DATA_TYPE_MISMATCH",
+        checkDependentTypeEvolutionError(
+          // Migrate map's value to int type.
+          spark.createDataFrame(Seq(Tuple1(Tuple1(Array(Map(1 -> 999999, 3 -> 3))))))
+            .toDF("s").withColumn("s", col("s").cast("struct<arr:array<map<tinyint,int>>>"))
+            .write.format("delta").mode("append").saveAsTable("t"),
           parameters = Map(
             "columnName" -> "s.arr.element.value",
             "columnType" -> "TINYINT",

@@ -981,6 +981,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_DML_USE_DSV2_SCHEMA_EVOLUTION =
+    buildConf("dml.useDSv2SchemaEvolution")
+      .internal()
+      .doc(
+        """
+          |If enabled, DML operations on Delta tables will use Spark's DSv2 schema evolution
+          |rules (ResolveInsertSchemaEvolution / ResolveMergeIntoSchemaEvolution) to handle
+          |automatic schema evolution when new columns or type changes are detected.
+        """.stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_FAIL_IF_SOURCE_CHANGED =
     buildConf("merge.failIfSourceChanged")
       .internal()
