@@ -2866,4 +2866,66 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       spark.conf().unset(configKey);
     }
   }
+
+  @Test
+  public void testDataFrameBasedInitialSnapshot_handlesLargeSnapshot(@TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_df_snapshot_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String maxFilesKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    String dfFlagKey = DeltaSQLConf.DELTA_STREAMING_USE_DATAFRAME_INITIAL_SNAPSHOT().key();
+    spark.conf().set(maxFilesKey, "5");
+    spark.conf().set(dfFlagKey, "true");
+
+    try {
+      Configuration hadoopConf = spark.sessionState().newHadoopConf();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = 5L;
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      List<IndexedFile> files = new ArrayList<>();
+      try (CloseableIterator<IndexedFile> iter =
+          stream.getFileChanges(version, fromIndex, isInitialSnapshot, Optional.empty())) {
+        while (iter.hasNext()) {
+          files.add(iter.next());
+        }
+      }
+
+      // Should succeed (no exception) and include BEGIN/END sentinels + data files
+      assertTrue(files.size() >= 3, "Should have at least BEGIN, one file, and END sentinels");
+      assertEquals(DeltaSourceOffset.BASE_INDEX(), files.get(0).getIndex());
+      assertEquals(DeltaSourceOffset.END_INDEX(), files.get(files.size() - 1).getIndex());
+
+      // Verify data files are sorted by (modificationTime, path)
+      for (int i = 2; i < files.size() - 1; i++) {
+        IndexedFile prev = files.get(i - 1);
+        IndexedFile curr = files.get(i);
+        if (prev.getAddFile() != null && curr.getAddFile() != null) {
+          long prevTime = prev.getAddFile().getModificationTime();
+          long currTime = curr.getAddFile().getModificationTime();
+          assertTrue(
+              prevTime < currTime
+                  || (prevTime == currTime
+                      && prev.getAddFile().getPath().compareTo(curr.getAddFile().getPath()) <= 0),
+              "Files should be sorted by (modificationTime, path)");
+        }
+      }
+    } finally {
+      spark.conf().unset(maxFilesKey);
+      spark.conf().unset(dfFlagKey);
+    }
+  }
 }
