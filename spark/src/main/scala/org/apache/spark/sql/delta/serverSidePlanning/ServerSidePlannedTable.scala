@@ -406,28 +406,7 @@ class ServerSidePlannedFilePartitionReaderFactory(
     // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
     // (avoids AccessDenied when temp creds expire and a cached FS is reused).
     // Aligns with CredPropsUtil in the Unity Catalog connector.
-    credentials.foreach { creds =>
-      creds match {
-        case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
-          conf.set("fs.s3a.path.style.access", "true")
-          conf.set("fs.s3.impl.disable.cache", "true")
-          conf.set("fs.s3a.impl.disable.cache", "true")
-          conf.set("fs.s3a.access.key", accessKeyId)
-          conf.set("fs.s3a.secret.key", secretAccessKey)
-          conf.set("fs.s3a.session.token", sessionToken)
-
-        case AzureCredentials(accountName, sasToken, containerName) =>
-          conf.set("fs.abfs.impl.disable.cache", "true")
-          conf.set("fs.abfss.impl.disable.cache", "true")
-          // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
-          val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
-          conf.set(sasKey, sasToken)
-
-        case GcsCredentials(oauth2Token) =>
-          conf.set("fs.gs.impl.disable.cache", "true")
-          conf.set("fs.gs.auth.access.token", oauth2Token)
-      }
-    }
+    credentials.foreach(_.configure(conf))
 
     new SerializableConfiguration(conf)
   }
