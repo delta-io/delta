@@ -167,7 +167,7 @@ def getLibraryDependencies(
   // Package suffix comes from CrossSparkVersions.scala (single source of truth)
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
   val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
-  val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
+  val deltaIcebergDep = "io.delta" % s"delta-iceberg_${scalaBinVersion}" % deltaVersion
 
   val resolvedSparkVersion = resolveSparkVersion(deltaVersion)
 
