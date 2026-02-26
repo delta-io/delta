@@ -262,7 +262,6 @@ public abstract class AbstractKernelTable implements DeltaTable {
             withRetry(
                 () -> {
                   Engine localEngine = getEngine();
-                  Transaction txn;
                   Optional<Snapshot> snapshotOpt = snapshot();
                   if (snapshotOpt.isEmpty()) {
                     throw new IllegalStateException("Snapshot should exist");
@@ -272,7 +271,7 @@ public abstract class AbstractKernelTable implements DeltaTable {
                       snapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
                   txnBuilder.withTransactionId(appId, txnId);
                   txnBuilder.withTablePropertiesAdded(properties);
-                  txn = txnBuilder.build(engine);
+                  Transaction txn = txnBuilder.build(engine);
 
                   TransactionCommitResult result =
                       withTiming("commit.txn", () -> txn.commit(localEngine, actions));
@@ -350,7 +349,8 @@ public abstract class AbstractKernelTable implements DeltaTable {
   /**
    * Subclass may implement this to achieve fast cache validation. This method is expected to be
    * faster than {@link #loadLatestSnapshot()}. The default implementation checks if a file with the
-   * given version exists.
+   * given version exists. NOTE: catalog-managed tables need to override this method to check
+   * against catalog.
    *
    * @return the latest version of the table, null if unknown / not supported
    */

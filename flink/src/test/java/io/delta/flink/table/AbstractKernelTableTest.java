@@ -43,7 +43,6 @@ import java.net.URI;
 import java.nio.file.AccessDeniedException;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 import org.apache.flink.util.InstantiationUtil;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.jupiter.api.Test;
@@ -115,6 +114,12 @@ class AbstractKernelTableTest extends TestHelper {
           AbstractKernelTable copy =
               InstantiationUtil.deserializeObject(serialized, getClass().getClassLoader());
           assertNotNull(copy);
+          assertNull(copy.getSchema());
+          assertNull(copy.tableState);
+          assertEquals(copy.getId(), table.getId());
+          assertEquals(copy.getTablePath(), table.getTablePath());
+          assertEquals(copy.getTableUUID(), table.getTableUUID());
+          assertEquals(copy.getPartitionColumns(), table.getPartitionColumns());
         });
   }
 
@@ -149,7 +154,7 @@ class AbstractKernelTableTest extends TestHelper {
   }
 
   @Test
-  void testCommitToEmptyTableWithoutPartition() {
+  void testCreateTableAndCommitWithoutPartition() {
     StructType schema =
         new StructType().add("id", IntegerType.INTEGER).add("part", StringType.STRING);
 
@@ -158,12 +163,7 @@ class AbstractKernelTableTest extends TestHelper {
         Collections.emptyList(),
         table -> {
           List<Row> actions =
-              IntStream.range(0, 5)
-                  .mapToObj(
-                      i ->
-                          dummyAddFileRow(
-                              schema, 10 + i, Map.of("part", Literal.ofString("p" + i))))
-                  .collect(Collectors.toList());
+              dummyAddFileRows(schema, 5, (i) -> Map.of("part", Literal.ofString("p" + i)));
 
           CloseableIterable<Row> dataActions =
               new CloseableIterable<Row>() {
@@ -196,7 +196,7 @@ class AbstractKernelTableTest extends TestHelper {
   }
 
   @Test
-  void testCommitToEmptyTableWithPartition() {
+  void testCreateNewTableAndCommitWithPartition() {
     withTempDir(
         dir -> {
           String tablePath = dir.getAbsolutePath();
@@ -209,12 +209,7 @@ class AbstractKernelTableTest extends TestHelper {
           table.open();
 
           List<Row> actions =
-              IntStream.range(0, 5)
-                  .mapToObj(
-                      i ->
-                          dummyAddFileRow(
-                              schema, 10 + i, Map.of("part", Literal.ofString("p" + i))))
-                  .collect(Collectors.toList());
+              dummyAddFileRows(schema, 5, (i) -> Map.of("part", Literal.ofString("p" + i)));
 
           CloseableIterable<Row> dataActions =
               new CloseableIterable<Row>() {
@@ -271,10 +266,7 @@ class AbstractKernelTableTest extends TestHelper {
                   URI.create(tablePath), Collections.emptyMap(), schema, Collections.emptyList());
           table.open();
 
-          List<Row> actions =
-              IntStream.range(0, 5)
-                  .mapToObj(i -> dummyAddFileRow(schema, 10 + i, Collections.emptyMap()))
-                  .collect(Collectors.toList());
+          List<Row> actions = dummyAddFileRows(schema, 5, (i) -> Map.of());
 
           CloseableIterable<Row> dataActions =
               CloseableIterable.inMemoryIterable(Utils.toCloseableIterator(actions.iterator()));
@@ -312,12 +304,7 @@ class AbstractKernelTableTest extends TestHelper {
           table.open();
 
           List<Row> actions =
-              IntStream.range(0, 5)
-                  .mapToObj(
-                      i ->
-                          dummyAddFileRow(
-                              schema, 10 + i, Map.of("part", Literal.ofString("p" + i))))
-                  .collect(Collectors.toList());
+              dummyAddFileRows(schema, 5, (i) -> Map.of("part", Literal.ofString("p" + i)));
 
           CloseableIterable<Row> dataActions =
               CloseableIterable.inMemoryIterable(Utils.toCloseableIterator(actions.iterator()));
@@ -681,7 +668,7 @@ class AbstractKernelTableTest extends TestHelper {
   }
 
   @Test
-  public void testPublishAndCheckpoint() {
+  public void testCheckpoint() {
     withTempDir(
         dir -> {
           StructType schema =
