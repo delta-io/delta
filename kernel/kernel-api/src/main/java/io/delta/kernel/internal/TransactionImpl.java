@@ -595,11 +595,11 @@ public class TransactionImpl implements Transaction {
     return new CommitInfo(
         generateInCommitTimestampForFirstCommitAttempt(engine, commitAttemptStartTime),
         commitAttemptStartTime, /* timestamp */
-        "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
-        operation.getDescription(), /* description */
+        Optional.of("Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo), /* engineInfo */
+        Optional.of(operation.getDescription()), /* description */
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
-        txnId.toString(), /* txnId */
+        Optional.of(txnId.toString()), /* txnId */
         emptyMap() /* operationMetrics */);
   }
 
