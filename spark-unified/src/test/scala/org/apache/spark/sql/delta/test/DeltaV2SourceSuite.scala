@@ -26,9 +26,6 @@ import org.apache.spark.sql.delta.DeltaSourceSuite
  */
 class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
-  // Avoid spark%dir%prefix - Kernel path handling fails with % in paths (URI encoding issues)
-  override protected val defaultTempDirPrefix: String = "spark_dir_prefix"
-
   override protected def useDsv2: Boolean = true
 
   /**
