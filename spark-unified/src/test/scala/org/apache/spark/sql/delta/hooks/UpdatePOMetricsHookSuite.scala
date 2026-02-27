@@ -22,7 +22,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.JsonUtils
 
@@ -39,7 +38,7 @@ import org.apache.spark.sql.types.StructType
  * Tests cover:
  * - buildRequest: file and row metric extraction without Delta infrastructure
  * - JSON payload structure matching the server contract (snake_case, nested)
- * - Hook enablement via configuration
+ * - Hook behavior and error handling
  * - Error handling (commits succeed even when HTTP fails)
  * - Basic mock server integration
  * - Smoke test: run() fires HTTP POST with correct payload for UC-managed table
@@ -47,6 +46,8 @@ import org.apache.spark.sql.types.StructType
 class UpdatePOMetricsHookSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
+  private val UC_CATALOG_URI_CONF_KEY = "spark.sql.catalog.migration_bugbash.uri"
+  private val TEST_CATALOG_NAME = "test_catalog"
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
@@ -271,11 +272,9 @@ class UpdatePOMetricsHookSuite extends QueryTest
   // Hook lifecycle tests
   // ---------------------------------------------------------------------------
 
-  test("hook disabled by config - skips execution") {
+  test("path-based table writes continue without PO hook registration") {
     withTempDir { dir =>
       val tablePath = dir.getCanonicalPath
-
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_ENABLED.key, "false")
 
       // Create and append - if hook ran it would fail (no endpoint configured)
       spark.range(10).write.format("delta").save(tablePath)
@@ -292,10 +291,8 @@ class UpdatePOMetricsHookSuite extends QueryTest
       mockServer.setResponseCode(500)
       mockServer.start()
 
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_ENDPOINT.key,
-        s"http://localhost:${mockServer.getPort()}/metrics")
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_AUTH_TOKEN.key, "test-token")
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_TIMEOUT_MS.key, "1000")
+      spark.conf.set(UC_CATALOG_URI_CONF_KEY, s"http://localhost:${mockServer.getPort()}")
+      spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.token", "test-token")
 
       val request = ReportDeltaMetricsRequest(
         tableId = "test-id",
@@ -303,7 +300,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
       )
       // Client should throw on 5xx; the hook catches and logs this as a warning
       intercept[RuntimeException] {
-        POMetricsClient.sendMetrics(spark, request)
+        POMetricsClient.sendMetrics(spark, request, catalogName = Some(TEST_CATALOG_NAME))
       }
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request even on error")
     } finally {
@@ -317,10 +314,8 @@ class UpdatePOMetricsHookSuite extends QueryTest
       mockServer.setResponseCode(200)
       mockServer.start()
 
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_ENDPOINT.key,
-        s"http://localhost:${mockServer.getPort()}/metrics")
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_AUTH_TOKEN.key, "test-token-123")
-      spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_TIMEOUT_MS.key, "5000")
+      spark.conf.set(UC_CATALOG_URI_CONF_KEY, s"http://localhost:${mockServer.getPort()}")
+      spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.token", "test-token-123")
 
       val request = ReportDeltaMetricsRequest(
         tableId = "abc-123",
@@ -330,7 +325,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
           numRowsInserted = Some(100L)
         ))
       )
-      POMetricsClient.sendMetrics(spark, request)
+      POMetricsClient.sendMetrics(spark, request, catalogName = Some(TEST_CATALOG_NAME))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
 
@@ -363,10 +358,8 @@ class UpdatePOMetricsHookSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
         val snapshot = deltaLog.snapshot
 
-        spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_ENABLED.key, "true")
-        spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_ENDPOINT.key,
-          s"http://localhost:${mockServer.getPort()}/metrics")
-        spark.conf.set(DeltaSQLConf.DELTA_PO_METRICS_AUTH_TOKEN.key, "smoke-token")
+        spark.conf.set(UC_CATALOG_URI_CONF_KEY, s"http://localhost:${mockServer.getPort()}")
+        spark.conf.set("spark.sql.catalog.spark_catalog.token", "smoke-token")
 
         // catalog identifier causes isUCManagedTable to return true
         val catalogTable = CatalogTable(

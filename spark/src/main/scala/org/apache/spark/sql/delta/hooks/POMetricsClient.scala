@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.hooks
 
 import com.fasterxml.jackson.annotation.JsonProperty
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.http.HttpHeaders
@@ -89,6 +88,11 @@ case class FileSizeHistogramPayload(
  *  4. Forward the metrics to PO via PredictiveOptimizationClient.pushExternalDeltaCommitMetrics
  */
 object POMetricsClient {
+  private val UC_CATALOG_URI_CONF_KEY = "spark.sql.catalog.migration_bugbash.uri"
+  private val CATALOG_TOKEN_CONF_PREFIX = "spark.sql.catalog."
+  private val CATALOG_TOKEN_CONF_SUFFIX = ".token"
+  private val PO_METRICS_ENDPOINT_SUFFIX = "/api/2.1/unity-catalog/delta/preview/metrics"
+  private val HTTP_TIMEOUT_MS = 5000L
 
   /**
    * Sends commit metrics to the PO endpoint synchronously.
@@ -97,15 +101,17 @@ object POMetricsClient {
    * @param request The fully-constructed request payload
    * @throws Exception if the HTTP request fails (caller should catch and log)
    */
-  def sendMetrics(spark: SparkSession, request: ReportDeltaMetricsRequest): Unit = {
+  def sendMetrics(
+      spark: SparkSession,
+      request: ReportDeltaMetricsRequest,
+      catalogName: Option[String] = None): Unit = {
     val endpointUrl = getEndpointUrl(spark)
-    val authToken = getAuthToken(spark)
-    val timeoutMs = getTimeoutMs(spark)
+    val authToken = getAuthToken(spark, catalogName)
 
     val requestConfig = RequestConfig.custom()
-      .setConnectTimeout(timeoutMs.toInt)
-      .setSocketTimeout(timeoutMs.toInt)
-      .setConnectionRequestTimeout(timeoutMs.toInt)
+      .setConnectTimeout(HTTP_TIMEOUT_MS.toInt)
+      .setSocketTimeout(HTTP_TIMEOUT_MS.toInt)
+      .setConnectionRequestTimeout(HTTP_TIMEOUT_MS.toInt)
       .build()
 
     val httpClient: CloseableHttpClient = HttpClientBuilder.create()
@@ -141,28 +147,32 @@ object POMetricsClient {
   }
 
   private def getEndpointUrl(spark: SparkSession): String = {
-    spark.conf.getOption(DeltaSQLConf.DELTA_PO_METRICS_ENDPOINT.key) match {
-      case Some(url) if url.nonEmpty => url
+    spark.conf.getOption(UC_CATALOG_URI_CONF_KEY) match {
+      case Some(uri) if uri.nonEmpty =>
+        s"${uri.stripSuffix("/")}$PO_METRICS_ENDPOINT_SUFFIX"
       case _ =>
-        val key = DeltaSQLConf.DELTA_PO_METRICS_ENDPOINT.key
+        val key = UC_CATALOG_URI_CONF_KEY
         throw new IllegalArgumentException(
-          s"PO metrics endpoint URL not configured. Set $key")
+          s"UC catalog base URI not configured. Set $key")
     }
   }
 
-  private def getAuthToken(spark: SparkSession): String = {
-    spark.conf.getOption(DeltaSQLConf.DELTA_PO_METRICS_AUTH_TOKEN.key)
-      .orElse(Option(System.getenv("DATABRICKS_TOKEN"))) match {
+  private def getAuthToken(spark: SparkSession, catalogName: Option[String]): String = {
+    val token = catalogName
+      .map(name => s"$CATALOG_TOKEN_CONF_PREFIX$name$CATALOG_TOKEN_CONF_SUFFIX")
+      .flatMap(spark.conf.getOption)
+      .filter(_.nonEmpty)
+
+    token match {
       case Some(token) if token.nonEmpty => token
       case _ =>
-        val key = DeltaSQLConf.DELTA_PO_METRICS_AUTH_TOKEN.key
+        val keyHint = catalogName
+          .map(name => s"$CATALOG_TOKEN_CONF_PREFIX$name$CATALOG_TOKEN_CONF_SUFFIX")
+          .getOrElse(
+          s"$CATALOG_TOKEN_CONF_PREFIX<catalog>$CATALOG_TOKEN_CONF_SUFFIX")
         throw new IllegalArgumentException(
-          s"PO metrics auth token not configured. Set $key or " +
-          "DATABRICKS_TOKEN environment variable")
+          s"PO metrics auth token not configured. Set $keyHint")
     }
   }
 
-  private def getTimeoutMs(spark: SparkSession): Long = {
-    spark.conf.get(DeltaSQLConf.DELTA_PO_METRICS_TIMEOUT_MS)
-  }
 }

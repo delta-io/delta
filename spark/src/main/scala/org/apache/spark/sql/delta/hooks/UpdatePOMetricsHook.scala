@@ -24,7 +24,6 @@ import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.FileSizeHistogram
 
 import org.apache.spark.internal.MDC
@@ -76,14 +75,7 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
   )
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
-    if (!spark.conf.get(DeltaSQLConf.DELTA_PO_METRICS_ENABLED)) return
-
     if (!isUCManagedTable(txn.deltaLog, catalogTable)) return
-
-    if (!spark.conf.getOption(DeltaSQLConf.DELTA_PO_METRICS_ENDPOINT.key).exists(_.nonEmpty)) {
-      logInfo("PO metrics endpoint not configured, skipping")
-      return
-    }
 
     try {
       val tableId = resolveTableId(catalogTable, txn.deltaLog)
@@ -92,7 +84,8 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
       }
 
       val request = buildRequest(tableId, txn.committedActions, txn.committedVersion)
-      POMetricsClient.sendMetrics(spark, request)
+      val catalogName = catalogTable.flatMap(_.identifier.catalog)
+      POMetricsClient.sendMetrics(spark, request, catalogName = catalogName)
 
       logInfo(
         log"Successfully sent PO metrics for table " +
