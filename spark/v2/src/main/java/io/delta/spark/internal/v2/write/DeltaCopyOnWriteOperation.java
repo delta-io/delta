@@ -58,7 +58,7 @@ public class DeltaCopyOnWriteOperation implements RowLevelOperation {
         table.getSnapshotManager(),
         table.getDataSchema(),
         table.getPartitionSchema(),
-        options) {
+        mergeOptionsWithTable(options)) {
       @Override
       public Scan build() {
         Scan scan = super.build();
@@ -66,6 +66,12 @@ public class DeltaCopyOnWriteOperation implements RowLevelOperation {
         return scan;
       }
     };
+  }
+
+  private CaseInsensitiveStringMap mergeOptionsWithTable(CaseInsensitiveStringMap scanOptions) {
+    java.util.Map<String, String> combined = new java.util.HashMap<>(table.getOptions());
+    combined.putAll(scanOptions.asCaseSensitiveMap());
+    return new CaseInsensitiveStringMap(combined);
   }
 
   @Override

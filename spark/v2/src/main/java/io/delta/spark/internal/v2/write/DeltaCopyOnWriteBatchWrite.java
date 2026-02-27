@@ -16,15 +16,18 @@
 package io.delta.spark.internal.v2.write;
 
 import io.delta.kernel.Operation;
-import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.InternalScanFileUtils;
+import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.SparkScan;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.RowLevelOperation;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
@@ -110,7 +113,13 @@ public class DeltaCopyOnWriteBatchWrite extends AbstractDeltaKernelBatchWrite {
     }
 
     CloseableIterator<Row> removeActionIter =
-        Transaction.generateRemoveActions(engine, txnState, scanFileIter);
+        scanFileIter.map(
+            scanFileRow -> {
+              Row addFileRow = scanFileRow.getStruct(InternalScanFileUtils.ADD_FILE_ORDINAL);
+              AddFile addFile = new AddFile(addFileRow);
+              Row removeFileRow = addFile.toRemoveFileRow(true, Optional.empty());
+              return SingleAction.createRemoveFileSingleAction(removeFileRow);
+            });
 
     List<Row> removeActions = new ArrayList<>();
     while (removeActionIter.hasNext()) {
@@ -120,15 +129,7 @@ public class DeltaCopyOnWriteBatchWrite extends AbstractDeltaKernelBatchWrite {
   }
 
   private static Operation toKernelOperation(RowLevelOperation.Command command) {
-    switch (command) {
-      case DELETE:
-        return Operation.DELETE;
-      case UPDATE:
-        return Operation.UPDATE;
-      case MERGE:
-        return Operation.MERGE;
-      default:
-        throw new IllegalArgumentException("Unsupported row-level command: " + command);
-    }
+    // TODO: use Operation.DELETE/UPDATE/MERGE once kernel-api is updated
+    return Operation.WRITE;
   }
 }
