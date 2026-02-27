@@ -173,7 +173,7 @@ public class SparkTable implements Table, SupportsRead {
    *
    * @return Path created from the table path
    */
-  public Path getPath() {
+  public Path getTablePath() {
     return new Path(tablePath);
   }
 
