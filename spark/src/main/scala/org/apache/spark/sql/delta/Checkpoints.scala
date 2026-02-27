@@ -474,7 +474,7 @@ trait Checkpoints extends DeltaLogging {
         .filterNot(cv => cv.version < 0 || cv.version == CheckpointInstance.MaxValue.version)
         .getOrElse {
           logInfo(
-            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to " +
+            log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] Try to " +
             log"find Delta last complete checkpoint")
           eventData("listingFromZero") = true.toString
           return findLastCompleteCheckpoint()
@@ -484,8 +484,8 @@ trait Checkpoints extends DeltaLogging {
     eventData("upperBoundCheckpointType") = upperBoundCv.format.name
     var iterations: Long = 0L
     var numFilesScanned: Long = 0L
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Try to find " +
-      log"Delta last complete checkpoint before version " +
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+      log"Try to find Delta last complete checkpoint before version " +
       log"${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     var listingEndVersion = upperBoundCv.version
 
@@ -530,7 +530,7 @@ trait Checkpoints extends DeltaLogging {
       eventData("numFilesScanned") = numFilesScanned.toString
       if (lastCheckpoint.isDefined) {
         logInfo(
-          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Delta " +
+          log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] Delta " +
           log"checkpoint is found at version " +
           log"${MDC(DeltaLogKeys.VERSION, lastCheckpoint.get.version)}")
         return lastCheckpoint
@@ -538,7 +538,7 @@ trait Checkpoints extends DeltaLogging {
       listingEndVersion = listingEndVersion - 1000
     }
     logInfo(
-      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] No checkpoint " +
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] No checkpoint " +
       log"found for Delta table before version ${MDC(DeltaLogKeys.VERSION, upperBoundCv.version)}")
     None
   }
