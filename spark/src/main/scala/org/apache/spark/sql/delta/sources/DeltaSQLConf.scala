@@ -2925,6 +2925,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
+    buildConf("spark.sql.delta.sharing.streamingAutoResolveResponseFormat")
+      .doc("When true, auto-resolve Delta Sharing streaming source format by calling getMetadata " +
+        "on the table and using the server's responded format (parquet or delta). When false, " +
+        "use the responseFormat option from the user.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   ///////////////////
   // IDENTITY COLUMN
   ///////////////////
