@@ -2557,6 +2557,7 @@
     "message" : [
       "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
       "Please provide a 'schemaTrackingLocation' to enable non-additive schema evolution for Delta stream processing.",
+      "Note that schema tracking is not supported in delta source v2 yet",
       "See <docLink> for more details.",
       "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
     ],
