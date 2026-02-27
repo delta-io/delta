@@ -35,6 +35,15 @@ public enum Operation {
   /** Recorded during REPLACE operation (may also be considered an overwrite) */
   REPLACE_TABLE("REPLACE TABLE"),
 
+  /** Recorded when data is deleted from the table. */
+  DELETE("DELETE"),
+
+  /** Recorded when data is updated in the table. */
+  UPDATE("UPDATE"),
+
+  /** Recorded during MERGE operations. */
+  MERGE("MERGE"),
+
   /** For any operation that doesn't fit the above categories. */
   MANUAL_UPDATE("Manual Update");
 

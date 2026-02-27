@@ -16,43 +16,18 @@
 package io.delta.spark.internal.v2.write;
 
 import io.delta.kernel.Operation;
-import io.delta.kernel.Transaction;
-import io.delta.kernel.data.Row;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
-import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
-import io.delta.kernel.utils.CloseableIterable;
-import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.internal.v2.utils.SchemaUtils;
-import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.spark.sql.connector.write.BatchWrite;
-import org.apache.spark.sql.connector.write.DataWriterFactory;
-import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.types.StructType;
 
 /**
- * DSv2 BatchWrite that uses the Delta Kernel Transaction API. Creates the transaction on the
- * driver, passes serialized transaction state to executor tasks via {@link
+ * DSv2 BatchWrite for append-only writes using the Delta Kernel Transaction API. Creates the
+ * transaction on the driver, passes serialized transaction state to executor tasks via {@link
  * DeltaKernelDataWriterFactory}, and commits on the driver when all tasks succeed.
  */
-public class DeltaKernelBatchWrite implements BatchWrite {
-
-  private static final String ENGINE_INFO = "Spark-Delta-Kernel";
-
-  private final String tablePath;
-  private final Configuration hadoopConf;
-  private final io.delta.kernel.Snapshot initialSnapshot;
-  private final StructType writeSchema;
-  private final String queryId;
-  private final java.util.Map<String, String> options;
-  private final List<String> partitionColumnNames;
-
-  private final Transaction transaction;
-  private final SerializableKernelRowWrapper serializedTxnState;
+public class DeltaKernelBatchWrite extends AbstractDeltaKernelBatchWrite {
 
   public DeltaKernelBatchWrite(
       String tablePath,
@@ -60,62 +35,13 @@ public class DeltaKernelBatchWrite implements BatchWrite {
       io.delta.kernel.Snapshot initialSnapshot,
       StructType writeSchema,
       String queryId,
-      java.util.Map<String, String> options,
+      Map<String, String> options,
       List<String> partitionColumnNames) {
-    this.tablePath = tablePath;
-    this.hadoopConf = hadoopConf;
-    this.initialSnapshot = initialSnapshot;
-    this.writeSchema = writeSchema;
-    this.queryId = queryId;
-    this.options = options != null ? options : java.util.Collections.emptyMap();
-    this.partitionColumnNames =
-        partitionColumnNames != null ? partitionColumnNames : java.util.Collections.emptyList();
-
-    Engine engine = DefaultEngine.create(hadoopConf);
-    UpdateTableTransactionBuilder txnBuilder =
-        initialSnapshot.buildUpdateTableTransaction(ENGINE_INFO, Operation.WRITE);
-    this.transaction = txnBuilder.build(engine);
-    Row txnState = transaction.getTransactionState(engine);
-    this.serializedTxnState = new SerializableKernelRowWrapper(txnState);
-  }
-
-  @Override
-  public DataWriterFactory createBatchWriterFactory(PhysicalWriteInfo physicalWriteInfo) {
-    // Serialize Hadoop config as Map so the factory can be sent to executors (Configuration is not
-    // Serializable). See HadoopConfSerialization and DeltaKernelDataWriterFactory.
-    java.util.Map<String, String> hadoopConfMap =
-        io.delta.spark.internal.v2.write.HadoopConfSerialization.toMap(hadoopConf);
-    // Use table schema (from snapshot) for Kernel so nullability matches; LogicalWriteInfo schema
-    // can differ (e.g. id nullable=false in query vs nullable=true in table). See docs (07-e2e).
-    StructType tableSchemaSpark =
-        SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
-    return new DeltaKernelDataWriterFactory(
-        tablePath,
-        hadoopConfMap,
-        serializedTxnState,
-        tableSchemaSpark,
-        partitionColumnNames,
-        options);
+    super(tablePath, hadoopConf, initialSnapshot, Operation.WRITE, options, partitionColumnNames);
   }
 
   @Override
   public void commit(WriterCommitMessage[] messages) {
-    List<Row> allActions = new ArrayList<>();
-    for (WriterCommitMessage message : messages) {
-      DeltaKernelWriterCommitMessage msg = (DeltaKernelWriterCommitMessage) message;
-      for (SerializableKernelRowWrapper wrapper : msg.getActionRows()) {
-        allActions.add(wrapper.getRow());
-      }
-    }
-    CloseableIterator<Row> actionsIter =
-        io.delta.kernel.internal.util.Utils.toCloseableIterator(allActions.iterator());
-    CloseableIterable<Row> dataActionsIterable = CloseableIterable.inMemoryIterable(actionsIter);
-    Engine engine = DefaultEngine.create(hadoopConf);
-    transaction.commit(engine, dataActionsIterable);
-  }
-
-  @Override
-  public void abort(WriterCommitMessage[] messages) {
-    // No Kernel commit; optionally clean up staged files in the future.
+    commitActions(collectAddActions(messages));
   }
 }

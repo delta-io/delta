@@ -104,6 +104,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
+  private List<Row> scanFileRows = new ArrayList<>();
   private long totalBytes = 0L;
   // Estimated size in bytes accounting for column projection, used for query optimizer cost
   // estimation
@@ -292,6 +293,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
         while (addFileRowIter.hasNext()) {
           final Row row = addFileRowIter.next();
+          scanFileRows.add(row);
           final AddFile addFile = new AddFile(row.getStruct(0));
 
           final PartitionedFile partitionedFile =
@@ -353,6 +355,16 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private void ensurePlanned() {
     // Pass null to indicate no runtime predicate should be applied - just perform the scan planning
     ensurePlanned(null);
+  }
+
+  /**
+   * Returns the raw scan file rows collected during planning. Each row contains an AddFile entry
+   * that can be used to generate RemoveFile actions for COW operations. The scan must be planned
+   * before calling this method.
+   */
+  public List<Row> getScanFileRows() {
+    ensurePlanned();
+    return Collections.unmodifiableList(scanFileRows);
   }
 
   StructType getDataSchema() {
