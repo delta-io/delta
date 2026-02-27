@@ -477,8 +477,6 @@ class Snapshot(
       val localMinFileRetentionTimestamp = minFileRetentionTimestamp
       val localMinSetTransactionRetentionTimestamp = minSetTransactionRetentionTimestamp
 
-      val canonicalPath = deltaLog.getCanonicalPathUdf()
-
       // Canonicalize the paths so we can repartition the actions correctly, but only rewrite the
       // add/remove actions themselves after partitioning and sorting are complete. Otherwise, the
       // optimizer can generate a really bad plan that re-evaluates _EVERY_ field of the rewritten
@@ -490,9 +488,9 @@ class Snapshot(
       val REMOVE_PATH_CANONICAL_COL_NAME = "remove_path_canonical"
       loadActions
         .withColumn(ADD_PATH_CANONICAL_COL_NAME, when(
-          col("add.path").isNotNull, canonicalPath(col("add.path"))))
+          col("add.path").isNotNull, col("add.path")))
         .withColumn(REMOVE_PATH_CANONICAL_COL_NAME, when(
-          col("remove.path").isNotNull, canonicalPath(col("remove.path"))))
+          col("remove.path").isNotNull, col("remove.path")))
         .repartition(
           getNumPartitions,
           coalesce(col(ADD_PATH_CANONICAL_COL_NAME), col(REMOVE_PATH_CANONICAL_COL_NAME)))

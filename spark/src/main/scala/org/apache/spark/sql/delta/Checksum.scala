@@ -603,20 +603,13 @@ trait RecordChecksum extends DeltaLogging {
       }
       .getOrElse { return None }
 
-    val canonicalPath = new DeltaLog.CanonicalPathFunction(() => deltaLog.newDeltaHadoopConf())
-    def normalizePath(action: Action): Action = action match {
-      case af: AddFile => af.copy(path = canonicalPath(af.path))
-      case rf: RemoveFile => rf.copy(path = canonicalPath(rf.path))
-      case others => others
-    }
-
     // We only work with AddFile, so RemoveFile and SetTransaction retention don't matter.
     val logReplay = new InMemoryLogReplay(
       minFileRetentionTimestamp = None,
       minSetTransactionRetentionTimestamp = None)
 
-    logReplay.append(attemptVersion - 1, oldAllFiles.map(normalizePath).toIterator)
-    logReplay.append(attemptVersion, actionsToCommit.map(normalizePath).toIterator)
+    logReplay.append(attemptVersion - 1, oldAllFiles.toIterator)
+    logReplay.append(attemptVersion, actionsToCommit.toIterator)
     Some(logReplay.allFiles)
   }
 }
