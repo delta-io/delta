@@ -17,6 +17,9 @@
 package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.{
+  UC_TABLE_ID_KEY, UC_TABLE_ID_KEY_OLD}
+
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -37,11 +40,15 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
 
   override val name: String = "Update UC Metrics"
 
+  // Key injected by the open-source UCSingleCatalog into CatalogTable.storage.properties.
+  // Delta's DeltaTableV2.properties() surfaces this as "option.fs.unitycatalog.table.id".
+  private val UC_TABLE_ID_STORAGE_KEY = "fs.unitycatalog.table.id"
+
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     if (!isUCManagedTable(txn.deltaLog, catalogTable)) return
 
     try {
-      val tableId = txn.deltaLog.tableId
+      val tableId = resolveTableId(catalogTable, txn.deltaLog)
       if (tableId.isEmpty) {
         throw new IllegalStateException("UC-managed table must have a table ID")
       }
@@ -70,6 +77,40 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     logWarning(
       log"UC metrics hook failed for version ${MDC(DeltaLogKeys.VERSION, version)}: " +
       log"${MDC(DeltaLogKeys.ERROR, error.getMessage)}", error)
+  }
+
+  // ---------------------------------------------------------------------------
+  // UC table detection
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Resolves the table ID to send in the UC metrics payload.
+   *
+   * Resolution order (first non-empty wins):
+   *  1. CatalogTable.properties["io.unitycatalog.tableId"]
+   *     set by the Databricks-internal UC connector
+   *  2. CatalogTable.properties["ucTableId"]
+   *     legacy Databricks-internal key
+   *  3. CatalogTable.storage.properties["fs.unitycatalog.table.id"]
+   *     set by the open-source UCSingleCatalog connector
+   *  4. DeltaLog.tableId (Delta Metadata.id)
+   *     fallback; matches UC ID on DBR-created tables
+   *
+   * The Delta Metadata.id diverges from the UC-registered table ID when the first Delta commit
+   * was written by a non-DBR client (which generates a random UUID), causing the UC endpoint
+   * to return 404. The catalog properties always carry the authoritative UC-registered table ID.
+   */
+  private[hooks] def resolveTableId(
+      catalogTable: Option[CatalogTable],
+      deltaLog: DeltaLog): String = {
+    catalogTable
+      .flatMap { ct =>
+        ct.properties.get(UC_TABLE_ID_KEY)
+          .orElse(ct.properties.get(UC_TABLE_ID_KEY_OLD))
+          .orElse(ct.storage.properties.get(UC_TABLE_ID_STORAGE_KEY))
+          .filter(_.nonEmpty)
+      }
+      .getOrElse(deltaLog.tableId)
   }
 
   private def isUCManagedTable(
