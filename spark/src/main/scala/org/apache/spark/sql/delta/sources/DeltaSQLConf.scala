@@ -127,6 +127,35 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_PO_METRICS_ENABLED =
+    buildConf("po.metrics.enabled")
+      .internal()
+      .doc("When true, commit metrics are sent to the PO endpoint for UC-managed tables.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_PO_METRICS_ENDPOINT =
+    buildConf("po.metrics.endpoint")
+      .internal()
+      .doc("Base URL for the Unity Catalog PO metrics endpoint.")
+      .stringConf
+      .createOptional
+
+  val DELTA_PO_METRICS_AUTH_TOKEN =
+    buildConf("po.metrics.authToken")
+      .internal()
+      .doc("Bearer token for authenticating to the PO metrics endpoint. " +
+        "Falls back to DATABRICKS_TOKEN env var if not set.")
+      .stringConf
+      .createOptional
+
+  val DELTA_PO_METRICS_TIMEOUT_MS =
+    buildConf("po.metrics.timeoutMs")
+      .internal()
+      .doc("HTTP request timeout for PO metrics endpoint calls (milliseconds).")
+      .longConf
+      .createWithDefault(5000L)
+
   val DELTA_CONVERT_USE_METADATA_LOG =
     buildConf("convert.useMetadataLog")
       .doc(
