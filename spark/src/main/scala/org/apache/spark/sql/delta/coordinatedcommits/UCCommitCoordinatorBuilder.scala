@@ -289,22 +289,41 @@ trait UCClientFactory {
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
+    createUCClient(uri, authConfig, Map.empty)
+  }
+
+  def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      extraAppVersions: Map[String, String]): UCClient = {
     // Create TokenProvider from the authentication configuration map
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val appVersions = Map(
+    val appVersions = defaultAppVersions ++ extraAppVersions
+    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  private def defaultAppVersions: Map[String, String] = {
+    Map(
       "Delta" -> io.delta.VERSION,
       "Spark" -> org.apache.spark.SPARK_VERSION,
       "Scala" -> scala.util.Properties.versionNumberString,
       "Java" -> System.getProperty("java.version")
     )
-    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
   }
 
   /** Java-friendly overload that accepts a java.util.Map */
   def createUCClient(uri: String, authConfig: java.util.Map[String, String]): UCClient = {
     createUCClient(uri, authConfig.asScala.toMap)
+  }
+
+  /** Java-friendly overload that accepts extra application versions for telemetry. */
+  def createUCClient(
+      uri: String,
+      authConfig: java.util.Map[String, String],
+      extraAppVersions: java.util.Map[String, String]): UCClient = {
+    createUCClient(uri, authConfig.asScala.toMap, extraAppVersions.asScala.toMap)
   }
 }
 

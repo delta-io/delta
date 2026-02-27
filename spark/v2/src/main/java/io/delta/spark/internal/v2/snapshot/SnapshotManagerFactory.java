@@ -16,11 +16,13 @@
 package io.delta.spark.internal.v2.snapshot;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.Meta;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
@@ -71,7 +73,9 @@ public final class SnapshotManagerFactory {
       UCTableInfo tableInfo, Engine kernelEngine) {
     UCClient ucClient =
         UCTokenBasedRestClientFactory$.MODULE$.createUCClient(
-            tableInfo.getUcUri(), tableInfo.getAuthConfig());
+            tableInfo.getUcUri(),
+            tableInfo.getAuthConfig(),
+            Map.of("Kernel", Meta.KERNEL_VERSION));
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
     return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
   }
