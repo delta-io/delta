@@ -20,6 +20,9 @@ import java.util.{Collections, Optional}
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.actions.Protocol
+import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.util.ColumnMapping
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
@@ -281,23 +284,76 @@ class UCManagedTableSnapshotManagerSuite
 
   // ==================== buildCreateTableTransaction ====================
 
-  test("buildCreateTableTransaction: v0 commit succeeds with expected schema") {
+  /**
+   * Verifies every field of the Transaction and TransactionStateRow returned by the UC builder:
+   * logicalSchema, physicalSchema, partitionColumns, configuration, tablePath, maxRetries,
+   * protocol, plus Transaction-level getSchema/getPartitionColumns/getReadTableVersion/getCommitter.
+   */
+  test("buildCreateTableTransaction: full transaction state and v0 commit") {
     withTempDir { tempDir =>
       val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getCanonicalPath)
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val manager = createManager(ucClient, tablePath)
 
-      val result = manager
-        .buildCreateTableTransaction(
-          testSchema,
-          Collections.emptyMap[String, String](),
-          Optional.empty(),
-          "test-engine-info")
-        .commit(defaultEngine, CloseableIterable.emptyIterable())
+      val txn = manager.buildCreateTableTransaction(
+        testSchema,
+        Collections.emptyMap[String, String](),
+        Optional.empty(),
+        "UCManagedSM-test-v2.0")
 
+      // --- Transaction-level APIs ---
+      assert(txn.getReadTableVersion == -1L)
+      assert(txn.getSchema(defaultEngine) == testSchema)
+      assert(txn.getPartitionColumns(defaultEngine).isEmpty)
+      assert(txn.getCommitter() != null)
+
+      // --- TransactionStateRow: all 7 fields ---
+      val state = txn.getTransactionState(defaultEngine)
+
+      // 1. logicalSchema
+      assert(TransactionStateRow.getLogicalSchema(state) == testSchema,
+        s"logicalSchema mismatch: expected $testSchema")
+
+      // 2. physicalSchema: matches logical for new table (no column mapping)
+      assert(TransactionStateRow.getPhysicalSchema(state) == testSchema,
+        s"physicalSchema mismatch: expected $testSchema")
+
+      // 3. partitionColumns: empty for unpartitioned table
+      assert(TransactionStateRow.getPartitionColumnsList(state).isEmpty,
+        "Unpartitioned table should have no partition columns")
+
+      // 4. configuration: present, no iceberg compat, column mapping none
+      val config = TransactionStateRow.getConfiguration(state)
+      assert(config != null, "Configuration should not be null")
+      assert(!TransactionStateRow.isIcebergCompatV2Enabled(state),
+        "Iceberg compat v2 should be disabled")
+      assert(!TransactionStateRow.isIcebergCompatV3Enabled(state),
+        "Iceberg compat v3 should be disabled")
+      assert(TransactionStateRow.getColumnMappingMode(state) ==
+        ColumnMapping.ColumnMappingMode.NONE,
+        "Column mapping mode should be NONE")
+
+      // 5. tablePath: resolves to the temp dir
+      val stateTablePath = TransactionStateRow.getTablePath(state)
+      assert(stateTablePath.contains(tempDir.getCanonicalPath.replace("\\", "/")),
+        s"Table path '$stateTablePath' should contain '${tempDir.getCanonicalPath}'")
+
+      // 6. maxRetries: positive value
+      val maxRetries = TransactionStateRow.getMaxRetries(state)
+      assert(maxRetries > 0, s"maxRetries should be > 0, got $maxRetries")
+
+      // 7. protocol: valid reader/writer versions
+      val protocol: Protocol = TransactionStateRow.getProtocol(state)
+      assert(protocol != null, "Protocol should not be null")
+      assert(protocol.getMinReaderVersion >= 1,
+        s"minReaderVersion should be >= 1, got ${protocol.getMinReaderVersion}")
+      assert(protocol.getMinWriterVersion >= 1,
+        s"minWriterVersion should be >= 1, got ${protocol.getMinWriterVersion}")
+
+      // --- Commit produces v0 with correct schema ---
+      val result = txn.commit(defaultEngine, CloseableIterable.emptyIterable())
       assert(result.getVersion == 0L)
-      val snapshot = result.getPostCommitSnapshot().get()
-      assert(snapshot.getSchema() == testSchema)
+      assert(result.getPostCommitSnapshot().get().getSchema() == testSchema)
     }
   }
 

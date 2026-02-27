@@ -17,15 +17,34 @@ package io.delta.spark.internal.v2.snapshot;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.TransactionCommitResult;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -399,5 +418,188 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
           .history()
           .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
     }
+  }
+
+  // ==================== buildCreateTableTransaction ====================
+
+  private static final StructType CREATE_TABLE_SCHEMA =
+      new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+
+  /**
+   * Verifies every field of the Transaction and TransactionStateRow returned by the PathBased
+   * builder: logicalSchema, physicalSchema, partitionColumns, configuration, tablePath, maxRetries,
+   * protocol, plus Transaction-level
+   * getSchema/getPartitionColumns/getReadTableVersion/getCommitter.
+   */
+  @Test
+  public void testBuildCreateTableTransaction_fullTransactionState(@TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            CREATE_TABLE_SCHEMA, Collections.emptyMap(), Optional.empty(), "PathBasedSM-test-v1.0");
+
+    // --- Transaction-level APIs ---
+    assertEquals(-1L, txn.getReadTableVersion());
+    assertEquals(CREATE_TABLE_SCHEMA, txn.getSchema(defaultEngine));
+    assertTrue(txn.getPartitionColumns(defaultEngine).isEmpty());
+    assertNotNull(txn.getCommitter());
+
+    // --- TransactionStateRow: all 7 fields ---
+    Row state = txn.getTransactionState(defaultEngine);
+
+    // 1. logicalSchema: round-trips to exact schema we passed in
+    assertEquals(CREATE_TABLE_SCHEMA, TransactionStateRow.getLogicalSchema(state));
+
+    // 2. physicalSchema: matches logical for a new table (no column mapping)
+    assertEquals(CREATE_TABLE_SCHEMA, TransactionStateRow.getPhysicalSchema(state));
+
+    // 3. partitionColumns: empty for unpartitioned table
+    assertTrue(TransactionStateRow.getPartitionColumnsList(state).isEmpty());
+
+    // 4. configuration: present, contains no iceberg compat, column mapping is "none"
+    Map<String, String> config = TransactionStateRow.getConfiguration(state);
+    assertNotNull(config);
+    assertFalse(TransactionStateRow.isIcebergCompatV2Enabled(state));
+    assertFalse(TransactionStateRow.isIcebergCompatV3Enabled(state));
+    assertEquals(
+        ColumnMapping.ColumnMappingMode.NONE, TransactionStateRow.getColumnMappingMode(state));
+
+    // 5. tablePath: resolves to the temp dir
+    String resolvedPath = TransactionStateRow.getTablePath(state);
+    assertTrue(
+        resolvedPath.contains(tempDir.getName()),
+        "Resolved path '" + resolvedPath + "' should contain '" + tempDir.getName() + "'");
+
+    // 6. maxRetries: positive value
+    assertTrue(
+        TransactionStateRow.getMaxRetries(state) > 0,
+        "maxRetries should be > 0, got " + TransactionStateRow.getMaxRetries(state));
+
+    // 7. protocol: valid reader/writer versions
+    Protocol protocol = TransactionStateRow.getProtocol(state);
+    assertNotNull(protocol);
+    assertTrue(
+        protocol.getMinReaderVersion() >= 1,
+        "minReaderVersion should be >= 1, got " + protocol.getMinReaderVersion());
+    assertTrue(
+        protocol.getMinWriterVersion() >= 1,
+        "minWriterVersion should be >= 1, got " + protocol.getMinWriterVersion());
+
+    // --- Commit produces v0 with correct schema ---
+    TransactionCommitResult result = txn.commit(defaultEngine, CloseableIterable.emptyIterable());
+    assertEquals(0L, result.getVersion());
+    assertEquals(CREATE_TABLE_SCHEMA, result.getPostCommitSnapshot().get().getSchema());
+  }
+
+  @Test
+  public void testBuildCreateTableTransaction_withTableProperties(@TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Map<String, String> props = new HashMap<>();
+    props.put("delta.appendOnly", "true");
+    props.put("delta.logRetentionDuration", "interval 60 days");
+
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            CREATE_TABLE_SCHEMA, props, Optional.empty(), "PathBasedSM-test-v1.0");
+
+    Row state = txn.getTransactionState(defaultEngine);
+    Map<String, String> config = TransactionStateRow.getConfiguration(state);
+    assertEquals("true", config.get("delta.appendOnly"));
+    assertEquals("interval 60 days", config.get("delta.logRetentionDuration"));
+
+    // Schema and other fields unaffected by properties
+    assertEquals(CREATE_TABLE_SCHEMA, TransactionStateRow.getLogicalSchema(state));
+    assertTrue(TransactionStateRow.getPartitionColumnsList(state).isEmpty());
+
+    TransactionCommitResult result = txn.commit(defaultEngine, CloseableIterable.emptyIterable());
+    assertEquals(0L, result.getVersion());
+    assertEquals(CREATE_TABLE_SCHEMA, result.getPostCommitSnapshot().get().getSchema());
+  }
+
+  @Test
+  public void testBuildCreateTableTransaction_withPartitionedLayout(@TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    StructType partitionedSchema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("region", StringType.STRING)
+            .add("amount", IntegerType.INTEGER);
+
+    DataLayoutSpec layoutSpec = DataLayoutSpec.partitioned(Arrays.asList(new Column("region")));
+
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            partitionedSchema,
+            Collections.emptyMap(),
+            Optional.of(layoutSpec),
+            "PathBasedSM-test-v1.0");
+
+    Row state = txn.getTransactionState(defaultEngine);
+
+    // Partition columns via both TransactionStateRow and Transaction API
+    assertEquals(Arrays.asList("region"), TransactionStateRow.getPartitionColumnsList(state));
+    assertEquals(Arrays.asList("region"), txn.getPartitionColumns(defaultEngine));
+
+    // Full schema preserved (including partition column)
+    assertEquals(partitionedSchema, TransactionStateRow.getLogicalSchema(state));
+    assertEquals(partitionedSchema, txn.getSchema(defaultEngine));
+
+    // Physical schema should also include all columns
+    assertEquals(partitionedSchema, TransactionStateRow.getPhysicalSchema(state));
+
+    TransactionCommitResult result = txn.commit(defaultEngine, CloseableIterable.emptyIterable());
+    assertEquals(0L, result.getVersion());
+    assertEquals(partitionedSchema, result.getPostCommitSnapshot().get().getSchema());
+  }
+
+  @Test
+  public void testBuildCreateTableTransaction_withPropertiesAndMultiColumnPartition(
+      @TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    StructType schema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("year", IntegerType.INTEGER)
+            .add("region", StringType.STRING)
+            .add("value", IntegerType.INTEGER);
+
+    Map<String, String> props = new HashMap<>();
+    props.put("delta.appendOnly", "true");
+
+    DataLayoutSpec layoutSpec =
+        DataLayoutSpec.partitioned(Arrays.asList(new Column("year"), new Column("region")));
+
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            schema, props, Optional.of(layoutSpec), "PathBasedSM-test-v1.0");
+
+    Row state = txn.getTransactionState(defaultEngine);
+
+    // Properties present
+    assertEquals("true", TransactionStateRow.getConfiguration(state).get("delta.appendOnly"));
+
+    // Both partition columns in order
+    List<String> expectedPartCols = Arrays.asList("year", "region");
+    assertEquals(expectedPartCols, TransactionStateRow.getPartitionColumnsList(state));
+    assertEquals(expectedPartCols, txn.getPartitionColumns(defaultEngine));
+
+    // All four columns in schema
+    assertEquals(schema, TransactionStateRow.getLogicalSchema(state));
+
+    TransactionCommitResult result = txn.commit(defaultEngine, CloseableIterable.emptyIterable());
+    assertEquals(0L, result.getVersion());
+    assertEquals(schema, result.getPostCommitSnapshot().get().getSchema());
   }
 }
