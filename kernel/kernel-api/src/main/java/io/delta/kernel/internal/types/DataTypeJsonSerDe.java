@@ -503,6 +503,10 @@ public class DataTypeJsonSerDe {
     } else if (dataType instanceof DecimalType) {
       DecimalType decimalType = (DecimalType) dataType;
       gen.writeString(format("decimal(%d,%d)", decimalType.getPrecision(), decimalType.getScale()));
+    } else if (dataType instanceof StringType) {
+      // Always serialize `StringType` as "string" without including collation info, since collation
+      // is stored in the field metadata.
+      gen.writeString("string");
     } else {
       gen.writeString(dataType.toString());
     }
