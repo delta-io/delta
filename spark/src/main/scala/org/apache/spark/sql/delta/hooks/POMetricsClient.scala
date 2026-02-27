@@ -45,10 +45,36 @@ case class CommitReportEnvelope(
     @JsonProperty("commit_report") commitReport: CommitReport)
 
 /**
- * Skeleton payload for transport wiring validation. The full metrics payload
- * is added in a follow-up change.
+ * Commit-level file and row metrics.
+ *
+ * All fields are optional - the server validates they are non-negative if present.
+ * num_clustered_bytes_removed is intentionally omitted: RemoveFile carries no
+ * clusteringProvider, so we cannot compute it from the commit log alone.
+ *
+ * commit_version is conveyed via file_size_histogram.commit_version and is
+ * required by the server to validate the payload is not stale.
  */
-case class CommitReport()
+case class CommitReport(
+    @JsonProperty("num_files_added") numFilesAdded: Option[Long] = None,
+    @JsonProperty("num_files_removed") numFilesRemoved: Option[Long] = None,
+    @JsonProperty("num_bytes_added") numBytesAdded: Option[Long] = None,
+    @JsonProperty("num_bytes_removed") numBytesRemoved: Option[Long] = None,
+    @JsonProperty("num_clustered_bytes_added") numClusteredBytesAdded: Option[Long] = None,
+    // num_clustered_bytes_removed omitted: not derivable from RemoveFile (no clusteringProvider)
+    @JsonProperty("num_rows_inserted") numRowsInserted: Option[Long] = None,
+    @JsonProperty("num_rows_removed") numRowsRemoved: Option[Long] = None,
+    @JsonProperty("num_rows_updated") numRowsUpdated: Option[Long] = None,
+    @JsonProperty("file_size_histogram") fileSizeHistogram: Option[FileSizeHistogramPayload] = None)
+
+/**
+ * File size distribution for the added files in this commit.
+ * commit_version is also used by the server to validate payload freshness.
+ */
+case class FileSizeHistogramPayload(
+    @JsonProperty("sorted_bin_boundaries") sortedBinBoundaries: Seq[Long],
+    @JsonProperty("file_counts") fileCounts: Seq[Long],
+    @JsonProperty("total_bytes") totalBytes: Seq[Long],
+    @JsonProperty("commit_version") commitVersion: Option[Long] = None)
 
 /**
  * HTTP client for sending commit metrics to the UC PO endpoint.
