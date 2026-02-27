@@ -868,7 +868,7 @@ public class SparkMicroBatchStream
               newMetadata.getId(), oldMetadata.getId());
     }
 
-    // TODO(#5319): schema tracking for non-additive schema changes
+    checkNonAdditiveSchemaChanges(oldMetadata, newMetadata, validatedDuringStreamStart);
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -922,6 +922,30 @@ public class SparkMicroBatchStream
                 Some.apply(version),
                 options.containsStartingVersionOrTimestamp());
       }
+    }
+  }
+
+  // TODO(#5319): schema tracking for non-additive schema changes
+  private void checkNonAdditiveSchemaChanges(
+      Metadata oldMetadata, Metadata newMetadata, Boolean validatedDuringStreamStart) {
+    if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
+      return;
+    }
+
+    io.delta.kernel.types.StructType newPhysicalSchema = newMetadata.getPhysicalSchema();
+    io.delta.kernel.types.StructType currentPhysicalSchema = oldMetadata.getPhysicalSchema();
+
+    boolean isDropColumn =
+        currentPhysicalSchema.fieldNames().stream()
+            .anyMatch(name -> newPhysicalSchema.indexOf(name) < 0);
+
+    if (isDropColumn) {
+      throw (RuntimeException)
+          DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+              spark,
+              SchemaUtils.convertKernelSchemaToSparkSchema(oldMetadata.getSchema()),
+              SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema()),
+              !validatedDuringStreamStart);
     }
   }
 

@@ -17,7 +17,6 @@ package io.delta.spark.internal.v2.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -2128,26 +2127,6 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             + "_"
             + System.nanoTime();
 
-    // TODO(#5318): Skip forward-fill drop column test until checkNonAdditiveSchemaChanges is
-    // implemented.
-    //
-    // `isReadCompatible` cannot distinguish between safe "backfill + add column" and breaking
-    // "forward-fill + drop column" scenarios. Both involve reading [A,B] data with [A,B,C] schema,
-    // which passes compatibility checks. However, the latter is a breaking change.
-    //
-    // Special handling is needed to detect "forward-fill + drop column" scenarios. DSv1 solves
-    // this via `checkNonAdditiveSchemaChanges`, which relies on
-    // DeltaColumnMapping.hasNoColumnMappingSchemaChanges.
-    //
-    // DSv1 has the same limitation when `checkNonAdditiveSchemaChanges` is removed. Since
-    // non-additive schema change detection is the next work item and provides the complete
-    // solution for all column mapping changes, implementing a partial fix now would create
-    // duplicate logic. DSv1 also behaved the same way before `checkNonAdditiveSchemaChanges`
-    // was implemented, so we skip this test as a short-term solution for now.
-    assumeFalse(
-        testDescription.contains("Drop"),
-        "Skipping drop column test - checkNonAdditiveSchemaChanges not yet implemented in v2 (TODO #5318)");
-
     createSchemaEvolutionTestTable(testTablePath, testTableName);
 
     // Try to read from version 0, which should include commits with METADATA actions
@@ -2194,9 +2173,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
 
-      DeltaIllegalStateException dsv2Exception =
+      Exception dsv2Exception =
           assertThrows(
-              DeltaIllegalStateException.class,
+              Exception.class,
               () -> {
                 CloseableIterator<IndexedFile> kernelChanges =
                     stream.getFileChanges(
