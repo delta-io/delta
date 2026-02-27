@@ -17,7 +17,6 @@ package io.delta.spark.internal.v2.read;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -2256,26 +2255,6 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             + "_"
             + System.nanoTime();
 
-    // TODO(#5318): Skip forward-fill drop column test until checkNonAdditiveSchemaChanges is
-    // implemented.
-    //
-    // `isReadCompatible` cannot distinguish between safe "backfill + add column" and breaking
-    // "forward-fill + drop column" scenarios. Both involve reading [A,B] data with [A,B,C] schema,
-    // which passes compatibility checks. However, the latter is a breaking change.
-    //
-    // Special handling is needed to detect "forward-fill + drop column" scenarios. DSv1 solves
-    // this via `checkNonAdditiveSchemaChanges`, which relies on
-    // DeltaColumnMapping.hasNoColumnMappingSchemaChanges.
-    //
-    // DSv1 has the same limitation when `checkNonAdditiveSchemaChanges` is removed. Since
-    // non-additive schema change detection is the next work item and provides the complete
-    // solution for all column mapping changes, implementing a partial fix now would create
-    // duplicate logic. DSv1 also behaved the same way before `checkNonAdditiveSchemaChanges`
-    // was implemented, so we skip this test as a short-term solution for now.
-    assumeFalse(
-        testDescription.contains("Drop"),
-        "Skipping drop column test - checkNonAdditiveSchemaChanges not yet implemented in v2 (TODO #5318)");
-
     createSchemaEvolutionTestTable(testTablePath, testTableName);
 
     // Try to read from version 0, which should include commits with METADATA actions
@@ -2322,9 +2301,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
 
-      DeltaIllegalStateException dsv2Exception =
+      DeltaUnsupportedOperationException dsv2Exception =
           assertThrows(
-              DeltaIllegalStateException.class,
+              DeltaUnsupportedOperationException.class,
               () -> {
                 CloseableIterator<IndexedFile> kernelChanges =
                     stream.getFileChanges(
@@ -2349,7 +2328,15 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                 }
               },
               String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2
+
+      assertEquals(
+          dsv1Exception.getErrorClass(),
+          dsv2Exception.getErrorClass(),
+          "v1 connector and v2 connector should throw the same error class on forward-fill non-additive schema changes");
+      assertEquals(
+          dsv1Exception.getMessageParameters(),
+          dsv2Exception.getMessageParameters(),
+          "v1 connector and v2 connector should throw the same error messages on forward-fill non-additive schema changes");
     } finally {
       // recover spark config to original state
       sparkConf.forEach((key, value) -> spark.conf().unset(key));
@@ -2420,9 +2407,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
 
-      DeltaIllegalStateException dsv2Exception =
+      DeltaUnsupportedOperationException dsv2Exception =
           assertThrows(
-              DeltaIllegalStateException.class,
+              DeltaUnsupportedOperationException.class,
               () -> {
                 CloseableIterator<IndexedFile> kernelChanges =
                     stream.getFileChanges(
@@ -2447,7 +2434,15 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                 }
               },
               String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2
+
+      assertEquals(
+          dsv1Exception.getErrorClass(),
+          dsv2Exception.getErrorClass(),
+          "v1 connector and v2 connector should throw the same error class on backfill non-additive schema changes");
+      assertEquals(
+          dsv1Exception.getMessageParameters(),
+          dsv2Exception.getMessageParameters(),
+          "v1 connector and v2 connector should throw the same error messages on backfill non-additive schema changes");
     } finally {
       // recover spark config to original state
       sparkConf.forEach((key, value) -> spark.conf().unset(key));
@@ -2476,7 +2471,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
     // Execute schema change before source initialization to ensure backfill change
     spark.sql(String.format("ALTER table %s RENAME COLUMN id TO userId", testTableName));
-    spark.sql(String.format("INSERT INTO %s VALUES (3, 'Cathy', 5)", testTableName));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (3, 'Cathy', 5, named_struct('col1', 18, 'col2', 'SF'))",
+            testTableName));
     // Record the version prior to reverting schema change
     long incompatibleSchemaVersion =
         DeltaLog.forTable(spark, new Path(testTablePath))
@@ -2484,7 +2482,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             .version();
     // Revert the schema change
     spark.sql(String.format("ALTER table %s RENAME COLUMN userId TO id", testTableName));
-    spark.sql(String.format("INSERT INTO %s VALUES (4, 'David', 8)", testTableName));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (4, 'David', 8, named_struct('col1', 47, 'col2', 'DC'))",
+            testTableName));
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     String tableId = deltaLog.tableId();
@@ -2517,11 +2518,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
-    // TODO(#5318): Change error type to
-    // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges
-    DeltaIllegalStateException dsv2Exception =
+    DeltaUnsupportedOperationException dsv2Exception =
         assertThrows(
-            DeltaIllegalStateException.class,
+            DeltaUnsupportedOperationException.class,
             () -> stream.latestOffset(startOffset, readLimit),
             String.format(
                 "DSv2 should throw error on stream start for scenario: %s", testDescription));
@@ -2530,6 +2529,15 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         .anyMatch(
             element ->
                 element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+
+    assertEquals(
+        dsv1Exception.getErrorClass(),
+        dsv2Exception.getErrorClass(),
+        "v1 connector and v2 connector should throw the same error class on stream start schema changes");
+    assertEquals(
+        dsv1Exception.getMessageParameters(),
+        dsv2Exception.getMessageParameters(),
+        "v1 connector and v2 connector should throw the same error messages on stream start schema changes");
   }
 
   /** Provides test scenarios that generate additive schema changes actions. */
@@ -2629,18 +2637,31 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             /* sparkConf */ Map.of(),
             "Rename column"),
 
-        // Drop both nullable and non-nullable columns
+        // Drop nullable, non-nullable and struct columns
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s DROP COLUMNS (id, value)", tableName);
+                  sql("ALTER TABLE %s DROP COLUMNS (id, value, info)", tableName);
                 },
             /* sparkConf */ Map.of(
                 DeltaSQLConf
                     .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES()
                     .key(),
                 "false"),
-            "Drop both nullable and non-nullable columns"),
+            "Drop nullable, non-nullable and struct columns"),
+
+        // Drop column in nested struct
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s DROP COLUMNS info.col1", tableName);
+                },
+            /* sparkConf */ Map.of(
+                DeltaSQLConf
+                    .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES()
+                    .key(),
+                "false"),
+            "Drop column in nested struct"),
 
         // Widen INT column to BIGINT
         Arguments.of(

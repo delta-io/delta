@@ -68,13 +68,19 @@ public abstract class DeltaV2TestBase {
   protected void createSchemaEvolutionTestTable(String path, String tableName) {
     spark.sql(
         String.format(
-            "CREATE TABLE %s (id INT NOT NULL, name String, value FLOAT) USING delta LOCATION '%s'"
+            "CREATE TABLE %s (id INT NOT NULL, "
+                + "name String, value FLOAT, "
+                + "info STRUCT<col1: INT, col2: STRING>) USING delta LOCATION '%s'"
                 + "TBLPROPERTIES ("
                 + "'delta.columnMapping.mode' = 'name', "
                 + "'delta.enableTypeWidening' = 'true')",
             tableName, path));
     spark.sql(
-        String.format("INSERT INTO %s VALUES (1, 'Alice', 10.5), (2,'Bob', NULL)", tableName));
+        String.format(
+            "INSERT INTO %s VALUES "
+                + "(1, 'Alice', 10.5, named_struct('col1', 27, 'col2', 'LA')), "
+                + "(2,'Bob', NULL, named_struct('col1', 30, 'col2', 'NYC'))",
+            tableName));
   }
 
   protected static void createPartitionedTable(String tableName, String path) {

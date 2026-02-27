@@ -2275,6 +2275,237 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("drop column: should fail with non-additive schema change error") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        // Create a table with column mapping enabled (required for drop/rename column)
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        def startQuery(): StreamingQuery = {
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+        }
+
+        val q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          // Simulate dropping "value" column by committing new metadata with only "id".
+          // This is a non-additive schema change (column removal).
+          withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains(
+            "Streaming read is not supported on tables with read-incompatible schema changes"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("drop column: should succeed with unsafe column mapping schema change flag enabled") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Enable the unsafe flag that allows streaming to continue past column mapping
+      // schema changes (drop/rename) instead of failing.
+      withSQLConf(
+        DeltaSQLConf
+          .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+          .key -> "true"
+      ) {
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          // Simulate dropping "value" column by committing new metadata with only "id".
+          withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+
+          // Write more data after the drop column schema change
+          (5 until 10).foreach { i =>
+            Seq(i.toString).toDF("id")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          // With the unsafe flag, the stream should process all data without failing.
+          // Post-drop rows have null for the removed "value" column.
+          q.processAllAvailable()
+
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getAbsolutePath),
+            (0 until 5).map(i => (i.toString, s"val$i")).toDF("id", "value") union
+              (5 until 10).map(i => (i.toString, null: String)).toDF("id", "value"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("rename column: should fail with non-additive schema change error") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        def startQuery(): StreamingQuery = {
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+        }
+
+        var q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          // Simulate renaming "value" -> "renamed_value" by committing new metadata.
+          // Column rename is a non-additive schema change under column mapping.
+          withMetadata(deltaLog, StructType.fromDDL("id STRING, renamed_value STRING"))
+
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains(
+            "Streaming read is not supported on tables with read-incompatible schema changes"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("rename column: should throw schema change error with unsafe flag enabled") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        // The unsafe flag only helps with drop-column; rename is still blocked because
+        // it changes logical column identity, which can silently corrupt data.
+        withSQLConf(
+          DeltaSQLConf
+            .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+            .key -> "true"
+        ) {
+          sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+            "USING DELTA " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+          val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+          (0 until 5).foreach { i =>
+            Seq((i.toString, s"val$i")).toDF("id", "value")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          def startQuery(): StreamingQuery = {
+            loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+              .writeStream
+              .option("checkpointLocation", checkpointDir.getCanonicalPath)
+              .format("noop")
+              .start()
+          }
+
+          var q = startQuery()
+          try {
+            q.processAllAvailable()
+
+            DeltaLog.clearCache()
+            // Simulate renaming "value" -> "renamed_value" by committing new metadata.
+            withMetadata(deltaLog, StructType.fromDDL("id STRING, renamed_value STRING"))
+
+            // Even with the unsafe flag, rename still fails - but with a different error
+            // ("Detected schema change") rather than the non-additive schema change error.
+            val e = intercept[StreamingQueryException] {
+              q.processAllAvailable()
+            }
+            assert(e.getMessage.contains("Detected schema change in version 6"))
+          } finally {
+            q.stop()
+          }
+        }
+      }
+    }
+  }
+
+  test("type widening: should fail with non-additive schema change error "
+    + "when enable schema tracking") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        withSQLConf(
+          DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "true"
+        ) {
+          // Table with type widening enabled so that type changes are allowed but tracked.
+          sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT, value STRING) " +
+            "USING DELTA " +
+            "TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+          val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+          (0 until 5).foreach { i =>
+            Seq((i, s"val$i")).toDF("id", "value")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          def startQuery(): StreamingQuery = {
+            loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+              .writeStream
+              .option("checkpointLocation", checkpointDir.getCanonicalPath)
+              .format("noop")
+              .start()
+          }
+
+          var q = startQuery()
+          try {
+            q.processAllAvailable()
+
+            DeltaLog.clearCache()
+            // Simulate widening "id" from INT -> BIGINT by committing new metadata.
+            // Type widening is a non-additive schema change for streaming reads.
+            withMetadata(deltaLog, StructType.fromDDL("id BIGINT, value STRING"))
+
+            val e = intercept[StreamingQueryException] {
+              q.processAllAvailable()
+            }
+            assert(e.getMessage.contains(
+              "Streaming read is not supported on tables with read-incompatible schema changes"))
+          } finally {
+            q.stop()
+          }
+        }
+      }
+    }
+  }
+
+  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
   test("handling nullability schema changes") {
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
