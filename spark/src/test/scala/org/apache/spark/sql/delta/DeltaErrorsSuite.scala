@@ -1785,6 +1785,13 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED", "KD00G",
         Map("path" -> path.toString))
     }
+    {
+      val e = intercept[DeltaUnsupportedOperationException] {
+        throw DeltaErrors.operationBlockedOnCatalogManagedTable("OPTIMIZE")
+      }
+      checkError(e, "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION", "0AKDC",
+        Map("operation" -> "OPTIMIZE"))
+    }
   }
 
   // The compiler complains the lambda function is too large if we put all tests in one lambda.
