@@ -39,7 +39,11 @@ public class SnapshotManagerFactoryTest {
           + TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName();
   private static final String FEATURE_SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE;
   private static final String UC_TABLE_ID_KEY = UCCommitCoordinatorClient.UC_TABLE_ID_KEY;
+  private static final String UC_CATALOG_NAME = "uc_catalog_factory_create";
   private static final String UC_CATALOG_CONNECTOR = "io.unitycatalog.spark.UCSingleCatalog";
+  private static final String UC_CATALOG_URI =
+      "https://uc-factory-create.example.com/api/2.1/unity-catalog";
+  private static final String UC_CATALOG_TOKEN = "dapi_factory_create_token_7kP3";
 
   @BeforeAll
   public static void setUp() {
@@ -51,6 +55,9 @@ public class SnapshotManagerFactoryTest {
             .config(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
+            .config("spark.sql.catalog." + UC_CATALOG_NAME, UC_CATALOG_CONNECTOR)
+            .config("spark.sql.catalog." + UC_CATALOG_NAME + ".uri", UC_CATALOG_URI)
+            .config("spark.sql.catalog." + UC_CATALOG_NAME + ".token", UC_CATALOG_TOKEN)
             .getOrCreate();
   }
 
@@ -77,41 +84,13 @@ public class SnapshotManagerFactoryTest {
 
   @Test
   public void testForCreateTable_ucProperties_returnsUCManaged() {
-    String catalogName = "uc_catalog_factory_create";
-    String ucUri = "https://uc-factory-create.example.com/api/2.1/unity-catalog";
-    String ucToken = "dapi_factory_create_token_7kP3";
-
     Map<String, String> props = new HashMap<>();
     props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED);
     props.put(UC_TABLE_ID_KEY, "factory_create_table_id_9x2b");
 
-    String[][] configs = {
-      {"spark.sql.catalog." + catalogName, UC_CATALOG_CONNECTOR},
-      {"spark.sql.catalog." + catalogName + ".uri", ucUri},
-      {"spark.sql.catalog." + catalogName + ".token", ucToken}
-    };
-    String[] originals = new String[configs.length];
-    for (int i = 0; i < configs.length; i++) {
-      try {
-        originals[i] = spark.conf().get(configs[i][0]);
-      } catch (Exception e) {
-        originals[i] = null;
-      }
-      spark.conf().set(configs[i][0], configs[i][1]);
-    }
-    try {
-      DeltaSnapshotManager manager =
-          SnapshotManagerFactory.forCreateTable(
-              "/some/path", kernelEngine(), props, catalogName, spark);
-      assertInstanceOf(UCManagedTableSnapshotManager.class, manager);
-    } finally {
-      for (int i = 0; i < configs.length; i++) {
-        if (originals[i] != null) {
-          spark.conf().set(configs[i][0], originals[i]);
-        } else {
-          spark.conf().unset(configs[i][0]);
-        }
-      }
-    }
+    DeltaSnapshotManager manager =
+        SnapshotManagerFactory.forCreateTable(
+            "/some/path", kernelEngine(), props, UC_CATALOG_NAME, spark);
+    assertInstanceOf(UCManagedTableSnapshotManager.class, manager);
   }
 }
