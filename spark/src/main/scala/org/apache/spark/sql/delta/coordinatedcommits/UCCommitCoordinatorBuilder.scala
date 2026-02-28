@@ -289,7 +289,7 @@ trait UCClientFactory {
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
-    createUCClient(uri, authConfig, Map.empty)
+    createUCClient(uri, authConfig, Map.empty[String, String])
   }
 
   def createUCClient(
@@ -300,8 +300,13 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val appVersions = defaultAppVersions ++ extraAppVersions
+    val appVersions = buildAppVersions(extraAppVersions)
     new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  private[delta] def buildAppVersions(
+      extraAppVersions: Map[String, String]): Map[String, String] = {
+    defaultAppVersions ++ extraAppVersions
   }
 
   private def defaultAppVersions: Map[String, String] = {

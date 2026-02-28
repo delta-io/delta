@@ -15,8 +15,8 @@
  */
 package io.delta.spark.internal.v2.snapshot;
 
+import io.delta.kernel.Meta;
 import io.delta.kernel.engine.Engine;
-import io.delta.kernel.internal.Meta;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;

@@ -108,6 +108,18 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     }
   }
 
+  test("token based rest client factory app versions preserve defaults and merge extras") {
+    val appVersions = UCTokenBasedRestClientFactory.buildAppVersions(
+      Map("Kernel" -> "4.0.0", "Spark" -> "override-spark-version")
+    )
+
+    assert(appVersions("Delta") === io.delta.VERSION)
+    assert(appVersions("Spark") === "override-spark-version")
+    assert(appVersions("Scala") === scala.util.Properties.versionNumberString)
+    assert(appVersions("Java") === System.getProperty("java.version"))
+    assert(appVersions("Kernel") === "4.0.0")
+  }
+
   test("build with missing metastore ID") {
     val exception = intercept[IllegalArgumentException] {
       CommitCoordinatorProvider.getCommitCoordinatorClient(
