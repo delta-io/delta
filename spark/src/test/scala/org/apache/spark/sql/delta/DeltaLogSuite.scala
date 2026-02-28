@@ -236,7 +236,7 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  testQuietly("paths should be canonicalized") {
+  testQuietly("paths should not be canonicalized") {
     Seq("file:", "file://").foreach { scheme =>
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir)
@@ -245,7 +245,7 @@ class DeltaLogSuite extends QueryTest
         val add = AddFile(
           path, Map.empty, 100L, 10L, dataChange = true)
         val rm = RemoveFile(
-          s"$scheme$path", Some(200L), dataChange = false)
+          s"$path", Some(200L), dataChange = false)
 
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
@@ -266,7 +266,7 @@ class DeltaLogSuite extends QueryTest
     }
   }
 
-  testQuietly("paths should be canonicalized - special characters") {
+  testQuietly("paths should not be canonicalized - special characters") {
     Seq("file:", "file://").foreach { scheme =>
       withTempDir { dir =>
         val log = DeltaLog.forTable(spark, dir)
@@ -275,7 +275,7 @@ class DeltaLogSuite extends QueryTest
         val add = AddFile(
           path, Map.empty, 100L, 10L, dataChange = true)
         val rm = RemoveFile(
-          s"$scheme$path", Some(200L), dataChange = false)
+          s"$path", Some(200L), dataChange = false)
 
         log.store.write(
           FileNames.unsafeDeltaFile(log.logPath, 0L),
@@ -780,10 +780,11 @@ class DeltaLogSuite extends QueryTest
       val addFiles = Seq(
         AddFile(
           path = absolutePath,
-          partitionValues = Map(),
-          size = 128L,
+          partitionValues = Map.empty,
+          size = 1L,
           modificationTime = 1L,
-          dataChange = true
+          dataChange = true,
+          stats = "{\"numRecords\": 1}"
         ))
       val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
       deltaLog.startTransaction().commit(addFiles, DeltaOperations.ManualUpdate)
