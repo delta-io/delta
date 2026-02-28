@@ -55,9 +55,6 @@ public class SnapshotManagerFactoryTest {
             .config(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
-            .config("spark.sql.catalog." + UC_CATALOG_NAME, UC_CATALOG_CONNECTOR)
-            .config("spark.sql.catalog." + UC_CATALOG_NAME + ".uri", UC_CATALOG_URI)
-            .config("spark.sql.catalog." + UC_CATALOG_NAME + ".token", UC_CATALOG_TOKEN)
             .getOrCreate();
   }
 
@@ -71,6 +68,33 @@ public class SnapshotManagerFactoryTest {
 
   private Engine kernelEngine() {
     return DefaultEngine.create(spark.sessionState().newHadoopConf());
+  }
+
+  private void withUCCatalogConfig(Runnable action) {
+    String catalogPrefix = "spark.sql.catalog." + UC_CATALOG_NAME;
+    Map<String, String> configs = new HashMap<>();
+    configs.put(catalogPrefix, UC_CATALOG_CONNECTOR);
+    configs.put(catalogPrefix + ".uri", UC_CATALOG_URI);
+    configs.put(catalogPrefix + ".token", UC_CATALOG_TOKEN);
+
+    Map<String, scala.Option<String>> originalValues = new HashMap<>();
+    for (String key : configs.keySet()) {
+      originalValues.put(key, spark.conf().getOption(key));
+      spark.conf().set(key, configs.get(key));
+    }
+
+    try {
+      action.run();
+    } finally {
+      for (String key : configs.keySet()) {
+        scala.Option<String> originalValue = originalValues.get(key);
+        if (originalValue.isDefined()) {
+          spark.conf().set(key, originalValue.get());
+        } else {
+          spark.conf().unset(key);
+        }
+      }
+    }
   }
 
   @Test
@@ -88,9 +112,12 @@ public class SnapshotManagerFactoryTest {
     props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED);
     props.put(UC_TABLE_ID_KEY, "factory_create_table_id_9x2b");
 
-    DeltaSnapshotManager manager =
-        SnapshotManagerFactory.forCreateTable(
-            "/some/path", kernelEngine(), props, UC_CATALOG_NAME, spark);
-    assertInstanceOf(UCManagedTableSnapshotManager.class, manager);
+    withUCCatalogConfig(
+        () -> {
+          DeltaSnapshotManager manager =
+              SnapshotManagerFactory.forCreateTable(
+                  "/some/path", kernelEngine(), props, UC_CATALOG_NAME, spark);
+          assertInstanceOf(UCManagedTableSnapshotManager.class, manager);
+        });
   }
 }
