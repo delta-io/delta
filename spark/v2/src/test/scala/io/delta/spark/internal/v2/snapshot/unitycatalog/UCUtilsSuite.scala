@@ -73,10 +73,13 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       catalogName: String,
       uri: String,
       token: String)(testCode: => Unit): Unit = {
-    val configs = Seq(
+    withSparkConfs(Seq(
       s"spark.sql.catalog.$catalogName" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogName.uri" -> uri,
-      s"spark.sql.catalog.$catalogName.token" -> token)
+      s"spark.sql.catalog.$catalogName.token" -> token))(testCode)
+  }
+
+  private def withSparkConfs(configs: Seq[(String, String)])(testCode: => Unit): Unit = {
     val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
 
     try {
@@ -90,6 +93,21 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
         }
       }
     }
+  }
+
+  private def assertTableInfo(
+      info: UCTableInfo,
+      expectedTableId: String,
+      expectedTablePath: String,
+      expectedUcUri: String,
+      expectedToken: String): Unit = {
+    assert(info.getTableId == expectedTableId)
+    assert(info.getTablePath == expectedTablePath)
+    assert(info.getUcUri == expectedUcUri)
+
+    val authConfig = info.getAuthConfig
+    assert(authConfig.get("type") == "static")
+    assert(authConfig.get("token") == expectedToken)
   }
 
   // ==================== Tests ====================
@@ -156,21 +174,8 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
     withUCCatalogConfig(CATALOG_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA) {
       val result = UCUtils.extractTableInfo(table, spark)
 
-      assert(result.isPresent, "Should return table info")
-      val info = result.get()
-      // Each assertion uses the specific expected value - would fail if hardcoded
-      assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
-      assert(
-        info.getTablePath == TABLE_PATH_ALPHA,
-        s"Table path mismatch: got ${info.getTablePath}")
-      assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
-      val configMap = info.getAuthConfig
-      assert(
-        configMap.get("type") == "static",
-        s"Type should be static: got ${configMap.get("type")}")
-      assert(
-        configMap.get("token") == UC_TOKEN_ALPHA,
-        s"UC token mismatch: got ${configMap.get("token")}")
+      assert(result.isPresent)
+      assertTableInfo(result.get(), TABLE_ID_ALPHA, TABLE_PATH_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA)
     }
   }
 
@@ -185,14 +190,11 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
 
   test("extractTableInfoForCreate: returns empty for non-UC-managed properties") {
     val props = new JHashMap[String, String]()
-    // No FEATURE_CATALOG_MANAGED key - not a UC managed table
     val result = UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
-    assert(result.isEmpty, "Non-UC-managed properties should return empty Optional")
+    assert(result.isEmpty)
   }
 
   test("extractTableInfoForCreate: throws when UC_TABLE_ID_KEY is empty") {
-    // Key present but empty: isUnityCatalogManagedTableFromProperties returns true
-    // (containsKey passes), then the empty-value guard throws.
     val props = new JHashMap[String, String]()
     props.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
     props.put(UC_TABLE_ID_KEY, "")
@@ -210,18 +212,8 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       val result =
         UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
 
-      assert(result.isPresent, "Should return table info for UC-managed create properties")
-      val info = result.get()
-      assert(info.getTableId == TABLE_ID_ALPHA, s"Table ID mismatch: got ${info.getTableId}")
-      assert(
-        info.getTablePath == TABLE_PATH_ALPHA,
-        s"Table path mismatch: got ${info.getTablePath}")
-      assert(info.getUcUri == UC_URI_ALPHA, s"UC URI mismatch: got ${info.getUcUri}")
-      val configMap = info.getAuthConfig
-      assert(configMap.get("type") == "static", s"Auth type mismatch: got ${configMap.get("type")}")
-      assert(
-        configMap.get("token") == UC_TOKEN_ALPHA,
-        s"Token mismatch: got ${configMap.get("token")}")
+      assert(result.isPresent)
+      assertTableInfo(result.get(), TABLE_ID_ALPHA, TABLE_PATH_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA)
     }
   }
 
@@ -252,7 +244,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       tablePath = tablePathBeta,
       catalogName = Some(catalogBeta))
 
-    val configs = Seq(
+    withSparkConfs(Seq(
       // catalogGamma config (should NOT be used)
       s"spark.sql.catalog.$catalogGamma" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogGamma.uri" -> ucUriGamma,
@@ -260,36 +252,11 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       // catalogBeta config (should be used)
       s"spark.sql.catalog.$catalogBeta" -> UC_CATALOG_CONNECTOR,
       s"spark.sql.catalog.$catalogBeta.uri" -> ucUriBeta,
-      s"spark.sql.catalog.$catalogBeta.token" -> ucTokenBeta)
-    val originalValues = configs.map { case (key, _) => key -> spark.conf.getOption(key) }.toMap
-
-    try {
-      configs.foreach { case (key, value) => spark.conf.set(key, value) }
-
+      s"spark.sql.catalog.$catalogBeta.token" -> ucTokenBeta)) {
       val result = UCUtils.extractTableInfo(table, spark)
-      assert(result.isPresent, "Should return table info")
+      assert(result.isPresent)
 
-      val info = result.get()
-      // Verify it selected catalogBeta's config, not catalogGamma's
-      assert(
-        info.getUcUri == ucUriBeta,
-        s"Should use catalogBeta's URI, got: ${info.getUcUri}")
-      val configMap = info.getAuthConfig
-      assert(configMap.get("type") == "static", s"Type should be static")
-      assert(
-        configMap.get("token") == ucTokenBeta,
-        s"Should use catalogBeta's token, got: ${configMap.get("token")}")
-      assert(info.getTableId == tableIdBeta, s"Should extract tableIdBeta, got: ${info.getTableId}")
-      assert(
-        info.getTablePath == tablePathBeta,
-        s"Should extract tablePathBeta, got: ${info.getTablePath}")
-    } finally {
-      configs.foreach { case (key, _) =>
-        originalValues.get(key).flatten match {
-          case Some(v) => spark.conf.set(key, v)
-          case None => spark.conf.unset(key)
-        }
-      }
+      assertTableInfo(result.get(), tableIdBeta, tablePathBeta, ucUriBeta, ucTokenBeta)
     }
   }
 }

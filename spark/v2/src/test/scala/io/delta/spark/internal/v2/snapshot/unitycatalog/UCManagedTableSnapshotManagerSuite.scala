@@ -15,7 +15,7 @@
  */
 package io.delta.spark.internal.v2.snapshot.unitycatalog
 
-import java.util.{Collections, Optional}
+import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
@@ -289,7 +289,7 @@ class UCManagedTableSnapshotManagerSuite
 
       val txn = manager.buildCreateTableTransaction(
         testSchema,
-        Collections.emptyMap[String, String](),
+        Map.empty[String, String].asJava,
         Optional.empty(),
         "UCManagedSM-test-v2.0")
 

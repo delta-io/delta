@@ -34,8 +34,6 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.io.File;
 import java.sql.Timestamp;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -421,9 +419,8 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
       new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
 
   private static Stream<Arguments> buildCreateTableTransactionTestCases() {
-    Map<String, String> propsWithRetention = new HashMap<>();
-    propsWithRetention.put("delta.appendOnly", "true");
-    propsWithRetention.put("delta.logRetentionDuration", "interval 60 days");
+    Map<String, String> propsWithRetention =
+        Map.of("delta.appendOnly", "true", "delta.logRetentionDuration", "interval 60 days");
 
     StructType partitionedSchema =
         new StructType()
@@ -438,36 +435,30 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
             .add("region", StringType.STRING)
             .add("value", IntegerType.INTEGER);
 
-    Map<String, String> appendOnlyProps = new HashMap<>();
-    appendOnlyProps.put("delta.appendOnly", "true");
+    Map<String, String> appendOnlyProps = Map.of("delta.appendOnly", "true");
 
     return Stream.of(
         Arguments.of(
-            "unpartitioned defaults",
-            CREATE_TABLE_SCHEMA,
-            Collections.<String, String>emptyMap(),
-            Optional.empty(),
-            Collections.emptyList()),
+            "unpartitioned defaults", CREATE_TABLE_SCHEMA, Map.of(), Optional.empty(), List.of()),
         Arguments.of(
             "table properties",
             CREATE_TABLE_SCHEMA,
             propsWithRetention,
             Optional.empty(),
-            Collections.emptyList()),
+            List.of()),
         Arguments.of(
             "single partition column",
             partitionedSchema,
-            Collections.<String, String>emptyMap(),
-            Optional.of(DataLayoutSpec.partitioned(Arrays.asList(new Column("region")))),
-            Arrays.asList("region")),
+            Map.of(),
+            Optional.of(DataLayoutSpec.partitioned(List.of(new Column("region")))),
+            List.of("region")),
         Arguments.of(
             "properties and multiple partition columns",
             multiPartitionSchema,
             appendOnlyProps,
             Optional.of(
-                DataLayoutSpec.partitioned(
-                    Arrays.asList(new Column("year"), new Column("region")))),
-            Arrays.asList("year", "region")));
+                DataLayoutSpec.partitioned(List.of(new Column("year"), new Column("region")))),
+            List.of("year", "region")));
   }
 
   @ParameterizedTest(name = "{0}")
