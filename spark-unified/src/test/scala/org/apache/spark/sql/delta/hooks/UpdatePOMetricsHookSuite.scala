@@ -153,7 +153,7 @@ class SimpleMockServer(port: Int) {
             handleRequest(clientSocket)
           } catch {
             case _: java.net.SocketException if !running =>
-            case e: Exception => e.printStackTrace()
+            case _: Exception =>
           }
         }
       }
@@ -201,7 +201,7 @@ class SimpleMockServer(port: Int) {
 
       clientSocket.close()
     } catch {
-      case e: Exception => e.printStackTrace()
+      case _: Exception =>
     }
   }
 
