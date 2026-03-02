@@ -133,6 +133,19 @@ case class CreateDeltaTableCommand(
     }
 
     val tableWithLocation = getCatalogTableWithLocation(sparkSession)
+    // scalastyle:off println
+    System.out.println(
+      s"[RTAS] CDTC.run: op=$operation")
+    System.out.println(
+      s"[RTAS] twl.identifier=${tableWithLocation.identifier}")
+    System.out.println(
+      s"[RTAS] twl.identifier.catalog=" +
+      s"${tableWithLocation.identifier.catalog}")
+    System.out.println(
+      s"[RTAS] existingTableOpt=$existingTableOpt")
+    System.out.println(
+      s"[RTAS] allowCatalogManaged=$allowCatalogManaged")
+    // scalastyle:on println
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
     // To be safe, here we only extract file system options from table storage properties, to create
@@ -450,34 +463,6 @@ case class CreateDeltaTableCommand(
       }
     }
 
-    // For UC-managed tables, block REPLACE/RTAS that change schema or
-    // properties until atomic metadata sync to UC is supported.
-    // TODO: Remove this guard once UC metadata sync is implemented.
-    if (isReplace && allowCatalogManaged && txn.readVersion >= 0) {
-      val oldSchema = txn.snapshot.metadata.schema
-      val newSchema = tableWithLocation.schema
-      if (oldSchema != newSchema) {
-        throw DeltaErrors.operationNotSupportedException(
-          "Replacing a catalog-managed table with a different schema")
-      }
-      val oldConfig = txn.snapshot.metadata.configuration
-      val newProps = tableWithLocation.properties
-      // Compare user-specified properties, ignoring system/delta keys
-      val systemPrefixes = Seq(
-        "delta.", "io.unitycatalog.", "is_managed_location",
-        "ucTableId")
-      val userNewProps = newProps.filterKeys(k =>
-        !systemPrefixes.exists(k.startsWith))
-      val changedProps = userNewProps.filter { case (k, v) =>
-        oldConfig.get(k).exists(_ != v)
-      }
-      if (changedProps.nonEmpty) {
-        throw DeltaErrors.operationNotSupportedException(
-          "Replacing a catalog-managed table with different " +
-          s"properties (changed: ${changedProps.keys.mkString(", ")})")
-      }
-    }
-
     // We are defining a table using the Create or Replace Table statements.
     val actionsToCommit = operation match {
       case TableCreationModes.Create =>
@@ -505,7 +490,6 @@ case class CreateDeltaTableCommand(
           throw DeltaErrors.metadataAbsentForExistingCatalogTable(
             tableWithLocation.identifier.toString, txn.deltaLog.logPath.toString)
         }
-        // We need to replace
         replaceMetadataIfNecessary(
           txn,
           tableWithLocation,
@@ -788,6 +772,95 @@ case class CreateDeltaTableCommand(
   }
 
   /**
+   * UC-managed REPLACE/RTAS cannot commit a Metadata action until metadata updates are atomically
+   * synchronized with the catalog. If the command preserves metadata, we skip the metadata update;
+   * otherwise we fail early before writing any new files.
+   *
+   * @return true if the caller should skip `updateMetadataForNewTableInReplace`.
+   */
+  private def validateCatalogManagedReplacePreservesMetadata(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      tableDesc: CatalogTable,
+      schema: StructType): Boolean = {
+    if (!(allowCatalogManaged && isReplace && txn.readVersion > -1L)) {
+      return false
+    }
+
+    val existingMetadata = txn.snapshot.metadata
+    val schemaDifferences = SchemaUtils.reportDifferences(
+      DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, existingMetadata.schema),
+      schema)
+    if (schemaDifferences.nonEmpty) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with a different schema")
+    }
+
+    if (tableDesc.partitionColumnNames != existingMetadata.partitionColumns) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with different partitioning")
+    }
+
+    val specifiedClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
+    val existingClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
+    if (specifiedClusterBySpec != existingClusterBySpec) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with different clustering")
+    }
+
+    // Only block if the user explicitly specified a different comment.
+    // Omitted COMMENT means "preserve existing".
+    tableDesc.comment.foreach { specifiedComment =>
+      if (specifiedComment != existingMetadata.description) {
+        throw DeltaErrors.operationNotSupportedException(
+          "Replacing a catalog-managed table with a different" +
+          " comment")
+      }
+    }
+
+    val ignoredKeys =
+      CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS ++
+        CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS ++
+        Set(
+          UC_TABLE_ID_KEY,
+          UC_TABLE_ID_KEY_OLD,
+          "is_managed_location",
+          ClusteredTableUtils.PROP_CLUSTERING_COLUMNS)
+
+    def normalizeProperties(
+        props: Map[String, String]): Map[String, String] = {
+      var normalized = filterColumnMappingProperties(props)
+      normalized =
+        Protocol.filterProtocolPropsFromTableProps(normalized)
+      if (ClusteredTableUtils.isSupported(txn.protocol)) {
+        normalized =
+          ClusteredTableUtils.removeInternalTableProperties(
+            normalized)
+      }
+      normalized -- ignoredKeys
+    }
+
+    val specifiedProps = normalizeProperties(tableDesc.properties)
+    val existingProps = normalizeProperties(
+      existingMetadata.configuration)
+    // Only check properties the user explicitly specified.
+    // Properties that exist only in the existing metadata
+    // (auto-set by Delta) are preserved since we skip the
+    // metadata update.
+    val changedKeys = specifiedProps.collect {
+      case (key, value)
+        if existingProps.get(key) != Some(value) => key
+    }.toSeq.sorted
+    if (changedKeys.nonEmpty) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with different" +
+          s" properties (changed: ${changedKeys.mkString(", ")})")
+    }
+
+    true
+  }
+
+  /**
    * With DataFrameWriterV2, methods like `replace()` or `createOrReplace()` mean that the
    * metadata of the table should be replaced. If overwriteSchema=false is provided with these
    * methods, then we will verify that the metadata match exactly.
@@ -806,9 +879,13 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
+      if (validateCatalogManagedReplacePreservesMetadata(
+          sparkSession, txn, tableDesc, schema)) {
+        return
+      }
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      var newMetadata = getProvidedMetadata(table, schema.json)
+      var newMetadata = getProvidedMetadata(tableDesc, schema.json)
       // For UC-managed RTAS, strip the UC table ID from new
       // metadata. updateMetadataForNewTableInReplace will
       // preserve it from the existing snapshot.

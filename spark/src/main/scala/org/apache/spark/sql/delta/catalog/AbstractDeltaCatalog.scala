@@ -112,6 +112,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    // scalastyle:off println
+    System.out.println(
+      s"[RTAS] createDeltaTable: ident=$ident op=$operation" +
+      s" isUC=$isUnityCatalog hasQuery=${sourceQuery.isDefined}")
+    // scalastyle:on println
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
@@ -205,8 +210,26 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      // For UC managed tables, existingTableOpt is always None
+      // (session catalog doesn't track UC tables). Use tableDesc
+      // which has the catalog name, so DeltaLog resolves via
+      // catalog instead of path-based access (which is blocked
+      // for catalog-managed tables).
+      val deltaLogTableOpt = existingTableOpt.orElse(
+        Option.when(isUnityCatalog)(tableDesc))
+      // scalastyle:off println
+      System.out.println(
+        s"[RTAS] writer: op=$operation isUC=$isUnityCatalog")
+      System.out.println(
+        s"[RTAS] existingTableOpt=$existingTableOpt")
+      System.out.println(
+        s"[RTAS] deltaLogTableOpt=$deltaLogTableOpt")
+      System.out.println(
+        s"[RTAS] tableDesc.id=${tableDesc.identifier}")
+      System.out.println(s"[RTAS] loc=$loc")
+      // scalastyle:on println
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, deltaLogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -424,6 +447,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       partitions: Array[Transform],
       properties: util.Map[String, String]): StagedTable =
     recordFrameProfile("DeltaCatalog", "stageReplace") {
+      // scalastyle:off println
+      System.out.println(
+        s"[RTAS] DeltaCatalog.stageReplace: $ident")
+      System.out.println(
+        s"[RTAS] props keys: ${properties.keySet()}")
+      // scalastyle:on println
       if (DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))) {
         new StagedDeltaTableV2(
           ident,
@@ -649,6 +678,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
+      // scalastyle:off println
+      System.out.println(
+        s"[RTAS] commitStagedChanges: op=$operation" +
+        s" ident=$ident isUC=$isUnityCatalog")
+      // scalastyle:on println
       val conf = spark.sessionState.conf
       val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
       val (props, sqlWriteOptions) = getTablePropsAndWriteOptions(properties)
