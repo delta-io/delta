@@ -24,6 +24,7 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -1948,22 +1949,22 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             + " TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
         testTableName, testTablePath); // Version 0
 
-    String beforeV1TS = new java.sql.Timestamp(System.currentTimeMillis()).toString();
+    String beforeV1TS = new Timestamp(System.currentTimeMillis()).toString();
     // Version 1
     sql("INSERT INTO %s VALUES (1, 'User1')", testTableName);
     Thread.sleep(10);
-    String betweenV1V2TS = new java.sql.Timestamp(System.currentTimeMillis()).toString();
+    String betweenV1V2TS = new Timestamp(System.currentTimeMillis()).toString();
     // Version 2
     sql("INSERT INTO %s VALUES (2, 'User2')", testTableName);
     Thread.sleep(10);
-    String afterV2TS = new java.sql.Timestamp(System.currentTimeMillis()).toString();
+    String afterV2TS = new Timestamp(System.currentTimeMillis()).toString();
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
 
     // Read exact commit timestamps from the delta log for boundary testing
     scala.collection.Seq<DeltaHistory> history =
         deltaLog.history().getHistory(0L, scala.Option.apply(2L), scala.Option.empty());
-    java.util.Map<Long, java.sql.Timestamp> versionTimestamps = new java.util.HashMap<>();
+    java.util.Map<Long, Timestamp> versionTimestamps = new java.util.HashMap<>();
     for (int i = 0; i < history.size(); i++) {
       DeltaHistory entry = history.apply(i);
       long version = (long) entry.version().get();
@@ -1975,17 +1976,34 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     try {
       spark.conf().set(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP().key(), "true");
 
-      Object[][] testCases = {
-        {beforeV1TS, 1L, "timestamp between v0 and v1 should return version 1"},
-        {v1ExactTS, 1L, "timestamp exactly at v1 commit time should return version 1"},
-        {betweenV1V2TS, 2L, "timestamp between v1 and v2 should return version 2"},
-        {v2ExactTS, 2L, "timestamp exactly at v2 commit time should return version 2"},
-        {afterV2TS, 3L, "timestamp after v2 and allow out of range should return version 3"}
+      class TimestampTestCase {
+        final String timestamp;
+        final long expectedVersion;
+        final String message;
+
+        TimestampTestCase(String timestamp, long expectedVersion, String message) {
+          this.timestamp = timestamp;
+          this.expectedVersion = expectedVersion;
+          this.message = message;
+        }
+      }
+
+      TimestampTestCase[] testCases = {
+        new TimestampTestCase(
+            beforeV1TS, 1L, "timestamp between v0 and v1 should return version 1"),
+        new TimestampTestCase(
+            v1ExactTS, 1L, "timestamp exactly at v1 commit time should return version 1"),
+        new TimestampTestCase(
+            betweenV1V2TS, 2L, "timestamp between v1 and v2 should return version 2"),
+        new TimestampTestCase(
+            v2ExactTS, 2L, "timestamp exactly at v2 commit time should return version 2"),
+        new TimestampTestCase(
+            afterV2TS, 3L, "timestamp after v2 and allow out of range should return version 3")
       };
-      for (Object[] testCase : testCases) {
-        String timestamp = (String) testCase[0];
-        long expectedVersion = (long) testCase[1];
-        String message = (String) testCase[2];
+      for (TimestampTestCase testCase : testCases) {
+        String timestamp = testCase.timestamp;
+        long expectedVersion = testCase.expectedVersion;
+        String message = testCase.message;
 
         // dsv1
         DeltaSource deltaSource =
