@@ -27,6 +27,7 @@ import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -78,10 +79,12 @@ public class SparkParquetBatchWrite implements BatchWrite {
         SchemaUtils.convertKernelSchemaToSparkSchema(this.initialSnapshot.getSchema());
     this.alignedWriteSchema = alignWriteSchema(writeSchema, tableSchema);
     this.queryId = requireNonNull(queryId, "query id is null");
-    this.options = Collections.unmodifiableMap(requireNonNull(options, "options is null"));
+    this.options =
+        Collections.unmodifiableMap(new HashMap<>(requireNonNull(options, "options is null")));
     this.partitionColumnNames =
         Collections.unmodifiableList(
-            requireNonNull(partitionColumnNames, "partition column names is null"));
+            new ArrayList<>(
+                requireNonNull(partitionColumnNames, "partition column names is null")));
 
     this.engine = DefaultEngine.create(this.hadoopConf);
     this.transaction =
@@ -101,6 +104,7 @@ public class SparkParquetBatchWrite implements BatchWrite {
 
   @Override
   public DataWriterFactory createBatchWriterFactory(PhysicalWriteInfo info) {
+    requireNonNull(info, "physical write info is null");
     return new SparkParquetDataWriterFactory(
         tablePath,
         queryId,
@@ -180,7 +184,9 @@ public class SparkParquetBatchWrite implements BatchWrite {
     StructType nonNullTableSchema = requireNonNull(tableSchema, "table schema is null");
     if (!DataType.equalsIgnoreNullability(nonNullWriteSchema, nonNullTableSchema)) {
       throw new IllegalArgumentException(
-          "Write schema does not match table schema after nullability normalization");
+          String.format(
+              "Write schema does not match table schema after nullability normalization. expected=%s actual=%s",
+              nonNullTableSchema.catalogString(), nonNullWriteSchema.catalogString()));
     }
     return nonNullTableSchema;
   }

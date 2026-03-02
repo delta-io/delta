@@ -41,6 +41,7 @@ import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
+import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
@@ -122,9 +123,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
             new HashMap<>(),
             Arrays.asList("id"));
 
-    assertThrows(
-        UnsupportedOperationException.class,
-        () -> batchWrite.createBatchWriterFactory(null).createWriter(0, 0L).write(null));
+    assertThrows(NullPointerException.class, () -> batchWrite.createBatchWriterFactory(null));
     assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(null));
   }
 
@@ -132,7 +131,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   public void testBatchWriteCreatesSerializableDataWriterFactory(@TempDir File tempDir)
       throws Exception {
     SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_factory_creation");
-    DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
+    DataWriterFactory factory = batchWrite.createBatchWriterFactory(physicalWriteInfo());
     DataWriter<?> dataWriter = factory.createWriter(1, 101L);
 
     assertNotNull(factory);
@@ -219,9 +218,11 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
                     "query-incompatible-schema",
                     new HashMap<>(),
                     Arrays.asList("id")));
-    assertEquals(
-        "Write schema does not match table schema after nullability normalization",
-        ex.getMessage());
+    assertTrue(
+        ex.getMessage()
+            .contains("Write schema does not match table schema after nullability normalization"));
+    assertTrue(ex.getMessage().contains("expected=struct<id:int>"));
+    assertTrue(ex.getMessage().contains("actual=struct<id:bigint>"));
   }
 
   private SparkParquetBatchWrite createBatchWrite(File tempDir, String tableName) throws Exception {
@@ -244,6 +245,10 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
         "query-roundtrip",
         new HashMap<>(),
         Arrays.asList("id"));
+  }
+
+  private static PhysicalWriteInfo physicalWriteInfo() {
+    return () -> 1;
   }
 
   private static <T extends Serializable> T roundTrip(T value, Class<T> expectedType)
