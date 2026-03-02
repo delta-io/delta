@@ -39,6 +39,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.connector.write.DataWriter;
+import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
@@ -61,8 +63,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
         SnapshotManagerFactory.create(tablePath, engine, Optional.empty());
     Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
 
-    StructType writeSchema =
-        new StructType().add("id", DataTypes.IntegerType).add("value", DataTypes.StringType);
+    StructType writeSchema = new StructType().add("id", DataTypes.IntegerType, false);
     String queryId = "query-123";
     Map<String, String> options = new HashMap<>();
     options.put("compression", "snappy");
@@ -82,7 +83,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertEquals(tablePath, batchWrite.getTablePath());
     assertEquals(hadoopConf, batchWrite.getHadoopConf());
     assertEquals(initialSnapshot, batchWrite.getInitialSnapshot());
-    assertEquals(writeSchema, batchWrite.getWriteSchema());
+    assertEquals(new StructType().add("id", DataTypes.IntegerType), batchWrite.getWriteSchema());
     assertEquals(queryId, batchWrite.getQueryId());
     assertEquals(options, batchWrite.getOptions());
     assertEquals(partitionColumnNames, batchWrite.getPartitionColumnNames());
@@ -122,8 +123,22 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
             Arrays.asList("id"));
 
     assertThrows(
-        UnsupportedOperationException.class, () -> batchWrite.createBatchWriterFactory(null));
+        UnsupportedOperationException.class,
+        () -> batchWrite.createBatchWriterFactory(null).createWriter(0, 0L).write(null));
     assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(null));
+  }
+
+  @Test
+  public void testBatchWriteCreatesSerializableDataWriterFactory(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_factory_creation");
+    DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
+    DataWriter<?> dataWriter = factory.createWriter(1, 101L);
+
+    assertNotNull(factory);
+    assertNotNull(dataWriter);
+    assertTrue(factory instanceof SparkParquetDataWriterFactory);
+    assertTrue(dataWriter instanceof SparkParquetDataWriter);
   }
 
   @Test
@@ -176,6 +191,37 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
         countEntries(batchWrite.getHadoopConf()),
         countEntries(reconstructed),
         "Reconstructed configuration should preserve all captured entries");
+  }
+
+  @Test
+  public void testBatchWriteRejectsIncompatibleWriteSchema(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_incompatible_schema (id INT) USING delta LOCATION '%s'", tablePath));
+
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    Engine engine = DefaultEngine.create(hadoopConf);
+    DeltaSnapshotManager snapshotManager =
+        SnapshotManagerFactory.create(tablePath, engine, Optional.empty());
+    Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
+
+    StructType incompatibleSchema = new StructType().add("id", DataTypes.LongType);
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                new SparkParquetBatchWrite(
+                    tablePath,
+                    hadoopConf,
+                    initialSnapshot,
+                    incompatibleSchema,
+                    "query-incompatible-schema",
+                    new HashMap<>(),
+                    Arrays.asList("id")));
+    assertEquals(
+        "Write schema does not match table schema after nullability normalization",
+        ex.getMessage());
   }
 
   private SparkParquetBatchWrite createBatchWrite(File tempDir, String tableName) throws Exception {

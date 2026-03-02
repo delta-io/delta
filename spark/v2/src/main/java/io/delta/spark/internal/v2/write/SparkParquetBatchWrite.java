@@ -25,6 +25,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Literal;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.SerializableKernelRowWrapper;
 import java.util.Collections;
 import java.util.HashMap;
@@ -35,6 +36,7 @@ import org.apache.spark.sql.connector.write.BatchWrite;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
+import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
 
@@ -49,7 +51,7 @@ public class SparkParquetBatchWrite implements BatchWrite {
   private final String tablePath;
   private final Configuration hadoopConf;
   private final Snapshot initialSnapshot;
-  private final StructType writeSchema;
+  private final StructType alignedWriteSchema;
   private final String queryId;
   private final Map<String, String> options;
   private final List<String> partitionColumnNames;
@@ -72,7 +74,9 @@ public class SparkParquetBatchWrite implements BatchWrite {
     this.tablePath = requireNonNull(tablePath, "table path is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initial snapshot is null");
-    this.writeSchema = requireNonNull(writeSchema, "write schema is null");
+    StructType tableSchema =
+        SchemaUtils.convertKernelSchemaToSparkSchema(this.initialSnapshot.getSchema());
+    this.alignedWriteSchema = alignWriteSchema(writeSchema, tableSchema);
     this.queryId = requireNonNull(queryId, "query id is null");
     this.options = Collections.unmodifiableMap(requireNonNull(options, "options is null"));
     this.partitionColumnNames =
@@ -97,8 +101,14 @@ public class SparkParquetBatchWrite implements BatchWrite {
 
   @Override
   public DataWriterFactory createBatchWriterFactory(PhysicalWriteInfo info) {
-    throw new UnsupportedOperationException(
-        "DataWriterFactory creation is implemented in follow-up changes");
+    return new SparkParquetDataWriterFactory(
+        tablePath,
+        queryId,
+        partitionColumnNames,
+        alignedWriteSchema,
+        targetDirectory,
+        serializableTxnState,
+        serializableHadoopConf);
   }
 
   @Override
@@ -122,7 +132,7 @@ public class SparkParquetBatchWrite implements BatchWrite {
   }
 
   StructType getWriteSchema() {
-    return writeSchema;
+    return alignedWriteSchema;
   }
 
   String getQueryId() {
@@ -163,5 +173,15 @@ public class SparkParquetBatchWrite implements BatchWrite {
 
   String getTargetDirectory() {
     return targetDirectory;
+  }
+
+  private static StructType alignWriteSchema(StructType writeSchema, StructType tableSchema) {
+    StructType nonNullWriteSchema = requireNonNull(writeSchema, "write schema is null");
+    StructType nonNullTableSchema = requireNonNull(tableSchema, "table schema is null");
+    if (!DataType.equalsIgnoreNullability(nonNullWriteSchema, nonNullTableSchema)) {
+      throw new IllegalArgumentException(
+          "Write schema does not match table schema after nullability normalization");
+    }
+    return nonNullTableSchema;
   }
 }
