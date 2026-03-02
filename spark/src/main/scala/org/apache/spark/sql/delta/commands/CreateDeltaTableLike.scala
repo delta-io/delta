@@ -125,7 +125,8 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         try {
           createTableFunc.get.apply(cleaned)
         } catch {
-          case _: Exception =>
+          case e: Exception if e.getMessage != null
+            && e.getMessage.contains("already exists") =>
             // Table already exists in UC — expected for the
             // "replace existing" path of CreateOrReplace.
             ()

@@ -332,11 +332,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       check(fullTableName, List.of(List.of("2", "b")));
     }
 
-    // Verify that table information maintained at the uc server side are expected.
-    // TODO: Remove the block when delta supports the CTAS in the correct way. Currently CTAS
-    //  is missing AbstractDeltaCatalog.translateUCTableIdProperty
-    // Metadata sync for RTAS is not yet implemented - skip UC table info verification
-    if ((!withAsSelect || replaceTable) && !replaceTable) {
+    // Verify UC server-side table info. Skip for:
+    // - CTAS paths (withAsSelect): CTAS is still missing
+    //   AbstractDeltaCatalog.translateUCTableIdProperty.
+    // - REPLACE paths (replaceTable): RTAS metadata sync
+    //   is not yet implemented.
+    if (!withAsSelect && !replaceTable) {
       assertUCTableInfo(
           tableType,
           fullTableName,

@@ -133,19 +133,6 @@ case class CreateDeltaTableCommand(
     }
 
     val tableWithLocation = getCatalogTableWithLocation(sparkSession)
-    // scalastyle:off println
-    System.out.println(
-      s"[RTAS] CDTC.run: op=$operation")
-    System.out.println(
-      s"[RTAS] twl.identifier=${tableWithLocation.identifier}")
-    System.out.println(
-      s"[RTAS] twl.identifier.catalog=" +
-      s"${tableWithLocation.identifier.catalog}")
-    System.out.println(
-      s"[RTAS] existingTableOpt=$existingTableOpt")
-    System.out.println(
-      s"[RTAS] allowCatalogManaged=$allowCatalogManaged")
-    // scalastyle:on println
 
     val tableLocation = getDeltaTablePath(tableWithLocation)
     // To be safe, here we only extract file system options from table storage properties, to create
