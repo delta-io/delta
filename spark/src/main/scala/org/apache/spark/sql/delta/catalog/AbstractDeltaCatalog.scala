@@ -155,7 +155,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Option(allTableProperties.get("location"))
     }
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
@@ -649,11 +650,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
+      val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
       val (props, sqlWriteOptions) = getTablePropsAndWriteOptions(properties)
       if (writeOptions.isEmpty && sqlWriteOptions.nonEmpty) {
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      if (isUC) {
+        props.remove("test.simulateUC")
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,

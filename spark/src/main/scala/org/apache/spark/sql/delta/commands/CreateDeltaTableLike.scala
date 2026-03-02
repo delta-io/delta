@@ -107,6 +107,11 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+      case TableCreationModes.Replace if createTableFunc.isDefined =>
+        // UC-managed table: table exists in UC catalog, not in session catalog,
+        // so existingTableOpt is None. Data replacement is atomic via Delta's
+        // transaction log. Metadata sync to UC is not yet implemented.
+        ()
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)

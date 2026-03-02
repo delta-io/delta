@@ -28,6 +28,8 @@ import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperti
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -142,11 +144,15 @@ case class CreateDeltaTableCommand(
       sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
+    // For UC-managed RTAS, the catalog injects UC table ID properties into the CatalogTable
+    // properties. Strip them before validation since they are system-injected, not user-specified.
+    val propsForValidation = tableWithLocation.properties -
+      UC_TABLE_ID_KEY - UC_TABLE_ID_KEY_OLD
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
       spark = sparkSession,
       tableExists = deltaLog.tableExists,
       query = query,
-      catalogTableProperties = tableWithLocation.properties,
+      catalogTableProperties = propsForValidation,
       existingTableSnapshotOpt =
         if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 
@@ -772,11 +778,18 @@ case class CreateDeltaTableCommand(
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
       var newMetadata = getProvidedMetadata(table, schema.json)
-      val updatedConfig = UniversalFormat.enforceDependenciesInConfiguration(
-        sparkSession,
-        tableDesc,
-        newMetadata.configuration,
-        txn.snapshot)
+      // For UC-managed RTAS, strip the UC table ID from new
+      // metadata. updateMetadataForNewTableInReplace will
+      // preserve it from the existing snapshot.
+      val cleanedConfig = newMetadata.configuration -
+        UC_TABLE_ID_KEY - UC_TABLE_ID_KEY_OLD
+      newMetadata = newMetadata.copy(configuration = cleanedConfig)
+      val updatedConfig =
+        UniversalFormat.enforceDependenciesInConfiguration(
+          sparkSession,
+          tableDesc,
+          newMetadata.configuration,
+          txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
@@ -794,7 +807,16 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    // For RTAS on an existing catalog-owned table, the commit coordinator needs
+    // the CatalogTable to resolve via CatalogAndIdentifier. Without it, the lazy
+    // readSnapshotTableCommitCoordinatorClientOpt fails with
+    // "Couldn't locate commit coordinator".
+    val catalogTableOpt = if (isReplace && deltaLog.tableExists) {
+      Some(tableWithLocation)
+    } else {
+      None
+    }
+    val txn = deltaLog.startTransaction(catalogTableOpt, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion
