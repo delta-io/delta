@@ -22,6 +22,8 @@ To support this feature:
 
 This table feature is enabled when the table property `delta.enableIcebergCompatV3` is set to `true`.
 
+> **NOTE:** Unlike IcebergCompatV1 and IcebergCompatV2, this feature does _NOT_ forbid supporting and enabling Deletion Vectors on the table.
+
 ## Writer Requirements for IcebergCompatV3
 
 When this feature is supported and enabled, writers must:
@@ -37,5 +39,3 @@ When this feature is supported and enabled, writers must:
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
-
-> **NOTE:** Unlike IcebergCompatV1 and IcebergCompatV2, this feature does _NOT_ forbid supporting and enabling Deletion Vectors on the table.
