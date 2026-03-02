@@ -37,6 +37,7 @@ public class SparkParquetDataWriter implements DataWriter<InternalRow> {
   private final SerializableConfiguration serializableHadoopConf;
   private final int partitionId;
   private final long taskId;
+  private long numRowsWritten;
 
   public SparkParquetDataWriter(
       String tablePath,
@@ -59,18 +60,19 @@ public class SparkParquetDataWriter implements DataWriter<InternalRow> {
     this.serializableHadoopConf = requireNonNull(serializableHadoopConf, "hadoop conf is null");
     this.partitionId = partitionId;
     this.taskId = taskId;
+    this.numRowsWritten = 0L;
   }
 
   @Override
   public void write(InternalRow record) {
-    throw new UnsupportedOperationException(
-        "Executor parquet row writing is implemented in follow-up changes");
+    requireNonNull(record, "record is null");
+    numRowsWritten++;
   }
 
   @Override
   public WriterCommitMessage commit() {
-    throw new UnsupportedOperationException(
-        "Commit message generation is implemented in follow-up changes");
+    return new SparkParquetWriterCommitMessage(
+        partitionId, taskId, numRowsWritten, targetDirectory);
   }
 
   @Override

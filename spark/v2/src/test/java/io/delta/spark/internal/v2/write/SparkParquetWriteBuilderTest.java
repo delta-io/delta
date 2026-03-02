@@ -39,8 +39,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
+import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
@@ -139,6 +141,27 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertNotNull(dataWriter);
     assertTrue(factory instanceof SparkParquetDataWriterFactory);
     assertTrue(dataWriter instanceof SparkParquetDataWriter);
+  }
+
+  @Test
+  public void testDataWriterCommitMessageContainsRowCount(@TempDir File tempDir) throws Exception {
+    SparkParquetBatchWrite batchWrite =
+        createBatchWrite(tempDir, "test_data_writer_commit_message");
+    DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
+    @SuppressWarnings("unchecked")
+    DataWriter<org.apache.spark.sql.catalyst.InternalRow> dataWriter =
+        (DataWriter<org.apache.spark.sql.catalyst.InternalRow>) factory.createWriter(2, 202L);
+
+    dataWriter.write(new GenericInternalRow(new Object[] {1}));
+    dataWriter.write(new GenericInternalRow(new Object[] {2}));
+    WriterCommitMessage commitMessage = dataWriter.commit();
+
+    assertTrue(commitMessage instanceof SparkParquetWriterCommitMessage);
+    SparkParquetWriterCommitMessage message = (SparkParquetWriterCommitMessage) commitMessage;
+    assertEquals(2, message.getPartitionId());
+    assertEquals(202L, message.getTaskId());
+    assertEquals(2L, message.getNumRowsWritten());
+    assertNotNull(message.getTargetDirectory());
   }
 
   @Test
