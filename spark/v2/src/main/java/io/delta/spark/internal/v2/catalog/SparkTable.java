@@ -35,17 +35,22 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead {
+public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
-          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
+          EnumSet.of(
+              TableCapability.BATCH_READ,
+              TableCapability.MICRO_BATCH_READ,
+              TableCapability.BATCH_WRITE));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -169,6 +174,15 @@ public class SparkTable implements Table, SupportsRead {
   }
 
   /**
+   * Returns the Path to the Delta table root.
+   *
+   * @return Path created from the table path
+   */
+  public Path getTablePath() {
+    return new Path(tablePath);
+  }
+
+  /**
    * Returns the table name in a format compatible with DeltaTableV2.
    *
    * <p>For catalog-based tables, returns the fully qualified table name (e.g.,
@@ -222,6 +236,19 @@ public class SparkTable implements Table, SupportsRead {
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
         merged);
+  }
+
+  /**
+   * Batch write for Delta tables via the DSv2 connector is not yet supported.
+   *
+   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
+   * follow-up changes land the full write implementation.
+   */
+  @Override
+  public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
+    requireNonNull(info, "write info is null");
+    throw new UnsupportedOperationException(
+        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
   }
 
   @Override
