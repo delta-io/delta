@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.read;
+package io.delta.spark.internal.v2.parquet;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
@@ -24,7 +24,7 @@ import scala.Option;
  * V2 implementation of DeltaParquetFileFormat using Kernel's Protocol and Metadata.
  *
  * <p>This class enables the V2 connector to reuse delta-spark-v1's DeltaParquetFileFormatBase for
- * reading Parquet files with Delta-specific features like column mapping.
+ * both DSv2 read and write path Parquet operations.
  */
 public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
 

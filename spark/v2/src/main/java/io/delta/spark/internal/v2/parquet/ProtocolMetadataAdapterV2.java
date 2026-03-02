@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package io.delta.spark.internal.v2.read;
+package io.delta.spark.internal.v2.parquet;
 
 import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
@@ -37,18 +37,8 @@ import scala.jdk.javaapi.CollectionConverters;
 /**
  * Implementation of ProtocolMetadataAdapter for Delta Kernel's Protocol and Metadata.
  *
- * <p>This class adapts Kernel's Protocol and Metadata to the ProtocolMetadataAdapter interface,
- * enabling the V2 connector to reuse delta-spark-v1's DeltaParquetFileFormat for reading Parquet
- * files.
- *
- * <p>Key responsibilities:
- *
- * <ul>
- *   <li>Bridge Kernel's Protocol/Metadata to delta-spark's ProtocolMetadataAdapter interface
- *   <li>Convert column mapping modes between Kernel and delta-spark representations
- *   <li>Provide Delta-aware feature checks (deletion vectors, row tracking, Iceberg compatibility)
- *   <li>Convert schemas between Kernel and Spark formats
- * </ul>
+ * <p>This class adapts Kernel's Protocol and Metadata to the ProtocolMetadataAdapter interface for
+ * shared DSv2 parquet read/write reuse.
  */
 public class ProtocolMetadataAdapterV2 implements ProtocolMetadataAdapter, Serializable {
   private static final long serialVersionUID = 1L;
