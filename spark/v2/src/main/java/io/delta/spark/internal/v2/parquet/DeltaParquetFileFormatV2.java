@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.parquet;
 
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
+import java.util.Objects;
 import org.apache.spark.sql.delta.DeltaParquetFileFormatBase;
 import scala.Option;
 
@@ -77,5 +78,15 @@ public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
         && this.optimizationsEnabled() == that.optimizationsEnabled()
         && this.tablePath().equals(that.tablePath())
         && this.isCDCRead() == that.isCDCRead();
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        this.columnMappingMode(),
+        this.referenceSchema(),
+        this.optimizationsEnabled(),
+        this.tablePath(),
+        this.isCDCRead());
   }
 }

@@ -151,6 +151,14 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testParquetGlueClassMovedToSharedPackage() throws Exception {
+    assertNotNull(Class.forName("io.delta.spark.internal.v2.parquet.DeltaParquetFileFormatV2"));
+    assertThrows(
+        ClassNotFoundException.class,
+        () -> Class.forName("io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2"));
+  }
+
+  @Test
   public void testCalculateMaxSplitBytes_Basic() {
     SQLConf sqlConf = SQLConf.get();
     long minPartitionNum = 4;
