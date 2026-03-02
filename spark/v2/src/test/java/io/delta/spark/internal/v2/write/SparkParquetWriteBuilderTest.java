@@ -33,6 +33,7 @@ import java.io.File;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -69,7 +70,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     String queryId = "query-123";
     Map<String, String> options = new HashMap<>();
     options.put("compression", "snappy");
-    List<String> partitionColumnNames = Arrays.asList("id");
+    List<String> partitionColumnNames = new ArrayList<>(Arrays.asList("id"));
 
     SparkParquetWriteBuilder builder =
         new SparkParquetWriteBuilder(
@@ -98,6 +99,43 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertTrue(
         batchWrite.getTargetDirectory().contains(tablePath),
         "Target directory should be under the table path");
+  }
+
+  @Test
+  public void testBuilderSnapshotsMutableInputCollections(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_write_builder_snapshots (id INT) USING delta LOCATION '%s'",
+            tablePath));
+
+    Configuration hadoopConf = spark.sessionState().newHadoopConf();
+    Engine engine = DefaultEngine.create(hadoopConf);
+    DeltaSnapshotManager snapshotManager =
+        SnapshotManagerFactory.create(tablePath, engine, Optional.empty());
+    Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
+    StructType writeSchema = new StructType().add("id", DataTypes.IntegerType);
+
+    Map<String, String> options = new HashMap<>();
+    options.put("compression", "snappy");
+    List<String> partitionColumnNames = new ArrayList<>(Arrays.asList("id"));
+
+    SparkParquetWriteBuilder builder =
+        new SparkParquetWriteBuilder(
+            tablePath,
+            hadoopConf,
+            initialSnapshot,
+            writeSchema,
+            "query-input-snapshot",
+            options,
+            partitionColumnNames);
+
+    options.put("compression", "gzip");
+    partitionColumnNames.add("late_added_partition");
+
+    SparkParquetBatchWrite batchWrite = builder.buildForBatch();
+    assertEquals("snappy", batchWrite.getOptions().get("compression"));
+    assertEquals(Arrays.asList("id"), batchWrite.getPartitionColumnNames());
   }
 
   @Test
@@ -162,6 +200,27 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertEquals(202L, message.getTaskId());
     assertEquals(2L, message.getNumRowsWritten());
     assertNotNull(message.getTargetDirectory());
+  }
+
+  @Test
+  public void testCommitMessageRejectsNegativeRowCount() {
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> new SparkParquetWriterCommitMessage(0, 1L, -1L, "/tmp/path"));
+    assertEquals("numRowsWritten must be non-negative", ex.getMessage());
+  }
+
+  @Test
+  public void testCommitMessageRejectsNullOrEmptyTargetDirectory() {
+    assertThrows(
+        NullPointerException.class, () -> new SparkParquetWriterCommitMessage(0, 1L, 0L, null));
+
+    IllegalArgumentException ex =
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> new SparkParquetWriterCommitMessage(0, 1L, 0L, ""));
+    assertEquals("target directory is empty", ex.getMessage());
   }
 
   @Test
@@ -261,6 +320,44 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     IllegalArgumentException ex =
         assertThrows(IllegalArgumentException.class, () -> batchWrite.commit(invalidMessages));
     assertTrue(ex.getMessage().contains("Unexpected commit message type"));
+    assertTrue(ex.getMessage().contains("index 0"));
+  }
+
+  @Test
+  public void testBatchWriteCommitRejectsUnexpectedMessageTypesInMixedArray(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite =
+        createBatchWrite(tempDir, "test_commit_message_decode_mixed_array");
+    WriterCommitMessage[] invalidMessages =
+        new WriterCommitMessage[] {
+          new SparkParquetWriterCommitMessage(0, 1L, 1L, batchWrite.getTargetDirectory()),
+          new WriterCommitMessage() {
+            private static final long serialVersionUID = 1L;
+          }
+        };
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> batchWrite.commit(invalidMessages));
+    assertTrue(ex.getMessage().contains("Unexpected commit message type"));
+    assertTrue(ex.getMessage().contains("index 1"));
+  }
+
+  @Test
+  public void testBatchWriteCommitRejectsDuplicateWriterAttemptMessages(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite =
+        createBatchWrite(tempDir, "test_commit_duplicate_writer_attempt");
+    WriterCommitMessage[] duplicateMessages =
+        new WriterCommitMessage[] {
+          new SparkParquetWriterCommitMessage(0, 10L, 1L, batchWrite.getTargetDirectory()),
+          new SparkParquetWriterCommitMessage(0, 10L, 2L, batchWrite.getTargetDirectory())
+        };
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> batchWrite.commit(duplicateMessages));
+    assertTrue(ex.getMessage().contains("Duplicate commit message for writer attempt"));
+    assertTrue(ex.getMessage().contains("partitionId=0"));
+    assertTrue(ex.getMessage().contains("taskId=10"));
   }
 
   @Test
