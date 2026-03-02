@@ -285,12 +285,15 @@ public class ChecksumUtils {
 
             CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i);
             if (commitInfo == null
-                || !INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
+                || !commitInfo
+                    .getOperation()
+                    .filter(INCREMENTAL_SUPPORTED_OPS::contains)
+                    .isPresent()) {
               logger.info(
                   "Falling back to full replay after {}ms: "
                       + "unsupported operation '{}' for version {}",
                   System.currentTimeMillis() - startTime,
-                  commitInfo != null ? commitInfo.getOperation() : "null",
+                  commitInfo != null ? commitInfo.getOperation().orElse("null") : "null",
                   newVersion);
               return Optional.empty();
             }
