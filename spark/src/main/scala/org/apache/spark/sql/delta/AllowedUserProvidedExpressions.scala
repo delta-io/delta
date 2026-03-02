@@ -363,8 +363,6 @@ object AllowedUserProvidedExpressions {
     // Date/time arithmetic expressions
     expression[DatetimeSub]("datetimesub"),
     // Date/time arithmetic with intervals
-    // TODO: Allowlist `TimestampAddInterval` once OSS does not build/test against
-    // Spark 4.0.
     expression[TimestampAddYMInterval]("timestampaddyminterval"),
     expression[DateAddInterval]("dateaddinterval"),
     expression[DateAddYMInterval]("dateaddyminterval"),
