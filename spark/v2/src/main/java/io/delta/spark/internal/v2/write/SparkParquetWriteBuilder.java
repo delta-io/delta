@@ -18,6 +18,9 @@ package io.delta.spark.internal.v2.write;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
@@ -47,9 +50,12 @@ public class SparkParquetWriteBuilder implements WriteBuilder {
     this.initialSnapshot = requireNonNull(initialSnapshot, "initial snapshot is null");
     this.writeSchema = requireNonNull(writeSchema, "write schema is null");
     this.queryId = requireNonNull(queryId, "query id is null");
-    this.options = requireNonNull(options, "options is null");
+    this.options =
+        Collections.unmodifiableMap(new HashMap<>(requireNonNull(options, "options is null")));
     this.partitionColumnNames =
-        requireNonNull(partitionColumnNames, "partition column names is null");
+        Collections.unmodifiableList(
+            new ArrayList<>(
+                requireNonNull(partitionColumnNames, "partition column names is null")));
   }
 
   @Override
