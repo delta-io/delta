@@ -25,6 +25,7 @@ import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.write.DeltaCopyOnWriteOperation;
 import java.util.*;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -36,6 +37,8 @@ import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.RowLevelOperationBuilder;
+import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructField;
@@ -43,7 +46,7 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead, SupportsWrite {
+public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsRowLevelOperations {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
@@ -193,6 +196,21 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     return options;
   }
 
+  /** Returns the snapshot manager for this table. */
+  public DeltaSnapshotManager getSnapshotManager() {
+    return snapshotManager;
+  }
+
+  /** Returns the data schema (non-partition columns). */
+  public StructType getDataSchema() {
+    return schemaProvider.getDataSchema();
+  }
+
+  /** Returns the partition schema. */
+  public StructType getPartitionSchema() {
+    return schemaProvider.getPartitionSchema();
+  }
+
   /** Returns partition column names in table order. */
   public List<String> getPartitionColumnNames() {
     return schemaProvider.getPartitionColumnNames();
@@ -201,6 +219,11 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     return new io.delta.spark.internal.v2.write.DeltaKernelWriteBuilder(this, info);
+  }
+
+  @Override
+  public RowLevelOperationBuilder newRowLevelOperationBuilder(RowLevelOperationInfo info) {
+    return new io.delta.spark.internal.v2.write.DeltaRowLevelOperationBuilder(this, info);
   }
 
   /**
@@ -247,6 +270,15 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap scanOptions) {
+    return createScanBuilder(scanOptions);
+  }
+
+  /**
+   * Creates a {@link SparkScanBuilder} with the given options merged with table options. Exposed as
+   * a separate method so that {@link DeltaCopyOnWriteOperation} can subclass the builder to capture
+   * the built scan.
+   */
+  public SparkScanBuilder createScanBuilder(CaseInsensitiveStringMap scanOptions) {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
