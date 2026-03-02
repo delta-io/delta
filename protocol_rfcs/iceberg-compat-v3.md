@@ -31,10 +31,11 @@ When this feature is supported and enabled, writers must:
   - Materialized Row Commit Version column must use field ID 2147483539
 - Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. The requirement to ID allocation is the same as that in IcebergCompatV2.
 - Require that IcebergCompatV1 and IcebergCompatV2 are not active on the table
-- Allow Deletion Vectors to be enabled on the table. Unlike IcebergCompatV1 and IcebergCompatV2, this feature does not require Deletion Vectors to be disabled. Deletion Vectors are supported but not required.
 - Require that partition column values be materialized when writing Parquet data files
 - Require that all new `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
 - Require writing timestamp columns as int64
 - Block replacing partitioned tables with a differently-named partition spec
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_b INT` must be blocked
   - e.g. replacing a table partitioned by `part_a INT` with partition spec `part_a LONG` is allowed
+
+> **NOTE:** Unlike IcebergCompatV1 and IcebergCompatV2, this feature does _NOT_ forbid supporting and enabling Deletion Vectors on the table.
