@@ -20,30 +20,21 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.kernel.Snapshot;
-import io.delta.kernel.defaults.engine.DefaultEngine;
-import io.delta.kernel.engine.Engine;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
-import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
-import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import java.io.File;
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Optional;
-import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
 import org.apache.spark.sql.connector.write.WriterCommitMessage;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 public class SparkParquetDataWriterHardeningTest extends DeltaV2TestBase {
   @Test
   public void testDataWriterRejectsNullRows(@TempDir File tempDir) throws Exception {
-    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_writer_rejects_null_rows");
+    SparkParquetBatchWrite batchWrite =
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_writer_rejects_null_rows", "query-hardening");
     DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
     @SuppressWarnings("unchecked")
     DataWriter<org.apache.spark.sql.catalyst.InternalRow> writer =
@@ -56,7 +47,8 @@ public class SparkParquetDataWriterHardeningTest extends DeltaV2TestBase {
   @Test
   public void testDataWriterAbortAndCloseAreNoOps(@TempDir File tempDir) throws Exception {
     SparkParquetBatchWrite batchWrite =
-        createBatchWrite(tempDir, "test_writer_abort_close_idempotent");
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_writer_abort_close_idempotent", "query-hardening");
     DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
     @SuppressWarnings("unchecked")
     DataWriter<org.apache.spark.sql.catalyst.InternalRow> writer =
@@ -72,7 +64,8 @@ public class SparkParquetDataWriterHardeningTest extends DeltaV2TestBase {
   public void testDataWriterCommitMessageIncludesTargetDirectory(@TempDir File tempDir)
       throws Exception {
     SparkParquetBatchWrite batchWrite =
-        createBatchWrite(tempDir, "test_writer_commit_message_directory");
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_writer_commit_message_directory", "query-hardening");
     DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
     @SuppressWarnings("unchecked")
     DataWriter<org.apache.spark.sql.catalyst.InternalRow> writer =
@@ -94,27 +87,5 @@ public class SparkParquetDataWriterHardeningTest extends DeltaV2TestBase {
         assertThrows(
             NullPointerException.class, () -> SparkParquetCommitMessageUtils.decodeMessages(null));
     assertEquals("commit messages are null", ex.getMessage());
-  }
-
-  private SparkParquetBatchWrite createBatchWrite(File tempDir, String tableName) throws Exception {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(
-        String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, tablePath));
-
-    Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
-    DeltaSnapshotManager snapshotManager =
-        SnapshotManagerFactory.create(tablePath, engine, Optional.empty());
-    Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
-    StructType writeSchema = new StructType().add("id", DataTypes.IntegerType);
-
-    return new SparkParquetBatchWrite(
-        tablePath,
-        hadoopConf,
-        initialSnapshot,
-        writeSchema,
-        "query-hardening",
-        new HashMap<>(),
-        Arrays.asList("id"));
   }
 }

@@ -171,7 +171,9 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   @Test
   public void testBatchWriteCreatesSerializableDataWriterFactory(@TempDir File tempDir)
       throws Exception {
-    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_factory_creation");
+    SparkParquetBatchWrite batchWrite =
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_factory_creation", "query-roundtrip");
     DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
     DataWriter<?> dataWriter = factory.createWriter(1, 101L);
 
@@ -184,7 +186,8 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   @Test
   public void testDataWriterCommitMessageContainsRowCount(@TempDir File tempDir) throws Exception {
     SparkParquetBatchWrite batchWrite =
-        createBatchWrite(tempDir, "test_data_writer_commit_message");
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_data_writer_commit_message", "query-roundtrip");
     DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
     @SuppressWarnings("unchecked")
     DataWriter<org.apache.spark.sql.catalyst.InternalRow> dataWriter =
@@ -226,7 +229,9 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   @Test
   public void testTxnStateWrapperRoundTripsViaSerialization(@TempDir File tempDir)
       throws Exception {
-    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_txn_state_roundtrip");
+    SparkParquetBatchWrite batchWrite =
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_txn_state_roundtrip", "query-roundtrip");
     SerializableKernelRowWrapper roundTripped =
         roundTrip(batchWrite.getSerializableTxnState(), SerializableKernelRowWrapper.class);
 
@@ -309,7 +314,9 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   @Test
   public void testBatchWriteCommitRejectsUnexpectedMessageTypes(@TempDir File tempDir)
       throws Exception {
-    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_commit_message_decode");
+    SparkParquetBatchWrite batchWrite =
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_commit_message_decode", "query-roundtrip");
     WriterCommitMessage[] invalidMessages =
         new WriterCommitMessage[] {
           new WriterCommitMessage() {
@@ -327,7 +334,8 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   public void testBatchWriteCommitRejectsUnexpectedMessageTypesInMixedArray(@TempDir File tempDir)
       throws Exception {
     SparkParquetBatchWrite batchWrite =
-        createBatchWrite(tempDir, "test_commit_message_decode_mixed_array");
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_commit_message_decode_mixed_array", "query-roundtrip");
     WriterCommitMessage[] invalidMessages =
         new WriterCommitMessage[] {
           new SparkParquetWriterCommitMessage(0, 1L, 1L, batchWrite.getTargetDirectory()),
@@ -346,7 +354,8 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   public void testBatchWriteCommitRejectsDuplicateWriterAttemptMessages(@TempDir File tempDir)
       throws Exception {
     SparkParquetBatchWrite batchWrite =
-        createBatchWrite(tempDir, "test_commit_duplicate_writer_attempt");
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_commit_duplicate_writer_attempt", "query-roundtrip");
     WriterCommitMessage[] duplicateMessages =
         new WriterCommitMessage[] {
           new SparkParquetWriterCommitMessage(0, 10L, 1L, batchWrite.getTargetDirectory()),
@@ -363,7 +372,9 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   @Test
   public void testBatchWriteCommitAllowsEmptyAndZeroRowMessages(@TempDir File tempDir)
       throws Exception {
-    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_commit_zero_rows");
+    SparkParquetBatchWrite batchWrite =
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_commit_zero_rows", "query-roundtrip");
 
     batchWrite.commit(new WriterCommitMessage[] {});
     batchWrite.commit(
@@ -376,7 +387,8 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
   public void testBatchWriteCommitSignalsFollowUpForNonEmptyMessages(@TempDir File tempDir)
       throws Exception {
     SparkParquetBatchWrite batchWrite =
-        createBatchWrite(tempDir, "test_commit_non_zero_rows_followup");
+        SparkParquetWriteTestUtils.createBatchWrite(
+            spark, tempDir, "test_commit_non_zero_rows_followup", "query-roundtrip");
     WriterCommitMessage[] messages =
         new WriterCommitMessage[] {
           new SparkParquetWriterCommitMessage(0, 1L, 1L, batchWrite.getTargetDirectory())
@@ -387,28 +399,6 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertEquals(
         "Driver append-action generation and transaction commit are implemented in follow-up changes",
         ex.getMessage());
-  }
-
-  private SparkParquetBatchWrite createBatchWrite(File tempDir, String tableName) throws Exception {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(
-        String.format("CREATE TABLE %s (id INT) USING delta LOCATION '%s'", tableName, tablePath));
-
-    Configuration hadoopConf = spark.sessionState().newHadoopConf();
-    Engine engine = DefaultEngine.create(hadoopConf);
-    DeltaSnapshotManager snapshotManager =
-        SnapshotManagerFactory.create(tablePath, engine, Optional.empty());
-    Snapshot initialSnapshot = snapshotManager.loadLatestSnapshot();
-    StructType writeSchema = new StructType().add("id", DataTypes.IntegerType);
-
-    return new SparkParquetBatchWrite(
-        tablePath,
-        hadoopConf,
-        initialSnapshot,
-        writeSchema,
-        "query-roundtrip",
-        new HashMap<>(),
-        Arrays.asList("id"));
   }
 
   private static <T extends Serializable> T roundTrip(T value, Class<T> expectedType)
