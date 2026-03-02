@@ -460,6 +460,22 @@ case class CreateDeltaTableCommand(
         throw DeltaErrors.operationNotSupportedException(
           "Replacing a catalog-managed table with a different schema")
       }
+      val oldConfig = txn.snapshot.metadata.configuration
+      val newProps = tableWithLocation.properties
+      // Compare user-specified properties, ignoring system/delta keys
+      val systemPrefixes = Seq(
+        "delta.", "io.unitycatalog.", "is_managed_location",
+        "ucTableId")
+      val userNewProps = newProps.filterKeys(k =>
+        !systemPrefixes.exists(k.startsWith))
+      val changedProps = userNewProps.filter { case (k, v) =>
+        oldConfig.get(k).exists(_ != v)
+      }
+      if (changedProps.nonEmpty) {
+        throw DeltaErrors.operationNotSupportedException(
+          "Replacing a catalog-managed table with different " +
+          s"properties (changed: ${changedProps.keys.mkString(", ")})")
+      }
     }
 
     // We are defining a table using the Create or Replace Table statements.
