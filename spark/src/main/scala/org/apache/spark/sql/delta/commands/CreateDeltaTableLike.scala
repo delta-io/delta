@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta.commands
 
+import io.unitycatalog.client.ApiException
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -85,7 +87,12 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     Iterator.iterate(Option(t))(_.flatMap(e => Option(e.getCause)))
       .takeWhile(_.nonEmpty)
       .map(_.get)
-      .exists(_.isInstanceOf[TableAlreadyExistsException])
+      .exists {
+        case _: TableAlreadyExistsException => true
+        case e: ApiException =>
+          Option(e.getResponseBody).exists(_.contains("\"error_code\":\"TABLE_ALREADY_EXISTS\""))
+        case _ => false
+      }
   }
 
   /**
