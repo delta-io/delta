@@ -355,23 +355,23 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     ensurePlanned(null);
   }
 
-  StructType getDataSchema() {
+  public StructType getDataSchema() {
     return dataSchema;
   }
 
-  StructType getPartitionSchema() {
+  public StructType getPartitionSchema() {
     return partitionSchema;
   }
 
-  StructType getReadDataSchema() {
+  public StructType getReadDataSchema() {
     return readDataSchema;
   }
 
-  CaseInsensitiveStringMap getOptions() {
+  public CaseInsensitiveStringMap getOptions() {
     return options;
   }
 
-  Configuration getConfiguration() {
+  public Configuration getConfiguration() {
     return hadoopConf;
   }
 

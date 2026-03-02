@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -93,6 +94,108 @@ public class SparkScanTest extends DeltaV2TestBase {
   // a full set of cities in the golden table, repsents all partitions
   protected static final List<String> allCities =
       Arrays.asList("city=hz", "city=sh", "city=bj", "city=sz");
+
+  // ===============================================================================================
+  // Tests for getDataSchema, getPartitionSchema, getReadDataSchema, getOptions, getConfiguration
+  // ===============================================================================================
+
+  @Test
+  public void testGetDataSchemaPartitionSchemaReadDataSchemaOptionsConfiguration() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Table schema: (part INT, date STRING, city STRING, name STRING, cnt INT)
+    // Partition columns: (date STRING, city STRING, part INT)
+    // Data columns: (name STRING, cnt INT)
+    StructType dataSchema = scan.getDataSchema();
+    StructType partitionSchema = scan.getPartitionSchema();
+    StructType readDataSchema = scan.getReadDataSchema();
+    CaseInsensitiveStringMap scanOptions = scan.getOptions();
+    Configuration configuration = scan.getConfiguration();
+
+    assertEquals(2, dataSchema.fields().length, "dataSchema should have 2 fields (name, cnt)");
+    assertNotNull(dataSchema.fieldNames());
+    assertTrue(
+        Arrays.asList(dataSchema.fieldNames()).containsAll(Arrays.asList("name", "cnt")),
+        "dataSchema should contain name and cnt");
+
+    assertEquals(
+        3,
+        partitionSchema.fields().length,
+        "partitionSchema should have 3 fields (date, city, part)");
+    assertTrue(
+        Arrays.asList(partitionSchema.fieldNames())
+            .containsAll(Arrays.asList("date", "city", "part")),
+        "partitionSchema should contain date, city, part");
+
+    assertEquals(
+        dataSchema,
+        readDataSchema,
+        "readDataSchema should equal dataSchema without column pruning");
+
+    assertNotNull(scanOptions, "options should not be null");
+    assertEquals(options, scanOptions, "options should match the scan options");
+
+    assertNotNull(configuration, "configuration should not be null");
+    // Verify configuration matches expected: built from same options via Spark session
+    Configuration expectedConf =
+        spark.sessionState().newHadoopConfWithOptions(ScalaUtils.toScalaMap(options));
+    assertEquals(
+        expectedConf.get("fs.defaultFS"),
+        configuration.get("fs.defaultFS"),
+        "fs.defaultFS should match expected");
+    assertEquals(
+        expectedConf.get("fs.default.name"),
+        configuration.get("fs.default.name"),
+        "fs.default.name should match expected");
+  }
+
+  @Test
+  public void testGetConfigurationWithHadoopOptions() {
+    // Pass Hadoop options and verify they appear in the returned Configuration
+    Map<String, String> optionsWithHadoop = new HashMap<>();
+    optionsWithHadoop.put("fs.file.impl.disable.cache", "true");
+    optionsWithHadoop.put("dfs.replication", "2");
+    CaseInsensitiveStringMap optionsWithHadoopMap = new CaseInsensitiveStringMap(optionsWithHadoop);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(optionsWithHadoopMap);
+    SparkScan scan = (SparkScan) builder.build();
+    Configuration configuration = scan.getConfiguration();
+
+    assertEquals(
+        "true",
+        configuration.get("fs.file.impl.disable.cache"),
+        "Hadoop option fs.file.impl.disable.cache should flow through to Configuration");
+    assertEquals(
+        "2",
+        configuration.get("dfs.replication"),
+        "Hadoop option dfs.replication should flow through to Configuration");
+  }
+
+  @Test
+  public void testGetReadDataSchemaWithColumnPruning() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("date", DataTypes.StringType)
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    StructType dataSchema = scan.getDataSchema();
+    StructType readDataSchema = scan.getReadDataSchema();
+
+    assertEquals(2, dataSchema.fields().length, "dataSchema should still have 2 fields");
+    assertEquals(
+        1,
+        readDataSchema.fields().length,
+        "readDataSchema should have 1 field (name) after pruning cnt");
+    assertEquals("name", readDataSchema.fields()[0].name());
+  }
 
   @Test
   public void testDPP_singleFilter() throws Exception {
@@ -281,9 +384,9 @@ public class SparkScanTest extends DeltaV2TestBase {
     return (long) field.get(scan);
   }
 
-  // ================================================================================================
+  // ===============================================================================================
   // Tests for streaming options validation
-  // ================================================================================================
+  // ===============================================================================================
 
   @Test
   public void testValidateStreamingOptions_SupportedOptions() {
@@ -330,9 +433,9 @@ public class SparkScanTest extends DeltaV2TestBase {
         exception.getMessage());
   }
 
-  // ================================================================================================
+  // ===============================================================================================
   // Tests for equals and hashCode
-  // ================================================================================================
+  // ===============================================================================================
 
   @Test
   public void testEqualsAndHashCode() {
@@ -405,9 +508,9 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
   }
 
-  // ================================================================================================
+  // ===============================================================================================
   // Tests for estimated size with column projection
-  // ================================================================================================
+  // ===============================================================================================
 
   @Test
   public void testEstimatedSizeMatchesStatistics() throws Exception {
@@ -542,9 +645,9 @@ public class SparkScanTest extends DeltaV2TestBase {
         "Statistics sizeInBytes should be 0 after filtering out all files");
   }
 
-  // ================================================================================================
+  // ===============================================================================================
   // Tests for equals and hashCode with runtime filters
-  // ================================================================================================
+  // ===============================================================================================
 
   @Test
   public void testEqualsAndHashCodeWithSameRuntimeFilter() {
