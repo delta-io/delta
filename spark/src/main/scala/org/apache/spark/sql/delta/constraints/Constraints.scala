@@ -36,6 +36,7 @@ import org.apache.spark.sql.catalyst.expressions.{Alias, Expression, GetArrayIte
 import org.apache.spark.sql.catalyst.expressions.aggregate.AggregateExpression
 import org.apache.spark.sql.catalyst.plans.logical.{LocalRelation, Project}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.types.{BooleanType, StructType}
 
 /**
@@ -195,7 +196,9 @@ object Constraints extends DeltaLogging {
     // Use LocalRelation with the table schema to ensure column references can be validated
     val analyzed = try {
       val analyzer = spark.sessionState.analyzer
-      val relation = LocalRelation(DataTypeUtils.toAttributes(schema))
+      val relation = LocalRelation(
+        DataTypeUtils.toAttributes(CharVarcharUtils.replaceCharVarcharWithStringInSchema(schema))
+      )
       val plan = analyzer.execute(Project(selectExprs, relation))
       analyzer.checkAnalysis(plan)
       plan
