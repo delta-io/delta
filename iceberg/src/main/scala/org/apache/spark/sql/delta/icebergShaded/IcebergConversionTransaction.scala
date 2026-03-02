@@ -38,6 +38,7 @@ import shadedForDelta.org.apache.iceberg.MetadataUpdate
 import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
+import shadedForDelta.org.apache.iceberg.unityCatalog.{UnityCatalog, UnityCatalogTableOperations}
 import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
@@ -53,6 +54,11 @@ sealed trait IcebergConversionMode  {
 }
 // Used by Post-commit Delta UniForm (Iceberg conversion in Delta post commit hook)
 case object UNIFORM_POST_COMMIT_MODE extends IcebergConversionMode {
+}
+// Used by atomic Delta UniForm
+case object UNIFORM_CC_MODE extends IcebergConversionMode {
+  override def shouldUpdateCatalogOnIcebergCommit: Boolean = false
+  override def shouldPreserveDeltaProperties: Boolean = true
 }
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Iceberg table located
@@ -73,6 +79,7 @@ class IcebergConversionTransaction(
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
     protected val lastConvertedIcebergSnapshotId: Option[Long] = None,
     protected val lastConvertedDeltaVersion: Option[Long] = None,
+    protected val lastConvertedIcebergMetadataPath: Option[String] = None,
     protected val metadataUpdates: java.util.ArrayList[MetadataUpdate] =
       new java.util.ArrayList[MetadataUpdate]()
     ) extends DeltaLogging {
@@ -459,27 +466,54 @@ class IcebergConversionTransaction(
   ///////////////////////
   // Protected Methods //
   ///////////////////////
-
   protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
       IcebergTransaction = {
-    val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf, metadataUpdates)
-    val icebergTableId = IcebergTransactionUtils
-      .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
+    val (commitToUC, baseMetadataPath) =
+      (tableOpOpt.getOrElse(tableOp), lastConvertedIcebergMetadataPath) match {
+        case (CREATE_TABLE, None) => (false, None)
+        case (CREATE_TABLE, Some(_)) =>
+          throw new IllegalStateException(
+            "Unexpected base metadata path for CREATE_TABLE operation")
+        case (op, None) =>
+          throw new IllegalStateException(s"Missing base metadata path for $op operation")
+        case (_, Some(path)) => (false, Some(path))
+      }
 
-    val tableExists = hiveCatalog.tableExists(icebergTableId)
+    val ucTable = new UnityCatalog(
+      SparkSession.active.sessionState.catalog,
+      metadataUpdates,
+      baseMetadataPath.toJava,
+      commitToUC,
+      true /* shouldPreserveDeltaProperties */
+    )
+    ucTable.initialize(null, new java.util.HashMap[String, String]())
+    ucTable.setConf(conf)
+
+    val icebergIdentifier =
+      IcebergTransactionUtils.convertSparkTableIdentifierToIceberg(catalogTable.identifier)
+
+    val tableExists = ucTable.tableExists(icebergIdentifier)
 
     def tableBuilder = {
-      hiveCatalog
-        .buildTable(icebergTableId, icebergSchema)
+      val tableLocation = catalogTable match {
+        case table if ManagedIcebergTableUtils.isDBIManagedIcebergTable(table) =>
+          ManagedIcebergTableUtils.
+            buildIcebergTableRootLocation(postCommitSnapshot.deltaLog.dataPath).toString
+        case _ =>
+          postCommitSnapshot.deltaLog.dataPath.toString
+      }
+      ucTable
+        .buildTable(icebergIdentifier, icebergSchema)
         .withPartitionSpec(partitionSpec)
         .withProperties(convert.properties.asJava)
+        .withLocation(tableLocation)
     }
 
-    tableOpOpt.getOrElse(tableOp) match {
+    val txn = tableOpOpt.getOrElse(tableOp) match {
       case WRITE_TABLE =>
         if (tableExists) {
           recordFrameProfile("IcebergConversionTransaction", "loadTable") {
-            hiveCatalog.loadTable(icebergTableId).newTransaction()
+            ucTable.loadTable(icebergIdentifier).newTransaction()
           }
         } else {
           throw new IllegalStateException(s"Cannot write to table $tablePath. Table doesn't exist.")
@@ -501,6 +535,19 @@ class IcebergConversionTransaction(
           throw new IllegalStateException(s"Cannot replace table $tablePath. Table doesn't exist.")
         }
     }
+
+    // Iceberg CREATE_TABLE reassigns the field id in schema, which
+    // is not consistent with Delta in edge cases (For nested schemas)
+    // As data files written in the txn will rely on it, we need to
+    // overwrite the schema and partitionSpec in the txn to keep
+    // it consistent with Delta again
+    /* todo
+    if (tableOpOpt.getOrElse(tableOp) == CREATE_TABLE) {
+      IcebergTransactionUtils.setIcebergTxnSchema(txn, icebergSchema)
+      IcebergTransactionUtils.setIcebergTxnPartitionSpec(txn, partitionSpec)
+    }
+     */
+    txn
   }
 
   ////////////////////
