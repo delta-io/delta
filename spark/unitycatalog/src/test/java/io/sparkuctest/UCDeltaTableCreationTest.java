@@ -789,6 +789,37 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
+  @Test
+  public void testRTASFailurePreservesOriginalData() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = "test_rtas_failure";
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      // 1. Create initial managed table with original data
+      sql(
+          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'original' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      check(fullTableName, List.of(List.of("1", "original")));
+
+      // 2. Attempt RTAS with a query that fails (division by zero)
+      assertThatThrownBy(
+          () ->
+              sql(
+                  "REPLACE TABLE %s USING DELTA %s AS SELECT 1/0 AS id, 'bad' AS val",
+                  fullTableName, MANAGED_TBLPROPERTIES_CLAUSE));
+
+      // 3. Verify original data is still intact
+      check(fullTableName, List.of(List.of("1", "original")));
+
+      // 4. Verify table is still writable
+      sql("INSERT INTO %s VALUES (2, 'still works')", fullTableName);
+      check(fullTableName, List.of(List.of("1", "original"), List.of("2", "still works")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
   private static String parseTableName(String fullTableName) {
     String[] splits = fullTableName.split("\\.");
     assertThat(splits.length).isEqualTo(3);
