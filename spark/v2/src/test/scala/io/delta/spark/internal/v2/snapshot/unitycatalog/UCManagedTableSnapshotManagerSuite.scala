@@ -305,6 +305,28 @@ class UCManagedTableSnapshotManagerSuite
     }
   }
 
+  test("buildCreateTableTransaction: merges user properties with UC config") {
+    withTempDir { tempDir =>
+      val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getCanonicalPath)
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val manager = createManager(ucClient, tablePath)
+
+      val userProps = new java.util.HashMap[String, String]()
+      userProps.put("delta.appendOnly", "true")
+
+      val txn = manager.buildCreateTableTransaction(
+        testSchema, userProps, Optional.empty(), "UCManagedSM-test-v2.0")
+
+      val state = txn.getTransactionState(defaultEngine)
+      val expectedConfig = Map(
+        "io.unitycatalog.tableId" -> testUcTableId,
+        "delta.enableInCommitTimestamps" -> "true",
+        "delta.appendOnly" -> "true").asJava
+
+      assert(TransactionStateRow.getConfiguration(state) == expectedConfig)
+    }
+  }
+
   // ==================== Exception Propagation ====================
 
   test("operations propagate InvalidTargetTableException from client") {
