@@ -129,8 +129,9 @@ class IcebergConverter
                     try {
                       logInfo(log"Converting Delta table [path=" +
                         log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
-                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}, version=" +
-                        log"${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] into Iceberg")
+                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.unsafeVolatileTableId)}, " +
+                        log"version=${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] " +
+                        log"into Iceberg")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
@@ -227,7 +228,7 @@ class IcebergConverter
       txn.catalogTable match {
         case Some(table) => convertSnapshotWithRetry(snapshotToConvert, Some(txn), table)
         case _ =>
-          val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
+          val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.unsafeVolatileTableId} " +
             s"is empty in txn. Skip iceberg conversion."
           throw DeltaErrors.universalFormatConversionFailedException(
             snapshotToConvert.version, "iceberg", msg)
@@ -514,7 +515,7 @@ class IcebergConverter
       if (needsExpireSnapshot) {
         logInfo(log"Committing iceberg snapshot expiration for uniform table " +
           log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
-          log"${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}]")
+          log"${MDC(DeltaLogKeys.TABLE_ID, log.unsafeVolatileTableId)}]")
         expireIcebergSnapshot(snapshotToConvert, icebergTxn)
       }
 

@@ -95,8 +95,9 @@ case class PersistedMetadata(
     protocolJson.map(Action.fromJson).map(_.asInstanceOf[Protocol])
 
   def validateAgainstSnapshot(snapshot: SnapshotDescriptor): Unit = {
-    if (snapshot.deltaLog.tableId != tableId) {
-      throw DeltaErrors.incompatibleSchemaLogDeltaTable(tableId, snapshot.deltaLog.tableId)
+    if (snapshot.deltaLog.unsafeVolatileTableId != tableId) {
+      throw DeltaErrors.incompatibleSchemaLogDeltaTable(
+        tableId, snapshot.deltaLog.unsafeVolatileTableId)
     }
   }
 
@@ -256,7 +257,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
     val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
     val metadataTrackingLocation = fullMetadataTrackingLocation(
-      rootMetadataLocation, sourceSnapshot.deltaLog.tableId, sourceTrackingId)
+      rootMetadataLocation, sourceSnapshot.deltaLog.unsafeVolatileTableId, sourceTrackingId)
     val log = new DeltaSourceMetadataTrackingLog(
       sparkSession,
       metadataTrackingLocation,
