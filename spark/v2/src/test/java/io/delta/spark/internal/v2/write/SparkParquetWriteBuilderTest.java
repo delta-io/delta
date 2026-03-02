@@ -127,7 +127,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertThrows(
         UnsupportedOperationException.class,
         () -> batchWrite.createBatchWriterFactory(null).createWriter(0, 0L).write(null));
-    assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(null));
+    assertThrows(NullPointerException.class, () -> batchWrite.commit(null));
   }
 
   @Test
@@ -244,6 +244,51 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
                     Arrays.asList("id")));
     assertEquals(
         "Write schema does not match table schema after nullability normalization",
+        ex.getMessage());
+  }
+
+  @Test
+  public void testBatchWriteCommitRejectsUnexpectedMessageTypes(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_commit_message_decode");
+    WriterCommitMessage[] invalidMessages =
+        new WriterCommitMessage[] {
+          new WriterCommitMessage() {
+            private static final long serialVersionUID = 1L;
+          }
+        };
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> batchWrite.commit(invalidMessages));
+    assertTrue(ex.getMessage().contains("Unexpected commit message type"));
+  }
+
+  @Test
+  public void testBatchWriteCommitAllowsEmptyAndZeroRowMessages(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_commit_zero_rows");
+
+    batchWrite.commit(new WriterCommitMessage[] {});
+    batchWrite.commit(
+        new WriterCommitMessage[] {
+          new SparkParquetWriterCommitMessage(0, 1L, 0L, batchWrite.getTargetDirectory())
+        });
+  }
+
+  @Test
+  public void testBatchWriteCommitSignalsFollowUpForNonEmptyMessages(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite =
+        createBatchWrite(tempDir, "test_commit_non_zero_rows_followup");
+    WriterCommitMessage[] messages =
+        new WriterCommitMessage[] {
+          new SparkParquetWriterCommitMessage(0, 1L, 1L, batchWrite.getTargetDirectory())
+        };
+
+    UnsupportedOperationException ex =
+        assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(messages));
+    assertEquals(
+        "Driver append-action generation and transaction commit are implemented in follow-up changes",
         ex.getMessage());
   }
 
