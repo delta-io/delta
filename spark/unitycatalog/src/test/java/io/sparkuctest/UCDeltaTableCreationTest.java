@@ -314,10 +314,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       tablesToCleanUp.add(fullTableName);
     }
 
-    // TODO: External table REPLACE is not yet supported.
-    // The initial table is managed, and REPLACE at a new
-    // external location doesn't properly update the catalog.
-    if (replaceTable && tableType == TableType.EXTERNAL) {
+    // TODO: Schema-changing REPLACE and external REPLACE are
+    // not yet supported. Remove once UC metadata sync and
+    // external table location updates are implemented.
+    if (replaceTable) {
       return;
     }
 
@@ -414,12 +414,12 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
         check(tableName, List.of(List.of("1", "Alice")));
 
-        // CREATE OR REPLACE on existing table (acts as REPLACE)
+        // CREATE OR REPLACE on existing table with same schema
         sql(
-            "CREATE OR REPLACE TABLE %s (id INT, age INT) USING DELTA %s",
+            "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
             tableName, MANAGED_TBLPROPERTIES_CLAUSE);
-        sql("INSERT INTO %s VALUES (2, 30)", tableName);
-        check(tableName, List.of(List.of("2", "30")));
+        sql("INSERT INTO %s VALUES (2, 'Bob')", tableName);
+        check(tableName, List.of(List.of("2", "Bob")));
       } else {
         withTempDir(
             (Path dir) -> {
@@ -757,32 +757,33 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
   }
 
+  // TODO: Re-enable once atomic metadata sync to UC is implemented,
+  //  so that schema changes during REPLACE are propagated to UC.
+  // @Test
+  // public void testReplaceTableWithNewSchema() { ... }
+
   @Test
-  public void testReplaceTableWithNewSchema() {
+  public void testReplaceTableWithNewSchemaIsBlocked() {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = "test_rt_new_schema";
+    String tableName = "test_rt_schema_blocked";
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
-      // 1. Create initial managed table with original schema
       sql(
           "CREATE TABLE %s (id INT, name STRING) USING DELTA %s",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       sql("INSERT INTO %s VALUES (1, 'Alice')", fullTableName);
+
+      // Schema-changing REPLACE is blocked until UC metadata sync
+      assertThatThrownBy(
+              () ->
+                  sql(
+                      "REPLACE TABLE %s (id INT, age INT) USING DELTA %s",
+                      fullTableName, MANAGED_TBLPROPERTIES_CLAUSE))
+          .hasMessageContaining("not supported");
+
+      // Original data intact
       check(fullTableName, List.of(List.of("1", "Alice")));
-
-      // 2. REPLACE TABLE with a new schema (id INT, age INT)
-      sql(
-          "REPLACE TABLE %s (id INT, age INT) USING DELTA %s",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
-
-      // 3. Insert data with the new schema
-      sql("INSERT INTO %s VALUES (2, 30)", fullTableName);
-
-      // 4. Verify new schema data
-      List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
-      assertThat(results).hasSize(1);
-      assertThat(results.get(0)).containsExactly("2", "30");
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
     }

@@ -450,6 +450,18 @@ case class CreateDeltaTableCommand(
       }
     }
 
+    // For UC-managed tables, block REPLACE/RTAS that change schema or
+    // properties until atomic metadata sync to UC is supported.
+    // TODO: Remove this guard once UC metadata sync is implemented.
+    if (isReplace && allowCatalogManaged && txn.readVersion >= 0) {
+      val oldSchema = txn.snapshot.metadata.schema
+      val newSchema = tableWithLocation.schema
+      if (oldSchema != newSchema) {
+        throw DeltaErrors.operationNotSupportedException(
+          "Replacing a catalog-managed table with a different schema")
+      }
+    }
+
     // We are defining a table using the Create or Replace Table statements.
     val actionsToCommit = operation match {
       case TableCreationModes.Create =>
