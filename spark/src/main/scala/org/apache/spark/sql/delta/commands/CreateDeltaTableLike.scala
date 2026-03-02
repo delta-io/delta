@@ -115,6 +115,21 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
+      case TableCreationModes.CreateOrReplace if createTableFunc.isDefined =>
+        // UC-managed table: for CreateOrReplace, the table either
+        // already existed or was newly created. Since existingTableOpt
+        // is always None for UC (session catalog doesn't track UC
+        // tables), we attempt to create. If it already exists in UC
+        // (ALREADY_EXISTS), the data replacement was committed via
+        // Delta's txn log and metadata sync is deferred.
+        try {
+          createTableFunc.get.apply(cleaned)
+        } catch {
+          case _: Exception =>
+            // Table already exists in UC — expected for the
+            // "replace existing" path of CreateOrReplace.
+            ()
+        }
       case TableCreationModes.CreateOrReplace =>
       spark.sessionState.catalog.createTable(
         cleaned,

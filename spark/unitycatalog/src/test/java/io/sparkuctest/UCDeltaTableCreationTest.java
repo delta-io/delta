@@ -401,40 +401,39 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @TestAllTableTypes
   public void testCreateOrReplaceTable(TableType tableType) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
-    withTempDir(
-        (Path dir) -> {
-          try {
-            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
-            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
-            // CREATE OR REPLACE with new schema
-            if (tableType == TableType.MANAGED) {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
-                          tableName, MANAGED_TBLPROPERTIES_CLAUSE));
-            } else {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-                          tableName, dir.toString()));
-            }
+    String tableName =
+        String.format(
+            "%s.%s.create_or_replace_%s",
+            uc.catalogName(), uc.schemaName(), tableType.name().toLowerCase());
+    try {
+      if (tableType == TableType.MANAGED) {
+        // CREATE OR REPLACE on non-existent table (acts as CREATE)
+        sql(
+            "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
+            tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+        sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+        check(tableName, List.of(List.of("1", "Alice")));
 
-            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
-
-            // Assert the unity catalog table information.
-            // assertUCTableInfo(
-            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
-
-            // Insert data to verify new schema
-            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            // check(tableName, List.of(List.of("1", "Alice")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", tableName);
-          }
-        });
+        // CREATE OR REPLACE on existing table (acts as REPLACE)
+        sql(
+            "CREATE OR REPLACE TABLE %s (id INT, age INT) USING DELTA %s",
+            tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+        sql("INSERT INTO %s VALUES (2, 30)", tableName);
+        check(tableName, List.of(List.of("2", "30")));
+      } else {
+        withTempDir(
+            (Path dir) -> {
+              // External CREATE OR REPLACE (CREATE path only)
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
+                  tableName, dir.toString());
+              sql("INSERT INTO %s VALUES (1)", tableName);
+              check(tableName, List.of(List.of("1")));
+            });
+      }
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
   }
 
   @TestAllTableTypes
@@ -815,6 +814,37 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       // 4. Verify table is still writable
       sql("INSERT INTO %s VALUES (2, 'still works')", fullTableName);
       check(fullTableName, List.of(List.of("1", "original"), List.of("2", "still works")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testCreateOrReplaceAtomicity() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = "test_cor_atomicity";
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      // 1. CREATE OR REPLACE on non-existent table (acts as CREATE)
+      sql(
+          "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      check(fullTableName, List.of(List.of("1", "first")));
+
+      // 2. CREATE OR REPLACE on existing table (acts as REPLACE)
+      sql(
+          "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'second' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+
+      // 3. Verify old data is gone, new data is present
+      List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
+      assertThat(results).hasSize(1);
+      assertThat(results.get(0)).containsExactly("2", "second");
+
+      // 4. Verify table is still writable
+      sql("INSERT INTO %s VALUES (3, 'third')", fullTableName);
+      check(fullTableName, List.of(List.of("2", "second"), List.of("3", "third")));
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
     }

@@ -456,8 +456,11 @@ case class CreateDeltaTableCommand(
         require(!tableExistsInCatalog, "Can't recreate a table when it exists")
         createActionsForNewTableOrVerify()
 
-      case TableCreationModes.CreateOrReplace if !tableExistsInCatalog =>
-        // If the table doesn't exist, CREATE OR REPLACE must provide a schema
+      case TableCreationModes.CreateOrReplace
+        if !tableExistsInCatalog && txn.readVersion == -1 =>
+        // Table doesn't exist in catalog AND no Delta log at location.
+        // If the table doesn't exist, CREATE OR REPLACE must provide
+        // a schema.
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
         }
