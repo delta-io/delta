@@ -281,6 +281,31 @@ public interface Transaction {
   }
 
   /**
+   * For scan file rows produced by {@link Scan#getScanFiles}, generate RemoveFile actions that can
+   * be committed in a transaction. This is used for Copy-on-Write DML operations where affected
+   * files need to be removed and replaced with new files.
+   *
+   * @param engine {@link Engine} instance.
+   * @param transactionState State of the transaction.
+   * @param scanFileRows Iterator of scan file rows (as returned by {@link Scan#getScanFiles}). Each
+   *     row contains an AddFile entry that will be converted to a RemoveFile action.
+   * @return {@link CloseableIterator} of {@link Row} representing RemoveFile actions to commit
+   *     using {@link Transaction#commit}.
+   */
+  static CloseableIterator<Row> generateRemoveActions(
+      Engine engine, Row transactionState, CloseableIterator<Row> scanFileRows) {
+    return scanFileRows.map(
+        scanFileRow -> {
+          Row addFileRow =
+              scanFileRow.getStruct(
+                  io.delta.kernel.internal.InternalScanFileUtils.ADD_FILE_ORDINAL);
+          AddFile addFile = new AddFile(addFileRow);
+          Row removeFileRow = addFile.toRemoveFileRow(true /* dataChange */, Optional.empty());
+          return SingleAction.createRemoveFileSingleAction(removeFileRow);
+        });
+  }
+
+  /**
    * For given data files, generate Delta actions that can be committed in a transaction. These data
    * files are the result of writing the data returned by {@link Transaction#transformLogicalData}
    * with the context returned by {@link Transaction#getWriteContext}.

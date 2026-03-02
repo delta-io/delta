@@ -88,7 +88,27 @@ public class DeltaKernelDataWriter implements DataWriter<InternalRow> {
 
   @Override
   public void write(InternalRow record) {
-    rowBuffer.add(record.copy());
+    rowBuffer.add(projectDataColumns(record).copy());
+  }
+
+  /**
+   * Projects the InternalRow to only include data columns matching the table schema. In COW
+   * operations, Spark may prepend metadata columns (e.g. file_path) to the row, causing a mismatch
+   * between record.numFields() and tableSchema.length(). This method strips the leading metadata
+   * columns by computing an offset.
+   */
+  private InternalRow projectDataColumns(InternalRow record) {
+    int numDataCols = tableSchema.length();
+    if (record.numFields() == numDataCols) {
+      return record;
+    }
+    int offset = record.numFields() - numDataCols;
+    org.apache.spark.sql.catalyst.expressions.GenericInternalRow projected =
+        new org.apache.spark.sql.catalyst.expressions.GenericInternalRow(numDataCols);
+    for (int i = 0; i < numDataCols; i++) {
+      projected.update(i, record.get(i + offset, tableSchema.apply(i).dataType()));
+    }
+    return projected;
   }
 
   @Override
