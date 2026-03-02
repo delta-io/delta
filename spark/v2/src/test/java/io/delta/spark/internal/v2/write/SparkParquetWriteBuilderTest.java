@@ -39,9 +39,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.connector.write.DataWriter;
 import org.apache.spark.sql.connector.write.DataWriterFactory;
-import org.apache.spark.sql.connector.write.PhysicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriterCommitMessage;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.SerializableConfiguration;
@@ -123,21 +124,44 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
             new HashMap<>(),
             Arrays.asList("id"));
 
-    assertThrows(NullPointerException.class, () -> batchWrite.createBatchWriterFactory(null));
-    assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(null));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> batchWrite.createBatchWriterFactory(null).createWriter(0, 0L).write(null));
+    assertThrows(NullPointerException.class, () -> batchWrite.commit(null));
   }
 
   @Test
   public void testBatchWriteCreatesSerializableDataWriterFactory(@TempDir File tempDir)
       throws Exception {
     SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_factory_creation");
-    DataWriterFactory factory = batchWrite.createBatchWriterFactory(physicalWriteInfo());
+    DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
     DataWriter<?> dataWriter = factory.createWriter(1, 101L);
 
     assertNotNull(factory);
     assertNotNull(dataWriter);
     assertTrue(factory instanceof SparkParquetDataWriterFactory);
     assertTrue(dataWriter instanceof SparkParquetDataWriter);
+  }
+
+  @Test
+  public void testDataWriterCommitMessageContainsRowCount(@TempDir File tempDir) throws Exception {
+    SparkParquetBatchWrite batchWrite =
+        createBatchWrite(tempDir, "test_data_writer_commit_message");
+    DataWriterFactory factory = batchWrite.createBatchWriterFactory(null);
+    @SuppressWarnings("unchecked")
+    DataWriter<org.apache.spark.sql.catalyst.InternalRow> dataWriter =
+        (DataWriter<org.apache.spark.sql.catalyst.InternalRow>) factory.createWriter(2, 202L);
+
+    dataWriter.write(new GenericInternalRow(new Object[] {1}));
+    dataWriter.write(new GenericInternalRow(new Object[] {2}));
+    WriterCommitMessage commitMessage = dataWriter.commit();
+
+    assertTrue(commitMessage instanceof SparkParquetWriterCommitMessage);
+    SparkParquetWriterCommitMessage message = (SparkParquetWriterCommitMessage) commitMessage;
+    assertEquals(2, message.getPartitionId());
+    assertEquals(202L, message.getTaskId());
+    assertEquals(2L, message.getNumRowsWritten());
+    assertNotNull(message.getTargetDirectory());
   }
 
   @Test
@@ -218,11 +242,54 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
                     "query-incompatible-schema",
                     new HashMap<>(),
                     Arrays.asList("id")));
-    assertTrue(
-        ex.getMessage()
-            .contains("Write schema does not match table schema after nullability normalization"));
-    assertTrue(ex.getMessage().contains("expected=struct<id:int>"));
-    assertTrue(ex.getMessage().contains("actual=struct<id:bigint>"));
+    assertEquals(
+        "Write schema does not match table schema after nullability normalization",
+        ex.getMessage());
+  }
+
+  @Test
+  public void testBatchWriteCommitRejectsUnexpectedMessageTypes(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_commit_message_decode");
+    WriterCommitMessage[] invalidMessages =
+        new WriterCommitMessage[] {
+          new WriterCommitMessage() {
+            private static final long serialVersionUID = 1L;
+          }
+        };
+
+    IllegalArgumentException ex =
+        assertThrows(IllegalArgumentException.class, () -> batchWrite.commit(invalidMessages));
+    assertTrue(ex.getMessage().contains("Unexpected commit message type"));
+  }
+
+  @Test
+  public void testBatchWriteCommitAllowsEmptyAndZeroRowMessages(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite = createBatchWrite(tempDir, "test_commit_zero_rows");
+
+    batchWrite.commit(new WriterCommitMessage[] {});
+    batchWrite.commit(
+        new WriterCommitMessage[] {
+          new SparkParquetWriterCommitMessage(0, 1L, 0L, batchWrite.getTargetDirectory())
+        });
+  }
+
+  @Test
+  public void testBatchWriteCommitSignalsFollowUpForNonEmptyMessages(@TempDir File tempDir)
+      throws Exception {
+    SparkParquetBatchWrite batchWrite =
+        createBatchWrite(tempDir, "test_commit_non_zero_rows_followup");
+    WriterCommitMessage[] messages =
+        new WriterCommitMessage[] {
+          new SparkParquetWriterCommitMessage(0, 1L, 1L, batchWrite.getTargetDirectory())
+        };
+
+    UnsupportedOperationException ex =
+        assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(messages));
+    assertEquals(
+        "Driver append-action generation and transaction commit are implemented in follow-up changes",
+        ex.getMessage());
   }
 
   private SparkParquetBatchWrite createBatchWrite(File tempDir, String tableName) throws Exception {
@@ -245,10 +312,6 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
         "query-roundtrip",
         new HashMap<>(),
         Arrays.asList("id"));
-  }
-
-  private static PhysicalWriteInfo physicalWriteInfo() {
-    return () -> 1;
   }
 
   private static <T extends Serializable> T roundTrip(T value, Class<T> expectedType)

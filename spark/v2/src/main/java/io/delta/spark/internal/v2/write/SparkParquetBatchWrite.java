@@ -117,7 +117,14 @@ public class SparkParquetBatchWrite implements BatchWrite {
 
   @Override
   public void commit(WriterCommitMessage[] messages) {
-    throw new UnsupportedOperationException("Batch commit is implemented in follow-up changes");
+    List<SparkParquetWriterCommitMessage> decodedMessages =
+        SparkParquetCommitMessageUtils.decodeMessages(messages);
+    long totalRowsWritten = SparkParquetCommitMessageUtils.totalRows(decodedMessages);
+    if (totalRowsWritten == 0L) {
+      return;
+    }
+    throw new UnsupportedOperationException(
+        "Driver append-action generation and transaction commit are implemented in follow-up changes");
   }
 
   @Override
