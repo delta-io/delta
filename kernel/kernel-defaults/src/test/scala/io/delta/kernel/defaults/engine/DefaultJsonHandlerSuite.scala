@@ -15,7 +15,9 @@
  */
 package io.delta.kernel.defaults.engine
 
+import java.io.UncheckedIOException
 import java.math.{BigDecimal => JBigDecimal}
+import java.nio.channels.ClosedByInterruptException
 import java.nio.file.FileAlreadyExistsException
 import java.util.Optional
 
@@ -24,9 +26,12 @@ import scala.collection.JavaConverters._
 import io.delta.kernel.data.ColumnVector
 import io.delta.kernel.defaults.engine.hadoopio.HadoopFileIO
 import io.delta.kernel.defaults.utils.{DefaultVectorTestUtils, TestRow, TestUtils}
+import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.internal.actions.CommitInfo
 import io.delta.kernel.internal.util.InternalUtils.singletonStringColumnVector
+import io.delta.kernel.internal.util.Utils.singletonCloseableIterator
 import io.delta.kernel.types._
+import io.delta.kernel.utils.FileStatus
 
 import org.apache.hadoop.conf.Configuration
 import org.scalatest.funsuite.AnyFunSuite
@@ -553,5 +558,23 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     assert(commitInfo.getIsBlindAppend === Optional.empty())
     assert(commitInfo.getInCommitTimestamp === Optional.empty())
     assert(commitInfo.getTimestamp === 1740009523401L)
+  }
+
+  test("ClosedByInterruptException propagates as UncheckedIOException, not KernelEngineException") {
+    val handler = new DefaultJsonHandler(throwingFileIO(new ClosedByInterruptException()))
+    val fileIter = singletonCloseableIterator(
+      FileStatus.of("file:///fake/_delta_log/00000000000000000000.json", 100, 0))
+    val iter = handler.readJsonFiles(
+      fileIter,
+      new StructType().add("value", StringType.STRING),
+      Optional.empty())
+
+    val ex = intercept[UncheckedIOException] {
+      iter.hasNext()
+    }
+    assert(
+      ex.getCause.isInstanceOf[ClosedByInterruptException],
+      s"Expected ClosedByInterruptException cause, got: ${ex.getCause.getClass}")
+    assert(!ex.isInstanceOf[KernelEngineException])
   }
 }
