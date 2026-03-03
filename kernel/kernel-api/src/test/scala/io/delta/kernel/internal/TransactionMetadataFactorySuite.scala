@@ -21,6 +21,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.test.MockSnapshotUtils
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
 
@@ -287,6 +288,45 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
 
     assert(output.physicalNewClusteringColumns.isPresent &&
       output.physicalNewClusteringColumns.get.size == 1)
+  }
+
+  // =====================================================================
+  // catalogManaged feature dependency tests
+  // =====================================================================
+
+  /**
+   * Regression test: When creating a table with the `catalogManaged` feature enabled, Kernel must
+   * include `vacuumProtocolCheck` in the protocol's reader/writer features. Spark's
+   * `CatalogOwnedTableFeature.requiredFeatures` includes `VacuumProtocolCheckTableFeature`, so
+   * without it the table is unreadable by Spark with:
+   *   DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH: the following table features are enabled in
+   *   metadata but not listed in protocol: vacuumProtocolCheck.
+   */
+  test("buildCreateTableMetadata - catalogManaged feature must include vacuumProtocolCheck") {
+    val tableProperties = Map(
+      TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported").asJava
+
+    val output = TransactionMetadataFactory.buildCreateTableMetadata(
+      testTablePath,
+      testSchema,
+      tableProperties,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+
+    assert(output.newProtocol.isPresent, "New protocol should be present for create table")
+    val protocol = output.newProtocol.get()
+
+    assert(
+      protocol.supportsFeature(TableFeatures.CATALOG_MANAGED_RW_FEATURE),
+      "Protocol must support catalogManaged")
+    assert(
+      protocol.supportsFeature(TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE),
+      "Protocol must support vacuumProtocolCheck when catalogManaged is enabled, " +
+        "otherwise Spark throws DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH")
+    assert(
+      protocol.supportsFeature(TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE),
+      "Protocol must support inCommitTimestamp when catalogManaged is enabled")
   }
 
   test("buildUpdateTableMetadata - overlapping set and unset properties should fail") {

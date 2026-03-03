@@ -27,7 +27,7 @@ import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtil
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TransactionImpl}
 import io.delta.kernel.internal.TableConfig.UniversalFormats
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
@@ -190,6 +190,34 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
       spark.sql("ALTER TABLE delta.`" + tablePath +
         "` SET TBLPROPERTIES ('delta.feature.timestampNtz' = 'supported')")
       spark.sql("ALTER TABLE delta.`" + tablePath + "` ADD COLUMN newCol TIMESTAMP_NTZ")
+    }
+  }
+
+  /**
+   * Regression test: A table created with `catalogManaged` enabled via the Kernel
+   * `CreateTableTransactionBuilder` must include `vacuumProtocolCheck` in its protocol
+   * reader/writer features. Without it, Spark throws:
+   *   DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH: the following table features are enabled in
+   *   metadata but not listed in protocol: vacuumProtocolCheck.
+   *
+   * Root cause: Spark's `CatalogOwnedTableFeature.requiredFeatures` includes
+   * `VacuumProtocolCheckTableFeature`, so Spark's dependency closure over the protocol features
+   * expects `vacuumProtocolCheck` to be present whenever `catalogManaged` is present.
+   */
+  test("catalogManaged table transaction must include vacuumProtocolCheck in protocol") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val txn = getCreateTxn(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties =
+          Map(TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported"))
+      val protocol = txn.asInstanceOf[TransactionImpl].getProtocol()
+
+      assert(
+        protocol.supportsFeature(TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE),
+        "Protocol must include vacuumProtocolCheck when catalogManaged is enabled, " +
+          "otherwise Spark throws DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH")
     }
   }
 
