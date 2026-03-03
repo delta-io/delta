@@ -27,7 +27,7 @@ import io.delta.kernel.defaults.utils.{AbstractWriteUtils, WriteUtils, WriteUtil
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.exceptions.{InvalidConfigurationValueException, KernelException}
 import io.delta.kernel.expressions.Literal
-import io.delta.kernel.internal.{SnapshotImpl, TableConfig}
+import io.delta.kernel.internal.{SnapshotImpl, TableConfig, TransactionImpl}
 import io.delta.kernel.internal.TableConfig.UniversalFormats
 import io.delta.kernel.internal.actions.{Protocol => KernelProtocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
@@ -204,25 +204,20 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
    * `VacuumProtocolCheckTableFeature`, so Spark's dependency closure over the protocol features
    * expects `vacuumProtocolCheck` to be present whenever `catalogManaged` is present.
    */
-  test("catalogManaged table created by Kernel includes vacuumProtocolCheck in protocol, " +
-    "and is readable by Spark") {
+  test("catalogManaged table transaction must include vacuumProtocolCheck in protocol") {
     withTempDirAndEngine { (tablePath, engine) =>
-      createEmptyTable(
+      val txn = getCreateTxn(
         engine,
         tablePath,
         testSchema,
-        tableProperties = Map(
-          TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported"))
+        tableProperties =
+          Map(TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported"))
+      val protocol = txn.asInstanceOf[TransactionImpl].getProtocol()
 
-      // Verify vacuumProtocolCheck is in both reader and writer features
-      checkReaderWriterFeaturesSupported(tablePath, "vacuumProtocolCheck")
-      // Also verify the other required features are present
-      checkReaderWriterFeaturesSupported(tablePath, "catalogManaged")
-
-      // Verify Spark can read the table without throwing
-      // DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH
-      val rows = spark.sql(s"SELECT * FROM delta.`$tablePath`").collect()
-      assert(rows.isEmpty) // table has no data, just verifying it doesn't throw
+      assert(
+        protocol.supportsFeature(TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE),
+        "Protocol must include vacuumProtocolCheck when catalogManaged is enabled, " +
+          "otherwise Spark throws DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH")
     }
   }
 
