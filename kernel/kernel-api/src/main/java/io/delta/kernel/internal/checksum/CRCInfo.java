@@ -65,6 +65,7 @@ public class CRCInfo {
           .add(DOMAIN_METADATA, new ArrayType(DomainMetadata.FULL_SCHEMA, false), /*nullable*/ true)
           .add(FILE_SIZE_HISTOGRAM, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
 
+  // Used by ChecksumReader to support reading CRC files with the legacy "histogramOpt" field.
   public static final StructType CRC_FILE_READ_SCHEMA =
       CRC_FILE_SCHEMA.add(HISTOGRAM_OPT, FileSizeHistogram.FULL_SCHEMA, /*nullable*/ true);
 
