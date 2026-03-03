@@ -20,6 +20,6 @@
             git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
             cd /tmp/unitycatalog
             git checkout atomic-rtas
-            COURSIER_PARALLEL_DOWNLOAD_COUNT=1 ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" clean package publishM2
+            ./build/sbt clean package publishM2
         - name: generate unidoc
           run: build/sbt "++ ${{ matrix.scala }}" unidoc
