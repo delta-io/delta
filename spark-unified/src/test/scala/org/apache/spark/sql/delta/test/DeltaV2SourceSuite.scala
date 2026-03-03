@@ -59,6 +59,9 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
 
+    // === Read options ===
+    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+
     // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",
@@ -106,7 +109,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === read options ===
     "skip change commits",
-    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
     "startingTimestamp",
 
     // === Data Loss Detection ===
