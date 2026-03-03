@@ -192,11 +192,11 @@ class SimpleMockServer(port: Int) {
       lastRequestBody = new String(body)
       lastHeaders = headers.toMap
 
-      out.println(s"HTTP/1.1 $responseCode ${statusMessage(responseCode)}")
-      out.println("Content-Type: application/json")
-      out.println("Content-Length: 2")
-      out.println()
-      out.println("{}")
+      out.write(s"HTTP/1.1 $responseCode ${statusMessage(responseCode)}\r\n")
+      out.write("Content-Type: application/json\r\n")
+      out.write("Content-Length: 2\r\n")
+      out.write("\r\n")
+      out.write("{}")
       out.flush()
 
       clientSocket.close()
