@@ -926,9 +926,19 @@ public class SparkMicroBatchStream
   }
 
   // TODO(#5319): schema tracking for non-additive schema changes
+  // Non-additive schema changes include rename column, drop column and change column type
   private void checkNonAdditiveSchemaChanges(
       Metadata oldMetadata, Metadata newMetadata, Boolean validatedDuringStreamStart) {
     if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
+      return;
+    }
+
+    // We will need to compare the new schema's physical columns to the current schema's physical
+    // columns. So, they both must have column mapping enabled.
+    if (ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration())
+            == ColumnMapping.ColumnMappingMode.NONE
+        || ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration())
+            == ColumnMapping.ColumnMappingMode.NONE) {
       return;
     }
 

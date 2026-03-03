@@ -2173,34 +2173,72 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
 
-      Exception dsv2Exception =
-          assertThrows(
-              Exception.class,
-              () -> {
-                CloseableIterator<IndexedFile> kernelChanges =
-                    stream.getFileChanges(
-                        fromVersion,
-                        fromIndex,
-                        isInitialSnapshot,
-                        ScalaUtils.toJavaOptional(endOffset));
-                try {
-                  // Consume the iterator to trigger validation (if not already triggered)
-                  while (kernelChanges.hasNext()) {
-                    kernelChanges.next();
-                  }
-                  kernelChanges.close();
-                } finally {
-                  // Make sure to close the iterator even if exception occurs
-                  if (kernelChanges != null) {
-                    try {
-                      kernelChanges.close();
-                    } catch (Exception ignored) {
+      // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2 and
+      // consolidate exception type
+      if (testDescription.contains("Drop")) {
+        // drop column would skip the check of
+        // DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking,
+        // so we add additional guard to throw
+        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges on its case.
+        // All other non-additional schema change should throw
+        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges after
+        // schema tracking log is enable
+        DeltaUnsupportedOperationException dsv2Exception =
+            assertThrows(
+                DeltaUnsupportedOperationException.class,
+                () -> {
+                  CloseableIterator<IndexedFile> kernelChanges =
+                      stream.getFileChanges(
+                          fromVersion,
+                          fromIndex,
+                          isInitialSnapshot,
+                          ScalaUtils.toJavaOptional(endOffset));
+                  try {
+                    // Consume the iterator to trigger validation (if not already triggered)
+                    while (kernelChanges.hasNext()) {
+                      kernelChanges.next();
+                    }
+                    kernelChanges.close();
+                  } finally {
+                    // Make sure to close the iterator even if exception occurs
+                    if (kernelChanges != null) {
+                      try {
+                        kernelChanges.close();
+                      } catch (Exception ignored) {
+                      }
                     }
                   }
-                }
-              },
-              String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2
+                },
+                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+      } else {
+        DeltaIllegalStateException dsv2Exception =
+            assertThrows(
+                DeltaIllegalStateException.class,
+                () -> {
+                  CloseableIterator<IndexedFile> kernelChanges =
+                      stream.getFileChanges(
+                          fromVersion,
+                          fromIndex,
+                          isInitialSnapshot,
+                          ScalaUtils.toJavaOptional(endOffset));
+                  try {
+                    // Consume the iterator to trigger validation (if not already triggered)
+                    while (kernelChanges.hasNext()) {
+                      kernelChanges.next();
+                    }
+                    kernelChanges.close();
+                  } finally {
+                    // Make sure to close the iterator even if exception occurs
+                    if (kernelChanges != null) {
+                      try {
+                        kernelChanges.close();
+                      } catch (Exception ignored) {
+                      }
+                    }
+                  }
+                },
+                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+      }
     } finally {
       // recover spark config to original state
       sparkConf.forEach((key, value) -> spark.conf().unset(key));
@@ -2271,34 +2309,72 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
 
-      DeltaIllegalStateException dsv2Exception =
-          assertThrows(
-              DeltaIllegalStateException.class,
-              () -> {
-                CloseableIterator<IndexedFile> kernelChanges =
-                    stream.getFileChanges(
-                        fromVersion,
-                        fromIndex,
-                        isInitialSnapshot,
-                        ScalaUtils.toJavaOptional(endOffset));
-                try {
-                  // Consume the iterator to trigger validation (if not already triggered)
-                  while (kernelChanges.hasNext()) {
-                    kernelChanges.next();
-                  }
-                  kernelChanges.close();
-                } finally {
-                  // Make sure to close the iterator even if exception occurs
-                  if (kernelChanges != null) {
-                    try {
-                      kernelChanges.close();
-                    } catch (Exception ignored) {
+      // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2 and
+      // consolidate exception type
+      if (testDescription.contains("Drop")) {
+        // drop column would skip the check of
+        // DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking,
+        // so we add additional guard to throw
+        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges on its case.
+        // All other non-additional schema change should throw
+        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges after
+        // schema tracking log is enable
+        DeltaUnsupportedOperationException dsv2Exception =
+            assertThrows(
+                DeltaUnsupportedOperationException.class,
+                () -> {
+                  CloseableIterator<IndexedFile> kernelChanges =
+                      stream.getFileChanges(
+                          fromVersion,
+                          fromIndex,
+                          isInitialSnapshot,
+                          ScalaUtils.toJavaOptional(endOffset));
+                  try {
+                    // Consume the iterator to trigger validation (if not already triggered)
+                    while (kernelChanges.hasNext()) {
+                      kernelChanges.next();
+                    }
+                    kernelChanges.close();
+                  } finally {
+                    // Make sure to close the iterator even if exception occurs
+                    if (kernelChanges != null) {
+                      try {
+                        kernelChanges.close();
+                      } catch (Exception ignored) {
+                      }
                     }
                   }
-                }
-              },
-              String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2
+                },
+                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+      } else {
+        DeltaIllegalStateException dsv2Exception =
+            assertThrows(
+                DeltaIllegalStateException.class,
+                () -> {
+                  CloseableIterator<IndexedFile> kernelChanges =
+                      stream.getFileChanges(
+                          fromVersion,
+                          fromIndex,
+                          isInitialSnapshot,
+                          ScalaUtils.toJavaOptional(endOffset));
+                  try {
+                    // Consume the iterator to trigger validation (if not already triggered)
+                    while (kernelChanges.hasNext()) {
+                      kernelChanges.next();
+                    }
+                    kernelChanges.close();
+                  } finally {
+                    // Make sure to close the iterator even if exception occurs
+                    if (kernelChanges != null) {
+                      try {
+                        kernelChanges.close();
+                      } catch (Exception ignored) {
+                      }
+                    }
+                  }
+                },
+                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+      }
     } finally {
       // recover spark config to original state
       sparkConf.forEach((key, value) -> spark.conf().unset(key));
