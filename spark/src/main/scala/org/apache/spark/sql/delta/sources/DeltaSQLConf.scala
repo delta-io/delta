@@ -20,6 +20,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -45,6 +46,28 @@ trait DeltaSQLConfUtils {
  * [[SQLConf]] entries for Delta features.
  */
 trait DeltaSQLConfBase extends DeltaSQLConfUtils {
+
+  object DeltaBreakingChangeEnum {
+    val OFF = "OFF"
+    val LOG_ONLY = "LOG_ONLY"
+    val ASSERT = "ASSERT"
+    val validValues: Set[String] = Set(OFF, LOG_ONLY, ASSERT)
+  }
+
+  abstract class DeltaBreakingChangeEnum(configEntry: ConfigEntry[String])
+    extends Enumeration {
+    val OFF = Value("OFF")
+    val LOG_ONLY = Value("LOG_ONLY")
+    val ASSERT = Value("ASSERT")
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(configEntry))
+
+    def default: Value =
+      withName(configEntry.defaultValueString)
+
+    def confName: String = configEntry.key
+  }
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -200,6 +223,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_EMPTY_FILE_CHECK_THROW_ENABLED =
+    buildConf("emptyFileCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions " +
+        "referencing parquet files with size 0 bytes. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
+    buildConf("nullPartitionCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions with " +
+        "null partition values for columns that have NOT NULL constraints. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
     buildConf("checkLatestSchemaOnRead")
       .doc("In Delta, we always try to give users the latest version of their data without " +
@@ -216,9 +257,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc(
         """
-          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
-          |The field is unstable, so including it can lead semantic violations for equals and
-          |hashCode.""".stripMargin)
+          |Include the deltaLog.unsafeVolatileTableId field in equals and hashCode for
+          |TahoeLogFileIndex. The field is unstable, so including it can lead semantic violations
+          |for equals and hashCode.""".stripMargin)
       .booleanConf
       // TODO: Phase this out towards `false` eventually remove the flag altogether again.
       .createWithDefault(true)
@@ -425,6 +466,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
+
+  val DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION =
+    buildConf("conflictChecker.enforceConcurrentFeatureEnablement.enabled")
+      .internal()
+      .doc("When enabled, the conflict checker will enforce that features that are marked " +
+        "as failing concurrent transactions at upgrade, will fail any conflicting commits with " +
+        "their enablement protocol changes.")
+      .booleanConf
+      .createWithDefault(false)
 
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
@@ -1276,6 +1326,34 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Whether the checksum file can be written.")
       .booleanConf
       .createWithDefault(true)
+
+  private val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
+  val FORCED_CHECKSUM_VALIDATION_INTERVAL =
+    buildConf("versionChecksum.forcedValidationInterval")
+      .internal()
+      .doc("The number of commits since the last checkpoint at which we " +
+        "should force validation of the version checksum. This is done before " +
+        "a commit to block further writes in case of checksum mismatch." +
+        "Set to -1 to disable, set to 0 to validate on every commit. " +
+        "The validation will be skipped if the checkpoint was created " +
+        "within the time gap specified by versionChecksum.forcedValidationMinTimeIntevalMinutes.")
+      .intConf
+      .createWithDefault(FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT)
+
+  val FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES =
+    buildConf("versionChecksum.forcedValidationMinTimeIntevalMinutes")
+      .internal()
+      .doc("The minimum time gap in minutes between the checkpoint creation time and " +
+        "current time for forced checksum validation. If the checkpoint was created " +
+        "within this time gap, forced validation is skipped even if the number of " +
+        "commits since the checkpoint exceeds the forcedValidationInterval threshold. " +
+        "For fast moving tables, the checkpoint can lag much behind " +
+        "versionChecksum.forcedValidationInterval. This helps us avoid slowing " +
+        "them down. Set to 0 to disable this optimization.")
+      .intConf
+      .checkValue(_ >= 0,
+        "'versionChecksum.forcedValidationMinTimeIntevalMinutes' must be non-negative.")
+      .createWithDefault(12*60) // 12 hours
 
   val INCREMENTAL_COMMIT_ENABLED =
     buildConf("incremental.commit.enabled")
@@ -2946,6 +3024,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         |""".stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  /////////////////////////////////////
+  // NORMALIZE PARTITION VALUES ON READ
+  ////////////////////////////////////
+
+  val DELTA_NORMALIZE_PARTITION_VALUES_ON_READ =
+    buildConf("normalizePartitionValuesOnRead")
+      .internal()
+      .doc(
+        "When true, we will normalize partition values on read by parsing them " +
+        "to their actual types for comparison instead of using raw strings. This helps prevent " +
+        "issues with inconsistently formatted partition values. " +
+        "UTC_TIMESTAMP_PARTITION_VALUES normalized timestamp partition values on write. However, " +
+        "data written before this flag existed may not be normalized and needs to be normalized " +
+        "on read."
+      )
+      .booleanConf
+      .createWithDefault(true)
 
   //////////////////
   // CORRECTNESS

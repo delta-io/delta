@@ -418,8 +418,7 @@ class DeltaSqlAstBuilder extends DeltaSqlBaseBaseVisitor[AnyRef] {
     }
 
     val targetIdentifier = visitTableIdentifier(ctx.table)
-    val tableNameParts = targetIdentifier.database.toSeq :+ targetIdentifier.table
-    val targetTable = UnresolvedTable(tableNameParts, "REORG")
+    val targetTable = UnresolvedTable(targetIdentifier.nameParts, "REORG")
 
     val reorgTableSpec = if (ctx.PURGE != null) {
       DeltaReorgTableSpec(DeltaReorgTableMode.PURGE, None)

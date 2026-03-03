@@ -19,11 +19,20 @@ package io.delta.spark.internal.v2;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
+import java.util.stream.LongStream;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.catalyst.expressions.Expression;
+import org.apache.spark.sql.catalyst.expressions.Literal$;
+import org.apache.spark.sql.delta.DeltaLog;
+import org.apache.spark.sql.delta.stats.StatisticsCollection;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
+import scala.Option;
+import scala.collection.JavaConverters;
 
 /** Tests for V2 streaming read operations. */
 public class V2StreamingReadTest extends V2TestBase {
@@ -95,6 +104,118 @@ public class V2StreamingReadTest extends V2TestBase {
     List<Row> actualRows = processStreamingQuery(streamingDF, "test_streaming_read");
     List<Row> expectedRows =
         Arrays.asList(RowFactory.create(1, "Alice", 100.0), RowFactory.create(2, "Bob", 200.0));
+
+    assertDataEquals(actualRows, expectedRows);
+  }
+
+  /**
+   * Tests that streaming read after stats recompute does not produce duplicate rows.
+   *
+   * <p>StatisticsCollection.recompute re-adds files with updated stats (dataChange=false), creating
+   * duplicate AddFile entries in the log. The initial snapshot scan must use the selection vector
+   * to filter out stale entries.
+   */
+  @Test
+  public void testStreamingReadAfterStatsRecompute(@TempDir File deltaTablePath) throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Write data with stats collection disabled - files will have no stats
+    withSQLConf(
+        "spark.databricks.delta.stats.collect",
+        "false",
+        () ->
+            spark
+                .range(10)
+                .selectExpr("id", "cast(id as string) as value")
+                .write()
+                .format("delta")
+                .save(tablePath));
+
+    // Recompute statistics - this re-adds files with updated stats (dataChange=false),
+    // creating duplicate AddFile entries in the log that must be filtered by selection vector
+    DeltaLog deltaLog = DeltaLog.forTable(spark, tablePath);
+    StatisticsCollection.recompute(
+        spark,
+        deltaLog,
+        Option.empty(),
+        JavaConverters.<Expression>asScalaBuffer(
+                new ArrayList<>(List.of((Expression) Literal$.MODULE$.apply(true))))
+            .toList(),
+        af -> (Object) Boolean.TRUE);
+
+    // Stream via V2 - should see each row exactly once, not duplicated
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+    List<Row> actualRows = processStreamingQuery(streamingDF, "test_stats_recompute");
+
+    List<Row> expectedRows =
+        LongStream.range(0, 10)
+            .mapToObj(i -> RowFactory.create(i, String.valueOf(i)))
+            .collect(Collectors.toList());
+
+    assertDataEquals(actualRows, expectedRows);
+  }
+
+  /**
+   * Tests that streaming read correctly handles multiple deletion vectors on the same file.
+   *
+   * <p>When multiple DELETE operations are applied to the same file, each creates/updates a
+   * deletion vector. The streaming initial snapshot should correctly apply the cumulative DV and
+   * only return non-deleted rows.
+   */
+  @Test
+  public void testStreamingReadWithMultipleDeletionVectors(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Create table with deletion vectors enabled
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (value INT) USING delta "
+                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
+            tablePath));
+
+    // Write 10 rows (0-9) in a single file
+    spark
+        .range(10)
+        .selectExpr("cast(id as int) as value")
+        .coalesce(1)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // Delete rows 0, 1, 2 - each creates/updates a DV on the same file
+    spark.sql(str("DELETE FROM delta.`%s` WHERE value = 0", tablePath));
+    spark.sql(str("DELETE FROM delta.`%s` WHERE value = 1", tablePath));
+    spark.sql(str("DELETE FROM delta.`%s` WHERE value = 2", tablePath));
+
+    // Verify DVs were created
+    DeltaLog deltaLog = DeltaLog.forTable(spark, tablePath);
+    long numDVs =
+        (long)
+            deltaLog
+                .update(false, Option.empty(), Option.empty())
+                .numDeletionVectorsOpt()
+                .getOrElse(() -> 0L);
+    assertTrue(numDVs > 0, "Expected deletion vectors to be created");
+
+    // Stream via V2 - should see rows 3-9 only (rows 0, 1, 2 deleted)
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+    List<Row> actualRows = processStreamingQuery(streamingDF, "test_multiple_dvs");
+
+    List<Row> expectedRows =
+        Arrays.asList(
+            RowFactory.create(3),
+            RowFactory.create(4),
+            RowFactory.create(5),
+            RowFactory.create(6),
+            RowFactory.create(7),
+            RowFactory.create(8),
+            RowFactory.create(9));
 
     assertDataEquals(actualRows, expectedRows);
   }

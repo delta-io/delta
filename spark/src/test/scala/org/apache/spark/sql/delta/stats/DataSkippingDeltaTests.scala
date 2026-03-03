@@ -889,6 +889,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   test("data skipping stats before and after optimize") {
+      assume(!catalogOwnedDefaultCreationEnabledInTests,
+        "OPTIMIZE is blocked on catalog-managed tables")
       val tempDir = Utils.createTempDir()
       var r = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
@@ -1976,8 +1978,13 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0},"tightBounds":true}""".stripMargin
+    } else {
       s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
         s""""nullCount":{"$colName":0}}""".stripMargin
+    }
   }
 
   test("data skipping get specific files with Stats API") {
@@ -2420,8 +2427,13 @@ trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
 
   override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
     val x = colName.phy(deltaLog)
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+        s""""nullCount":{"$x":0},"tightBounds":true}""".stripMargin
+    } else {
       s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
         s""""nullCount":{"$x":0}}""".stripMargin
+    }
   }
 }
 

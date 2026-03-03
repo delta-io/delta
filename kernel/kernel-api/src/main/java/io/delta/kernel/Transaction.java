@@ -35,14 +35,17 @@ import io.delta.kernel.exceptions.DomainDoesNotExistException;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DataWriteContextImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.columndefaults.ColumnDefaults;
 import io.delta.kernel.internal.data.TransactionStateRow;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
+import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.statistics.DataFileStatistics;
+import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.VariantType;
 import io.delta.kernel.utils.*;
@@ -185,6 +188,9 @@ public interface Transaction {
 
     boolean isIcebergCompatEnabled =
         isIcebergCompatV2Enabled(transactionState) || isIcebergCompatV3Enabled(transactionState);
+    Protocol protocol = getProtocol(transactionState);
+    boolean materializePartitionColumnsEnabled =
+        protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE);
     blockIfColumnMappingEnabled(transactionState);
     blockIfVariantDataTypeIsDefined(tableSchema);
     // We recognize the AllowColumnDefaults feature for Iceberg v3
@@ -195,21 +201,37 @@ public interface Transaction {
     String tablePath = getTablePath(transactionState);
     return dataIter.map(
         filteredBatch -> {
-          if (isIcebergCompatEnabled) {
-            // don't remove the partition columns for iceberg compat v2 enabled tables
-            return filteredBatch;
-          }
-
           ColumnarBatch data = filteredBatch.getData();
           if (!data.getSchema().isWriteCompatible(tableSchema)) {
             throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
           }
-          for (String partitionColName : partitionColNames) {
-            int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
-            if (partitionColIndex < 0) {
-              throw partitionColumnMissingInData(tablePath, partitionColName);
+
+          if (isIcebergCompatEnabled || materializePartitionColumnsEnabled) {
+            // Move partition columns to the end of the schema for iceberg compat enabled tables
+            // or when materialize partition columns feature is enabled.
+            for (String partitionColName : partitionColNames) {
+              int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
+              if (partitionColIndex < 0) {
+                throw partitionColumnMissingInData(tablePath, partitionColName);
+              }
+              StructField partitionColField = data.getSchema().at(partitionColIndex);
+              ColumnVector partitionColVector = data.getColumnVector(partitionColIndex);
+              data = data.withDeletedColumnAt(partitionColIndex);
+              // Add the partition column at the end
+              data =
+                  data.withNewColumn(
+                      data.getSchema().length(), partitionColField, partitionColVector);
             }
-            data = data.withDeletedColumnAt(partitionColIndex);
+          } else {
+            // Remove partition columns entirely for non-materialized partitions, and non-iceberg
+            // compat tables.
+            for (String partitionColName : partitionColNames) {
+              int partitionColIndex = findColIndex(data.getSchema(), partitionColName);
+              if (partitionColIndex < 0) {
+                throw partitionColumnMissingInData(tablePath, partitionColName);
+              }
+              data = data.withDeletedColumnAt(partitionColIndex);
+            }
           }
           return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector());
         });

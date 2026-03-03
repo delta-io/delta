@@ -509,6 +509,15 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature MATERIALIZE_PARTITION_COLUMNS_W_FEATURE =
+      new MaterializePartitionColumnsFeature();
+
+  private static class MaterializePartitionColumnsFeature extends TableFeature.WriterFeature {
+    MaterializePartitionColumnsFeature() {
+      super("materializePartitionColumns", /* minWriterVersion = */ 7);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -542,6 +551,7 @@ public class TableFeatures {
               IDENTITY_COLUMNS_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               INVARIANTS_W_FEATURE,
+              MATERIALIZE_PARTITION_COLUMNS_W_FEATURE,
               ROW_TRACKING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE,

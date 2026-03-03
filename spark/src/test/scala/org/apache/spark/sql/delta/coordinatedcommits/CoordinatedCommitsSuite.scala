@@ -25,10 +25,10 @@ import scala.collection.mutable.ArrayBuffer
 
 import com.databricks.spark.util.Log4jUsageLogger
 import com.databricks.spark.util.UsageRecord
-import org.apache.spark.sql.delta.{CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CommitCoordinatorGetCommitsFailedException, DeltaIllegalArgumentException}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CommitCoordinatorGetCommitsFailedException, CommitStats, CoordinatedCommitsStats, CoordinatedCommitsTableFeature, DeltaIllegalArgumentException, DeltaOperations, DeltaTestUtilsBase, DeltaUnsupportedOperationException, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.CoordinatedCommitType._
-import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.DeltaConfigs.{CHECKPOINT_INTERVAL, CHECKPOINT_POLICY, COORDINATED_COMMITS_COORDINATOR_CONF, COORDINATED_COMMITS_COORDINATOR_NAME, COORDINATED_COMMITS_TABLE_CONF, IN_COMMIT_TIMESTAMPS_ENABLED}
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.DummySnapshot
@@ -1276,57 +1276,60 @@ abstract class CommitCoordinatorSuiteBase
       val tablePath = tempDir.getAbsolutePath
       val log = DeltaLog.forTable(spark, tablePath)
 
-      // Version 0 -- backfilled by default
-      makeCommitAndAssertSnapshotState(
-        data = Seq(0),
-        expectedLastKnownBackfilledVersion = 0,
-        expectedNumUnbackfilledCommits = 0,
-        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
-        log, tablePath)
-      // Version 1 -- not backfilled immediately because of batchSize = 2
-      makeCommitAndAssertSnapshotState(
-        data = Seq(1),
-        expectedLastKnownBackfilledVersion = 0,
-        expectedNumUnbackfilledCommits = 1,
-        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
-        log, tablePath)
-      // Version 2 -- backfills versions 1 and 2
-      makeCommitAndAssertSnapshotState(
-        data = Seq(2),
-        expectedLastKnownBackfilledVersion = 2,
-        expectedNumUnbackfilledCommits = 2,
-        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
-        log, tablePath)
-      // Version 3 -- not backfilled immediately because of batchSize = 2
-      makeCommitAndAssertSnapshotState(
-        data = Seq(3),
-        expectedLastKnownBackfilledVersion = 2,
-        expectedNumUnbackfilledCommits = 3,
-        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
-        log, tablePath)
-      // Version 4 -- backfills versions 3 and 4
-      makeCommitAndAssertSnapshotState(
-        data = Seq(4),
-        expectedLastKnownBackfilledVersion = 4,
-        expectedNumUnbackfilledCommits = 4,
-        expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
-        log, tablePath)
-      // Trigger a checkpoint
-      log.checkpoint(log.update())
-      // Version 5 -- not backfilled immediately because of batchSize 2
-      makeCommitAndAssertSnapshotState(
-        data = Seq(5),
-        expectedLastKnownBackfilledVersion = 4,
-        expectedNumUnbackfilledCommits = 1,
-        expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
-        log, tablePath)
-      // Version 6 -- backfills versions 5 and 6
-      makeCommitAndAssertSnapshotState(
-        data = Seq(6),
-        expectedLastKnownBackfilledVersion = 6,
-        expectedNumUnbackfilledCommits = 2,
-        expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
-        log, tablePath)
+      withSQLConf(
+        CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.Classic.name) {
+        // Version 0 -- backfilled by default
+        makeCommitAndAssertSnapshotState(
+          data = Seq(0),
+          expectedLastKnownBackfilledVersion = 0,
+          expectedNumUnbackfilledCommits = 0,
+          expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+          log, tablePath)
+        // Version 1 -- not backfilled immediately because of batchSize = 2
+        makeCommitAndAssertSnapshotState(
+          data = Seq(1),
+          expectedLastKnownBackfilledVersion = 0,
+          expectedNumUnbackfilledCommits = 1,
+          expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+          log, tablePath)
+        // Version 2 -- backfills versions 1 and 2
+        makeCommitAndAssertSnapshotState(
+          data = Seq(2),
+          expectedLastKnownBackfilledVersion = 2,
+          expectedNumUnbackfilledCommits = 2,
+          expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+          log, tablePath)
+        // Version 3 -- not backfilled immediately because of batchSize = 2
+        makeCommitAndAssertSnapshotState(
+          data = Seq(3),
+          expectedLastKnownBackfilledVersion = 2,
+          expectedNumUnbackfilledCommits = 3,
+          expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+          log, tablePath)
+        // Version 4 -- backfills versions 3 and 4
+        makeCommitAndAssertSnapshotState(
+          data = Seq(4),
+          expectedLastKnownBackfilledVersion = 4,
+          expectedNumUnbackfilledCommits = 4,
+          expectedLastKnownBackfilledFile = FileNames.unsafeDeltaFile(log.logPath, 0),
+          log, tablePath)
+        // Trigger a checkpoint
+        log.checkpoint(log.update())
+        // Version 5 -- not backfilled immediately because of batchSize 2
+        makeCommitAndAssertSnapshotState(
+          data = Seq(5),
+          expectedLastKnownBackfilledVersion = 4,
+          expectedNumUnbackfilledCommits = 1,
+          expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
+          log, tablePath)
+        // Version 6 -- backfills versions 5 and 6
+        makeCommitAndAssertSnapshotState(
+          data = Seq(6),
+          expectedLastKnownBackfilledVersion = 6,
+          expectedNumUnbackfilledCommits = 2,
+          expectedLastKnownBackfilledFile = FileNames.checkpointFileSingular(log.logPath, 4),
+          log, tablePath)
+      }
     }
   }
 

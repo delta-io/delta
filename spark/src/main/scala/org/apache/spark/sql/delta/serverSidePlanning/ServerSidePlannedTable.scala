@@ -41,18 +41,6 @@ import org.apache.spark.sql.util.{CaseInsensitiveStringMap, SchemaUtils}
  */
 object ServerSidePlannedTable extends DeltaLogging {
   /**
-   * Property keys that indicate table credentials are available.
-   * Unity Catalog tables may expose temporary credentials via these properties.
-   */
-  private val CREDENTIAL_PROPERTY_KEYS = Seq(
-    "storage.credential",
-    "aws.temporary.credentials",
-    "azure.temporary.credentials",
-    "gcs.temporary.credentials",
-    "credential"
-  )
-
-  /**
    * Determine if server-side planning should be used based on catalog type,
    * credential availability, and configuration.
    *
@@ -161,15 +149,19 @@ object ServerSidePlannedTable extends DeltaLogging {
 
   /**
    * Check if a table has credentials available.
-   * Unity Catalog tables may lack credentials when accessed without proper permissions.
-   * UC injects credentials as table properties, see:
-   * https://github.com/unitycatalog/unitycatalog/blob/main/connectors/spark/src/main/scala/
-   *   io/unitycatalog/spark/UCSingleCatalog.scala#L260
+   * UC injects credentials as table properties with "option.fs.*" prefix for filesystem configs.
+   * See: CredPropsUtil in UCSingleCatalog.
    */
   private def hasCredentials(table: Table): Boolean = {
-    // Check table properties for credential information
     val properties = table.properties()
-    CREDENTIAL_PROPERTY_KEYS.exists(key => properties.containsKey(key))
+    val keys = properties.keySet()
+    val iter = keys.iterator()
+    while (iter.hasNext) {
+      if (iter.next().startsWith("option.fs.")) {
+        return true
+      }
+    }
+    false
   }
 }
 
@@ -410,23 +402,11 @@ class ServerSidePlannedFilePartitionReaderFactory(
   private val hadoopConf = {
     val conf = spark.sessionState.newHadoopConf()
 
-    // Inject temporary credentials from IRC server response
-    credentials.foreach { creds =>
-      creds match {
-        case S3Credentials(accessKeyId, secretAccessKey, sessionToken) =>
-          conf.set("fs.s3a.access.key", accessKeyId)
-          conf.set("fs.s3a.secret.key", secretAccessKey)
-          conf.set("fs.s3a.session.token", sessionToken)
-
-        case AzureCredentials(accountName, sasToken, containerName) =>
-          // Format: fs.azure.sas.<container>.<account>.dfs.core.windows.net
-          val sasKey = s"fs.azure.sas.$containerName.$accountName.dfs.core.windows.net"
-          conf.set(sasKey, sasToken)
-
-        case GcsCredentials(oauth2Token) =>
-          conf.set("fs.gs.auth.access.token", oauth2Token)
-      }
-    }
+    // Inject temporary credentials from IRC server response.
+    // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
+    // (avoids AccessDenied when temp creds expire and a cached FS is reused).
+    // Aligns with CredPropsUtil in the Unity Catalog connector.
+    credentials.foreach(_.configure(conf))
 
     new SerializableConfiguration(conf)
   }

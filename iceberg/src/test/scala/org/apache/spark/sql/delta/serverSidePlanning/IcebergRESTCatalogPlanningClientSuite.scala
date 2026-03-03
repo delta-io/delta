@@ -19,18 +19,13 @@ package org.apache.spark.sql.delta.serverSidePlanning
 import scala.jdk.CollectionConverters._
 
 import org.apache.hadoop.fs.Path
-import org.apache.http.HttpHeaders
-import org.apache.http.client.methods.HttpGet
-import org.apache.http.entity.ContentType
-import org.apache.http.impl.client.HttpClientBuilder
-import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.sources._
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructField, StructType}
 import shadedForDelta.org.apache.iceberg.{PartitionSpec, Schema, Table}
 import shadedForDelta.org.apache.iceberg.catalog._
-import shadedForDelta.org.apache.iceberg.expressions.Binder
+import shadedForDelta.org.apache.iceberg.expressions.{Binder, Expressions}
 import shadedForDelta.org.apache.iceberg.rest.IcebergRESTServer
 import shadedForDelta.org.apache.iceberg.types.Types
 
@@ -42,7 +37,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   private val defaultSchema = TestSchemas.testSchema
   private val defaultSpec = PartitionSpec.unpartitioned()
 
-  private lazy val server = startServer()
+  private lazy val server = IcebergRESTServerTestUtils.startServer()
   private lazy val catalog = server.getCatalog()
   private lazy val serverUri = s"http://localhost:${server.getPort}"
 
@@ -83,7 +78,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // Tests that the REST /plan endpoint returns 0 files for an empty table.
   test("basic plan table scan via IcebergRESTCatalogPlanningClient") {
     withTempTable("testTable") { table =>
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
         assert(scanPlan != null, "Scan plan should not be null")
@@ -111,7 +106,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         .map(row => (new Path(row.getString(0)).getName, row.getLong(1)))
         .toMap
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         val scanPlan = client.planScan(defaultNamespace.toString, "tableWithData")
         assert(scanPlan != null, "Scan plan should not be null")
@@ -143,49 +138,69 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // This will test the client's partition validation logic at
   // IcebergRESTCatalogPlanningClient:160-164
 
-  test("UnityCatalogMetadata uses prefix from /v1/config endpoint") {
-    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+  test("IcebergRESTCatalogPlanningClient uses prefix from /v1/config endpoint") {
+    server.clearCaptured()  // Clear any previous state
 
-    // Configure server to return prefix
-    server.setCatalogPrefix("catalogs/test-catalog")
+    server.setCatalogPrefix("catalogs/test-catalog-prefix")
 
-    val metadata = UnityCatalogMetadata(
-      catalogName = "test_catalog",
-      ucUri = serverUri,
-      ucToken = "test-token",
-      tableProps = Map.empty)
+    withTempTable("testTable") { table =>
+      // Client expects baseUri to include the /v1 path (per Iceberg REST spec)
+      val client = new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", "")
+      try {
+        // Make a call that will trigger the lazy initialization of icebergRestCatalogUriRoot
+        // which internally calls fetchCatalogPrefix()
+        val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
+        assert(scanPlan != null, "Scan plan should not be null")
 
-    // Verify endpoint includes prefix from /v1/config response
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest/v1/catalogs/test-catalog"
-    assert(
-      metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint to include prefix: ${metadata.planningEndpointUri}")
+        // Verify the server received a /plan request with the correct prefix
+        // This confirms that the config endpoint returned the correct prefix and that the client
+        // correctly constructed the full plan request path.
+        val capturedPath = server.getCapturedPlanRequestPath()
+        assert(capturedPath != null, "Server should have captured the request path")
+        assert(capturedPath.startsWith("v1/catalogs/test-catalog-prefix/"),
+          s"Expected path to start with 'v1/catalogs/test-catalog-prefix/' but got: $capturedPath")
+      } finally {
+        client.close()
+      }
+    }
   }
 
-  test("UnityCatalogMetadata falls back when /v1/config returns no prefix") {
-    import org.apache.spark.sql.delta.serverSidePlanning.UnityCatalogMetadata
+  test("IcebergRESTCatalogPlanningClient uses baseUri directly when /v1/config returns no prefix") {
+    server.clearCaptured()  // Clear any previous state
 
-    // Configure server to return no prefix (fallback case)
+    // Configure server to return no prefix
     server.setCatalogPrefix(null)
 
-    val metadata = UnityCatalogMetadata(
-      catalogName = "test_catalog",
-      ucUri = serverUri,
-      ucToken = "test-token",
-      tableProps = Map.empty)
+    withTempTable("testTable") { table =>
+      // Client expects baseUri to include the /v1 path (per Iceberg REST spec)
+      val client = new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", "")
+      try {
+        // Make a call that will trigger the lazy initialization
+        val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
+        assert(scanPlan != null, "Scan plan should not be null")
 
-    // Verify endpoint uses simple path without prefix
-    val expectedEndpoint = s"$serverUri/api/2.1/unity-catalog/iceberg-rest"
-    assert(
-      metadata.planningEndpointUri == expectedEndpoint,
-      s"Expected endpoint without prefix: ${metadata.planningEndpointUri}")
+        // Verify the server received a /plan request using baseUri directly (no prefix)
+        val capturedPath = server.getCapturedPlanRequestPath()
+        assert(capturedPath != null, "Server should have captured the request path")
+        // When no prefix is returned, use baseUri directly without adding prefix
+        assert(
+          !capturedPath.contains("catalogs/"),
+          s"Expected path to NOT contain 'catalogs/' when no prefix, but got: $capturedPath")
+        assert(
+          capturedPath.startsWith("v1/namespaces/"),
+          s"Expected path to start with 'v1/namespaces/' (using baseUri directly), but got: " +
+            s"$capturedPath")
+      } finally {
+        client.close()
+      }
+    }
   }
 
   test("filter sent to IRC server over HTTP") {
     withTempTable("filterTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.filterTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         val testCases = Seq(
           (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
@@ -295,7 +310,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           Set("`address.city`"))
       )
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         testCases.foreach { testCase =>
           // Clear previous captured projection
@@ -328,7 +343,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.limitTest"
       populateTestData(tableName)
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null, "")
       try {
         // Test different limit values
         val testCases = Seq(
@@ -363,7 +378,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.filterProjectionLimitTest"
       populateTestData(tableName)
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         // Note: Filter types are already tested in "filter sent to IRC server" test.
         // Here we verify filter, projection, AND limit are sent together correctly.
@@ -441,7 +456,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     withTempTable("caseSensitiveTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.caseSensitiveTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null, "")
       try {
         server.clearCaptured()
 
@@ -462,175 +477,54 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
-  // Test case class for parameterized credential tests
-  private case class CredentialTestCase(
-    description: String,
-    credentialConfig: Map[String, String],
-    expectedCredentials: ScanPlanStorageCredentials)
+  test("rejects FileScanTask with non-trivial residual") {
+    withTempTable("residualTest") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.residualTest")
 
-  test("ScanPlan with cloud provider credentials") {
-    withTempTable("credentialsTest") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.credentialsTest")
-
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
-        // Test cases for all three cloud providers
-        val testCases = Seq(
-          CredentialTestCase(
-            "S3",
-            Map(
-              "s3.access-key-id" -> "test-access-key",
-              "s3.secret-access-key" -> "test-secret-key",
-              "s3.session-token" -> "test-session-token"),
-            S3Credentials(
-              accessKeyId = "test-access-key",
-              secretAccessKey = "test-secret-key",
-              sessionToken = "test-session-token")),
-          CredentialTestCase(
-            "Azure",
-            Map(
-              "azure.account-name" -> "teststorageaccount",
-              "azure.sas-token" -> "sp=r&st=2024-01-01T00:00:00Z&se=2024-12-31T23:59:59Z&sig=test",
-              "azure.container-name" -> "testcontainer"),
-            AzureCredentials(
-              accountName = "teststorageaccount",
-              sasToken = "sp=r&st=2024-01-01T00:00:00Z&se=2024-12-31T23:59:59Z&sig=test",
-              containerName = "testcontainer")),
-          CredentialTestCase(
-            "GCS",
-            Map("gcs.oauth2.token" -> "test-oauth2-token"),
-            GcsCredentials(oauth2Token = "test-oauth2-token"))
-        )
+        // Verify that a trivial (alwaysTrue) residual is accepted
+        server.setTestResidual(Expressions.alwaysTrue())
+        val scanPlan = client.planScan(defaultNamespace.toString, "residualTest")
+        assert(scanPlan.files.nonEmpty,
+          "Scan with alwaysTrue residual should succeed and return files")
 
-        testCases.foreach { testCase =>
-          // Configure server to return test credentials
-          server.setTestCredentials(testCase.credentialConfig.asJava)
+        // Configure server to inject a non-trivial residual expression into the response.
+        // This simulates a server that expects the client to apply a residual filter,
+        // which is currently unsupported.
+        server.setTestResidual(Expressions.greaterThan("longCol", 42L))
 
-          // Call planScan
-          val scanPlan = client.planScan(defaultNamespace.toString, "credentialsTest")
-
-          // Verify credentials are present and match expected type
-          assert(scanPlan.credentials.isDefined,
-            s"[${testCase.description}] Credentials should be present in ScanPlan")
-
-          val actualCreds = scanPlan.credentials.get
-          assert(actualCreds == testCase.expectedCredentials,
-            s"[${testCase.description}] Expected credentials: ${testCase.expectedCredentials}, " +
-            s"got: $actualCreds")
-
-          // Clear for next test case
-          server.clearCaptured()
+        val exception = intercept[UnsupportedOperationException] {
+          client.planScan(defaultNamespace.toString, "residualTest")
         }
+
+        assert(exception.getMessage.contains("residual"),
+          s"Error message should mention 'residual'. Got: ${exception.getMessage}")
       } finally {
         client.close()
       }
     }
   }
 
-  test("ScanPlan with no credentials") {
-    withTempTable("noCredentialsTest") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.noCredentialsTest")
-
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
-      try {
-        // Don't configure any credentials (current default behavior)
-        val scanPlan = client.planScan(defaultNamespace.toString, "noCredentialsTest")
-
-        // Verify credentials are absent
-        assert(scanPlan.credentials.isEmpty,
-          "Credentials should be None when server doesn't return any")
-      } finally {
-        client.close()
-      }
-    }
-  }
-
-  test("incomplete credentials throw errors") {
-    withTempTable("incompleteCredsTest") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.incompleteCredsTest")
-
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null)
-      try {
-        // Test cases for incomplete credentials that should throw errors
-        val errorTestCases = Seq(
-          ("Incomplete S3 (missing secret and token)",
-            Map("s3.access-key-id" -> "test-key"),
-            "s3.secret-access-key"),
-          ("Incomplete Azure (missing SAS and container)",
-            Map("azure.account-name" -> "testaccount"),
-            "azure.sas-token")
-        )
-
-        errorTestCases.foreach { case (description, incompleteConfig, expectedMissingField) =>
-          // Configure server with incomplete credentials
-          server.setTestCredentials(incompleteConfig.asJava)
-
-          // Verify that planScan throws IllegalStateException
-          val exception = intercept[IllegalStateException] {
-            client.planScan(defaultNamespace.toString, "incompleteCredsTest")
-          }
-
-          // Verify error message mentions the missing field
-          assert(exception.getMessage.contains(expectedMissingField),
-            s"[$description] Error message should mention missing field '$expectedMissingField'. " +
-            s"Got: ${exception.getMessage}")
-
-          // Clear for next test case
-          server.clearCaptured()
-        }
-      } finally {
-        client.close()
-      }
-    }
-  }
-
-  private def startServer(): IcebergRESTServer = {
-    val config = Map(IcebergRESTServer.REST_PORT -> "0").asJava
-    val newServer = new IcebergRESTServer(config)
-    newServer.start(/* join = */ false)
-    if (!isServerReachable(newServer)) {
-      throw new IllegalStateException("Failed to start IcebergRESTServer")
-    }
-    newServer
-  }
-
-  private def isServerReachable(server: IcebergRESTServer): Boolean = {
-    val httpHeaders = Map(
-      HttpHeaders.ACCEPT -> ContentType.APPLICATION_JSON.getMimeType,
-      HttpHeaders.CONTENT_TYPE -> ContentType.APPLICATION_JSON.getMimeType
-    ).map { case (k, v) => new BasicHeader(k, v) }.toSeq.asJava
-
-    val httpClient = HttpClientBuilder.create()
-      .setDefaultHeaders(httpHeaders)
-      .build()
-
-    try {
-      val httpGet = new HttpGet(s"http://localhost:${server.getPort}/v1/config")
-      val httpResponse = httpClient.execute(httpGet)
-      try {
-        val statusCode = httpResponse.getStatusLine.getStatusCode
-        statusCode == 200
-      } finally {
-        httpResponse.close()
-      }
-    } finally {
-      httpClient.close()
-    }
-  }
-
+  /**
+   * Convenience wrapper for withTempTable that uses the test suite's default values.
+   */
   private def withTempTable[T](tableName: String)(func: Table => T): T = {
-    val tableId = TableIdentifier.of(defaultNamespace, tableName)
-    val table = catalog.createTable(tableId, defaultSchema, defaultSpec)
-    try {
-      func(table)
-    } finally {
-      catalog.dropTable(tableId, false)
-      server.clearCaptured()
-    }
+    IcebergRESTServerTestUtils.withTempTable(
+      catalog, defaultNamespace, tableName,
+      defaultSchema, defaultSpec, Some(server)
+    )(func)
+  }
+
+  /**
+   * Convenience wrapper for populateTestData that uses the test suite's SparkSession.
+   */
+  private def populateTestData(tableName: String): Unit = {
+    IcebergRESTServerTestUtils.populateTestData(spark, tableName)
   }
 
   test("User-Agent header format") {
-    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", null)
+    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", "test_catalog", "")
     try {
       val userAgent = client.getUserAgent()
 
@@ -667,41 +561,6 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     } finally {
       client.close()
     }
-  }
-
-  /**
-   * Populates a table with sample test data covering all schema types.
-   * Uses parallelize with 2 partitions to create 2 data files.
-   */
-  private def populateTestData(tableName: String): Unit = {
-    import org.apache.spark.sql.Row
-
-    val data = spark.sparkContext.parallelize(0 until 250, numSlices = 2)
-      .map(i => Row(
-        i, // intCol
-        i.toLong, // longCol
-        i * 10.0, // doubleCol
-        i.toFloat, // floatCol
-        s"test_$i", // stringCol
-        i % 2 == 0, // boolCol
-        BigDecimal(i).bigDecimal, // decimalCol
-        java.sql.Date.valueOf("2024-01-01"), // dateCol
-        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // timestampCol
-        java.sql.Date.valueOf("2024-01-01"), // localDateCol
-        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // localDateTimeCol
-        java.sql.Timestamp.valueOf("2024-01-01 00:00:00"), // instantCol
-        Row(i * 100), // address.intCol (nested struct)
-        Row(s"meta_$i"), // metadata.stringCol (nested struct)
-        Row(s"child_$i"), // parent.`child.name` (nested struct with dotted field name)
-        s"city_$i", // address.city (literal top-level dotted column)
-        s"abc_$i" // a.b.c (literal top-level dotted column)
-      ))
-
-    spark.createDataFrame(data, TestSchemas.sparkSchema)
-      .write
-      .format("iceberg")
-      .mode("append")
-      .save(tableName)
   }
 
 }

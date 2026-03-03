@@ -113,7 +113,25 @@ trait DescribeDeltaHistorySuiteBase
       val propertyDf = df.select(Seq($"operationParameters.properties"): _*)
       val actualPropertiesJson = propertyDf.take(1).head.getString(0)
       val actualProperties = JsonUtils.fromJson[Map[String, String]](actualPropertiesJson)
-      assert(actualProperties == expectedProperties)
+      if (catalogOwnedDefaultCreationEnabledInTests) {
+        // We need to filter out the following two properties b/c
+        // they are generated as part of [[RowTrackingFeature]] enablement,
+        // the values of which are non-deterministic so we only verify the
+        // existence.
+        assert(actualProperties.contains(MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP) &&
+          actualProperties.contains(MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP),
+          "RowTracking should be enabled as part of CatalogOwned QoL features, " +
+          s"expecting ${MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP} and " +
+          s"${MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP} to be present. " +
+          s"The `actualProperties`: $actualProperties")
+        val actualPropertiesForCO = actualProperties.filterNot { case (k, v) =>
+          k == MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP ||
+            k == MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP
+        }
+        assert(actualPropertiesForCO == expectedProperties)
+      } else {
+        assert(actualProperties == expectedProperties)
+      }
     }
     var df = io.delta.tables.DeltaTable.forPath(spark, basePath).history(1)
     checkFirstRowPropertyCol(df)
@@ -179,6 +197,12 @@ trait DescribeDeltaHistorySuiteBase
   protected def getProperties(
       extraProperty: Option[Map[String, String]] = None): Map[String, String] = {
     val catalogOwnedProperty = if (catalogOwnedDefaultCreationEnabledInTests) {
+      CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+        case (feature, config, value)
+        => config.key -> value
+      }.toMap ++
+      // DV is explicitly disabled here b/c the current suite is incompatible
+      // w/ DV, and we automatically enable it as part of CatalogOwned QoL features.
       Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
     } else {
       Map.empty[String, String]
@@ -1166,7 +1190,7 @@ trait DescribeDeltaHistorySuiteBase
 
   test("operation metrics - create table - without data") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
-      val tblName = "tbl"
+      val tblName = s"tbl_${System.currentTimeMillis()}" // unique name
       withTable(tblName) {
         sql(s"CREATE TABLE $tblName(id bigint) USING DELTA")
         val deltaTable = io.delta.tables.DeltaTable.forName(tblName)
@@ -1184,7 +1208,16 @@ trait DescribeDeltaHistorySuiteBase
               DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> enableCDF.toString,
               DeltaSQLConf.DELTA_COLLECT_STATS.key ->enableStats.toString,
               DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true") {
+            if (!enableStats) {
+              // Row IDs assignment needs row count statistics. So we need to disable RowTracking
+              // here for CCv1.5's QoL features if we are not enabling [[DELTA_COLLECT_STATS]].
+              spark.conf.set(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey, "false")
+            }
             f(enableCDF, enableStats)
+            if (!enableStats && spark.sessionState.conf.contains(
+                DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey)) {
+              spark.conf.unset(DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey)
+            }
           }
         }
       }
@@ -1419,6 +1452,11 @@ trait DescribeDeltaHistorySuiteBase
   test("replaceWhere metrics turned off - reverts to old behavior") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
         DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+        // We need to turn RowTracking off b/c it needs the row count
+        // statistics w/ [[DELTA_COLLECT_STATS]] enabled.
+        // We automatically enable [[RowTracking]] as part
+        // of CCv1.5's QoL features enablement.
+        DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false",
         DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED.key -> "false",
         DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED.key -> "false") {
       withTable("tbl") {
@@ -1457,6 +1495,11 @@ trait DescribeDeltaHistorySuiteBase
   test("enable remove metrics in insert with overwrite") {
     withSQLConf(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED.key -> "true",
         DeltaSQLConf.DELTA_COLLECT_STATS.key -> "false",
+        // We need to turn RowTracking off b/c it needs the row count
+        // statistics w/ [[DELTA_COLLECT_STATS]] enabled.
+        // We automatically enable [[RowTracking]] as part
+        // of CCv1.5's QoL features enablement.
+        DeltaConfigs.ROW_TRACKING_ENABLED.defaultTablePropertyKey -> "false",
         DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED.key -> "false",
         DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED.key -> "true") {
       withTable("tbl") {

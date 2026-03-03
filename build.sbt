@@ -662,7 +662,10 @@ lazy val contribs = (project in file("contribs"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-contribs is only published as delta-contribs_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
     Compile / packageBin / mappings := (Compile / packageBin / mappings).value ++
       listPythonFiles(baseDirectory.value.getParentFile / "python"),
 
@@ -700,7 +703,7 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = "0.3.1"
+val unityCatalogVersion = "0.4.0"
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
@@ -1058,6 +1061,8 @@ lazy val storage = (project in file("storage"))
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
+      // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
     ),
 
     // Unidoc settings
@@ -1134,7 +1139,10 @@ lazy val iceberg = (project in file("iceberg"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentModuleName(sparkVersion),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-iceberg is only published as delta-iceberg_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
     libraryDependencies ++= {
       if (supportIceberg) {
         Seq(
@@ -1148,7 +1156,9 @@ lazy val iceberg = (project in file("iceberg"))
           "org.xerial" % "sqlite-jdbc" % "3.45.0.0" % "test",
           "org.apache.httpcomponents.core5" % "httpcore5" % "5.2.4" % "test",
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
-          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided"
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
+          // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
+          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided"
         )
       } else {
         Seq.empty
@@ -1217,7 +1227,7 @@ lazy val iceberg = (project in file("iceberg"))
   )
 // scalastyle:on println
 
-val icebergShadedVersion = "1.10.0"
+val icebergShadedVersion = "1.10.1"
 lazy val icebergShaded = (project in file("icebergShaded"))
   .dependsOn(spark % "provided")
   .disablePlugins(JavaFormatterPlugin, ScalafmtPlugin)
@@ -1308,15 +1318,30 @@ lazy val hudi = (project in file("hudi"))
     commonSettings,
     scalaStyleSettings,
     releaseSettings,
-    CrossSparkVersions.sparkDependentSettings(sparkVersion),
-    libraryDependencies ++= Seq(
-      "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
-        ExclusionRule(organization = "org.apache.hadoop"),
-        ExclusionRule(organization = "org.apache.zookeeper"),
-      ),
-      "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-      "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
-    ),
+    // Set sparkVersion directly (not sparkDependentModuleName) so that
+    // runOnlyForReleasableSparkModules discovers this module, but without adding a Spark
+    // suffix to the artifact name. delta-hudi is only published as delta-hudi_2.13.
+    sparkVersion := CrossSparkVersions.getSparkVersion(),
+    libraryDependencies ++= {
+      if (supportHudi) {
+        Seq(
+          "org.apache.hudi" % "hudi-java-client" % "0.15.0" % "compile" excludeAll(
+            ExclusionRule(organization = "org.apache.hadoop"),
+            ExclusionRule(organization = "org.apache.zookeeper"),
+          ),
+          "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
+          "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
+        )
+      } else {
+        Seq.empty
+      }
+    },
+    // Skip compilation and publishing when supportHudi is false
+    Compile / skip := !supportHudi,
+    Test / skip := !supportHudi,
+    publish / skip := !supportHudi,
+    publishLocal / skip := !supportHudi,
+    publishM2 / skip := !supportHudi,
     assembly / assemblyJarName := s"${name.value}-assembly_${scalaBinaryVersion.value}-${version.value}.jar",
     assembly / logLevel := Level.Info,
     assembly / test := {},
@@ -1488,7 +1513,7 @@ lazy val sparkGroup = {
       // crossScalaVersions must be set to Nil on the aggregating project
       crossScalaVersions := Nil,
       publishArtifact := false,
-      publish / skip := false,
+      publish / skip := true,
     )
 }
 
@@ -1505,7 +1530,7 @@ lazy val icebergGroup = {
       // crossScalaVersions must be set to Nil on the aggregating project
       crossScalaVersions := Nil,
       publishArtifact := false,
-      publish / skip := false,
+      publish / skip := true,
     )
 }
 
@@ -1515,7 +1540,7 @@ lazy val kernelGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false,
+    publish / skip := true,
     unidocSourceFilePatterns := {
       (kernelApi / unidocSourceFilePatterns).value.scopeToProject(kernelApi) ++
       (kernelDefaults / unidocSourceFilePatterns).value.scopeToProject(kernelDefaults)
@@ -1528,7 +1553,7 @@ lazy val flinkGroup = project
     // crossScalaVersions must be set to Nil on the aggregating project
     crossScalaVersions := Nil,
     publishArtifact := false,
-    publish / skip := false,
+    publish / skip := true,
   )
 
 /*
@@ -1576,10 +1601,17 @@ lazy val releaseSettings = Seq(
     sys.env.getOrElse("SONATYPE_USERNAME", ""),
     sys.env.getOrElse("SONATYPE_PASSWORD", "")
   ),
+  credentials += Credentials(
+    "Sonatype Nexus Repository Manager",
+    "central.sonatype.com",
+    sys.env.getOrElse("SONATYPE_USERNAME", ""),
+    sys.env.getOrElse("SONATYPE_PASSWORD", "")
+  ),
   publishTo := {
     val ossrhBase = "https://ossrh-staging-api.central.sonatype.com/"
+    val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
     if (isSnapshot.value) {
-      Some("snapshots" at ossrhBase + "content/repositories/snapshots")
+      Some("snapshots" at centralSnapshots)
     } else {
       Some("releases"  at ossrhBase + "service/local/staging/deploy/maven2")
     }
@@ -1643,7 +1675,7 @@ lazy val releaseSettings = Seq(
 // Looks like some of release settings should be set for the root project as well.
 publishArtifact := false  // Don't release the root project
 publish / skip := true
-publishTo := Some("snapshots" at "https://ossrh-staging-api.central.sonatype.com/content/repositories/snapshots")
+publishTo := Some("snapshots" at "https://central.sonatype.com/repository/maven-snapshots/")
 releaseCrossBuild := false  // Don't use sbt-release's cross facility
 releaseProcess := Seq[ReleaseStep](
   checkSnapshotDependencies,
@@ -1652,7 +1684,7 @@ releaseProcess := Seq[ReleaseStep](
   setReleaseVersion,
   commitReleaseVersion,
   tagRelease
-) ++ CrossSparkVersions.crossSparkReleaseSteps("+publishSigned") ++ Seq[ReleaseStep](
+) ++ CrossSparkVersions.crossSparkReleaseSteps("publishSigned") ++ Seq[ReleaseStep](
 
   // Do NOT use `sonatypeBundleRelease` - it will actually release to Maven! We want to do that
   // manually.

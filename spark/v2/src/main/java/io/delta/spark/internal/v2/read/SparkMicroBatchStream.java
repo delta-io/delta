@@ -1066,12 +1066,13 @@ public class SparkMicroBatchStream
     try (CloseableIterator<FilteredColumnarBatch> filesIter = scan.getScanFiles(engine)) {
       while (filesIter.hasNext()) {
         FilteredColumnarBatch filteredBatch = filesIter.next();
-        ColumnarBatch batch = filteredBatch.getData();
 
         // Get all AddFiles from the batch. Include both dataChange=true and dataChange=false
-        // (checkpoint files) files.
-        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
-          Optional<AddFile> addOpt = StreamingHelper.getAddFile(batch, rowId);
+        // (checkpoint files) files. StreamingHelper.getAddFile respects the selection vector
+        // to filter out duplicate files (e.g., stats re-collection re-adds files with updated
+        // stats).
+        for (int rowId = 0; rowId < filteredBatch.getData().getSize(); rowId++) {
+          Optional<AddFile> addOpt = StreamingHelper.getAddFile(filteredBatch, rowId);
           if (addOpt.isPresent()) {
             addFiles.add(addOpt.get());
 

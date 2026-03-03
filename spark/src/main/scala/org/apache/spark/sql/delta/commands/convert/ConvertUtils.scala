@@ -204,8 +204,7 @@ trait ConvertUtilsBase extends DeltaLogging {
 
         val values = partValues
           .literals
-          .map(l => Cast(l, StringType, tz, ansiEnabled = false).eval())
-          .map(Option(_).map(_.toString).orNull)
+          .map(PartitionUtils.literalToNormalizedString(_, tz))
 
         partitionColNames.zip(partValues.columnNames).foreach { case (expected, parsed) =>
           if (!resolver(expected, parsed)) {

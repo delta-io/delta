@@ -27,15 +27,16 @@ import io.delta.kernel.exceptions.KernelException
 import io.delta.kernel.expressions.{Column, Literal}
 import io.delta.kernel.internal.{DataWriteContextImpl, TableConfig, TransactionImpl}
 import io.delta.kernel.internal.TableConfig.{COLUMN_MAPPING_MODE, ICEBERG_COMPAT_V2_ENABLED, ICEBERG_COMPAT_V3_ENABLED}
-import io.delta.kernel.internal.actions.{Format, Metadata}
+import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.internal.util.VectorUtils
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.test.{MockEngineUtils, VectorTestUtils}
-import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructType, TimestampType, VariantType}
+import io.delta.kernel.types.{DoubleType, FloatType, IntegerType, LongType, StringType, StructField, StructType, TimestampType, VariantType}
 import io.delta.kernel.utils.{CloseableIterator, DataFileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
@@ -90,6 +91,40 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
           assert(batch.getSchema === testSchema)
         }
       }
+  }
+
+  test("transformLogicalData: partitioned table with MaterializePartitionColumns feature") {
+    val transformedDateIter = transformLogicalData(
+      mockEngine(),
+      testTxnState(
+        testSchemaWithPartitions,
+        testPartitionColNames,
+        enableMaterializePartitionColumns = true),
+      testData(includePartitionCols = true),
+      /* partition values */
+      Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+
+    transformedDateIter.map(_.getData).forEachRemaining { batch =>
+      // when MaterializePartitionColumns feature is enabled, partition columns are included
+      assert(batch.getSchema === testSchemaWithPartitions)
+    }
+  }
+
+  test("transformLogicalData: partitioned table without MaterializePartitionColumns feature") {
+    val transformedDateIter = transformLogicalData(
+      mockEngine(),
+      testTxnState(
+        testSchemaWithPartitions,
+        testPartitionColNames,
+        enableMaterializePartitionColumns = false),
+      testData(includePartitionCols = true),
+      /* partition values */
+      Map("state" -> Literal.ofString("CA"), "country" -> Literal.ofString("USA")).asJava)
+
+    transformedDateIter.map(_.getData).forEachRemaining { batch =>
+      // when MaterializePartitionColumns feature is disabled, partition columns are filtered out
+      assert(batch.getSchema === testSchema)
+    }
   }
 
   withIcebergCompatVersions("generateAppendActions: iceberg comaptibily checks") {
@@ -167,7 +202,12 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
         VectorUtils.buildArrayValue(Seq.empty.asJava, StringType.STRING),
         Optional.empty(),
         stringStringMapValue(configMap.asJava))
-      val txnState = TransactionStateRow.of(metadata, "table path", 200 /* maxRetries */ )
+      val protocol = new Protocol(1, 1) // simple protocol for this test
+      val txnState = TransactionStateRow.of(
+        metadata,
+        protocol,
+        "table path",
+        200 /* maxRetries */ )
 
       // Get statistics columns and define expected result
       val statsColumns = TransactionImpl.getStatisticsColumns(txnState)
@@ -321,6 +361,21 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
         columnarBatch(newSchema, newColumnVectors.toSeq)
       }
 
+      override def withNewColumn(
+          ordinal: Int,
+          columnSchema: StructField,
+          columnVector: ColumnVector): ColumnarBatch = {
+        // Update the schema
+        val newStructFields = new util.ArrayList(schema.fields)
+        newStructFields.add(ordinal, columnSchema)
+        val newSchema: StructType = new StructType(newStructFields)
+
+        // Update the vectors
+        val newColumnVectors = vectors.toBuffer
+        newColumnVectors.insert(ordinal, columnVector)
+        columnarBatch(newSchema, newColumnVectors.toSeq)
+      }
+
       override def getSize: Int = vectors.head.getSize
     }
   }
@@ -330,7 +385,8 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       partitionCols: Seq[String] = Seq.empty,
       cmMode: String = "none",
       enableIcebergCompatV2: Boolean = false,
-      enableIcebergCompatV3: Boolean = false): Row = {
+      enableIcebergCompatV3: Boolean = false,
+      enableMaterializePartitionColumns: Boolean = false): Row = {
     val configurationMap = Map(
       ICEBERG_COMPAT_V2_ENABLED.getKey -> enableIcebergCompatV2.toString,
       ICEBERG_COMPAT_V3_ENABLED.getKey -> enableIcebergCompatV3.toString,
@@ -346,7 +402,20 @@ object TransactionSuite extends VectorTestUtils with MockEngineUtils {
       Optional.empty(), // createdTime
       stringStringMapValue(configurationMap.asJava) // configurationMap
     )
-    TransactionStateRow.of(metadata, "table path", 200 /* maxRetries */ )
+
+    // Create protocol with appropriate features
+    val writerFeatures: java.util.Set[String] = if (enableMaterializePartitionColumns) {
+      Set(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE.featureName()).asJava
+    } else {
+      java.util.Collections.emptySet[String]()
+    }
+    val protocol = new Protocol(
+      3, // minReaderVersion
+      7, // minWriterVersion to support table features
+      java.util.Collections.emptySet[String](), // readerFeatures
+      writerFeatures)
+
+    TransactionStateRow.of(metadata, protocol, "table path", 200 /* maxRetries */ )
   }
 
   def testStats(numRowsOpt: Option[Long]): Option[DataFileStatistics] = {
