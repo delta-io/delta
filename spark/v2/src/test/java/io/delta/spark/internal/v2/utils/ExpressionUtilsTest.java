@@ -134,6 +134,16 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testStringStartsWithFilter_NullValue() {
+    // A null prefix cannot be converted — treated as unsupported, falls back to post-scan
+    StringStartsWith filter = new StringStartsWith("name", null);
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "StringStartsWith with null value should not be converted");
+  }
+
+  @Test
   public void testStringStartsWithFilter_InAndFilter() {
     // AND(StringStartsWith(...), EqualTo(...)) — both convertible, fully pushed down
     StringStartsWith startsWithFilter = new StringStartsWith("name", "Al");
