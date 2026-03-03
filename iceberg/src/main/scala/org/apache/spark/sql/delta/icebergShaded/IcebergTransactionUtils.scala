@@ -225,26 +225,11 @@ object IcebergTransactionUtils
     )
   }
 
-  /**
-   * Create an Iceberg HiveCatalog
-   * @param conf: Hadoop Configuration
-   * @return
-   */
-  def createHiveCatalog(
-      conf: Configuration,
-      metadataUpdates: java.util.ArrayList[MetadataUpdate]
-        = new java.util.ArrayList[MetadataUpdate]()) : HiveCatalog = {
-    val catalog = new HiveCatalog()
-    catalog.setConf(conf)
-    catalog.initialize("spark_catalog", Map.empty[String, String].asJava, metadataUpdates)
-    catalog
-  }
-
     /**
      * Encode Spark table identifier to Iceberg table identifier by putting "database" and "catalog"
      * to the "namespace" in Iceberg table identifier
      */
-    override def convertSparkTableIdentifierToIceberg(
+    def convertSparkTableIdentifierToIceberg(
         identifier: SparkTableIdentifier): IcebergTableIdentifier = {
       val namespace = (identifier.database, identifier.catalog) match {
         case (Some(database), Some(catalog)) => Namespace.of(database, catalog)

@@ -1160,7 +1160,16 @@ lazy val iceberg = (project in file("iceberg"))
           "org.apache.httpcomponents.client5" % "httpclient5" % "5.3.1" % "test",
           "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % "1.10.0" % "provided",
           // For FixedGcsAccessTokenProvider (GCS server-side planning credentials)
-          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided"
+          "com.google.cloud.bigdataoss" % "util-hadoop" % "hadoop3-2.2.26" % "provided",
+          // Required for compilation: storage's UCTokenBasedRestClient references these types,
+          // and the Scala 2.12 update cache predates this transitive dep being added.
+          "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion % "provided" excludeAll(
+            ExclusionRule(organization = "org.openapitools"),
+            ExclusionRule(organization = "com.fasterxml.jackson.core"),
+            ExclusionRule(organization = "com.fasterxml.jackson.module"),
+            ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+            ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+          )
         )
       } else {
         Seq.empty

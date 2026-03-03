@@ -35,9 +35,6 @@ import org.apache.iceberg.io.FileIO;
 
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.exceptions.NotFoundException;
-
-import org.apache.spark.sql.catalyst.catalog.SessionCatalog;
-
 /**
  * UnityCatalog manages delta table with iceberg metadata conversion in unity catalog
  * Only newTableOps needs implementation as it is used to commit to Iceberg. All other methods are
@@ -46,8 +43,6 @@ import org.apache.spark.sql.catalyst.catalog.SessionCatalog;
  */
 public class UnityCatalog extends BaseMetastoreCatalog implements Closeable, Configurable<Object> {
     private static final String DEFAULT_FILE_IO_IMPL = "org.apache.iceberg.hadoop.HadoopFileIO";
-
-    private final SessionCatalog sessionCatalog;
 
     // Injectable factory for testing purposes.
     static class FileIOFactory {
@@ -79,7 +74,6 @@ public class UnityCatalog extends BaseMetastoreCatalog implements Closeable, Con
     /**
      * Creates a new UnityCatalog instance.
      *
-     * @param sessionCatalog The SessionCatalog backed by Unity Catalog
      * @param metadataUpdates metadata update to be committed in the table operation
      * @param baseMetadataLocation Optional file path specifying the base Iceberg metadata location.
      *                            If present, new Iceberg table operations will be based on
@@ -90,20 +84,17 @@ public class UnityCatalog extends BaseMetastoreCatalog implements Closeable, Con
      *                   when false, iceberg metadata file will be written but not tracked
      *                   by Unity Catalog
      */
-    public UnityCatalog(SessionCatalog sessionCatalog,
-                        List<MetadataUpdate> metadataUpdates,
+    public UnityCatalog(List<MetadataUpdate> metadataUpdates,
                         Optional<String> baseMetadataLocation,
                         boolean commitToUC,
                         boolean shouldPreserveDeltaProperties) {
-        this.sessionCatalog = sessionCatalog;
         this.metadataUpdates = metadataUpdates;
         this.baseMetadataLocation = baseMetadataLocation;
         this.commitToUC = commitToUC;
         this.shouldPreserveDeltaProperties = shouldPreserveDeltaProperties;
     }
 
-    public UnityCatalog(SessionCatalog sessionCatalog) {
-        this.sessionCatalog = sessionCatalog;
+    public UnityCatalog() {
         this.baseMetadataLocation = Optional.empty();
         this.commitToUC = true;
         this.shouldPreserveDeltaProperties = true;
@@ -114,7 +105,7 @@ public class UnityCatalog extends BaseMetastoreCatalog implements Closeable, Con
         FileIO fileIO = fileIOFactory.newFileIO(DEFAULT_FILE_IO_IMPL, catalogProperties, conf);
         closeableGroup.addCloseable(fileIO);
         return new UnityCatalogTableOperations(
-                sessionCatalog, fileIO, tableIdentifier, metadataUpdates, commitToUC, shouldPreserveDeltaProperties, baseMetadataLocation);
+                fileIO, tableIdentifier, metadataUpdates, commitToUC, shouldPreserveDeltaProperties, baseMetadataLocation);
     }
 
     @Override

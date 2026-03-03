@@ -22,6 +22,7 @@ import java.util.function.Consumer
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DummySnapshot, IcebergConstants, NoMapping, Snapshot}
@@ -33,7 +34,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.MetadataUpdate
 import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
@@ -51,9 +52,11 @@ case object WRITE_TABLE extends IcebergTableOp
 case object REPLACE_TABLE extends IcebergTableOp
 
 sealed trait IcebergConversionMode  {
-}
-// Used by Post-commit Delta UniForm (Iceberg conversion in Delta post commit hook)
-case object UNIFORM_POST_COMMIT_MODE extends IcebergConversionMode {
+  def shouldUpdateCatalogOnIcebergCommit: Boolean
+  // When true, preserve Delta related table properties
+  // Otherwise, remove delta table properties and name mapping to avoid leaking
+  // implementation details (like for managed iceberg tables)
+  def shouldPreserveDeltaProperties: Boolean
 }
 // Used by atomic Delta UniForm
 case object UNIFORM_CC_MODE extends IcebergConversionMode {
@@ -480,7 +483,6 @@ class IcebergConversionTransaction(
       }
 
     val ucTable = new UnityCatalog(
-      SparkSession.active.sessionState.catalog,
       metadataUpdates,
       baseMetadataPath.toJava,
       commitToUC,
@@ -495,13 +497,7 @@ class IcebergConversionTransaction(
     val tableExists = ucTable.tableExists(icebergIdentifier)
 
     def tableBuilder = {
-      val tableLocation = catalogTable match {
-        case table if ManagedIcebergTableUtils.isDBIManagedIcebergTable(table) =>
-          ManagedIcebergTableUtils.
-            buildIcebergTableRootLocation(postCommitSnapshot.deltaLog.dataPath).toString
-        case _ =>
-          postCommitSnapshot.deltaLog.dataPath.toString
-      }
+      val tableLocation = postCommitSnapshot.deltaLog.dataPath.toString
       ucTable
         .buildTable(icebergIdentifier, icebergSchema)
         .withPartitionSpec(partitionSpec)
@@ -589,5 +585,21 @@ class IcebergConversionTransaction(
       ) ++ icebergTxnTypes ++ errorData
     )
   }
+
+  def getConvertedIcebergMetadata: (String, TableMetadata) =
+    txn.asInstanceOf[BaseTransaction].underlyingOps() match {
+      case ops: UnityCatalogTableOperations =>
+        ops.getLastWrittenTableMetadataWithLocation.toScala match {
+          case Some((metadataPath, tableMetadata)) =>
+            (metadataPath, tableMetadata)
+          case _ => throw new IllegalStateException(
+            "Could not get converted Iceberg metadata: new written metadata not found")
+        }
+      case _ =>
+        throw new IllegalStateException(
+          "Could not get converted Iceberg metadata:" +
+            " underlying UnityCatalogTableOperations not found"
+        )
+    }
 
 }

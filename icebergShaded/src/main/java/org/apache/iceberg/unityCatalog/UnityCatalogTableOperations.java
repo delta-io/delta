@@ -21,8 +21,6 @@ import java.net.URISyntaxException;
 import java.time.Instant;
 import java.util.*;
 
-import com.databricks.sql.managedcatalog.DeltaUniformIceberg;
-import org.apache.spark.sql.delta.UniformConcurrentModificationException;
 import org.apache.iceberg.BaseMetastoreTableOperations;
 import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.PartitionSpec;
@@ -34,11 +32,6 @@ import org.apache.iceberg.exceptions.CommitFailedException;
 import org.apache.iceberg.exceptions.NoSuchTableException;
 import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-
-import org.apache.spark.sql.SparkSession;
-import org.apache.spark.network.util.JavaUtils;
-import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.catalyst.catalog.SessionCatalog;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,8 +61,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
 
     private final FileIO fileIO;
     private final TableIdentifier tableIdentifier;
-    private CatalogTable currentSparkCatalogTable;
-    private final SessionCatalog catalog;
     private final Optional<String> baseMetadataLocation;
     // When true, Iceberg catalog update and Iceberg metadata written would be atomic
     // Otherwise, Iceberg metadata will be generated without updating the corresponding catalog
@@ -92,7 +83,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
     /**
      * Creates a new UnityCatalogTableOperations instance for managing table operations.
      *
-     * @param catalog The SessionCatalog backed by Unity Catalog
      * @param fileIO FileIO instance used for reading and writing iceberg metadata file
      * @param tableIdentifier Identifier for the table
      * @param metadataUpdates metadata update to be committed in the table operation
@@ -106,7 +96,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
      *                            is false and table is present.
      */
     public UnityCatalogTableOperations(
-            SessionCatalog catalog,
             FileIO fileIO,
             TableIdentifier tableIdentifier,
             List<MetadataUpdate> metadataUpdates,
@@ -115,7 +104,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
             Optional<String> baseMetadataLocation) {
         this.fileIO = fileIO;
         this.tableIdentifier = tableIdentifier;
-        this.catalog = catalog;
         this.metadataUpdates = metadataUpdates;
         this.commitToUC = commitToUC;
         this.shouldPreserveDeltaProperties = shouldPreserveDeltaProperties;
@@ -246,8 +234,6 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
 
     /**
      * Returns both the location of the Iceberg metadata file and its corresponding table metadata.
-     * This information is only present when {@link commitToUC} is set to false.
-     *
      * @return An Optional containing a tuple of:
      *         - String: The path where the metadata file was written
      *         - TableMetadata: The corresponding Iceberg table metadata
@@ -261,6 +247,9 @@ public class UnityCatalogTableOperations extends BaseMetastoreTableOperations {
         if (baseMetadataLocation.isPresent()) {
             return baseMetadataLocation.get();
         }
+        throw new NoSuchTableException("Cannot find iceberg table %s. Either the table does " +
+                "not exist or the corresponding Delta table has not been converted yet.",
+                tableIdentifier.toString());
     }
 
 }
