@@ -90,7 +90,8 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       .exists {
         case _: TableAlreadyExistsException => true
         case e: ApiException =>
-          Option(e.getResponseBody).exists(_.contains("\"error_code\":\"TABLE_ALREADY_EXISTS\""))
+          Option(e.getResponseBody).exists(
+            _.contains("ALREADY_EXISTS"))
         case _ => false
       }
   }
