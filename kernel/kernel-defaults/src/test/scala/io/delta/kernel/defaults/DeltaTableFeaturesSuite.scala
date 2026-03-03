@@ -193,6 +193,39 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
     }
   }
 
+  /**
+   * Regression test: A table created with `catalogManaged` enabled via the Kernel
+   * `CreateTableTransactionBuilder` must include `vacuumProtocolCheck` in its protocol
+   * reader/writer features. Without it, Spark throws:
+   *   DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH: the following table features are enabled in
+   *   metadata but not listed in protocol: vacuumProtocolCheck.
+   *
+   * Root cause: Spark's `CatalogOwnedTableFeature.requiredFeatures` includes
+   * `VacuumProtocolCheckTableFeature`, so Spark's dependency closure over the protocol features
+   * expects `vacuumProtocolCheck` to be present whenever `catalogManaged` is present.
+   */
+  test("catalogManaged table created by Kernel includes vacuumProtocolCheck in protocol, " +
+    "and is readable by Spark") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = Map(
+          TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey -> "supported"))
+
+      // Verify vacuumProtocolCheck is in both reader and writer features
+      checkReaderWriterFeaturesSupported(tablePath, "vacuumProtocolCheck")
+      // Also verify the other required features are present
+      checkReaderWriterFeaturesSupported(tablePath, "catalogManaged")
+
+      // Verify Spark can read the table without throwing
+      // DELTA_FEATURES_PROTOCOL_METADATA_MISMATCH
+      val rows = spark.sql(s"SELECT * FROM delta.`$tablePath`").collect()
+      assert(rows.isEmpty) // table has no data, just verifying it doesn't throw
+    }
+  }
+
   test("feature can be enabled via delta.feature prefix") {
     withTempDirAndEngine { (tablePath, engine) =>
       val domainMetadataKey = (
