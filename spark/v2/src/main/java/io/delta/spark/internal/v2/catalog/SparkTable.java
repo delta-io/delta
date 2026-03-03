@@ -161,7 +161,14 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
    * etc.), not just file:// URIs.
    */
   private static String getDecodedPath(java.net.URI location) {
-    return new Path(location).toString();
+    Path hadoopPath = new Path(location);
+    // For local file system paths, return just the path component without the scheme
+    // to maintain consistency with path-based table construction where tablePath is a
+    // plain filesystem path string.
+    if (location.getScheme() == null || "file".equals(location.getScheme())) {
+      return hadoopPath.toUri().getPath();
+    }
+    return hadoopPath.toString();
   }
 
   /**
