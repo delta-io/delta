@@ -31,8 +31,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -64,9 +66,7 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
             tablePath,
             hadoopConf,
             initialSnapshot,
-            writeSchema,
-            queryId,
-            options,
+            logicalWriteInfo(queryId, writeSchema, options),
             partitionColumnNames);
 
     SparkParquetBatchWrite batchWrite = builder.buildForBatch();
@@ -106,5 +106,25 @@ public class SparkParquetWriteBuilderTest extends DeltaV2TestBase {
     assertThrows(
         UnsupportedOperationException.class, () -> batchWrite.createBatchWriterFactory(null));
     assertThrows(UnsupportedOperationException.class, () -> batchWrite.commit(null));
+  }
+
+  private static LogicalWriteInfo logicalWriteInfo(
+      String queryId, StructType schema, Map<String, String> options) {
+    return new LogicalWriteInfo() {
+      @Override
+      public String queryId() {
+        return queryId;
+      }
+
+      @Override
+      public StructType schema() {
+        return schema;
+      }
+
+      @Override
+      public CaseInsensitiveStringMap options() {
+        return new CaseInsensitiveStringMap(options);
+      }
+    };
   }
 }

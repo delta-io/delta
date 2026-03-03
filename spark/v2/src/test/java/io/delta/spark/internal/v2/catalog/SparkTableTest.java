@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.write.SparkParquetWriteBuilder;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -44,6 +45,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -489,16 +491,17 @@ public class SparkTableTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testNewWriteBuilderThrowsUnsupported(@TempDir File tempDir) throws Exception {
+  public void testNewWriteBuilderCreatesSparkParquetWriteBuilder(@TempDir File tempDir)
+      throws Exception {
     String path = tempDir.getAbsolutePath();
     spark.sql(
         String.format(
-            "CREATE TABLE test_write_builder_unsupported (id INT) USING delta LOCATION '%s'",
+            "CREATE TABLE test_write_builder_construction (id INT) USING delta LOCATION '%s'",
             path));
 
     SparkTable table =
         new SparkTable(
-            Identifier.of(new String[] {"default"}, "test_write_builder_unsupported"), path);
+            Identifier.of(new String[] {"default"}, "test_write_builder_construction"), path);
     LogicalWriteInfo writeInfo =
         new LogicalWriteInfo() {
           @Override
@@ -517,10 +520,21 @@ public class SparkTableTest extends DeltaV2TestBase {
           }
         };
 
-    UnsupportedOperationException ex =
-        assertThrows(UnsupportedOperationException.class, () -> table.newWriteBuilder(writeInfo));
-    assertEquals(
-        "Batch write for Delta tables via the DSv2 connector is not yet supported.",
-        ex.getMessage());
+    WriteBuilder writeBuilder = table.newWriteBuilder(writeInfo);
+    assertTrue(writeBuilder instanceof SparkParquetWriteBuilder);
+  }
+
+  @Test
+  public void testNewWriteBuilderRejectsNullWriteInfo(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_write_builder_null_info (id INT) USING delta LOCATION '%s'", path));
+
+    SparkTable table =
+        new SparkTable(
+            Identifier.of(new String[] {"default"}, "test_write_builder_null_info"), path);
+
+    assertThrows(NullPointerException.class, () -> table.newWriteBuilder(null));
   }
 }

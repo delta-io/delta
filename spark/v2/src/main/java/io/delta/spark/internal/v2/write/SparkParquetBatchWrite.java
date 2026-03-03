@@ -17,6 +17,7 @@ package io.delta.spark.internal.v2.write;
 
 import static java.util.Objects.requireNonNull;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.delta.kernel.Snapshot;
 import java.util.Collections;
 import java.util.List;
@@ -75,30 +76,37 @@ public class SparkParquetBatchWrite implements BatchWrite {
   @Override
   public void abort(WriterCommitMessage[] messages) {}
 
+  @VisibleForTesting
   String getTablePath() {
     return tablePath;
   }
 
+  @VisibleForTesting
   Configuration getHadoopConf() {
     return hadoopConf;
   }
 
+  @VisibleForTesting
   Snapshot getInitialSnapshot() {
     return initialSnapshot;
   }
 
+  @VisibleForTesting
   StructType getWriteSchema() {
     return writeSchema;
   }
 
+  @VisibleForTesting
   String getQueryId() {
     return queryId;
   }
 
+  @VisibleForTesting
   Map<String, String> getOptions() {
     return options;
   }
 
+  @VisibleForTesting
   List<String> getPartitionColumnNames() {
     return partitionColumnNames;
   }

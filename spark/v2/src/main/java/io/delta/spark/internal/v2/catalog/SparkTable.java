@@ -243,13 +243,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
     return new SparkParquetWriteBuilder(
-        tablePath,
-        hadoopConf,
-        initialSnapshot,
-        info.schema(),
-        info.queryId(),
-        info.options().asCaseSensitiveMap(),
-        schemaProvider.getPartitionColumnNames());
+        tablePath, hadoopConf, initialSnapshot, info, schemaProvider.getPartitionColumnNames());
   }
 
   @Override

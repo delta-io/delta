@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.types.StructType;
 
@@ -41,17 +42,21 @@ public class SparkParquetWriteBuilder implements WriteBuilder {
       String tablePath,
       Configuration hadoopConf,
       Snapshot initialSnapshot,
-      StructType writeSchema,
-      String queryId,
-      Map<String, String> options,
+      LogicalWriteInfo writeInfo,
       List<String> partitionColumnNames) {
     this.tablePath = requireNonNull(tablePath, "table path is null");
     this.hadoopConf = requireNonNull(hadoopConf, "hadoop conf is null");
     this.initialSnapshot = requireNonNull(initialSnapshot, "initial snapshot is null");
-    this.writeSchema = requireNonNull(writeSchema, "write schema is null");
-    this.queryId = requireNonNull(queryId, "query id is null");
+    LogicalWriteInfo nonNullWriteInfo = requireNonNull(writeInfo, "write info is null");
+    this.writeSchema = requireNonNull(nonNullWriteInfo.schema(), "write schema is null");
+    this.queryId = requireNonNull(nonNullWriteInfo.queryId(), "query id is null");
     this.options =
-        Collections.unmodifiableMap(new HashMap<>(requireNonNull(options, "options is null")));
+        Collections.unmodifiableMap(
+            new HashMap<>(
+                requireNonNull(
+                    requireNonNull(nonNullWriteInfo.options(), "write options are null")
+                        .asCaseSensitiveMap(),
+                    "options is null")));
     this.partitionColumnNames =
         Collections.unmodifiableList(
             new ArrayList<>(
