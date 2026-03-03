@@ -76,6 +76,12 @@ jobs:
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout atomic-rtas
+          COURSIER_PARALLEL_DOWNLOAD_COUNT=1 ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" clean package publishM2
       - name: Install Job dependencies
         run: |
           sudo apt-get update

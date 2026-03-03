@@ -68,6 +68,12 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout atomic-rtas
+          COURSIER_PARALLEL_DOWNLOAD_COUNT=1 ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" clean package publishM2
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -77,12 +83,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
-      # Run integration tests with JDK 11, as they have no Spark dependency
       - name: install java
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
-          java-version: "11"
+          java-version: "17"
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout atomic-rtas
+          COURSIER_PARALLEL_DOWNLOAD_COUNT=1 ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" clean package publishM2
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local

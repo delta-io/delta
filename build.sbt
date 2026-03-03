@@ -705,7 +705,8 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = "0.4.0"
+// Temporary snapshot pin until the corresponding Unity Catalog release is published.
+val unityCatalogVersion = "0.5.0-SNAPSHOT"
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
@@ -1426,7 +1427,7 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
       "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % "provided",
-      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+      "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion,
       "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",

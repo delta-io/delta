@@ -34,6 +34,12 @@ jobs:
             ~/.ivy2
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout atomic-rtas
+          COURSIER_PARALLEL_DOWNLOAD_COUNT=1 ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" clean package publishM2
 
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py
