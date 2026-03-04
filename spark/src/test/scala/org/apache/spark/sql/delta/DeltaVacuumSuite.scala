@@ -23,15 +23,13 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaUnsupportedOperationException}
+import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
-import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedCommitCoordinatorProvider
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
-import org.apache.spark.sql.delta.coordinatedcommits.TrackingInMemoryCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -1541,26 +1539,22 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
   }
 
   test("running vacuum on a catalog owned managed table should fail") {
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
-    CatalogOwnedCommitCoordinatorProvider.registerBuilder(
-      "spark_catalog", TrackingInMemoryCommitCoordinatorBuilder(batchSize = 3))
-    withTable("t1") {
-      spark.sql(s"CREATE TABLE t1 (id INT) USING delta TBLPROPERTIES " +
-        s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
+    withCatalogManagedTable() { tableName =>
       checkError(
         intercept[DeltaUnsupportedOperationException] {
-          spark.sql(s"VACUUM t1")
+          spark.sql(s"VACUUM $tableName")
         },
-        "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE"
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "VACUUM")
       )
       checkError(
         intercept[DeltaUnsupportedOperationException] {
-          spark.sql(s"VACUUM t1 DRY RUN")
+          spark.sql(s"VACUUM $tableName DRY RUN")
         },
-        "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE"
+        "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+        parameters = Map("operation" -> "VACUUM")
       )
     }
-    CatalogOwnedCommitCoordinatorProvider.clearBuilders()
   }
 }
 

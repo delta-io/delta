@@ -415,7 +415,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
         changedMetadataOpt, changedProtocolOpt, version)) {
 
       val schemaToPersist = PersistedMetadata(
-        deltaLog.tableId,
+        deltaLog.unsafeVolatileTableId,
         version,
         changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
         changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),

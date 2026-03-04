@@ -889,6 +889,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   test("data skipping stats before and after optimize") {
+      assume(!catalogOwnedDefaultCreationEnabledInTests,
+        "OPTIMIZE is blocked on catalog-managed tables")
       val tempDir = Utils.createTempDir()
       var r = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
