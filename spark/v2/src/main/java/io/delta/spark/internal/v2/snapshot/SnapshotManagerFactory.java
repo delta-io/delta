@@ -22,6 +22,7 @@ import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotMa
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
