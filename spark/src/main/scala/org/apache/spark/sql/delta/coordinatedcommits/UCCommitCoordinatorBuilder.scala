@@ -289,22 +289,50 @@ trait UCClientFactory {
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
+    createUCClientWithVersions(uri, authConfig, defaultAppVersions)
+  }
+
+  /**
+   * Creates a UC client with the given application versions for telemetry.
+   * The provided `appVersions` map is used as-is; callers are responsible for
+   * including all desired version entries.
+   */
+  def createUCClientWithVersions(
+      uri: String,
+      authConfig: Map[String, String],
+      appVersions: Map[String, String]): UCClient = {
     // Create TokenProvider from the authentication configuration map
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val appVersions = Map(
+    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
+    Map(
       "Delta" -> io.delta.VERSION,
       "Spark" -> org.apache.spark.SPARK_VERSION,
       "Scala" -> scala.util.Properties.versionNumberString,
       "Java" -> System.getProperty("java.version")
     )
-    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  /** Returns the default app versions as a mutable Java map for easy extension. */
+  def defaultAppVersionsAsJava: java.util.Map[String, String] = {
+    new java.util.HashMap(defaultAppVersions.asJava)
   }
 
   /** Java-friendly overload that accepts a java.util.Map */
   def createUCClient(uri: String, authConfig: java.util.Map[String, String]): UCClient = {
     createUCClient(uri, authConfig.asScala.toMap)
+  }
+
+  /** Java-friendly overload that accepts application versions for telemetry. */
+  def createUCClientWithVersions(
+      uri: String,
+      authConfig: java.util.Map[String, String],
+      appVersions: java.util.Map[String, String]): UCClient = {
+    createUCClientWithVersions(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
   }
 }
 
