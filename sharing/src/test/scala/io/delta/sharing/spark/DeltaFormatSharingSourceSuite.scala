@@ -246,6 +246,97 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
+  // Mirror of batch auto-resolve test: grid over flag. When ON, getMetadata is used and we send
+  // its format (delta or parquet); when OFF, user's responseFormat is used.
+  Seq(
+    (true, "shared_streaming_table_auto_resolve", "delta"),
+    (true, "shared_parquet_table_auto_resolve", "parquet"),
+    (false, "shared_parquet_table_streaming", "parquet"),
+    (false, "shared_streaming_table_delta", "delta")
+  ).foreach { case (autoResolve, sharedTableName, expectedFormat) =>
+    test(s"streaming auto-resolve [flag=$autoResolve, " +
+      s"format=$expectedFormat]") {
+      withTempDir { tempDir =>
+        val deltaTableName = "delta_table_auto_resolve"
+        withTable(deltaTableName) {
+          sql(s"DROP TABLE IF EXISTS $deltaTableName")
+          sql(
+            s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+          val profileFile = prepareProfileFile(tempDir)
+          val tablePath =
+            profileFile.getCanonicalPath +
+              s"#share1.default.$sharedTableName"
+          sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+          spark.sessionState.conf.setConfString(
+            "spark.delta.sharing.streaming" +
+              ".queryTableVersionIntervalSeconds",
+            "10s"
+          )
+          if (autoResolve) {
+            prepareMockedClientMetadata(
+              deltaTableName, sharedTableName)
+            if (expectedFormat == "delta") {
+              prepareMockedClientAndFileSystemResult(
+                deltaTableName, sharedTableName, Some(1L))
+            } else {
+              prepareMockedClientAndFileSystemResultForParquet(
+                deltaTableName, sharedTableName)
+              prepareMockedClientAndFileSystemResultForParquet(
+                deltaTableName, sharedTableName,
+                versionAsOf = Some(1L))
+              prepareMockedClientAndFileSystemResultForStreaming(
+                deltaTableName, sharedTableName, 1L, 1L)
+            }
+          } else {
+            if (expectedFormat == "parquet") {
+              prepareMockedClientAndFileSystemResultForParquet(
+                deltaTableName, sharedTableName)
+              prepareMockedClientAndFileSystemResultForParquet(
+                deltaTableName, sharedTableName,
+                versionAsOf = Some(1L))
+              prepareMockedClientAndFileSystemResultForStreaming(
+                deltaTableName, sharedTableName, 1L, 1L)
+            } else {
+              prepareMockedClientMetadata(
+                deltaTableName, sharedTableName)
+              prepareMockedClientAndFileSystemResult(
+                deltaTableName, sharedTableName, Some(1L))
+            }
+          }
+          prepareMockedClientGetTableVersion(
+            deltaTableName, sharedTableName)
+          val userResponseFormat =
+            if (autoResolve) "parquet" else expectedFormat
+          val autoResolveKey =
+            DeltaSQLConf
+              .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
+              .key
+          withSQLConf(
+            (getDeltaSharingClassesSQLConf +
+              (autoResolveKey -> autoResolve.toString))
+              .toSeq: _*
+          ) {
+            val df = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", userResponseFormat)
+              .load(tablePath)
+            testStream(df)(
+              AssertOnQuery { q =>
+                q.processAllAvailable(); true
+              },
+              CheckAnswer("a", "b"),
+              StopStream
+            )
+            assertRequestedFormat(
+              s"share1.default.$sharedTableName",
+              Seq(expectedFormat))
+          }
+        }
+      }
+    }
+  }
+
     test(
       "restart works sharing"
     ) {

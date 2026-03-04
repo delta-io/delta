@@ -212,6 +212,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       endingVersion.isDefined,
       "endingVersion is not defined. This shouldn't happen in unit test."
     )
+    val tableFullName = s"${table.share}.${table.schema}.${table.name}"
+    TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
     val iterator = SparkEnv.get.blockManager
       .get[String](getBlockId(table.name, s"getFiles_${startingVersion}_${endingVersion.get}"))
       .map(_.data.asInstanceOf[Iterator[String]])
