@@ -44,6 +44,7 @@ import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
+import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.*;
@@ -297,12 +298,21 @@ public class SparkMicroBatchStream
     Objects.requireNonNull(startOffset, "startOffset should not be null for MicroBatchStream");
     Objects.requireNonNull(limit, "limit should not be null for MicroBatchStream");
 
-    DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
-    initForTriggerAvailableNowIfNeeded(deltaStartOffset);
-    // Return null when no data is available for this batch.
-    DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
-    isFirstBatch = false;
-    return endOffset;
+    try {
+      DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
+      initForTriggerAvailableNowIfNeeded(deltaStartOffset);
+      // Return null when no data is available for this batch.
+      DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
+      isFirstBatch = false;
+      return endOffset;
+    } catch (Exception e) {
+      if (isInterruptedByStop(e)) {
+        logger.info("latestOffset() interrupted during stream shutdown, returning null");
+        isFirstBatch = false;
+        return null;
+      }
+      throw e;
+    }
   }
 
   /**
@@ -455,6 +465,34 @@ public class SparkMicroBatchStream
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
+  }
+
+  /**
+   * Returns true if the given exception was caused by a thread interrupt during stream shutdown.
+   *
+   * <p>When Spark stops a streaming query, it calls {@link Thread#interrupt()} on the micro-batch
+   * execution thread. If that thread is blocked inside Kernel's {@code DefaultJsonHandler} reading
+   * delta log files via NIO channels, the interrupt causes a {@link ClosedByInterruptException} (an
+   * {@link IOException} subclass with a null message). {@code DefaultJsonHandler} wraps this in a
+   * {@link io.delta.kernel.exceptions.KernelEngineException}, which is not an {@link
+   * InterruptedException}, so Spark's own {@code isInterruptedByStop} check misses it.
+   *
+   * <p>This method detects both cases by (1) checking the thread interrupt flag, which {@link
+   * ClosedByInterruptException} sets but does not clear, and (2) walking the full cause chain
+   * looking for either {@link ClosedByInterruptException} or {@link InterruptedException}.
+   */
+  private static boolean isInterruptedByStop(Throwable t) {
+    if (Thread.currentThread().isInterrupted()) {
+      return true;
+    }
+    Throwable cause = t;
+    while (cause != null) {
+      if (cause instanceof ClosedByInterruptException || cause instanceof InterruptedException) {
+        return true;
+      }
+      cause = cause.getCause();
+    }
+    return false;
   }
 
   ///////////////////////
