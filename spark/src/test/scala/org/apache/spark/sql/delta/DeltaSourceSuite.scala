@@ -2538,6 +2538,45 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("drop column: should fail with non-additive schema change error") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        def startQuery(): StreamingQuery = {
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+        }
+
+        var q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains(
+            "Streaming read is not supported on tables with read-incompatible schema changes"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
   // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
   test("handling nullability schema changes") {
     withTable("srcTable") {
