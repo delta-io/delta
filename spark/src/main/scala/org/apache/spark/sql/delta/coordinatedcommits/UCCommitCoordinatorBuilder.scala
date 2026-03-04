@@ -285,6 +285,15 @@ object UCCommitCoordinatorBuilder
 
 trait UCClientFactory {
   def createUCClient(uri: String, authConfig: Map[String, String]): UCClient
+
+  /**
+   * Creates a UC client with additional application version entries for telemetry.
+   * These are merged with the built-in default versions (Delta, Spark, Scala, Java).
+   */
+  def createUCClient(
+      uri: String,
+      authConfig: Map[String, String],
+      appVersions: Map[String, String]): UCClient
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
@@ -292,21 +301,21 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     createUCClient(uri, authConfig, Map.empty[String, String])
   }
 
-  def createUCClient(
+  override def createUCClient(
       uri: String,
       authConfig: Map[String, String],
-      extraAppVersions: Map[String, String]): UCClient = {
+      appVersions: Map[String, String]): UCClient = {
     // Create TokenProvider from the authentication configuration map
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val appVersions = buildAppVersions(extraAppVersions)
-    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+    val mergedVersions = buildAppVersions(appVersions)
+    new UCTokenBasedRestClient(uri, tokenProvider, mergedVersions.asJava)
   }
 
-  private[delta] def buildAppVersions(
-      extraAppVersions: Map[String, String]): Map[String, String] = {
-    defaultAppVersions ++ extraAppVersions
+  private[coordinatedcommits] def buildAppVersions(
+      appVersions: Map[String, String]): Map[String, String] = {
+    defaultAppVersions ++ appVersions
   }
 
   private def defaultAppVersions: Map[String, String] = {
@@ -323,12 +332,12 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     createUCClient(uri, authConfig.asScala.toMap)
   }
 
-  /** Java-friendly overload that accepts extra application versions for telemetry. */
+  /** Java-friendly overload that accepts application versions for telemetry. */
   def createUCClient(
       uri: String,
       authConfig: java.util.Map[String, String],
-      extraAppVersions: java.util.Map[String, String]): UCClient = {
-    createUCClient(uri, authConfig.asScala.toMap, extraAppVersions.asScala.toMap)
+      appVersions: java.util.Map[String, String]): UCClient = {
+    createUCClient(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
   }
 }
 

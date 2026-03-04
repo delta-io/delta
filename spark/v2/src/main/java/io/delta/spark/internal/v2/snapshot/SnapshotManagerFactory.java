@@ -73,7 +73,9 @@ public final class SnapshotManagerFactory {
       UCTableInfo tableInfo, Engine kernelEngine) {
     UCClient ucClient =
         UCTokenBasedRestClientFactory$.MODULE$.createUCClient(
-            tableInfo.getUcUri(), tableInfo.getAuthConfig(), Map.of("Kernel", Meta.KERNEL_VERSION));
+            tableInfo.getUcUri(),
+            tableInfo.getAuthConfig(),
+            Map.of("Kernel", Meta.KERNEL_VERSION, "DSv2", "true"));
     UCCatalogManagedClient ucCatalogClient = new UCCatalogManagedClient(ucClient);
     return new UCManagedTableSnapshotManager(ucCatalogClient, tableInfo, kernelEngine);
   }
