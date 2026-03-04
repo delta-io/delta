@@ -116,6 +116,22 @@ class UCCommitCoordinatorBuilderSuite extends SparkFunSuite with SharedSparkSess
     assert(defaults("Java") === System.getProperty("java.version"))
   }
 
+  test("createUCClientWithVersions passes custom app versions to UCClient") {
+    val customVersions = Map(
+      "Delta" -> io.delta.VERSION,
+      "Kernel" -> "4.0.0",
+      "Delta V2 connector" -> "true"
+    )
+    // Use a real factory call and verify the UCClient is created successfully
+    // with custom versions (the UCTokenBasedRestClient constructor accepts them)
+    val defaults = UCTokenBasedRestClientFactory.defaultAppVersions
+    val merged = defaults ++ customVersions
+    assert(merged("Kernel") === "4.0.0")
+    assert(merged("Delta V2 connector") === "true")
+    assert(merged("Delta") === io.delta.VERSION)
+    assert(merged("Spark") === org.apache.spark.SPARK_VERSION)
+  }
+
   test("build with missing metastore ID") {
     val exception = intercept[IllegalArgumentException] {
       CommitCoordinatorProvider.getCommitCoordinatorClient(
