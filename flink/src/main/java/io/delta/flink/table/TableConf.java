@@ -40,7 +40,7 @@ import org.apache.flink.configuration.Configuration;
  */
 public class TableConf implements Serializable {
 
-  private static final long serialVersionUID = 1L;
+  private static final long serialVersionUID = 1024L;
 
   /** Probability in [0.0, 1.0] to create a checkpoint on a commit. */
   public static final ConfigOption<Double> CHECKPOINT_FREQUENCY =
@@ -62,7 +62,7 @@ public class TableConf implements Serializable {
       Map.of("delta.feature.v2Checkpoint", "supported");
 
   private final Map<String, String> raw;
-  private final Configuration cfg;
+  private Configuration cfg;
 
   private final Random randgen = new Random(System.currentTimeMillis());
 
@@ -75,17 +75,27 @@ public class TableConf implements Serializable {
    * @param conf raw configuration map; must not be null
    */
   public TableConf(Map<String, String> conf) {
-    raw = Map.copyOf(Objects.requireNonNull(conf, "conf"));
+    raw = Objects.requireNonNull(conf, "conf");
     cfg = Configuration.fromMap(raw);
 
     validate();
   }
 
   /**
+   * Update the table conf by merging the provided conf into it.
+   *
+   * @param toUpdate configurations to be updated.
+   */
+  public void update(Map<String, String> toUpdate) {
+    raw.putAll(toUpdate);
+    cfg = Configuration.fromMap(raw);
+  }
+
+  /**
    * Configuration to be persisted in the catalog.
    *
    * <p>This returns a subset of options that are intended to be stored with the table definition.
-   * Now it includes configuration starts with "delta."
+   * Now it includes configuration starts with "delta." or "io.unitycatalog."
    *
    * @return a map of catalog-persisted configuration entries
    */
@@ -93,7 +103,10 @@ public class TableConf implements Serializable {
     Map<String, String> merged = new HashMap<>(DEFAULT_CONFS);
     merged.putAll(
         raw.entrySet().stream()
-            .filter(entry -> entry.getKey().startsWith("delta."))
+            .filter(
+                entry ->
+                    entry.getKey().startsWith("delta.")
+                        || entry.getKey().startsWith("io.unitycatalog."))
             .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue)));
     return merged;
   }
