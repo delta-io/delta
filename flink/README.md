@@ -3,6 +3,10 @@
 ## 1. Introduction
 
 The **Delta Flink Connector** enables Apache Flink streaming jobs to write data into **Delta Lake tables**.
+```aiignore
+Note: this is a private build right now and there will be no product support provided.
+Suggestions and feedbacks are welcome.
+```
 
 ### Supported Flink Versions
 - **Flink v2.0**
