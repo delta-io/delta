@@ -432,17 +432,17 @@ public class DataTypeJsonSerDe {
   private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
 
   // Geometry patterns
-  private static String GEOMETRY_REGEX = "geometry\\(\\s*([\\w]+:-?[\\w]+)\\s*\\)";
-  private static Pattern GEOMETRY_PATTERN = Pattern.compile(GEOMETRY_REGEX);
+  private static final String GEOMETRY_REGEX = "geometry\\(\\s*([\\w]+:-?[\\w]+)\\s*\\)";
+  private static final Pattern GEOMETRY_PATTERN = Pattern.compile(GEOMETRY_REGEX);
 
   // Geography patterns
-  private static String GEOGRAPHY_CRS_ALG_REGEX =
+  private static final String GEOGRAPHY_CRS_ALG_REGEX =
       "geography\\(\\s*(\\w+:-?\\w+)\\s*,\\s*(\\w+)\\s*\\)";
-  private static Pattern GEOGRAPHY_CRS_ALG_PATTERN = Pattern.compile(GEOGRAPHY_CRS_ALG_REGEX);
-  private static String GEOGRAPHY_CRS_REGEX = "geography\\(\\s*(\\w+:-?\\w+)\\s*\\)";
-  private static Pattern GEOGRAPHY_CRS_PATTERN = Pattern.compile(GEOGRAPHY_CRS_REGEX);
-  private static String GEOGRAPHY_ALG_REGEX = "geography\\(\\s*(\\w+)\\s*\\)";
-  private static Pattern GEOGRAPHY_ALG_PATTERN = Pattern.compile(GEOGRAPHY_ALG_REGEX);
+  private static final Pattern GEOGRAPHY_CRS_ALG_PATTERN = Pattern.compile(GEOGRAPHY_CRS_ALG_REGEX);
+  private static final String GEOGRAPHY_CRS_REGEX = "geography\\(\\s*(\\w+:-?\\w+)\\s*\\)";
+  private static final Pattern GEOGRAPHY_CRS_PATTERN = Pattern.compile(GEOGRAPHY_CRS_REGEX);
+  private static final String GEOGRAPHY_ALG_REGEX = "geography\\(\\s*(\\w+)\\s*\\)";
+  private static final Pattern GEOGRAPHY_ALG_PATTERN = Pattern.compile(GEOGRAPHY_ALG_REGEX);
 
   /** Parses primitive string type names to a {@link DataType} */
   private static DataType nameToType(String name) {
@@ -451,9 +451,9 @@ public class DataTypeJsonSerDe {
     } else if (name.equals("decimal")) {
       return DecimalType.USER_DEFAULT;
     } else if (name.equals("geometry")) {
-      return new GeometryType();
+      return GeometryType.ofDefault();
     } else if (name.equals("geography")) {
-      return new GeographyType();
+      return GeographyType.ofDefault();
     } else if ("void".equalsIgnoreCase(name)) {
       // Earlier versions of Delta had VOID type which is not specified in Delta Protocol.
       // It is not readable or writable. Throw a user-friendly error message.
@@ -471,7 +471,7 @@ public class DataTypeJsonSerDe {
       Matcher geometryMatcher = GEOMETRY_PATTERN.matcher(name);
       if (geometryMatcher.matches()) {
         String srid = geometryMatcher.group(1);
-        return new GeometryType(srid);
+        return GeometryType.ofSRID(srid);
       }
 
       // geography has different patterns:
@@ -491,14 +491,14 @@ public class DataTypeJsonSerDe {
       Matcher geographyCrsMatcher = GEOGRAPHY_CRS_PATTERN.matcher(name);
       if (geographyCrsMatcher.matches()) {
         String srid = geographyCrsMatcher.group(1);
-        return new GeographyType(srid);
+        return GeographyType.ofSRID(srid);
       }
 
       // Check for algorithm pattern (no colon)
       Matcher geographyAlgMatcher = GEOGRAPHY_ALG_PATTERN.matcher(name);
       if (geographyAlgMatcher.matches()) {
         String algorithm = geographyAlgMatcher.group(1);
-        return new GeographyType(GeographyType.DEFAULT_SRID, algorithm);
+        return GeographyType.ofAlgorithm(algorithm);
       }
 
       // We have encountered a type that is beyond the specification of the protocol
