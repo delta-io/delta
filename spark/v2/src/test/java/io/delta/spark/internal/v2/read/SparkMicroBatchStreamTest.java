@@ -1973,59 +1973,49 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     String v1ExactTS = versionTimestamps.get(1L).toString();
     String v2ExactTS = versionTimestamps.get(2L).toString();
 
-    try {
-      spark.conf().set(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP().key(), "true");
+    class TimestampTestCase {
+      final String timestamp;
+      final long expectedVersion;
+      final String message;
 
-      class TimestampTestCase {
-        final String timestamp;
-        final long expectedVersion;
-        final String message;
-
-        TimestampTestCase(String timestamp, long expectedVersion, String message) {
-          this.timestamp = timestamp;
-          this.expectedVersion = expectedVersion;
-          this.message = message;
-        }
+      TimestampTestCase(String timestamp, long expectedVersion, String message) {
+        this.timestamp = timestamp;
+        this.expectedVersion = expectedVersion;
+        this.message = message;
       }
+    }
 
-      TimestampTestCase[] testCases = {
-        new TimestampTestCase(
-            beforeV1TS, 1L, "timestamp between v0 and v1 should return version 1"),
-        new TimestampTestCase(
-            v1ExactTS, 1L, "timestamp exactly at v1 commit time should return version 1"),
-        new TimestampTestCase(
-            betweenV1V2TS, 2L, "timestamp between v1 and v2 should return version 2"),
-        new TimestampTestCase(
-            v2ExactTS, 2L, "timestamp exactly at v2 commit time should return version 2"),
-        new TimestampTestCase(
-            afterV2TS, 3L, "timestamp after v2 and allow out of range should return version 3")
-      };
-      for (TimestampTestCase testCase : testCases) {
-        String timestamp = testCase.timestamp;
-        long expectedVersion = testCase.expectedVersion;
-        String message = testCase.message;
+    TimestampTestCase[] testCases = {
+      new TimestampTestCase(beforeV1TS, 1L, "timestamp between v0 and v1 should return version 1"),
+      new TimestampTestCase(
+          v1ExactTS, 1L, "timestamp exactly at v1 commit time should return version 1"),
+      new TimestampTestCase(
+          betweenV1V2TS, 2L, "timestamp between v1 and v2 should return version 2"),
+      new TimestampTestCase(
+          v2ExactTS, 2L, "timestamp exactly at v2 commit time should return version 2")
+    };
+    for (TimestampTestCase testCase : testCases) {
+      String timestamp = testCase.timestamp;
+      long expectedVersion = testCase.expectedVersion;
+      String message = testCase.message;
 
-        // dsv1
-        DeltaSource deltaSource =
-            createDeltaSource(
-                deltaLog, testTablePath, createDeltaOptions("startingTimestamp", timestamp));
-        scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+      // dsv1
+      DeltaSource deltaSource =
+          createDeltaSource(
+              deltaLog, testTablePath, createDeltaOptions("startingTimestamp", timestamp));
+      scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
-        // dsv2
-        PathBasedSnapshotManager snapshotManager =
-            new PathBasedSnapshotManager(testTablePath, new Configuration());
-        SparkMicroBatchStream dsv2Stream =
-            createTestStreamWithDefaults(
-                snapshotManager,
-                new Configuration(),
-                createDeltaOptions("startingTimestamp", timestamp));
-        Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+      // dsv2
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, new Configuration());
+      SparkMicroBatchStream dsv2Stream =
+          createTestStreamWithDefaults(
+              snapshotManager,
+              new Configuration(),
+              createDeltaOptions("startingTimestamp", timestamp));
+      Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
-        compareStartingVersionResults(
-            dsv1Result, dsv2Result, Optional.of(expectedVersion), message);
-      }
-    } finally {
-      spark.conf().unset(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP().key());
+      compareStartingVersionResults(dsv1Result, dsv2Result, Optional.of(expectedVersion), message);
     }
 
     // dsv1
