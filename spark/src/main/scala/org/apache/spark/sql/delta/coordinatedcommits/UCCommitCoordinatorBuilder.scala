@@ -285,23 +285,19 @@ object UCCommitCoordinatorBuilder
 
 trait UCClientFactory {
   def createUCClient(uri: String, authConfig: Map[String, String]): UCClient
-
-  /**
-   * Creates a UC client with additional application version entries for telemetry.
-   * These are merged with the built-in default versions (Delta, Spark, Scala, Java).
-   */
-  def createUCClient(
-      uri: String,
-      authConfig: Map[String, String],
-      appVersions: Map[String, String]): UCClient
 }
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
-    createUCClient(uri, authConfig, Map.empty[String, String])
+    createUCClientWithVersions(uri, authConfig, defaultAppVersions)
   }
 
-  override def createUCClient(
+  /**
+   * Creates a UC client with the given application versions for telemetry.
+   * The provided `appVersions` map is used as-is; callers are responsible for
+   * including all desired version entries.
+   */
+  def createUCClientWithVersions(
       uri: String,
       authConfig: Map[String, String],
       appVersions: Map[String, String]): UCClient = {
@@ -309,16 +305,10 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val mergedVersions = buildAppVersions(appVersions)
-    new UCTokenBasedRestClient(uri, tokenProvider, mergedVersions.asJava)
+    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
   }
 
-  private[coordinatedcommits] def buildAppVersions(
-      appVersions: Map[String, String]): Map[String, String] = {
-    defaultAppVersions ++ appVersions
-  }
-
-  private def defaultAppVersions: Map[String, String] = {
+  private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
     Map(
       "Delta" -> io.delta.VERSION,
       "Spark" -> org.apache.spark.SPARK_VERSION,
@@ -327,17 +317,22 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     )
   }
 
+  /** Returns the default app versions as a mutable Java map for easy extension. */
+  def defaultAppVersionsAsJava: java.util.Map[String, String] = {
+    new java.util.HashMap(defaultAppVersions.asJava)
+  }
+
   /** Java-friendly overload that accepts a java.util.Map */
   def createUCClient(uri: String, authConfig: java.util.Map[String, String]): UCClient = {
     createUCClient(uri, authConfig.asScala.toMap)
   }
 
   /** Java-friendly overload that accepts application versions for telemetry. */
-  def createUCClient(
+  def createUCClientWithVersions(
       uri: String,
       authConfig: java.util.Map[String, String],
       appVersions: java.util.Map[String, String]): UCClient = {
-    createUCClient(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
+    createUCClientWithVersions(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
   }
 }
 
