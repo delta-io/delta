@@ -381,9 +381,9 @@ public class SparkTableTest extends DeltaV2TestBase {
     URI uri = new URI("file:///data/spark%25dir%25prefix/table");
     String result = (String) getDecodedPath.invoke(null, uri);
 
-    // Hadoop Path.toString() includes the scheme for file URIs
+    // For file URIs, getDecodedPath returns just the path without the scheme
     assertEquals(
-        "file:/data/spark%dir%prefix/table",
+        "/data/spark%dir%prefix/table",
         result, "URL-encoded characters should be properly decoded");
   }
 

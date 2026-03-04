@@ -1348,7 +1348,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       // Create a checkpoint so that logs before checkpoint can be expired and deleted
       writersLog.checkpoint()
-      val tahoeId = deltaLog.tableId // This isn't stable, but it shouldn't change during the test.
+      // This isn't stable, but it shouldn't change during the test.
+      val tahoeId = deltaLog.unsafeVolatileTableId
 
       testStream(df)(
         StartStream(Trigger.ProcessingTime("10 seconds"), new StreamManualClock),
@@ -1449,7 +1450,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       val deltaLog = DeltaLog.forTable(spark, inputDir.toString)
       def expectLatestOffset(offset: DeltaSourceOffset) {
           val lastOffset = DeltaSourceOffset(
-            deltaLog.tableId,
+            deltaLog.unsafeVolatileTableId,
             SerializedOffset(stream.lastProgress.sources.head.endOffset)
           )
 
@@ -1459,17 +1460,26 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       try {
         stream.processAllAvailable()
         expectLatestOffset(DeltaSourceOffset(
-          deltaLog.tableId, 1, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false))
+          deltaLog.unsafeVolatileTableId,
+          reservoirVersion = 1,
+          DeltaSourceOffset.BASE_INDEX,
+          isInitialSnapshot = false))
 
         deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
         stream.processAllAvailable()
         expectLatestOffset(DeltaSourceOffset(
-          deltaLog.tableId, 2, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false))
+          deltaLog.unsafeVolatileTableId,
+          reservoirVersion = 2,
+          DeltaSourceOffset.BASE_INDEX,
+          isInitialSnapshot = false))
 
         deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
         stream.processAllAvailable()
         expectLatestOffset(DeltaSourceOffset(
-          deltaLog.tableId, 3, DeltaSourceOffset.BASE_INDEX, isInitialSnapshot = false))
+          deltaLog.unsafeVolatileTableId,
+          reservoirVersion = 3,
+          DeltaSourceOffset.BASE_INDEX,
+          isInitialSnapshot = false))
       } finally {
         stream.stop()
       }
@@ -1493,7 +1503,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         def waitForOffset(offset: DeltaSourceOffset) {
           eventually(timeout(streamingTimeout)) {
             val lastOffset = DeltaSourceOffset(
-              deltaLog.tableId,
+              deltaLog.unsafeVolatileTableId,
               SerializedOffset(stream.lastProgress.sources.head.endOffset)
             )
 
@@ -1504,7 +1514,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Process the initial snapshot (version 0) and end up at the start of version 1 which
         // does not exist yet.
         stream.processAllAvailable()
-        waitForOffset(DeltaSourceOffset(deltaLog.tableId, 1, DeltaSourceOffset.BASE_INDEX, false))
+        waitForOffset(DeltaSourceOffset(
+          deltaLog.unsafeVolatileTableId, 1, DeltaSourceOffset.BASE_INDEX, false))
 
         // Add Versions 1, 2, 3, and 4
         for(i <- 1 to 4) {
@@ -1516,7 +1527,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // v4[END_INDEX] which is then rounded up to v5[BASE_INDEX] even though v5 does not exist
         // yet.
         stream.processAllAvailable()
-        waitForOffset(DeltaSourceOffset(deltaLog.tableId, 5, DeltaSourceOffset.BASE_INDEX, false))
+        waitForOffset(
+          DeltaSourceOffset(deltaLog.unsafeVolatileTableId, 5, DeltaSourceOffset.BASE_INDEX, false))
 
         // Add Version 5
         deltaLog.startTransaction().commit(Seq(), DeltaOperations.ManualUpdate)
@@ -1525,7 +1537,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // versions of the code we did not have END_INDEX. In that case the stream would not have
         // moved forward from v5, because there were no indexes after v5[BASE_INDEX].
         stream.processAllAvailable()
-        waitForOffset(DeltaSourceOffset(deltaLog.tableId, 6, DeltaSourceOffset.BASE_INDEX, false))
+        waitForOffset(
+          DeltaSourceOffset(deltaLog.unsafeVolatileTableId, 6, DeltaSourceOffset.BASE_INDEX, false))
       } finally {
         stream.stop()
       }

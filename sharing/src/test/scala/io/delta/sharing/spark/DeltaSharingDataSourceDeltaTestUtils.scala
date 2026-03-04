@@ -672,4 +672,11 @@ trait DeltaSharingDataSourceDeltaTestUtils extends SharedSparkSession {
       "io.delta.sharing.client.DeltaSharingFileProfileProvider"
     )
   }
+
+  /** Assert the response format recorded by the test client for the given table. */
+  protected def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
+    assert(
+      expectedFormat ==
+        TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
+  }
 }
