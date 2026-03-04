@@ -476,12 +476,8 @@ public class SparkMicroBatchStream
     // Note: returning a version beyond latest snapshot version won't be a problem as callers
     // of this function won't use the version to retrieve snapshot(refer to
     // [[getStartingOffset]]).
-    boolean allowOutOfRange =
-        (Boolean)
-            spark
-                .sessionState()
-                .conf()
-                .getConf(DeltaSQLConf.DELTA_CDF_ALLOW_OUT_OF_RANGE_TIMESTAMP());
+    // TODO(#5319): fetch spark config if CDF is supported.
+    boolean allowOutOfRange = false;
 
     if (options.startingVersion().isDefined()) {
       DeltaStartingVersion startingVersion = options.startingVersion().get();
