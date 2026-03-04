@@ -2577,6 +2577,52 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("drop column: should succeed with unsafe column mapping schema change flag enabled") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      withSQLConf(
+        DeltaSQLConf
+          .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+          .key -> "true"
+      ) {
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+
+          // Write more data after the drop column schema change
+          (5 until 10).foreach { i =>
+            Seq(i.toString).toDF("id")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          q.processAllAvailable()
+
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getAbsolutePath),
+            (0 until 5).map(i => (i.toString, s"val$i")).toDF("id", "value") union
+              (5 until 10).map(i => (i.toString, null: String)).toDF("id", "value"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
   // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
   test("handling nullability schema changes") {
     withTable("srcTable") {

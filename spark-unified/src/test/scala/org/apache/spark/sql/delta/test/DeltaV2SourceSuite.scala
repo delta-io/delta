@@ -59,6 +59,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
     "drop column: should fail with non-additive schema change error",
+    "drop column: should succeed with unsafe column mapping schema change flag enabled",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
