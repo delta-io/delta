@@ -46,7 +46,11 @@ public final class IntTestRunner {
   // Configure test classes here
   // -----------------------
   static final List<Class<? extends IntTestBase>> TEST_CASES =
-      List.of(UnityCatalogIntTest.class, CatalogManagedTableIntTest.class, DeltaSinkIntTest.class);
+      List.of(
+          UnityCatalogIntTest.class,
+          CatalogManagedTableIntTest.class,
+          DeltaSinkIntTest.class,
+          FlinkSqlIntTest.class);
   private static final ClassLoader LOADER = Thread.currentThread().getContextClassLoader();
 
   public static void main(String[] args) {
