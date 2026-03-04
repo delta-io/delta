@@ -1076,6 +1076,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedPartitionColumnChange(
+      operation: String,
+      oldPartitionColumns: Seq[String],
+      newPartitionColumns: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+      messageParameters = Array(
+        operation,
+        oldPartitionColumns.mkString(", "),
+        newPartitionColumns.mkString(", ")
+      )
+    )
+  }
+
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
     val msg = if (colsDropped) {
       " Columns which are of NullType have been dropped."

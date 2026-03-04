@@ -336,7 +336,9 @@ case class CreateDeltaTableCommand(
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options),
         clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
-          txn, taggedCommitData.actions)
+          txn, taggedCommitData.actions),
+        // Only recording "true" to reduce noise in DESCRIBE HISTORY when it doesn't apply.
+        isV1SaveAsTableOverwrite = if (isV1Writer) Some(true) else None
       )
       (taggedCommitData, op)
     }
@@ -682,13 +684,21 @@ case class CreateDeltaTableCommand(
       metadata: Metadata,
       isManagedTable: Boolean,
       options: Option[DeltaOptions],
-      clusterBy: Option[Seq[String]]
+      clusterBy: Option[Seq[String]],
+      isV1SaveAsTableOverwrite: Option[Boolean] = None
   ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined &&
       query.isDefined && options.nonEmpty =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata)
+      DeltaOperations.Write(
+        mode = mode,
+        partitionBy = Option(table.partitionColumnNames),
+        predicate = options.get.replaceWhere,
+        userMetadata = options.flatMap(_.userMetadata),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
 
     // DataSourceV2 table creation
@@ -713,7 +723,8 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        isV1SaveAsTableOverwrite = isV1SaveAsTableOverwrite
       )
 
     // Legacy saveAsTable with Overwrite mode
@@ -742,7 +753,8 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        isV1SaveAsTableOverwrite = isV1SaveAsTableOverwrite
       )
   }
 
