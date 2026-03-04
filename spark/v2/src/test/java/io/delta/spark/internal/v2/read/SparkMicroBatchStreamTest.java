@@ -2175,70 +2175,41 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
       // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2 and
       // consolidate exception type
-      if (testDescription.contains("Drop")) {
-        // drop column would skip the check of
-        // DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking,
-        // so we add additional guard to throw
-        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges on its case.
-        // All other non-additional schema change should throw
-        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges after
-        // schema tracking log is enable
-        DeltaUnsupportedOperationException dsv2Exception =
-            assertThrows(
-                DeltaUnsupportedOperationException.class,
-                () -> {
-                  CloseableIterator<IndexedFile> kernelChanges =
-                      stream.getFileChanges(
-                          fromVersion,
-                          fromIndex,
-                          isInitialSnapshot,
-                          ScalaUtils.toJavaOptional(endOffset));
-                  try {
-                    // Consume the iterator to trigger validation (if not already triggered)
-                    while (kernelChanges.hasNext()) {
-                      kernelChanges.next();
-                    }
-                    kernelChanges.close();
-                  } finally {
-                    // Make sure to close the iterator even if exception occurs
-                    if (kernelChanges != null) {
-                      try {
-                        kernelChanges.close();
-                      } catch (Exception ignored) {
-                      }
-                    }
-                  }
-                },
-                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      } else {
-        DeltaIllegalStateException dsv2Exception =
-            assertThrows(
-                DeltaIllegalStateException.class,
-                () -> {
-                  CloseableIterator<IndexedFile> kernelChanges =
-                      stream.getFileChanges(
-                          fromVersion,
-                          fromIndex,
-                          isInitialSnapshot,
-                          ScalaUtils.toJavaOptional(endOffset));
-                  try {
-                    // Consume the iterator to trigger validation (if not already triggered)
-                    while (kernelChanges.hasNext()) {
-                      kernelChanges.next();
-                    }
-                    kernelChanges.close();
-                  } finally {
-                    // Make sure to close the iterator even if exception occurs
-                    if (kernelChanges != null) {
-                      try {
-                        kernelChanges.close();
-                      } catch (Exception ignored) {
-                      }
-                    }
-                  }
-                },
-                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      }
+      // Drop column skips DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking, so we add an
+      // additional guard to throw
+      // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges in that case.
+      // All other non-additive schema changes throw DeltaIllegalStateException after schema
+      // tracking log is enabled.
+      Class<? extends Exception> expectedDsv2ExceptionClass =
+          testDescription.contains("Drop")
+              ? DeltaUnsupportedOperationException.class
+              : DeltaIllegalStateException.class;
+
+      assertThrows(
+          expectedDsv2ExceptionClass,
+          () -> {
+            CloseableIterator<IndexedFile> kernelChanges =
+                stream.getFileChanges(
+                    fromVersion,
+                    fromIndex,
+                    isInitialSnapshot,
+                    ScalaUtils.toJavaOptional(endOffset));
+            try {
+              // Consume the iterator to trigger validation (if not already triggered)
+              while (kernelChanges.hasNext()) {
+                kernelChanges.next();
+              }
+              kernelChanges.close();
+            } finally {
+              if (kernelChanges != null) {
+                try {
+                  kernelChanges.close();
+                } catch (Exception ignored) {
+                }
+              }
+            }
+          },
+          String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
     } finally {
       // recover spark config to original state
       sparkConf.forEach((key, value) -> spark.conf().unset(key));
@@ -2311,70 +2282,41 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
       // TODO(#5318): assert two exceptions are equal after schema tracking is supported in v2 and
       // consolidate exception type
-      if (testDescription.contains("Drop")) {
-        // drop column would skip the check of
-        // DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking,
-        // so we add additional guard to throw
-        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges on its case.
-        // All other non-additional schema change should throw
-        // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges after
-        // schema tracking log is enable
-        DeltaUnsupportedOperationException dsv2Exception =
-            assertThrows(
-                DeltaUnsupportedOperationException.class,
-                () -> {
-                  CloseableIterator<IndexedFile> kernelChanges =
-                      stream.getFileChanges(
-                          fromVersion,
-                          fromIndex,
-                          isInitialSnapshot,
-                          ScalaUtils.toJavaOptional(endOffset));
-                  try {
-                    // Consume the iterator to trigger validation (if not already triggered)
-                    while (kernelChanges.hasNext()) {
-                      kernelChanges.next();
-                    }
-                    kernelChanges.close();
-                  } finally {
-                    // Make sure to close the iterator even if exception occurs
-                    if (kernelChanges != null) {
-                      try {
-                        kernelChanges.close();
-                      } catch (Exception ignored) {
-                      }
-                    }
-                  }
-                },
-                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      } else {
-        DeltaIllegalStateException dsv2Exception =
-            assertThrows(
-                DeltaIllegalStateException.class,
-                () -> {
-                  CloseableIterator<IndexedFile> kernelChanges =
-                      stream.getFileChanges(
-                          fromVersion,
-                          fromIndex,
-                          isInitialSnapshot,
-                          ScalaUtils.toJavaOptional(endOffset));
-                  try {
-                    // Consume the iterator to trigger validation (if not already triggered)
-                    while (kernelChanges.hasNext()) {
-                      kernelChanges.next();
-                    }
-                    kernelChanges.close();
-                  } finally {
-                    // Make sure to close the iterator even if exception occurs
-                    if (kernelChanges != null) {
-                      try {
-                        kernelChanges.close();
-                      } catch (Exception ignored) {
-                      }
-                    }
-                  }
-                },
-                String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
-      }
+      // Drop column skips DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking, so we add an
+      // additional guard to throw
+      // DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges in that case.
+      // All other non-additive schema changes throw DeltaIllegalStateException after schema
+      // tracking log is enabled.
+      Class<? extends Exception> expectedDsv2ExceptionClass =
+          testDescription.contains("Drop")
+              ? DeltaUnsupportedOperationException.class
+              : DeltaIllegalStateException.class;
+
+      assertThrows(
+          expectedDsv2ExceptionClass,
+          () -> {
+            CloseableIterator<IndexedFile> kernelChanges =
+                stream.getFileChanges(
+                    fromVersion,
+                    fromIndex,
+                    isInitialSnapshot,
+                    ScalaUtils.toJavaOptional(endOffset));
+            try {
+              // Consume the iterator to trigger validation (if not already triggered)
+              while (kernelChanges.hasNext()) {
+                kernelChanges.next();
+              }
+              kernelChanges.close();
+            } finally {
+              if (kernelChanges != null) {
+                try {
+                  kernelChanges.close();
+                } catch (Exception ignored) {
+                }
+              }
+            }
+          },
+          String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
     } finally {
       // recover spark config to original state
       sparkConf.forEach((key, value) -> spark.conf().unset(key));
@@ -2403,7 +2345,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
     // Execute schema change before source initialization to ensure backfill change
     spark.sql(String.format("ALTER table %s RENAME COLUMN id TO userId", testTableName));
-    spark.sql(String.format("INSERT INTO %s VALUES (3, 'Cathy', 5)", testTableName));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (3, 'Cathy', 5, named_struct('col1', 18, 'col2', 'SF'))",
+            testTableName));
     // Record the version prior to reverting schema change
     long incompatibleSchemaVersion =
         DeltaLog.forTable(spark, new Path(testTablePath))
@@ -2411,7 +2356,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             .version();
     // Revert the schema change
     spark.sql(String.format("ALTER table %s RENAME COLUMN userId TO id", testTableName));
-    spark.sql(String.format("INSERT INTO %s VALUES (4, 'David', 8)", testTableName));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (4, 'David', 8, named_struct('col1', 47, 'col2', 'DC'))",
+            testTableName));
 
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     String tableId = deltaLog.tableId();
@@ -2556,18 +2504,31 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             /* sparkConf */ Map.of(),
             "Rename column"),
 
-        // Drop both nullable and non-nullable columns
+        // Drop nullable, non-nullable and struct columns
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
-                  sql("ALTER TABLE %s DROP COLUMNS (id, value)", tableName);
+                  sql("ALTER TABLE %s DROP COLUMNS (id, value, info)", tableName);
                 },
             /* sparkConf */ Map.of(
                 DeltaSQLConf
                     .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES()
                     .key(),
                 "false"),
-            "Drop both nullable and non-nullable columns"),
+            "Drop nullable, non-nullable and struct columns"),
+
+        // Drop column in nested struct
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s DROP COLUMNS info.col1", tableName);
+                },
+            /* sparkConf */ Map.of(
+                DeltaSQLConf
+                    .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES()
+                    .key(),
+                "false"),
+            "Drop column in nested struct"),
 
         // Widen INT column to BIGINT
         Arguments.of(

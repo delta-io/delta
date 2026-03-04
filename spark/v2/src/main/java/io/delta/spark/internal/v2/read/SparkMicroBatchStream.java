@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Preconditions;
+import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.utils.CloseableIterator;
@@ -945,9 +946,21 @@ public class SparkMicroBatchStream
     io.delta.kernel.types.StructType newPhysicalSchema = newMetadata.getPhysicalSchema();
     io.delta.kernel.types.StructType currentPhysicalSchema = oldMetadata.getPhysicalSchema();
 
-    boolean isDropColumn =
-        currentPhysicalSchema.fieldNames().stream()
-            .anyMatch(name -> newPhysicalSchema.indexOf(name) < 0);
+    Set<String> currentFieldPaths =
+        new SchemaIterable(currentPhysicalSchema)
+            .stream()
+                .filter(SchemaIterable.SchemaElement::isStructField)
+                .map(SchemaIterable.SchemaElement::getNamePath)
+                .collect(Collectors.toSet());
+
+    Set<String> newFieldPaths =
+        new SchemaIterable(newPhysicalSchema)
+            .stream()
+                .filter(SchemaIterable.SchemaElement::isStructField)
+                .map(SchemaIterable.SchemaElement::getNamePath)
+                .collect(Collectors.toSet());
+
+    boolean isDropColumn = !newFieldPaths.containsAll(currentFieldPaths);
 
     if (isDropColumn) {
       throw (RuntimeException)
