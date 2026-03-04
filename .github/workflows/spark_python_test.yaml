@@ -75,9 +75,15 @@ jobs:
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Setup Unity Catalog for testing
         run: |
+          export DELTA_VERSION="$(sed -n 's/^ThisBuild \/ version := \"\(.*\)\"$/\1/p' version.sbt)"
+          export SPARK_VERSION=4.0.0
+          export COURSIER_PARALLEL_DOWNLOAD_COUNT=1
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" kernelApi/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" kernelDefaults/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" storage/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "++ 2.13.16" spark/publishM2
           git clone --depth 1 --branch atomic-rtas https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
-          export COURSIER_PARALLEL_DOWNLOAD_COUNT=1
           ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set client / Compile / packageDoc / publishArtifact := false" client/generate client/publishM2
           ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set server / Compile / packageDoc / publishArtifact := false" server/publishM2
           ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set spark / Compile / packageDoc / publishArtifact := false" spark/publishM2
