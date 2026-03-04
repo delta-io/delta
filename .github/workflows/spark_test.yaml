@@ -81,7 +81,7 @@ jobs:
           git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
           git checkout atomic-rtas
-          ./build/sbt clean package publishM2
+          ./build/sbt "set every (Compile / packageDoc / publishArtifact) := false" clean package publishM2
       - name: Install Job dependencies
         run: |
           sudo apt-get update

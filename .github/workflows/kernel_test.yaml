@@ -73,7 +73,7 @@ jobs:
           git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
           git checkout atomic-rtas
-          ./build/sbt clean package publishM2
+          ./build/sbt "set every (Compile / packageDoc / publishArtifact) := false" clean package publishM2
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -93,7 +93,7 @@ jobs:
           git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
           git checkout atomic-rtas
-          ./build/sbt clean package publishM2
+          ./build/sbt "set every (Compile / packageDoc / publishArtifact) := false" clean package publishM2
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
