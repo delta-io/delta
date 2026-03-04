@@ -21,8 +21,6 @@ import java.net.URISyntaxException;
 import java.time.Instant;
 import java.util.*;
 
-import com.databricks.sql.managedcatalog.DeltaUniformIceberg;
-import org.apache.spark.sql.delta.UniformConcurrentModificationException;
 import org.apache.iceberg.BaseMetastoreTableOperations;
 import org.apache.iceberg.MetadataUpdate;
 import org.apache.iceberg.PartitionSpec;

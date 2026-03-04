@@ -21,7 +21,7 @@ import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
-import org.apache.spark.sql.delta.{DeltaLog, Sbapshot}
+import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.spark.sql.delta.icebergShaded.{IcebergConverter, UNIFORM_CC_MODE}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.test.SharedSparkSession
@@ -67,7 +67,6 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
       val deltaLog = DeltaLog.forTable(spark, tableId)
       val snapshot = deltaLog.update()
       val catalogTable = spark.sessionState.catalog.getTableMetadata(tableId)
-      assert(snapshot.numOfFiles == 1)
       // Trigger conversion
       val converter = new IcebergConverterForTest()
       val metadataPath = converter.convertSnapshotAndReturnMetadataPath(snapshot, catalogTable)

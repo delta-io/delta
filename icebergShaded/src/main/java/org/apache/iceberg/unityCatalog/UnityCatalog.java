@@ -80,7 +80,11 @@ public class UnityCatalog extends BaseMetastoreCatalog implements Closeable, Con
         FileIO fileIO = fileIOFactory.newFileIO(DEFAULT_FILE_IO_IMPL, catalogProperties, conf);
         closeableGroup.addCloseable(fileIO);
         return new UnityCatalogTableOperations(
-                sessionCatalog, fileIO, tableIdentifier, metadataUpdates, commitToUC, shouldPreserveDeltaProperties, baseMetadataLocation);
+                fileIO
+                , tableIdentifier
+                , metadataUpdates
+                , baseMetadataLocation
+        );
     }
 
     @Override
