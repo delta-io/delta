@@ -18,6 +18,7 @@ jobs:
         scala: [2.13.16]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
       - name: install java

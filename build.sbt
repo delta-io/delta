@@ -703,8 +703,10 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-// Temporary snapshot pin until the corresponding Unity Catalog release is published.
-val unityCatalogVersion = "0.5.0-SNAPSHOT"
+// Use the released UC version by default. CI jobs that bootstrap a local UC snapshot
+// override this via UNITY_CATALOG_VERSION.
+val unityCatalogReleaseVersion = "0.4.0"
+val unityCatalogVersion = sys.env.getOrElse("UNITY_CATALOG_VERSION", unityCatalogReleaseVersion)
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))

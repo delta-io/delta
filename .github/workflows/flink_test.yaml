@@ -10,6 +10,7 @@ concurrency:
 env:
   # Point SBT to our cache directories for consistency
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
+  UNITY_CATALOG_VERSION: "0.5.0-SNAPSHOT"
 
 jobs:
   test:

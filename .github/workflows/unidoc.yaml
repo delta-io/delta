@@ -4,6 +4,8 @@
     build:
       name: "U: Scala ${{ matrix.scala }}"
       runs-on: ubuntu-24.04
+      env:
+        UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
       strategy:
         matrix:
           # These Scala versions must match those in the build.sbt

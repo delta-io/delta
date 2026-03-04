@@ -24,6 +24,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       SCALA_VERSION: 2.13.16
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
       - name: install java
