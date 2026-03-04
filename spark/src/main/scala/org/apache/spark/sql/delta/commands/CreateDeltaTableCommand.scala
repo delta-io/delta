@@ -140,8 +140,14 @@ case class CreateDeltaTableCommand(
     val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
       DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
+    // For UC-managed tables, existingTableOpt is always None because UC tables
+    // aren't registered in the session catalog. Use tableWithLocation (which has
+    // the catalog name) so DeltaLog resolves via catalog instead of path-based
+    // access (which is blocked for catalog-managed tables).
+    val catalogTableForDeltaLog = existingTableOpt.orElse(
+      Option.when(allowCatalogManaged)(tableWithLocation))
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
-      sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
+      sparkSession, catalogTableForDeltaLog, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     // For UC-managed RTAS, the catalog injects UC table ID properties into the CatalogTable
