@@ -75,7 +75,7 @@ public final class SnapshotManagerFactory {
     Map<String, String> appVersions =
         UCTokenBasedRestClientFactory$.MODULE$.defaultAppVersionsAsJava();
     appVersions.put("Kernel", Meta.KERNEL_VERSION);
-    appVersions.put("DSv2", "true");
+    appVersions.put("Delta V2 connector", "true");
     UCClient ucClient =
         UCTokenBasedRestClientFactory$.MODULE$.createUCClientWithVersions(
             tableInfo.getUcUri(), tableInfo.getAuthConfig(), appVersions);
