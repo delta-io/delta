@@ -8,5 +8,9 @@
 /project/                       @tdas
 /version.sbt                    @tdas
 
+# Spark V2 and Unified modules
+/spark/v2/                      @tdas @huan233 @TimothyW553 @raveeram-db @murali-db
+/spark-unified/                 @tdas @huan233 @TimothyW553 @raveeram-db @murali-db
+
 # All files in the root directory
 /*                              @tdas
