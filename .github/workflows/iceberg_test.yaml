@@ -58,10 +58,12 @@ jobs:
           pipenv --python 3.8.18 install
       - name: Setup Unity Catalog for testing
         run: |
-          git clone https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
+          git clone --depth 1 --branch atomic-rtas https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
           cd /tmp/unitycatalog
-          git checkout atomic-rtas
-          ./build/sbt "set every (Compile / packageDoc / publishArtifact) := false" clean package publishM2
+          export COURSIER_PARALLEL_DOWNLOAD_COUNT=1
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set client / Compile / packageDoc / publishArtifact := false" client/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set server / Compile / packageDoc / publishArtifact := false" server/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set spark / Compile / packageDoc / publishArtifact := false" spark/publishM2
       - name: Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
