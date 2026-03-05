@@ -31,13 +31,10 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 class VersionChecksumHistogramCompatSuite
   extends QueryTest
+  with DeltaSQLCommandTest
   with SharedSparkSession {
 
   import testImplicits._
-
-  override def sparkConf: SparkConf = super.sparkConf
-    .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
-    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
   test("CRC with spec-compliant fileSizeHistogram field (Kernel format) is readable") {
     // Delta spec and Kernel (Java/Rust) use "fileSizeHistogram" as the JSON field name.
