@@ -29,7 +29,7 @@ import org.apache.spark.sql.delta.sources.DeltaDataSource
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.FunctionIdentifier
 import org.apache.spark.sql.catalyst.analysis.{FunctionRegistryBase, NamedRelation, TableFunctionRegistry, UnresolvedLeafNode, UnresolvedRelation}
-import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral}
+import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression, ExpressionInfo, Literal, StringLiteral, Unevaluable}
 import org.apache.spark.sql.catalyst.plans.logical.{LeafNode, LogicalPlan, UnaryNode}
 import org.apache.spark.sql.connector.catalog.V1Table
 import org.apache.spark.sql.execution.datasources.LogicalRelation
@@ -109,11 +109,14 @@ trait CDCStatementBase extends DeltaTableValueFunction {
   }
 
   protected def getOptions: CaseInsensitiveStringMap = {
-    def toDeltaOption(keyPrefix: String, value: Expression): (String, String) = {
+    def toDeltaOption(keyPrefix: String, value: Expression, position: Int): (String, String) = {
       val evaluated = try {
         val fakePlan = util.AnalysisHelper.FakeLogicalPlan(Seq(value), Nil)
         val timestampExpression =
           org.apache.spark.sql.catalyst.optimizer.ComputeCurrentTime(fakePlan).expressions.head
+        if (timestampExpression.isInstanceOf[Unevaluable]) {
+          throw DeltaErrors.cdcNonConstantArgument(fnName, keyPrefix, position, value)
+        }
         timestampExpression.eval().toString
       } catch {
         case _: NullPointerException => throw DeltaErrors.nullRangeBoundaryInCDCRead()
@@ -133,8 +136,8 @@ trait CDCStatementBase extends DeltaTableValueFunction {
       }
     }
 
-    val startingOption = toDeltaOption("starting", functionArgs(1))
-    val endingOption = functionArgs.drop(2).headOption.map(toDeltaOption("ending", _))
+    val startingOption = toDeltaOption("starting", functionArgs(1), 2)
+    val endingOption = functionArgs.drop(2).headOption.map(toDeltaOption("ending", _, 3))
     val options = Map(DeltaDataSource.CDC_ENABLED_KEY -> "true", startingOption) ++ endingOption
     new CaseInsensitiveStringMap(options.asJava)
   }
