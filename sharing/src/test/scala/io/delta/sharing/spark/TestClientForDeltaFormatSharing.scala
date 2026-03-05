@@ -60,7 +60,9 @@ private[spark] class TestClientForDeltaFormatSharing(
     asyncQueryMaxDuration: Long = 600000L,
     tokenExchangeMaxRetries: Int = 5,
     tokenExchangeMaxRetryDurationInSeconds: Int = 60,
-    tokenRenewalThresholdInSeconds: Int = 600)
+    tokenRenewalThresholdInSeconds: Int = 600,
+    callerOrg: String = "",
+    skipFileIdHashVerification: Boolean = false)
     extends DeltaSharingClient {
 
   private val supportedReaderFeatures: Seq[String] = Seq(
@@ -82,6 +84,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   )
 
   import TestClientForDeltaFormatSharing._
+
+  TestClientForDeltaFormatSharing.lastCallerOrg = callerOrg
 
   override def listAllTables(): Seq[Table] = throw new UnsupportedOperationException("not needed")
 
@@ -313,4 +317,5 @@ object TestClientForDeltaFormatSharing {
   val limits = scala.collection.mutable.Map[String, Long]()
   val requestedFormat = scala.collection.mutable.Map[String, String]()
   val jsonPredicateHints = scala.collection.mutable.Map[String, String]()
+  @volatile var lastCallerOrg: String = ""
 }
