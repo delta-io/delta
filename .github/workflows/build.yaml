@@ -12,6 +12,8 @@ jobs:
   test:
     name: "Build Test"
     runs-on: ubuntu-24.04
+    env:
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
 
@@ -34,6 +36,21 @@ jobs:
             ~/.ivy2
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
+      - name: Setup Unity Catalog for testing
+        run: |
+          export COURSIER_PARALLEL_DOWNLOAD_COUNT=1
+          git clone --depth 1 --branch atomic-rtas https://github.com/TimothyW553/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set client / Compile / packageDoc / publishArtifact := false" client/generate client/publishM2
+          cd "$GITHUB_WORKSPACE"
+          export DELTA_VERSION="$(sed -n 's/^ThisBuild \/ version := \"\(.*\)\"$/\1/p' version.sbt)"
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set kernelApi / Compile / doc / sources := Nil" "set kernelApi / Compile / packageDoc / publishArtifact := false" kernelApi/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set kernelDefaults / Compile / doc / sources := Nil" "set kernelDefaults / Compile / packageDoc / publishArtifact := false" kernelDefaults/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set storage / Compile / doc / sources := Nil" "set storage / Compile / packageDoc / publishArtifact := false" storage/publishM2
+          ./build/sbt -DsparkVersion=4.0 "++ 2.13.16" "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set spark / Compile / doc / sources := Nil" "set spark / Compile / packageDoc / publishArtifact := false" spark/publishM2
+          cd /tmp/unitycatalog
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set server / Compile / packageDoc / publishArtifact := false" server/publishM2
+          ./build/sbt "set Global / concurrentRestrictions := Seq(Tags.limitAll(1))" "set spark / Compile / packageDoc / publishArtifact := false" spark/publishM2
 
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py

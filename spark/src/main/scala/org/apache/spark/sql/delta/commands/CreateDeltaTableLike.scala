@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.commands
 
+import io.unitycatalog.client.ApiException
+
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
+import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -80,6 +83,19 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     }
   }
 
+  private def isTableAlreadyExists(t: Throwable): Boolean = {
+    Iterator.iterate(Option(t))(_.flatMap(e => Option(e.getCause)))
+      .takeWhile(_.nonEmpty)
+      .map(_.get)
+      .exists {
+        case _: TableAlreadyExistsException => true
+        case e: ApiException =>
+          Option(e.getResponseBody).exists(
+            _.contains("ALREADY_EXISTS"))
+        case _ => false
+      }
+  }
+
   /**
    * Here we disambiguate the catalog alterations we need to do based on the table operation, and
    * whether we have reached here through legacy code or DataSourceV2 code paths.
@@ -107,9 +123,32 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+      case TableCreationModes.Replace if allowCatalogManaged =>
+        // UC-managed table: table exists in UC catalog, not in session catalog,
+        // so existingTableOpt is None. Data replacement is atomic via Delta's
+        // transaction log. Metadata sync to UC is not yet implemented.
+        // Still preserve REPLACE semantics: if the target table does not exist,
+        // fail rather than silently no-op.
+        if (snapshot.version < 0) {
+          val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        }
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
+      case TableCreationModes.CreateOrReplace if allowCatalogManaged =>
+        // For UC-managed tables, CREATE OR REPLACE may be either:
+        // 1) creating a brand new UC catalog entry, or
+        // 2) replacing an existing UC table whose metadata sync is deferred.
+        // We still attempt the create, but suppress only the concrete
+        // "already exists" case from the backing catalog.
+        try {
+          createTableFunc.get.apply(cleaned)
+        } catch {
+          case e: Throwable if isTableAlreadyExists(e) => ()
+        }
+      case TableCreationModes.CreateOrReplace if createTableFunc.isDefined =>
+        createTableFunc.get.apply(cleaned)
       case TableCreationModes.CreateOrReplace =>
       spark.sessionState.catalog.createTable(
         cleaned,

@@ -155,7 +155,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Option(allTableProperties.get("location"))
     }
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id)
@@ -204,8 +205,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      // For UC managed tables, existingTableOpt is always None
+      // (session catalog doesn't track UC tables). Use tableDesc
+      // which has the catalog name, so DeltaLog resolves via
+      // catalog instead of path-based access (which is blocked
+      // for catalog-managed tables).
+      val deltaLogTableOpt = existingTableOpt.orElse(
+        Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, deltaLogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -649,11 +657,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
+      val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
       val (props, sqlWriteOptions) = getTablePropsAndWriteOptions(properties)
       if (writeOptions.isEmpty && sqlWriteOptions.nonEmpty) {
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      if (isUC) {
+        props.remove("test.simulateUC")
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,
