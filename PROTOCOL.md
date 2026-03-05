@@ -983,7 +983,7 @@ In order to support column mapping, writers must:
      - write a `metaData` action to add the `delta.columnMapping.mode` table property.
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
- - Track partition values and column level statistics with the physical name of the column in the transaction log.
+ - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
  - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
