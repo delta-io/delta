@@ -20,6 +20,10 @@ organizationName := "example"
 
 val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
+val unityCatalogVersion = "0.4.0"
+val jacksonVersion = "2.15.4"
+
+val runUCIntegrationTest = sys.env.getOrElse("RUN_UC_INTEGRATION_TEST", "false") == "true"
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
   val versionRegex = """.*version\s*:=\s*"([^"]+)".*""".r
@@ -207,19 +211,54 @@ lazy val root = (project in file("."))
       getSparkPackageSuffix.value,
       scalaBinaryVersion.value,
       getSupportIceberg.value),
+    // Unity Catalog dependencies for UC integration test (enabled via RUN_UC_INTEGRATION_TEST=true)
+    libraryDependencies ++= {
+      if (runUCIntegrationTest) {
+        Seq(
+          "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion excludeAll(
+            ExclusionRule(organization = "com.fasterxml.jackson.core"),
+            ExclusionRule(organization = "com.fasterxml.jackson.module"),
+            ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+            ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+          ),
+          "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion excludeAll(
+            ExclusionRule(organization = "com.fasterxml.jackson.core"),
+            ExclusionRule(organization = "com.fasterxml.jackson.module"),
+            ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+            ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+          )
+        )
+      } else {
+        Seq.empty
+      }
+    },
+    // Force Jackson versions to match Spark when UC deps are included
+    dependencyOverrides ++= {
+      if (runUCIntegrationTest) {
+        Seq(
+          "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
+          "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+          "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
+          "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
+          "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion
+        )
+      } else {
+        Seq.empty
+      }
+    },
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
     ),
-    // Conditionally exclude IcebergCompatV2.scala when supportIceberg is "false"
     Compile / unmanagedSources / excludeFilter := {
-      if (getSupportIceberg.value == "false") {
-        HiddenFileFilter || "IcebergCompatV2.scala"
-      } else {
-        HiddenFileFilter
-      }
+      var filter: FileFilter = HiddenFileFilter
+      if (getSupportIceberg.value == "false") filter = filter || "IcebergCompatV2.scala"
+      if (!runUCIntegrationTest) filter = filter || "UnityCatalogQuickstart.scala"
+      filter
     },
     java17Settings
   )

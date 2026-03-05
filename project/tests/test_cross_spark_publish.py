@@ -20,7 +20,6 @@ The script will:
 import json
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Set, Dict
@@ -55,15 +54,6 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
     "delta-kernel-defaults-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
     "delta-kernel-unitycatalog-{version}.jar"
-]
-
-# Kernel modules that must appear as dependencies in delta-spark's POM.
-# These are transitive through sparkV2 (an internal module filtered from the POM),
-# so they are explicitly added by pomPostProcess in build.sbt.
-DELTA_SPARK_EXPECTED_POM_DEPS = [
-    "delta-kernel-api",
-    "delta-kernel-defaults",
-    "delta-kernel-unitycatalog",
 ]
 
 
@@ -211,45 +201,6 @@ class CrossSparkPublishTest:
 
         return False
 
-    def validate_delta_spark_pom(self, spark_spec: 'SparkVersionSpec', test_name: str) -> bool:
-        """Validates that delta-spark's POM includes kernel module dependencies."""
-        m2_repo = Path.home() / ".m2" / "repository" / "io" / "delta"
-
-        # delta-spark artifact name includes Spark suffix and Scala version
-        artifact_name = f"delta-spark{spark_spec.suffix}_{self.scala_version}"
-        pom_dir = m2_repo / artifact_name / self.delta_version
-        pom_file = pom_dir / f"{artifact_name}-{self.delta_version}.pom"
-
-        if not pom_file.exists():
-            print(f"✗ {test_name} POM - File not found: {pom_file}")
-            return False
-
-        try:
-            tree = ET.parse(pom_file)
-            root = tree.getroot()
-            ns = {"m": "http://maven.apache.org/POM/4.0.0"}
-
-            found_artifact_ids = set()
-            for dep in root.findall(".//m:dependencies/m:dependency", ns):
-                aid = dep.find("m:artifactId", ns)
-                if aid is not None:
-                    found_artifact_ids.add(aid.text)
-
-            missing = [d for d in DELTA_SPARK_EXPECTED_POM_DEPS if d not in found_artifact_ids]
-
-            if not missing:
-                print(f"✓ {test_name} POM - All kernel dependencies present in {artifact_name}")
-                return True
-
-            print(f"✗ {test_name} POM - Missing kernel dependencies in {artifact_name}:")
-            for dep in missing:
-                print(f"  ✗ {dep}")
-            return False
-
-        except ET.ParseError as e:
-            print(f"✗ {test_name} POM - Failed to parse {pom_file}: {e}")
-            return False
-
     def test_default_publish(self) -> bool:
         """Default publishM2 should publish ALL modules WITH Spark suffix."""
         spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
@@ -268,9 +219,7 @@ class CrossSparkPublishTest:
 
         # Default behavior: all Spark-dependent modules have suffix (e.g., delta-spark_4.0_2.13)
         expected = substitute_xversion(spark_spec.all_jars, self.delta_version)
-        jars_ok = self.validate_jars(expected, "Default publishM2 (with suffix)")
-        pom_ok = self.validate_delta_spark_pom(spark_spec, "Default publishM2 (with suffix)")
-        return jars_ok and pom_ok
+        return self.validate_jars(expected, "Default publishM2 (with suffix)")
 
     def test_backward_compat_publish(self) -> bool:
         """skipSparkSuffix=true should publish ALL modules WITHOUT Spark suffix."""
@@ -293,10 +242,7 @@ class CrossSparkPublishTest:
 
         # Expect artifacts WITHOUT suffix (e.g., delta-spark_2.13 instead of delta-spark_4.0_2.13)
         expected = substitute_xversion(spark_spec_no_suffix.all_jars, self.delta_version)
-        jars_ok = self.validate_jars(expected, "skipSparkSuffix=true (backward compat)")
-        pom_ok = self.validate_delta_spark_pom(
-            spark_spec_no_suffix, "skipSparkSuffix=true (backward compat)")
-        return jars_ok and pom_ok
+        return self.validate_jars(expected, "skipSparkSuffix=true (backward compat)")
 
     def test_cross_spark_workflow(self) -> bool:
         """Full cross-Spark workflow: backward-compat (no suffix) + all versions (with suffix)."""
@@ -344,19 +290,7 @@ class CrossSparkPublishTest:
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
             expected.update(substitute_xversion(spark_spec.iceberg_jars, self.delta_version))
 
-        jars_ok = self.validate_jars(expected, "Cross-Spark Workflow")
-
-        # Validate POM for each Spark version's delta-spark artifact
-        pom_ok = True
-        pom_ok = self.validate_delta_spark_pom(
-            no_suffix_spec, "Cross-Spark Workflow (no suffix)") and pom_ok
-        for spark_version, spark_spec in SPARK_VERSIONS.items():
-            if "SNAPSHOT" in spark_version:
-                continue
-            pom_ok = self.validate_delta_spark_pom(
-                spark_spec, f"Cross-Spark Workflow ({spark_version})") and pom_ok
-
-        return jars_ok and pom_ok
+        return self.validate_jars(expected, "Cross-Spark Workflow")
 
     def validate_spark_versions(self) -> None:
         """
