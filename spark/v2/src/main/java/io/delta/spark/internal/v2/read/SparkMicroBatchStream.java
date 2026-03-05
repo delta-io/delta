@@ -73,6 +73,7 @@ import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -224,6 +225,7 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
+    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
   }
 
   @Override
@@ -1104,6 +1106,55 @@ public class SparkMicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Validates that the analysis-time schema matches the latest snapshot schema. This catches cases
+   * where the table schema changed after the streaming query was analyzed, and the user restarts
+   * the stream with a stale DataFrame.
+   *
+   * @param dataSchema data columns from analysis time (excludes partition columns)
+   * @param partitionSchema partition columns from analysis time
+   * @param snapshotSchema full table schema from the latest snapshot at stream start
+   */
+  private void validateSchemaCompatibilityOnStartup(
+      StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
+    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
+    // StructType is immutable — add() returns a new instance without modifying the original.
+    StructType querySchema = dataSchema;
+    for (StructField field : partitionSchema.fields()) {
+      querySchema = querySchema.add(field);
+    }
+
+    // Check that both schemas have the same set of column names.
+    // Note: both querySchema (from Spark analyzer) and snapshotSchema (from kernel's
+    // Snapshot.getSchema()) use logical column names, so this comparison is safe even with
+    // column mapping enabled.
+    // TODO(#5319): Decide how to handle nullability and data type changes (e.g., type widening).
+    // TODO(#5319): Add partition column change detection.
+    Set<String> queryColumns = collectFieldNames(querySchema, "");
+    Set<String> snapshotColumns = collectFieldNames(snapshotSchema, "");
+
+    if (!queryColumns.equals(snapshotColumns)) {
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
+    }
+  }
+
+  /**
+   * Recursively collects all field names from a schema using dot-notation for nested fields. For
+   * example, a schema with fields (a: INT, b: STRUCT<x: INT, y: INT>) produces {"a", "b", "b.x",
+   * "b.y"}.
+   */
+  private Set<String> collectFieldNames(StructType schema, String prefix) {
+    Set<String> names = new HashSet<>();
+    for (StructField field : schema.fields()) {
+      String fullName = prefix.isEmpty() ? field.name() : prefix + "." + field.name();
+      names.add(fullName);
+      if (field.dataType() instanceof StructType) {
+        names.addAll(collectFieldNames((StructType) field.dataType(), fullName));
+      }
+    }
+    return names;
   }
 
   /**
