@@ -776,38 +776,55 @@ case class CreateDeltaTableCommand(
       txn: OptimisticTransaction,
       tableDesc: CatalogTable,
       schema: StructType): Boolean = {
-    if (!(allowCatalogManaged && isReplace && txn.readVersion > -1L)) {
+    if (!(allowCatalogManaged && isReplace &&
+        txn.readVersion > -1L)) {
       return false
     }
 
     val existingMetadata = txn.snapshot.metadata
+    val existingSchema =
+      DeltaTableUtils.removeInternalDeltaMetadata(
+        sparkSession, existingMetadata.schema)
+    // Compare with .asNullable: the incoming DataFrame schema
+    // may have all-nullable columns (e.g. from SELECT *), but
+    // the table has NOT NULL constraints. Since this method
+    // preserves existing metadata, the constraints are kept.
     val schemaDifferences = SchemaUtils.reportDifferences(
-      DeltaTableUtils.removeInternalDeltaMetadata(sparkSession, existingMetadata.schema),
-      schema)
+      existingSchema.asNullable,
+      schema.asNullable)
     if (schemaDifferences.nonEmpty) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with a different schema")
+        "Replacing a catalog-managed table with a " +
+          "different schema")
     }
 
-    if (tableDesc.partitionColumnNames != existingMetadata.partitionColumns) {
+    // When partition columns are not specified (e.g. from
+    // writeTo().replace()), treat as "preserve existing".
+    val partCols = tableDesc.partitionColumnNames
+    val existPartCols = existingMetadata.partitionColumns
+    if (partCols.nonEmpty && partCols != existPartCols) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with different partitioning")
+        "Replacing a catalog-managed table with " +
+          "different partitioning")
     }
 
-    val specifiedClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
-    val existingClusterBySpec = ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
-    if (specifiedClusterBySpec != existingClusterBySpec) {
+    val specCluster =
+      ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
+    val existCluster =
+      ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
+    if (specCluster != existCluster) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with different clustering")
+        "Replacing a catalog-managed table with " +
+          "different clustering")
     }
 
-    // Only block if the user explicitly specified a different comment.
-    // Omitted COMMENT means "preserve existing".
+    // Only block if the user explicitly specified a different
+    // comment. Omitted COMMENT means "preserve existing".
     tableDesc.comment.foreach { specifiedComment =>
       if (specifiedComment != existingMetadata.description) {
         throw DeltaErrors.operationNotSupportedException(
-          "Replacing a catalog-managed table with a different" +
-          " comment")
+          "Replacing a catalog-managed table with a " +
+            "different comment")
       }
     }
 
@@ -833,21 +850,22 @@ case class CreateDeltaTableCommand(
       normalized -- ignoredKeys
     }
 
-    val specifiedProps = normalizeProperties(tableDesc.properties)
-    val existingProps = normalizeProperties(
+    val specProps = normalizeProperties(tableDesc.properties)
+    val existProps = normalizeProperties(
       existingMetadata.configuration)
     // Only check properties the user explicitly specified.
     // Properties that exist only in the existing metadata
     // (auto-set by Delta) are preserved since we skip the
     // metadata update.
-    val changedKeys = specifiedProps.collect {
+    val changedKeys = specProps.collect {
       case (key, value)
-        if existingProps.get(key) != Some(value) => key
+        if existProps.get(key) != Some(value) => key
     }.toSeq.sorted
     if (changedKeys.nonEmpty) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with different" +
-          s" properties (changed: ${changedKeys.mkString(", ")})")
+        "Replacing a catalog-managed table with " +
+          "different properties " +
+          s"(changed: ${changedKeys.mkString(", ")})")
     }
 
     true

@@ -159,7 +159,26 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    val existingTableOpt = getExistingTableIfExists(id).orElse {
+      // For UC tables, the session catalog doesn't track them,
+      // so getExistingTableIfExists always returns None. Try
+      // loading from the UC catalog to get the existing table
+      // with vended credentials in its storage properties.
+      if (isUnityCatalog) {
+        try {
+          super.loadTable(ident) match {
+            case v1: V1Table
+                if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+              Some(v1.catalogTable)
+            case _ => None
+          }
+        } catch {
+          case _: NoSuchTableException => None
+        }
+      } else {
+        None
+      }
+    }
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -205,11 +224,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
-      // For UC managed tables, existingTableOpt is always None
-      // (session catalog doesn't track UC tables). Use tableDesc
-      // which has the catalog name, so DeltaLog resolves via
-      // catalog instead of path-based access (which is blocked
-      // for catalog-managed tables).
+      // For UC tables being created (not yet in catalog),
+      // fall back to tableDesc so DeltaLog resolves via
+      // catalog name instead of path-based access.
       val deltaLogTableOpt = existingTableOpt.orElse(
         Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
