@@ -247,6 +247,53 @@ class DeltaCDCSQLSuite extends DeltaCDCSuiteBase with DeltaColumnMappingTestUtil
     }
   }
 
+  test("negative case - non-constant expressions in version/timestamp argument") {
+    val tbl = "tbl"
+    val otherTbl = "other_tbl"
+    withTempDir { dir =>
+      withTable(tbl, otherTbl) {
+        spark.range(10).write.format("delta").option("path", dir.getAbsolutePath).saveAsTable(tbl)
+        spark.range(5).toDF("version").write.format("delta").saveAsTable(otherTbl)
+
+        // (query, expectedFunctionName, expectedParamName, expectedPos)
+        val testCases = Seq(
+          // Scalar subquery as starting arg
+          (s"SELECT * FROM table_changes('$tbl', (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes", "starting", 2),
+          // Scalar subquery as ending arg
+          (s"SELECT * FROM table_changes('$tbl', 0, (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes", "ending", 3),
+          // Scalar subquery in table_changes_by_path
+          (s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}'," +
+            s" (SELECT MAX(version) FROM $otherTbl))",
+            "table_changes_by_path", "starting", 2),
+          // Aggregate expression as starting arg
+          (s"SELECT * FROM table_changes('$tbl', MAX(1))",
+            "table_changes", "starting", 2),
+          // Aggregate expression as ending arg
+          (s"SELECT * FROM table_changes('$tbl', 0, MAX(1))",
+            "table_changes", "ending", 3),
+          // Aggregate expression in table_changes_by_path
+          (s"SELECT * FROM table_changes_by_path('${dir.getAbsolutePath}', MAX(1))",
+            "table_changes_by_path", "starting", 2)
+        )
+
+        testCases.foreach { case (q, expectedFn, expectedParam, expectedPos) =>
+          checkErrorMatchPVals(
+            intercept[AnalysisException] { sql(q) },
+            "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+            parameters = Map(
+              "parameterName" -> s"`$expectedParam`",
+              "pos" -> expectedPos.toString,
+              "functionName" -> s"`$expectedFn`",
+              "sqlExpr" -> ".*"
+            )
+          )
+        }
+      }
+    }
+  }
+
   test("resolve expression for timestamp function") {
     val tbl = "tbl"
     withDefaultTimeZone(UTC) {
