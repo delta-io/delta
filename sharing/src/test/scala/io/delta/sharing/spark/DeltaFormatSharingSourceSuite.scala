@@ -39,7 +39,6 @@ import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.execution.streaming.checkpointing.{
   CheckpointFileManager,
-  CommitLog,
   CommitMetadata
 }
 import org.apache.spark.sql.execution.streaming.runtime.{
@@ -322,7 +321,7 @@ class DeltaFormatSharingSourceSuite
         val offsetOut = fileManager.createAtomic(offsetBatchPath, overwriteIfPossible = true)
         offsetOut.write(offsetContent)
         offsetOut.close()
-        val commitContent = s"v${CommitLog.VERSION_1}\n${CommitMetadata(0).json}"
+        val commitContent = s"v1\n${CommitMetadata(0).json}"
           .getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val commitBatchPath = new Path(
           new Path(checkpointPath, StreamingCheckpointConstants.DIR_NAME_COMMITS), "0")
@@ -475,7 +474,7 @@ class DeltaFormatSharingSourceSuite
         offset0Out.write(offset0Content)
         offset0Out.close()
         val commit0Content =
-          s"v${CommitLog.VERSION_1}\n${CommitMetadata(0).json}"
+          s"v1\n${CommitMetadata(0).json}"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val commit0Path = new Path(new Path(
           checkpointPath, commitsDir), "0")
@@ -501,7 +500,7 @@ class DeltaFormatSharingSourceSuite
         offset1Out.write(offset1Content)
         offset1Out.close()
         val commit1Content =
-          s"v${CommitLog.VERSION_1}\n${CommitMetadata(1).json}"
+          s"v1\n${CommitMetadata(1).json}"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val commit1Path = new Path(new Path(
           checkpointPath, commitsDir), "1")
