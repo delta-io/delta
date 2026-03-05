@@ -153,7 +153,7 @@ public class ParquetStatsReader {
           bbox.isMValid()
               ? OptionalDouble.of(decodeMin ? bbox.getMMin() : bbox.getMMax())
               : OptionalDouble.empty();
-      return Literal.ofPointWKT(GeometryUtils.formatPointWKT(x, y, z, m));
+      return Literal.ofString(GeometryUtils.formatPointWKT(x, y, z, m));
     }
 
     Object statValue = decodeMin ? statistics.genericGetMin() : statistics.genericGetMax();

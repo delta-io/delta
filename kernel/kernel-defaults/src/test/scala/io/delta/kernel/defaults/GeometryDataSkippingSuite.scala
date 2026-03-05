@@ -72,8 +72,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
         def filesHit(qMinX: Double, qMinY: Double, qMaxX: Double, qMaxY: Double): Int = {
           val pred = new StIntersectsBoxes(
             new Column("geom"),
-            Literal.ofPointWKT(s"POINT ($qMinX $qMinY)"),
-            Literal.ofPointWKT(s"POINT ($qMaxX $qMaxY)"))
+            Literal.ofString(s"POINT ($qMinX $qMinY)"),
+            Literal.ofString(s"POINT ($qMaxX $qMaxY)"))
           collectScanFileRows(snapshot.getScanBuilder().withFilter(pred).build()).size
         }
 
@@ -115,8 +115,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
             case Some((minX, minY, maxX, maxY)) =>
               new DataFileStatistics(
                 10,
-                Map(geomCol -> Literal.ofPointWKT(s"POINT ($minX $minY)")).asJava,
-                Map(geomCol -> Literal.ofPointWKT(s"POINT ($maxX $maxY)")).asJava,
+                Map(geomCol -> Literal.ofString(s"POINT ($minX $minY)")).asJava,
+                Map(geomCol -> Literal.ofString(s"POINT ($maxX $maxY)")).asJava,
                 Map(geomCol -> (0L: java.lang.Long)).asJava,
                 Optional.empty())
             case None =>
@@ -146,8 +146,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
         def filesHit(qMinX: Double, qMinY: Double, qMaxX: Double, qMaxY: Double): Int = {
           val pred = new StIntersectsBoxes(
             geomCol,
-            Literal.ofPointWKT(s"POINT ($qMinX $qMinY)"),
-            Literal.ofPointWKT(s"POINT ($qMaxX $qMaxY)"))
+            Literal.ofString(s"POINT ($qMinX $qMinY)"),
+            Literal.ofString(s"POINT ($qMaxX $qMaxY)"))
           collectScanFileRows(snapshot.getScanBuilder().withFilter(pred).build()).size
         }
 
@@ -186,10 +186,10 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
           10,
           Map(
             idCol -> Literal.ofInt(idMin),
-            geomCol -> Literal.ofPointWKT(s"POINT ($gMinX $gMinY)")).asJava,
+            geomCol -> Literal.ofString(s"POINT ($gMinX $gMinY)")).asJava,
           Map(
             idCol -> Literal.ofInt(idMax),
-            geomCol -> Literal.ofPointWKT(s"POINT ($gMaxX $gMaxY)")).asJava,
+            geomCol -> Literal.ofString(s"POINT ($gMaxX $gMaxY)")).asJava,
           Map(idCol -> (0L: java.lang.Long), geomCol -> (0L: java.lang.Long)).asJava,
           Optional.empty())
 
@@ -211,8 +211,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
       val geoAndId = new io.delta.kernel.expressions.And(
         new StIntersectsBoxes(
           geomCol,
-          Literal.ofPointWKT("POINT (1.0 1.0)"),
-          Literal.ofPointWKT("POINT (4.0 4.0)")),
+          Literal.ofString("POINT (1.0 1.0)"),
+          Literal.ofString("POINT (4.0 4.0)")),
         new io.delta.kernel.expressions.Predicate("<=", idCol, Literal.ofInt(5)))
 
       val files1 = collectScanFileRows(snapshot.getScanBuilder().withFilter(geoAndId).build())
@@ -222,8 +222,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
       val geoAndId2 = new io.delta.kernel.expressions.And(
         new StIntersectsBoxes(
           geomCol,
-          Literal.ofPointWKT("POINT (8.0 8.0)"),
-          Literal.ofPointWKT("POINT (11.0 11.0)")),
+          Literal.ofString("POINT (8.0 8.0)"),
+          Literal.ofString("POINT (11.0 11.0)")),
         new io.delta.kernel.expressions.Predicate(">=", idCol, Literal.ofInt(15)))
 
       val files2 = collectScanFileRows(snapshot.getScanBuilder().withFilter(geoAndId2).build())
@@ -232,8 +232,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
       // Center geometry + any id: geometry miss skips both files
       val geoCenterAny = new StIntersectsBoxes(
         geomCol,
-        Literal.ofPointWKT("POINT (4.0 4.0)"),
-        Literal.ofPointWKT("POINT (6.0 6.0)"))
+        Literal.ofString("POINT (4.0 4.0)"),
+        Literal.ofString("POINT (6.0 6.0)"))
 
       val files3 = collectScanFileRows(snapshot.getScanBuilder().withFilter(geoCenterAny).build())
       assert(files3.isEmpty)
@@ -257,8 +257,8 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
 
       val stats = new DataFileStatistics(
         10,
-        Map(geomCol -> Literal.ofPointWKT(s"POINT ($minX $minY)")).asJava,
-        Map(geomCol -> Literal.ofPointWKT(s"POINT ($maxX $maxY)")).asJava,
+        Map(geomCol -> Literal.ofString(s"POINT ($minX $minY)")).asJava,
+        Map(geomCol -> Literal.ofString(s"POINT ($maxX $maxY)")).asJava,
         Map(geomCol -> (0L: java.lang.Long)).asJava,
         Optional.empty())
 

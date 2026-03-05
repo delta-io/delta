@@ -26,11 +26,11 @@ import static java.util.stream.Collectors.toList;
 
 import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.data.ColumnarBatch;
-import io.delta.kernel.data.PointVal;
 import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -370,11 +370,21 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           children.size() == 4,
           "ST_INTERSECTS_BOXES_ON_STATS expects 4 children but got %d",
           children.size());
-      for (int i = 0; i < children.size(); i++) {
+      // Children 0 and 1 are stats columns (GeometryType/GeographyType in schema).
+      // Children 2 and 3 are WKT string literals from the query bounds.
+      for (int i = 0; i < 2; i++) {
         DataType dt = children.get(i).outputType;
         checkArgument(
             dt instanceof GeometryType || dt instanceof GeographyType,
             "ST_INTERSECTS_BOXES_ON_STATS child %d must be geometry/geography type, got %s",
+            i,
+            dt);
+      }
+      for (int i = 2; i < 4; i++) {
+        DataType dt = children.get(i).outputType;
+        checkArgument(
+            dt instanceof StringType,
+            "ST_INTERSECTS_BOXES_ON_STATS child %d must be string (WKT), got %s",
             i,
             dt);
       }
@@ -578,9 +588,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           || dataType instanceof DecimalType
           || dataType instanceof DateType
           || dataType instanceof TimestampType
-          || dataType instanceof TimestampNTZType
-          || dataType instanceof GeometryType
-          || dataType instanceof GeographyType) {
+          || dataType instanceof TimestampNTZType) {
         return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
       }
 
@@ -791,22 +799,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           nullability[rowId] = true;
           continue;
         }
-        result[rowId] =
-            boxesIntersect(
-                leftMin.getPoint(rowId),
-                leftMax.getPoint(rowId),
-                rightMin.getPoint(rowId),
-                rightMax.getPoint(rowId));
+        double[] lMin = GeometryUtils.parsePointXY(leftMin.getString(rowId));
+        double[] lMax = GeometryUtils.parsePointXY(leftMax.getString(rowId));
+        double[] rMin = GeometryUtils.parsePointXY(rightMin.getString(rowId));
+        double[] rMax = GeometryUtils.parsePointXY(rightMax.getString(rowId));
+        result[rowId] = boxesIntersect(lMin, lMax, rMin, rMax);
       }
       return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
     }
 
     private static boolean boxesIntersect(
-        PointVal lMin, PointVal lMax, PointVal rMin, PointVal rMax) {
-      return lMax.getX() >= rMin.getX()
-          && rMax.getX() >= lMin.getX()
-          && lMax.getY() >= rMin.getY()
-          && rMax.getY() >= lMin.getY();
+        double[] lMin, double[] lMax, double[] rMin, double[] rMax) {
+      return lMax[0] >= rMin[0] && rMax[0] >= lMin[0] && lMax[1] >= rMin[1] && rMax[1] >= lMin[1];
     }
 
     /**

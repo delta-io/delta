@@ -266,7 +266,7 @@ public class JsonUtils {
           throw new KernelException(
               String.format("Expected geometry as WKT string but got: %s", valueNode));
         }
-        return Literal.ofPointWKT(valueNode.asText());
+        return Literal.ofString(valueNode.asText());
       } else {
         throw unsupportedStatsDataType(dataType);
       }

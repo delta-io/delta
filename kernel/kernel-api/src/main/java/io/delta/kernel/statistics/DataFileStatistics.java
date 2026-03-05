@@ -20,13 +20,11 @@ import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
-import io.delta.kernel.data.PointVal;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
-import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.*;
 import java.io.IOException;
@@ -380,9 +378,9 @@ public class DataFileStatistics {
    */
   private void validateLiteralType(StructField field, Literal literal) {
     DataType fieldType = field.getDataType();
-    // Geometry/geography stats are PointVal literals (GeometryType, any SRID)
+    // Variant and geometry/geography stats are stored as string literals
     if (fieldType instanceof GeometryType || fieldType instanceof GeographyType) {
-      if (!(literal.getDataType() instanceof GeometryType)) {
+      if (!(literal.getDataType() instanceof StringType)) {
         throw DeltaErrors.statsTypeMismatch(field.getName(), fieldType, literal.getDataType());
       }
       return;
@@ -446,10 +444,6 @@ public class DataFileStatistics {
       LocalDateTime localDateTime = ChronoUnit.MICROS.addTo(EPOCH, epochMicros).toLocalDateTime();
       LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-    } else if (type instanceof GeometryType) {
-      PointVal pv = (PointVal) value;
-      generator.writeString(
-          GeometryUtils.formatPointWKT(pv.getX(), pv.getY(), pv.getZ(), pv.getM()));
     } else {
       throw unsupportedStatsDataType(type);
     }

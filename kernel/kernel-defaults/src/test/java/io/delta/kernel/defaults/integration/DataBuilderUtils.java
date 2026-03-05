@@ -20,7 +20,6 @@ import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import io.delta.kernel.data.ArrayValue;
 import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.data.MapValue;
-import io.delta.kernel.data.PointVal;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.data.DefaultRowBasedColumnarBatch;
 import io.delta.kernel.types.StructType;
@@ -147,11 +146,6 @@ public class DataBuilderUtils {
     @Override
     public byte[] getBinary(int ordinal) {
       return (byte[]) values.get(ordinal);
-    }
-
-    @Override
-    public PointVal getPoint(int ordinal) {
-      return (PointVal) values.get(ordinal);
     }
 
     @Override

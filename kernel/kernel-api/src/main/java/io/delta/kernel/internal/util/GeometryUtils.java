@@ -15,12 +15,11 @@
  */
 package io.delta.kernel.internal.util;
 
-import io.delta.kernel.data.PointVal;
 import java.util.OptionalDouble;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Utility for parsing WKT POINT strings into {@link PointVal}. */
+/** Utility for parsing and formatting WKT POINT strings for geometry/geography stats. */
 public class GeometryUtils {
   private GeometryUtils() {}
 
@@ -50,7 +49,7 @@ public class GeometryUtils {
   }
 
   /**
-   * Parses a WKT POINT string into a {@link PointVal}.
+   * Parses the x and y coordinates from a WKT POINT string. Returns double[]{x, y}.
    *
    * <p>Supported formats:
    *
@@ -63,7 +62,7 @@ public class GeometryUtils {
    *
    * @throws IllegalArgumentException if the input is null or does not match a valid POINT WKT
    */
-  public static PointVal parsePoint(String wkt) {
+  public static double[] parsePointXY(String wkt) {
     if (wkt == null) {
       throw new IllegalArgumentException("WKT POINT string cannot be null");
     }
@@ -101,19 +100,11 @@ public class GeometryUtils {
     try {
       double x = Double.parseDouble(parts[0]);
       double y = Double.parseDouble(parts[1]);
-      OptionalDouble z = OptionalDouble.empty();
-      OptionalDouble m = OptionalDouble.empty();
-
-      if ("Z".equals(mod)) {
-        z = OptionalDouble.of(Double.parseDouble(parts[2]));
-      } else if ("M".equals(mod)) {
-        m = OptionalDouble.of(Double.parseDouble(parts[2]));
-      } else if ("ZM".equals(mod)) {
-        z = OptionalDouble.of(Double.parseDouble(parts[2]));
-        m = OptionalDouble.of(Double.parseDouble(parts[3]));
+      // validate remaining coordinates even though we only use x, y
+      for (int i = 2; i < parts.length; i++) {
+        Double.parseDouble(parts[i]);
       }
-
-      return new PointVal(x, y, z, m);
+      return new double[] {x, y};
     } catch (NumberFormatException e) {
       throw new IllegalArgumentException("Invalid coordinate in WKT POINT string: " + wkt, e);
     }

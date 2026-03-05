@@ -17,7 +17,7 @@ package io.delta.kernel.expressions;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.types.GeometryType;
+import io.delta.kernel.types.StringType;
 import java.util.Arrays;
 
 /**
@@ -36,18 +36,18 @@ public class StIntersectsBoxes extends Predicate {
 
   /**
    * @param column the geometry or geography column to test
-   * @param queryMin lower-left corner of the query bounding box (GeometryType literal)
-   * @param queryMax upper-right corner of the query bounding box (GeometryType literal)
+   * @param queryMin lower-left corner of the query bounding box as a WKT POINT string literal
+   * @param queryMax upper-right corner of the query bounding box as a WKT POINT string literal
    */
   public StIntersectsBoxes(Column column, Literal queryMin, Literal queryMax) {
     super(NAME, Arrays.asList(column, queryMin, queryMax));
     checkArgument(
-        queryMin.getDataType() instanceof GeometryType,
-        "queryMin must be a GeometryType literal, got: %s",
+        queryMin.getDataType() instanceof StringType,
+        "queryMin must be a StringType WKT literal, got: %s",
         queryMin.getDataType());
     checkArgument(
-        queryMax.getDataType() instanceof GeometryType,
-        "queryMax must be a GeometryType literal, got: %s",
+        queryMax.getDataType() instanceof StringType,
+        "queryMax must be a StringType WKT literal, got: %s",
         queryMax.getDataType());
   }
 
