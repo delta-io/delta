@@ -29,10 +29,15 @@ import org.apache.spark.sql.test.SharedSparkSession
  * [[VersionChecksum.histogramOpt]] allows reading both field names so that CRC files written by
  * either Kernel or Delta-Spark are compatible.
  */
-class VersionChecksumHistogramCompatSuite extends QueryTest
-    with SharedSparkSession {
+class VersionChecksumHistogramCompatSuite
+  extends QueryTest
+  with SharedSparkSession {
 
   import testImplicits._
+
+  override def sparkConf: SparkConf = super.sparkConf
+    .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+    .set("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
 
   test("CRC with spec-compliant fileSizeHistogram field (Kernel format) is readable") {
     // Delta spec and Kernel (Java/Rust) use "fileSizeHistogram" as the JSON field name.
