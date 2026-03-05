@@ -16,7 +16,6 @@
 
 package io.delta.sharing.spark
 
-import java.io.File
 import java.time.LocalDateTime
 
 import org.apache.spark.sql.delta.{DeltaIllegalStateException, DeltaLog}
@@ -34,14 +33,10 @@ import org.apache.hadoop.fs.Path
 import org.apache.spark.SparkEnv
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.connector.read.streaming.ReadLimit
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
-import org.apache.spark.sql.execution.streaming.Offset
-import org.apache.spark.sql.execution.streaming.checkpointing.{
+import io.delta.sharing.spark.test.shims.SharingStreamingTestShims.{
   CheckpointFileManager,
-  CommitMetadata
-}
-import org.apache.spark.sql.execution.streaming.runtime.{
+  CommitMetadata,
   SerializedOffset,
   StreamingCheckpointConstants,
   StreamMetadata
