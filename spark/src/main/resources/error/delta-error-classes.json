@@ -371,6 +371,12 @@
     ],
     "sqlState" : "22004"
   },
+  "DELTA_CDC_START_VERSION_AFTER_LATEST" : {
+    "message" : [
+      "Start version <start> for change data feed exceeds the latest table version <latest>."
+    ],
+    "sqlState" : "22003"
+  },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
       "Retrieving table changes between version <start> and <end> failed because of an incompatible data schema.",
