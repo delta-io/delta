@@ -290,7 +290,9 @@ class DeltaFormatSharingSourceSuite
 
         // Build custom checkpoint with legacy DeltaSharingSourceOffset (no parquet stream run).
         val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
         val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
         val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
         val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
         val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
@@ -430,7 +432,9 @@ class DeltaFormatSharingSourceSuite
         // startOffset instead of None.
         val checkpointPath =
           new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
         val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
         val fileManager =
           CheckpointFileManager.create(checkpointPath, hadoopConf)
         val offsetsDir =
