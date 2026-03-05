@@ -148,7 +148,8 @@ class TestDeltaSharingClientForFileIndex(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     numGetFileCalls += 1
     limit.foreach(lim => savedLimits = savedLimits :+ lim)
@@ -175,7 +176,8 @@ class TestDeltaSharingClientForFileIndex(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(s"getFiles with startingVersion($startingVersion)")
   }
@@ -183,7 +185,8 @@ class TestDeltaSharingClientForFileIndex(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(
       s"getCDFFiles with cdfOptions:[$cdfOptions], " +

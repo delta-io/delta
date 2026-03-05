@@ -144,7 +144,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     val tableFullName = s"${table.share}.${table.schema}.${table.name}"
     limit.foreach(lim => TestClientForDeltaFormatSharing.limits.put(tableFullName, lim))
@@ -206,7 +207,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     assert(
       endingVersion.isDefined,
@@ -239,7 +241,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     val suffix = cdfOptions
       .get(DeltaSharingOptions.CDF_START_VERSION)
