@@ -284,6 +284,8 @@ class UCCatalogManagedClientSuite extends AnyFunSuite with UCCatalogManagedTestU
     val builderTableProperties = createTableTxnBuilder.getTablePropertiesOpt.get()
     assert(builderTableProperties
       .get(TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey) == "supported")
+    assert(builderTableProperties
+      .get(TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE.getTableFeatureSupportKey) == "supported")
     assert(builderTableProperties.get("io.unitycatalog.tableId") == testUcTableId)
     assert(builderTableProperties.get("foo") == "bar")
 

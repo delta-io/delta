@@ -20,7 +20,7 @@ jobs:
       matrix:
         version:
           - name: latest
-            ref: v4.0.0
+            ref: v4.0.1
             java: 17
             out_dir: docs/apis/_site/api
           - name: 3.3.2

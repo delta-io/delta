@@ -158,22 +158,37 @@ class DeltaLog private(
         && spark.conf.get(DeltaSQLConf.INCREMENTAL_COMMIT_FORCE_VERIFY_IN_TESTS))
   }
 
-  /** The unique identifier for this table. */
-  def tableId: String = unsafeVolatileMetadata.id // safe because table id never changes
+  /**
+   * The unique identifier for this table.
+   *
+   * WARNING: This value is volatile and can change during the lifetime of a DeltaLog instance,
+   * e.g., when the snapshot is updated and the new snapshot has a different table id. Use with
+   * care.
+   */
+  def unsafeVolatileTableId: String = unsafeVolatileMetadata.id
 
   /** Returns the truncated table ID for logging purposes. */
-  private[delta] def truncatedTableId: String = tableId.split("-").head
+  private[delta] def truncatedUnsafeVolatileTableId: String =
+    unsafeVolatileTableId.split("-").head
+
+  /**
+   * WARNING: This API is unsafe and deprecated. It will be removed in future versions.
+   * Use the above unsafeVolatileTableId to get the most recently cached table id.
+   */
+  @deprecated("This method is deprecated and will be removed in future versions. " +
+    "Use unsafeVolatileTableId instead", "18.0")
+  def tableId: String = unsafeVolatileTableId
 
   def getInitialCatalogTable: Option[CatalogTable] = initialCatalogTable
   /**
-   * Combines the tableId with the path of the table to ensure uniqueness. Normally `tableId`
+   * Combines the table id with the path of the table to ensure uniqueness. Normally the table id
    * should be globally unique, but nothing stops users from copying a Delta table directly to
-   * a separate location, where the transaction log is copied directly, causing the tableIds to
+   * a separate location, where the transaction log is copied directly, causing the table ids to
    * match. When users mutate the copied table, and then try to perform some checks joining the
-   * two tables, optimizations that depend on `tableId` alone may not be correct. Hence we use a
+   * two tables, optimizations that depend on the table id alone may not be correct. Hence we use a
    * composite id.
    */
-  private[delta] def compositeId: (String, Path) = tableId -> dataPath
+  private[delta] def compositeId: (String, Path) = unsafeVolatileTableId -> dataPath
 
   /**
    * Creates a [[LogicalRelation]] for a given [[DeltaLogFileIndex]], with all necessary file source

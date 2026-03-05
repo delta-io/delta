@@ -26,11 +26,13 @@ import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
 import org.apache.spark.sql.delta.schema._
+import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.sources.DeltaSQLConf.DELTA_COLLECT_STATS_USING_TABLE_SCHEMA
 import org.apache.spark.sql.delta.stats.{
   DeltaJobStatisticsTracker,
-  StatisticsCollection
+  StatisticsCollection,
+  StatsCollectionUtils
 }
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
@@ -128,7 +130,7 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
     // Validate that write columns for Row IDs have the correct name.
     RowId.throwIfMaterializedRowIdColumnNameIsInvalid(
-      normalizedData, metadata, protocol, deltaLog.tableId)
+      normalizedData, metadata, protocol, deltaLog.unsafeVolatileTableId)
 
     val nullAsDefault = options.isDefined &&
       options.get.options.contains(ColumnWithDefaultExprUtils.USE_NULL_AS_DEFAULT_DELTA_OPTION)
@@ -370,6 +372,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         override val spark: SparkSession = data.sparkSession
         override val statsColumnSpec = StatisticsCollection.configuredDeltaStatsColumnSpec(metadata)
         override val protocol: Protocol = newProtocol.getOrElse(snapshot.protocol)
+        override def getDataSkippingStringPrefixLength: Int =
+          StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
       }
       val (statsColExpr, newOutputStatsCollectionSchema) =
         getStatsColExpr(outputStatsCollectionSchema, statsCollection)
@@ -478,7 +482,9 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
             key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
               key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
           }.toMap
-      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString)
+      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) ++
+        VariantShreddingShims.getVariantInferShreddingSchemaOptions(
+          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata))
 
       try {
         DeltaFileFormatWriter.write(

@@ -120,12 +120,21 @@ object DeltaOperations {
       mode: SaveMode,
       partitionBy: Option[Seq[String]] = None,
       predicate: Option[String] = None,
-      override val userMetadata: Option[String] = None
+      override val userMetadata: Option[String] = None,
+      isDynamicPartitionOverwrite: Option[Boolean] = None,
+      canOverwriteSchema: Option[Boolean] = None,
+      canMergeSchema: Option[Boolean] = None
   ) extends Operation(OP_WRITE) {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()
     ) ++
       partitionBy.map("partitionBy" -> JsonUtils.toJson(_)) ++
-      predicate.map("predicate" -> _)
+      // Only log these fields when explicitly set to avoid noise in DESCRIBE HISTORY when users do
+      // not set them. This means we don't distinguish between explicitly disabled (false) and unset
+      // (defaults to disabled), but that's fine as the distinction is not particularly interesting.
+      predicate.map("predicate" -> _) ++
+      isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
+      canOverwriteSchema.map("canOverwriteSchema" -> _) ++
+      canMergeSchema.map("canMergeSchema" -> _)
 
     val replaceWhereMetricsEnabled = SparkSession.active.conf.get(
       DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
@@ -422,7 +431,11 @@ object DeltaOperations {
       orCreate: Boolean,
       asSelect: Boolean = false,
       override val userMetadata: Option[String] = None,
-      clusterBy: Option[Seq[String]] = None
+      clusterBy: Option[Seq[String]] = None,
+      predicate: Option[String] = None,
+      isDynamicPartitionOverwrite: Option[Boolean] = None,
+      canOverwriteSchema: Option[Boolean] = None,
+      canMergeSchema: Option[Boolean] = None
   ) extends Operation(s"${if (orCreate) "CREATE OR " else ""}REPLACE TABLE" +
       s"${if (asSelect) " AS SELECT" else ""}") {
     override val parameters: Map[String, Any] = Map(
@@ -431,7 +444,14 @@ object DeltaOperations {
       "partitionBy" -> JsonUtils.toJson(metadata.partitionColumns),
       CLUSTERING_PARAMETER_KEY -> JsonUtils.toJson(clusterBy.getOrElse(Seq.empty)),
       "properties" -> JsonUtils.toJson(metadata.configuration)
-  )
+  ) ++
+    // Only log these fields when explicitly set to avoid noise in DESCRIBE HISTORY when users do
+    // not set them. This means we don't distinguish between explicitly disabled (false) and unset
+    // (defaults to disabled), but that's fine as the distinction is not particularly interesting.
+    predicate.map("predicate" -> _) ++
+    isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
+    canOverwriteSchema.map("canOverwriteSchema" -> _) ++
+    canMergeSchema.map("canMergeSchema" -> _)
 
     private val insertOverwriteRemoveMetricsEnabled = SparkSession.active.conf.get(
       DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)

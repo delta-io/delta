@@ -1,4 +1,4 @@
-<img src="https://docs.delta.io/latest/_static/delta-lake-white.png" width="200" alt="Delta Lake Logo"></img>
+<img src="docs/src/assets/delta-lake-logo-light.svg" width="200" alt="Delta Lake Logo"></img>
 
 [![Test](https://github.com/delta-io/delta/actions/workflows/test.yaml/badge.svg)](https://github.com/delta-io/delta/actions/workflows/test.yaml)
 [![License](https://img.shields.io/badge/license-Apache%202-brightgreen.svg)](https://github.com/delta-io/delta/blob/master/LICENSE.txt)
@@ -97,7 +97,7 @@ See the [online documentation on Storage Configuration](https://docs.delta.io/la
 
 ## Concurrency Control
 
-Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/latest/delta-concurrency.html) for more details.
+Delta Lake ensures _serializability_ for concurrent reads and writes. Please see [Delta Lake Concurrency Control](https://docs.delta.io/concurrency-control/) for more details.
 
 ## Reporting issues
 

@@ -20,6 +20,7 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import org.apache.spark.internal.config.ConfigBuilder
+import org.apache.spark.internal.config.ConfigEntry
 import org.apache.spark.network.util.ByteUnit
 import org.apache.spark.sql.catalyst.FileSourceOptions
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
@@ -45,6 +46,28 @@ trait DeltaSQLConfUtils {
  * [[SQLConf]] entries for Delta features.
  */
 trait DeltaSQLConfBase extends DeltaSQLConfUtils {
+
+  object DeltaBreakingChangeEnum {
+    val OFF = "OFF"
+    val LOG_ONLY = "LOG_ONLY"
+    val ASSERT = "ASSERT"
+    val validValues: Set[String] = Set(OFF, LOG_ONLY, ASSERT)
+  }
+
+  abstract class DeltaBreakingChangeEnum(configEntry: ConfigEntry[String])
+    extends Enumeration {
+    val OFF = Value("OFF")
+    val LOG_ONLY = Value("LOG_ONLY")
+    val ASSERT = Value("ASSERT")
+
+    def fromConf(conf: SQLConf): Value =
+      withName(conf.getConf(configEntry))
+
+    def default: Value =
+      withName(configEntry.defaultValueString)
+
+    def confName: String = configEntry.key
+  }
 
   val RESOLVE_TIME_TRAVEL_ON_IDENTIFIER =
     buildConf("timeTravel.resolveOnIdentifier.enabled")
@@ -176,6 +199,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .stringConf
       .createWithDefault("MEMORY_AND_DISK_SER")
 
+  val DELTA_SNAPSHOT_LOGGING_MAX_FILES_THRESHOLD =
+    buildConf("snapshot.logging.maxFilesThreshold")
+      .internal()
+      .doc("Threshold for number of files in a snapshot. When exceeded, emits a warning with " +
+        "remediation hints. Set to 0 to disable snapshot logging completely.")
+      .longConf
+      .checkValue(_ >= 0, "must be non-negative")
+      .createWithDefault(500000L)
+
   val DELTA_PARTITION_COLUMN_CHECK_ENABLED =
     buildConf("partitionColumnValidity.enabled")
       .internal()
@@ -190,6 +222,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Whether to perform validation checks before commit or not.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_EMPTY_FILE_CHECK_THROW_ENABLED =
+    buildConf("emptyFileCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions " +
+        "referencing parquet files with size 0 bytes. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
+    buildConf("nullPartitionCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions with " +
+        "null partition values for columns that have NOT NULL constraints. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_SCHEMA_ON_READ_CHECK_ENABLED =
     buildConf("checkLatestSchemaOnRead")
@@ -207,9 +257,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc(
         """
-          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
-          |The field is unstable, so including it can lead semantic violations for equals and
-          |hashCode.""".stripMargin)
+          |Include the deltaLog.unsafeVolatileTableId field in equals and hashCode for
+          |TahoeLogFileIndex. The field is unstable, so including it can lead semantic violations
+          |for equals and hashCode.""".stripMargin)
       .booleanConf
       // TODO: Phase this out towards `false` eventually remove the flag altogether again.
       .createWithDefault(true)
@@ -416,6 +466,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
+
+  val DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION =
+    buildConf("conflictChecker.enforceConcurrentFeatureEnablement.enabled")
+      .internal()
+      .doc("When enabled, the conflict checker will enforce that features that are marked " +
+        "as failing concurrent transactions at upgrade, will fail any conflicting commits with " +
+        "their enablement protocol changes.")
+      .booleanConf
+      .createWithDefault(false)
 
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
@@ -1232,6 +1291,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(30)
 
+  val STATS_AS_STRUCT_IN_CHECKPOINT_FORCE_DISABLED =
+    buildConf("statsAsStructInCheckpoint.forcedDisabled")
+      .internal()
+      .doc("""
+          |Force disables storing statistics as struct in the checkpoint.
+          |Note that should only be used as a kill switch.
+          |This functionality should normally be controlled using the delta config
+          |'checkpoint.writeStatsAsStruct'.
+          |""".stripMargin)
+      .booleanConf
+      .createOptional
+
   val LAST_CHECKPOINT_SIDECARS_THRESHOLD =
     buildConf("lastCheckpoint.sidecars.threshold")
       .internal()
@@ -1242,11 +1313,47 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .createWithDefault(30)
 
+  val USE_CHECKPOINT_SCHEMA_FROM_CHECKPOINT_METADATA =
+    buildConf("checkpointSchema.useFromCheckpointMetadata")
+      .internal()
+      .doc("If enabled, use checkpoint schema from checkpoint metadata file instead of reading it" +
+        " from the checkpoint file")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
       .booleanConf
       .createWithDefault(true)
+
+  private val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
+  val FORCED_CHECKSUM_VALIDATION_INTERVAL =
+    buildConf("versionChecksum.forcedValidationInterval")
+      .internal()
+      .doc("The number of commits since the last checkpoint at which we " +
+        "should force validation of the version checksum. This is done before " +
+        "a commit to block further writes in case of checksum mismatch." +
+        "Set to -1 to disable, set to 0 to validate on every commit. " +
+        "The validation will be skipped if the checkpoint was created " +
+        "within the time gap specified by versionChecksum.forcedValidationMinTimeIntevalMinutes.")
+      .intConf
+      .createWithDefault(FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT)
+
+  val FORCED_CHECKSUM_VALIDATION_MIN_TIME_INTERVAL_MINUTES =
+    buildConf("versionChecksum.forcedValidationMinTimeIntevalMinutes")
+      .internal()
+      .doc("The minimum time gap in minutes between the checkpoint creation time and " +
+        "current time for forced checksum validation. If the checkpoint was created " +
+        "within this time gap, forced validation is skipped even if the number of " +
+        "commits since the checkpoint exceeds the forcedValidationInterval threshold. " +
+        "For fast moving tables, the checkpoint can lag much behind " +
+        "versionChecksum.forcedValidationInterval. This helps us avoid slowing " +
+        "them down. Set to 0 to disable this optimization.")
+      .intConf
+      .checkValue(_ >= 0,
+        "'versionChecksum.forcedValidationMinTimeIntevalMinutes' must be non-negative.")
+      .createWithDefault(12*60) // 12 hours
 
   val INCREMENTAL_COMMIT_ENABLED =
     buildConf("incremental.commit.enabled")
@@ -1505,6 +1612,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     buildConf("typeWidening.removeSchemaMetadata")
       .doc("When true, type widening metadata is removed from schemas that are surfaced outside " +
         "of Delta or used for schema comparisons")
+      .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_TYPE_WIDENING_ALLOW_INTEGRAL_DECIMAL_COERCION =
+    buildConf("typeWidening.allowIntegralDecimalCoercion")
+      .doc("When true, the type widening mode `AllTypeWideningToCommonWiderType` " +
+        "should allow converting integral types to DecimalType and use decimal " +
+        "coercion to find a common wider type with another DecimalType")
       .internal()
       .booleanConf
       .createWithDefault(true)
@@ -2809,6 +2925,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
+    buildConf("spark.sql.delta.sharing.streamingAutoResolveResponseFormat")
+      .doc("When true, auto-resolve Delta Sharing streaming source format by calling getMetadata " +
+        "on the table and using the server's responded format (parquet or delta). When false, " +
+        "use the responseFormat option from the user.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
   ///////////////////
   // IDENTITY COLUMN
   ///////////////////
@@ -2861,6 +2986,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(true)
 
+  val COLLECT_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.collectVariantDataSkippingStats")
+    .internal()
+    .doc(
+      """
+        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
+        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
+        | Variant stats."""
+        .stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
   ///////////
   // TESTING
   ///////////
@@ -2896,6 +3033,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         |""".stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  /////////////////////////////////////
+  // NORMALIZE PARTITION VALUES ON READ
+  ////////////////////////////////////
+
+  val DELTA_NORMALIZE_PARTITION_VALUES_ON_READ =
+    buildConf("normalizePartitionValuesOnRead")
+      .internal()
+      .doc(
+        "When true, we will normalize partition values on read by parsing them " +
+        "to their actual types for comparison instead of using raw strings. This helps prevent " +
+        "issues with inconsistently formatted partition values. " +
+        "UTC_TIMESTAMP_PARTITION_VALUES normalized timestamp partition values on write. However, " +
+        "data written before this flag existed may not be normalized and needs to be normalized " +
+        "on read."
+      )
+      .booleanConf
+      .createWithDefault(true)
 
   //////////////////
   // CORRECTNESS
@@ -2953,25 +3108,37 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
    * Controls which connector implementation to use for Delta table operations.
    *
    * Valid values:
-   * - NONE: V2 connector is disabled, always use V1 connector (DeltaTableV2) - default
-   * - STRICT: V2 connector is strictly enforced, always use V2 connector (Kernel SparkTable).
-   *           Intended for testing V2 connector capabilities
+   * - NONE: sparkV2 connector is disabled, always use sparkV1 connector (DeltaTableV2) - default
+   * - AUTO: Automatically use sparkV2 connector (SparkTable) for Unity Catalog managed tables
+   *         in streaming queries and sparkV1 connector (DeltaTableV2) for all other tables
+   * - STRICT: sparkV2 connector is strictly enforced, always use sparkV2 connector (SparkTable).
+   *           Intended for testing sparkV2 connector capabilities
    *
-   * V1 vs V2 Connectors:
-   * - V1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
+   * sparkV1 vs sparkV2 Connectors:
+   * - sparkV1 Connector (DeltaTableV2): Legacy Delta connector with full read/write support,
    *   uses DeltaLog for metadata management
-   * - V2 Connector (SparkTable): New Kernel-based connector with read-only support,
+   * - sparkV2 Connector (SparkTable): New kernel-based connector with read-only support,
    *   uses Kernel's Table API for metadata management
+   *
+   * See [[org.apache.spark.sql.delta.DeltaV2Mode]] for the centralized logic that interprets
+   * this configuration.
    */
   val V2_ENABLE_MODE =
     buildConf("v2.enableMode")
-      .internal()
       .doc(
-        "Controls the Delta V2 connector enable mode. " +
-        "Valid values: NONE (disabled, default), STRICT (should ONLY be enabled for testing).")
+        "Controls the Delta connector enable mode. " +
+          "NONE (use v1 connector for all cases), AUTO (use v2 only for v2 " +
+          "supported operations, default), STRICT (should ONLY be enabled for testing).")
       .stringConf
-      .checkValues(Set("NONE", "STRICT"))
-      .createWithDefault("NONE")
+      .checkValues(Set("AUTO", "NONE", "STRICT"))
+      .createWithDefault("AUTO")
+
+  val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
+    buildConf("streaming.initialSnapshotMaxFiles")
+      .internal()
+      .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
+      .intConf
+      .createWithDefault(50000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

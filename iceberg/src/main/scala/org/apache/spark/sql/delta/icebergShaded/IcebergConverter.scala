@@ -77,9 +77,9 @@ object IcebergConverter {
 /**
  * This class manages the transformation of delta snapshots into their Iceberg equivalent.
  */
-class IcebergConverter(spark: SparkSession)
-    extends UniversalFormatConverter(spark)
-    with DeltaLogging {
+class IcebergConverter
+  extends UniversalFormatConverter
+  with DeltaLogging {
 
   // Save an atomic reference of the snapshot being converted, and the txn that triggered
   // resulted in the specified snapshot
@@ -129,8 +129,9 @@ class IcebergConverter(spark: SparkSession)
                     try {
                       logInfo(log"Converting Delta table [path=" +
                         log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
-                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}, version=" +
-                        log"${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] into Iceberg")
+                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.unsafeVolatileTableId)}, " +
+                        log"version=${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] " +
+                        log"into Iceberg")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {
                       case NonFatal(e) =>
@@ -227,7 +228,7 @@ class IcebergConverter(spark: SparkSession)
       txn.catalogTable match {
         case Some(table) => convertSnapshotWithRetry(snapshotToConvert, Some(txn), table)
         case _ =>
-          val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.tableId} " +
+          val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.unsafeVolatileTableId} " +
             s"is empty in txn. Skip iceberg conversion."
           throw DeltaErrors.universalFormatConversionFailedException(
             snapshotToConvert.version, "iceberg", msg)
@@ -299,7 +300,8 @@ class IcebergConverter(spark: SparkSession)
    */
   protected class ConversionContext(
     val conversionMode: IcebergConversionMode,
-    val additionalDeltaActionsToCommit: Option[Seq[Action]]
+    val additionalDeltaActionsToCommit: Option[Seq[Action]],
+    val opType: String
   ) {
     validate()
     // Validation on parameters
@@ -335,6 +337,8 @@ class IcebergConverter(spark: SparkSession)
       txnOpt: Option[CommittedTransaction],
       catalogTable: CatalogTable): Option[(Long, Long)] =
       recordFrameProfile("Delta", "IcebergConverter.convertSnapshot") {
+        logInfo(s"convertSnapshot for table ${Option(catalogTable).map(_.identifier)} with " +
+          s"target delta version ${snapshotToConvert.version}")
         val cleanedCatalogTable =
           cleanCatalogTableIfEnablingUniform(catalogTable, snapshotToConvert, txnOpt)
         val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, cleanedCatalogTable)
@@ -363,13 +367,20 @@ class IcebergConverter(spark: SparkSession)
           ),
           conversionContext = new ConversionContext(
             conversionMode = UNIFORM_POST_COMMIT_MODE,
-            additionalDeltaActionsToCommit = None
+            additionalDeltaActionsToCommit = None,
+            opType = "delta.iceberg.conversion.convertSnapshot"
           ),
           cleanedCatalogTable
         )
         Some(snapshotToConvert.version, snapshotToConvert.timestamp)
   }
 
+  /**
+   * The core implementation of convertSnapshot
+   * 'delta.iceberg.conversion.convertSnapshot' ->
+   *    Convert Iceberg Metadata for a complete snapshot. Used for conversion
+   *    after delta commits and in create table
+   */
   private def convertSnapshotInternal(
       snapshotToConvert: Snapshot,
       readSnapshotOpt: Option[Snapshot],
@@ -504,16 +515,18 @@ class IcebergConverter(spark: SparkSession)
       if (needsExpireSnapshot) {
         logInfo(log"Committing iceberg snapshot expiration for uniform table " +
           log"[path = ${MDC(DeltaLogKeys.PATH, log.logPath)}] tableId=" +
-          log"${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}]")
+          log"${MDC(DeltaLogKeys.TABLE_ID, log.unsafeVolatileTableId)}]")
         expireIcebergSnapshot(snapshotToConvert, icebergTxn)
       }
 
       icebergTxn.commit()
+      logInfo(s"icebergTxn committed for table ${Option(catalogTable).map(_.identifier)} " +
+        s"with converted delta version ${snapshotToConvert.version}")
       validateIcebergCommit(snapshotToConvert, catalogTable)
 
       recordDeltaEvent(
         snapshotToConvert.deltaLog,
-        "delta.iceberg.conversion",
+        conversionContext.opType,
         data = Map(
           "deltaVersion" -> snapshotToConvert.version,
           "compatVersion" -> IcebergCompat.getEnabledVersion(snapshotToConvert.metadata)

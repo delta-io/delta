@@ -23,6 +23,7 @@ import scala.collection.JavaConverters._
 
 import io.delta.kernel.internal.files.{ParsedCatalogCommitData, ParsedDeltaData}
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.test.{MockFileSystemClientUtils, VectorTestUtils}
 import io.delta.kernel.utils.FileStatus
 
@@ -560,4 +561,48 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     assert(exMsg.contains("Currently, only file-based deltas are supported"))
   }
 
+  ////////////////////////////////
+  // newAsPublished tests       //
+  ////////////////////////////////
+
+  test("newAsPublished: list all files when there's no checkpoint") {
+    val commits = (0 to 10).map(i => FileStatus.of(s"$logPath/$i.json")) ++
+      (11 to 20).map(i => FileStatus.of(s"$logPath/$i.${java.util.UUID.randomUUID.toString}.json"))
+    val baseSegment = createLogSegmentForTest(
+      version = 20,
+      deltas = commits.asJava,
+      deltaAtEndVersion = Some(commits.last),
+      maxPublishedDeltaVersion = Optional.of(10))
+
+    val updated = baseSegment.newAsPublished()
+
+    assert(updated.getVersion === 20)
+    assert(updated.getDeltas.size() === 21)
+    updated.getDeltas.asScala.zipWithIndex.foreach { case (fs, i) =>
+      assert(fs.getPath == FileNames.deltaFile(logPath, i))
+    }
+    assert(updated.getDeltaFileAtEndVersion.getPath == FileNames.deltaFile(logPath, 20))
+    assert(updated.getMaxPublishedDeltaVersion == Optional.of(20L))
+  }
+
+  test("newAsPublished: list all files starting from checkpoint") {
+    val commits = (11 until 15).map(i => FileStatus.of(s"$logPath/$i.json")) ++
+      (15 to 20).map(i => FileStatus.of(s"$logPath/$i.${java.util.UUID.randomUUID.toString}.json"))
+    val baseSegment = createLogSegmentForTest(
+      version = 20,
+      deltas = commits.asJava,
+      deltaAtEndVersion = Some(commits.last),
+      checkpoints = checkpointFs10List,
+      maxPublishedDeltaVersion = Optional.of(15))
+
+    val updated = baseSegment.newAsPublished()
+
+    assert(updated.getVersion === 20)
+    assert(updated.getDeltas.size() === 10)
+    updated.getDeltas.asScala.zipWithIndex.foreach { case (fs, i) =>
+      assert(fs.getPath == FileNames.deltaFile(logPath, i + 11))
+    }
+    assert(updated.getDeltaFileAtEndVersion.getPath == FileNames.deltaFile(logPath, 20))
+    assert(updated.getMaxPublishedDeltaVersion == Optional.of(20L))
+  }
 }

@@ -94,6 +94,72 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("CREATE TABLE with check constraint referencing non-existent column fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_invalid_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.invalid' = 'non_existent_column > 0')
+                 |""".stripMargin)
+          },
+          "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",
+          parameters = Map("colName" -> "`non_existent_column`")
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with non-boolean check constraint fails at create time") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_non_boolean_constraint"
+      withTable(tableName) {
+        checkError(
+          exception = intercept[AnalysisException] {
+            sql(
+              s"""
+                 |CREATE TABLE $tableName (
+                 |id INT,
+                 |value STRING
+                 |) USING DELTA
+                 |TBLPROPERTIES('delta.constraints.nonbool' = 'id + 1')
+                 |""".stripMargin)
+          },
+          "DELTA_NON_BOOLEAN_CHECK_CONSTRAINT",
+          parameters = Map(
+            "name" -> "nonbool",
+            "expr" -> "(id + 1)"
+          )
+        )
+      }
+    }
+  }
+
+  test("CREATE TABLE with valid check constraint succeeds") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      val tableName = "test_create_valid_constraint"
+      withTable(tableName) {
+        sql(
+          s"""
+             |CREATE TABLE $tableName (
+             |id INT,
+             |value STRING
+             |) USING DELTA
+             |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
+             |""".stripMargin)
+      }
+    }
+  }
+
   test("constraint must be boolean") {
     withTestTable { table =>
       checkError(
@@ -466,6 +532,26 @@ class CheckConstraintsSuite extends QueryTest
     }
   }
 
+  test("validate check constraints on table with char/varchar columns") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+        ValidateCheckConstraintsMode.ASSERT.toString) {
+      withTable("charVarcharConstraintTest") {
+        sql(
+          """CREATE TABLE charVarcharConstraintTest (
+            |  id INT,
+            |  name VARCHAR(50),
+            |  code CHAR(10)
+            |) USING DELTA
+            |TBLPROPERTIES('delta.constraints.positive_id' = 'id > 0')
+            |""".stripMargin)
+        sql("INSERT INTO charVarcharConstraintTest VALUES (1, 'test', 'ABC')")
+        checkAnswer(
+          sql("SELECT id, name, code FROM charVarcharConstraintTest"),
+          Seq(Row(1, "test", "ABC       ")))
+      }
+    }
+  }
+
   test("constraint induced by varchar") {
     withTable("table") {
       sql("CREATE TABLE table (id INT, value VARCHAR(12)) USING DELTA")
@@ -539,6 +625,69 @@ class CheckConstraintsSuite extends QueryTest
           sql(s"ALTER TABLE $testTable ADD CONSTRAINT c1 CHECK (value == $expression(id, 'A'))")
           sql(s"INSERT INTO $testTable VALUES ('ABA', true), ('DEF', false)")
         }
+      }
+    }
+  }
+
+  test("check constraints with LIKE ANY/ALL and NOT LIKE ANY/ALL expressions") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      ValidateCheckConstraintsMode.ASSERT.toString) {
+      val testTable = "like_any_all_test"
+      withTable(testTable) {
+        sql(s"CREATE TABLE $testTable (id INT, name STRING, code STRING) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_like_any " +
+          "CHECK (name LIKE ANY ('%test%', '%prod%'))")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_not_like_any " +
+          "CHECK (name NOT LIKE ANY ('%forbidden%', '%blocked%'))")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_like_all " +
+          "CHECK (code LIKE ALL ('%A%', '%B%'))")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_not_like_all " +
+          "CHECK (code NOT LIKE ALL ('%X%', '%Y%'))")
+        sql(s"INSERT INTO $testTable VALUES (1, 'test_data', 'AB')")
+        checkAnswer(
+          sql(s"SELECT * FROM $testTable"),
+          Seq(Row(1, "test_data", "AB")))
+      }
+    }
+  }
+
+  test("check constraints with array_size and array_compact expressions") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      ValidateCheckConstraintsMode.ASSERT.toString) {
+      val testTable = "array_funcs_test"
+      withTable(testTable) {
+        sql(s"CREATE TABLE $testTable (id INT, tags ARRAY<STRING>) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_size " +
+          "CHECK (array_size(tags) > 0)")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_compact " +
+          "CHECK (array_size(array_compact(tags)) > 0)")
+        sql(s"INSERT INTO $testTable VALUES (1, array('a', 'b'))")
+        checkAnswer(
+          sql(s"SELECT id FROM $testTable"),
+          Seq(Row(1)))
+      }
+    }
+  }
+
+  test("check constraints with array_append, array_prepend, array_insert expressions") {
+    withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
+      ValidateCheckConstraintsMode.ASSERT.toString) {
+      val testTable = "array_modify_funcs_test"
+      withTable(testTable) {
+        sql(s"CREATE TABLE $testTable (id INT, tags ARRAY<STRING>) USING DELTA " +
+          "TBLPROPERTIES ('delta.feature.checkConstraints' = 'supported')")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_append " +
+          "CHECK (array_size(array_append(tags, 'x')) > 1)")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_prepend " +
+          "CHECK (array_size(array_prepend(tags, 'y')) > 1)")
+        sql(s"ALTER TABLE $testTable ADD CONSTRAINT c_array_insert " +
+          "CHECK (array_size(array_insert(tags, 1, 'z')) > 1)")
+        sql(s"INSERT INTO $testTable VALUES (1, array('a', 'b'))")
+        checkAnswer(
+          sql(s"SELECT id FROM $testTable"),
+          Seq(Row(1)))
       }
     }
   }

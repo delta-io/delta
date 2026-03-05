@@ -24,7 +24,7 @@ import io.delta.sharing.client.{
   DeltaSharingProfileProvider,
   DeltaSharingRestClient
 }
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.fs.Path
 
@@ -150,6 +150,12 @@ class TestDeltaSharingClientForCDFUtils(
       ),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
+  }
+
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
   }
 
   override def getForStreaming(): Boolean = forStreaming

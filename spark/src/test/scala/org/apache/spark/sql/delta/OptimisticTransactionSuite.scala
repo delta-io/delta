@@ -20,7 +20,7 @@ package org.apache.spark.sql.delta
 import java.nio.file.FileAlreadyExistsException
 
 import com.databricks.spark.util.Log4jUsageLogger
-import org.apache.spark.sql.delta.DeltaOperations.ManualUpdate
+import org.apache.spark.sql.delta.DeltaOperations.{ManualUpdate, Truncate}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, Metadata, Protocol, RemoveFile, SetTransaction}
 import org.apache.spark.sql.delta.coordinatedcommits.{CommitCoordinatorBuilder, CommitCoordinatorProvider, InMemoryCommitCoordinator, InMemoryCommitCoordinatorBuilder, TableCommitCoordinatorClient}
@@ -340,6 +340,42 @@ class OptimisticTransactionSuite
     }
   }
 
+  test("concurrent feature enablement with failConcurrentTransactionsAtUpgrade should conflict") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION.key -> "true") {
+      withTempDir { tempDir =>
+        val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+
+        val metadata = Metadata(
+          schemaString = new StructType().add("x", IntegerType).json,
+          partitionColumns = Seq("x"))
+        val protocol = Protocol(3, 7)
+        log.startTransaction().commit(Seq(metadata, protocol), ManualUpdate)
+
+        // Start a transaction that will write to the table concurrently with feature enablement.
+        val txn = log.startTransaction()
+
+        // Concurrently, enable the MaterializePartitionColumns feature
+        // This feature has failConcurrentTransactionsAtUpgrade = true
+        val newProtocol = txn.snapshot.protocol.withFeatures(
+          Set(MaterializePartitionColumnsTableFeature))
+
+        log.startTransaction().commit(Seq(newProtocol), ManualUpdate)
+
+        // The original transaction should fail when trying to commit
+        // because a feature with failConcurrentTransactionsAtUpgrade=true was added
+        val e = intercept[io.delta.exceptions.ProtocolChangedException] {
+          txn.commit(
+            Seq(AddFile("test", Map("x" -> "1"), 1, 1, dataChange = true)),
+            ManualUpdate)
+        }
+
+        // Verify the error message
+        assert(e.getMessage.contains("The protocol version of the Delta table has been changed"))
+      }
+    }
+  }
+
   test("AddFile with different partition schema compared to metadata should fail") {
     withTempDir { tempDir =>
       val log = DeltaLog.forTable(spark, new Path(tempDir.getAbsolutePath))
@@ -445,6 +481,45 @@ class OptimisticTransactionSuite
       }
       assert(e.getMessage == DeltaErrors.setTransactionVersionConflict("TestAppId", 2L, 1L)
         .getMessage)
+    }
+  }
+
+  test("conflict event logs winningTxnOperation for observability") {
+    withTempDir { tempDir =>
+      val log = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
+      // Initialize delta table with partitioned schema.
+      val metadata = Metadata(
+        schemaString = new StructType().add("x", IntegerType).json,
+        partitionColumns = Seq("x"),
+        // Set isolation level to SERIALIZABLE to ensure conflict detection.
+        configuration = Map(DeltaConfigs.ISOLATION_LEVEL.key -> Serializable.toString))
+      log.startTransaction().commit(Seq(metadata), ManualUpdate)
+
+      // Start a transaction that reads partition x=1.
+      val txn = log.startTransaction()
+      txn.filterFiles(EqualTo('x, Literal(1)) :: Nil)
+
+      // Commit a concurrent write to the same partition that will cause conflict.
+      log.startTransaction().commit(
+        Seq(AddFile("a", Map("x" -> "1"), 1, 1, dataChange = true)),
+        Truncate())
+
+      // Attempt to write to the same partition - should conflict.
+      val conflictLogs = Log4jUsageLogger.track {
+        intercept[DeltaConcurrentModificationException] {
+          txn.commit(
+            Seq(AddFile("b", Map("x" -> "1"), 1, 1, dataChange = true)),
+            Truncate())
+        }
+      }.filter(usageLog =>
+        usageLog.metric == "tahoeEvent" &&
+          usageLog.tags.getOrElse("opType", "").startsWith("delta.commit.conflict"))
+
+      // Verify the conflict event is logged with winningTxnOperation.
+      assert(conflictLogs.size == 1, "Expected exactly one conflict event to be logged")
+      val conflictBlob = JsonUtils.fromJson[Map[String, Any]](conflictLogs.head.blob)
+      assert(conflictBlob.get("winningTxnOperation")
+        .exists(_.toString == "TRUNCATE"))
     }
   }
 

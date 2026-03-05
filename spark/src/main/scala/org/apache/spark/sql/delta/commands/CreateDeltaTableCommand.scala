@@ -19,8 +19,11 @@ package org.apache.spark.sql.delta.commands
 // scalastyle:off import.ordering.noEmptyLine
 import java.util.concurrent.TimeUnit
 
+import scala.util.Try
+
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
@@ -140,7 +143,12 @@ case class CreateDeltaTableCommand(
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
-      sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
+      spark = sparkSession,
+      tableExists = deltaLog.tableExists,
+      query = query,
+      catalogTableProperties = tableWithLocation.properties,
+      existingTableSnapshotOpt =
+        if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 
     recordDeltaOperation(deltaLog, "delta.ddl.createTable") {
       val result = handleCommit(sparkSession, deltaLog, tableWithLocation)
@@ -288,7 +296,7 @@ case class CreateDeltaTableCommand(
         schema: StructType): (TaggedCommitData[Action], DeltaOperations.Operation) = {
       // In the V2 Writer, methods like "replace" and "createOrReplace" implicitly mean that
       // the metadata should be changed. This wasn't the behavior for DataFrameWriterV1.
-      if (!isV1Writer) {
+      if (!isV1WriterSaveAsTableOverwrite) {
         replaceMetadataIfNecessary(
           txn,
           tableWithLocation,
@@ -307,7 +315,7 @@ case class CreateDeltaTableCommand(
         // saveAsTable() command uses this same code path and is marked as a V1 writer.
         // We do not want saveAsTable() to be treated as a REPLACE command wrt dynamic partition
         // overwrite.
-        isTableReplace = isReplace && !isV1Writer
+        isTableReplace = isReplace && !isV1WriterSaveAsTableOverwrite
       )
       // The 'deltaWriter' initialized the schema. Remove 'EXISTS_DEFAULT' metadata keys because
       // they are not required on tables created by CTAS.
@@ -316,7 +324,7 @@ case class CreateDeltaTableCommand(
       // (only with V1 writer) will be handled inside WriteIntoDelta.
       // For createOrReplace operation, metadata updates are handled here if the table already
       // exists (replacing table), otherwise it is handled inside WriteIntoDelta (creating table).
-      if (!isV1Writer && isReplace && txn.readVersion > -1L) {
+      if (!isV1WriterSaveAsTableOverwrite && isReplace && txn.readVersion > -1L) {
         val newDomainMetadata = Seq.empty[DomainMetadata] ++
           ClusteredTableUtils.getDomainMetadataFromTransaction(
             ClusteredTableUtils.getClusterBySpecOptional(table), txn)
@@ -481,6 +489,14 @@ case class CreateDeltaTableCommand(
         actionsToCommit
     }
 
+    // Validate check constraints for CREATE/REPLACE TABLE
+    val checkConstraints = Constraints.getAll(txn.metadata, sparkSession)
+    Constraints.validateCheckConstraints(
+      sparkSession,
+      checkConstraints,
+      txn.deltaLog,
+      txn.metadata.schema
+    )
     val changedMetadata = txn.metadata != txn.snapshot.metadata
     val changedProtocol = txn.protocol != txn.snapshot.protocol
     if (actionsToCommit.nonEmpty || changedMetadata || changedProtocol) {
@@ -688,19 +704,45 @@ case class CreateDeltaTableCommand(
     // (userMetadata uses SQLConf in this case)
     case TableCreationModes.Replace =>
       DeltaOperations.ReplaceTable(
-        metadata, isManagedTable, orCreate = false, query.isDefined, clusterBy = clusterBy
+        metadata = metadata,
+        isManaged = isManagedTable,
+        orCreate = false,
+        asSelect = query.isDefined,
+        clusterBy = clusterBy,
+        predicate = options.flatMap(_.replaceWhere),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
 
     // Legacy saveAsTable with Overwrite mode
     case TableCreationModes.CreateOrReplace if options.exists(_.replaceWhere.isDefined) =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata)
+      DeltaOperations.Write(
+        mode = mode,
+        partitionBy = Option(table.partitionColumnNames),
+        predicate = options.get.replaceWhere,
+        userMetadata = options.flatMap(_.userMetadata),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
 
     // New DataSourceV2 saveAsTable with overwrite mode behavior
     case TableCreationModes.CreateOrReplace =>
-      DeltaOperations.ReplaceTable(metadata, isManagedTable, orCreate = true, query.isDefined,
-        options.flatMap(_.userMetadata), clusterBy = clusterBy
+      DeltaOperations.ReplaceTable(
+        metadata = metadata,
+        isManaged = isManagedTable,
+        orCreate = true,
+        asSelect = query.isDefined,
+        userMetadata = options.flatMap(_.userMetadata),
+        clusterBy = clusterBy,
+        predicate = options.flatMap(_.replaceWhere),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
   }
 

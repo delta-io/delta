@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import scala.collection.mutable
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.hadoop.fs.Path
 
@@ -64,7 +65,11 @@ trait DeltaInsertIntoTest
      * The method that tests will call to run the insert. Each type of insert must implement its
      * specific way to run insert.
      */
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit
 
     /** SQL keyword for this type of insert.  */
     def intoOrOverwrite: String = if (mode == SaveMode.Append) "INTO" else "OVERWRITE"
@@ -83,8 +88,16 @@ trait DeltaInsertIntoTest
     val name: String = s"INSERT $intoOrOverwrite"
     val byName: Boolean = false
     val isSQL: Boolean = true
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      sql(s"INSERT $intoOrOverwrite target SELECT * FROM source")
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      withSQLConf(DeltaSQLConf.
+          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(s"INSERT $intoOrOverwrite target SELECT * FROM source")
+      }
+    }
   }
 
   /** INSERT INTO/OVERWRITE (a, b) */
@@ -92,9 +105,16 @@ trait DeltaInsertIntoTest
     val name: String = s"INSERT $intoOrOverwrite (columns) - $mode"
     val byName: Boolean = true
     val isSQL: Boolean = true
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
       val colList = columns.mkString(", ")
-      sql(s"INSERT $intoOrOverwrite target ($colList) SELECT $colList FROM source")
+      withSQLConf(DeltaSQLConf.
+          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(s"INSERT $intoOrOverwrite target ($colList) SELECT $colList FROM source")
+      }
     }
   }
 
@@ -103,8 +123,17 @@ trait DeltaInsertIntoTest
     val name: String = s"INSERT $intoOrOverwrite BY NAME - $mode"
     val byName: Boolean = true
     val isSQL: Boolean = true
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      sql(s"INSERT $intoOrOverwrite target BY NAME SELECT ${columns.mkString(", ")} FROM source")
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      withSQLConf(DeltaSQLConf.
+          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(s"INSERT $intoOrOverwrite target BY NAME " +
+          s"SELECT ${columns.mkString(", ")} FROM source")
+      }
+    }
   }
 
   /** INSERT INTO REPLACE WHERE */
@@ -113,9 +142,17 @@ trait DeltaInsertIntoTest
     val mode: SaveMode = SaveMode.Overwrite
     val byName: Boolean = false
     val isSQL: Boolean = true
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      sql(s"INSERT INTO target REPLACE WHERE $whereCol = $whereValue " +
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      withSQLConf(DeltaSQLConf.
+          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(s"INSERT INTO target REPLACE WHERE $whereCol = $whereValue " +
           s"SELECT ${columns.mkString(", ")} FROM source")
+      }
+    }
   }
 
   /** INSERT OVERWRITE PARTITION (part = 1) */
@@ -124,10 +161,17 @@ trait DeltaInsertIntoTest
     val mode: SaveMode = SaveMode.Overwrite
     val byName: Boolean = false
     val isSQL: Boolean = true
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
       val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) " +
+      withSQLConf(DeltaSQLConf.
+          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) " +
           s"SELECT $assignments FROM source")
+      }
     }
   }
 
@@ -137,10 +181,18 @@ trait DeltaInsertIntoTest
     val mode: SaveMode = SaveMode.Overwrite
     val byName: Boolean = true
     val isSQL: Boolean = true
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
       val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) ($assignments) " +
+      withSQLConf(DeltaSQLConf.
+          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
+        sql(s"INSERT OVERWRITE target " +
+          s"PARTITION ($whereCol = $whereValue) ($assignments) " +
           s"SELECT $assignments FROM source")
+      }
     }
   }
 
@@ -149,8 +201,15 @@ trait DeltaInsertIntoTest
     val name: String = s"DFv1 insertInto() - $mode"
     val byName: Boolean = false
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
-      spark.read.table("source").write.mode(mode).insertInto("target")
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit =
+      spark.read.table("source").write.mode(mode)
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format("delta")
+        .insertInto("target")
   }
 
   /** df.write.mode(mode).saveAsTable() */
@@ -158,8 +217,15 @@ trait DeltaInsertIntoTest
     val name: String = s"DFv1 saveAsTable() - $mode"
     val byName: Boolean = true
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").write.mode(mode).format("delta").saveAsTable("target")
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      spark.read.table("source").write.mode(mode)
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format("delta")
+        .saveAsTable("target")
     }
   }
 
@@ -168,9 +234,16 @@ trait DeltaInsertIntoTest
     val name: String = s"DFv1 save() - $mode"
     val byName: Boolean = true
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
-      spark.read.table("source").write.mode(mode).format("delta").save(deltaLog.dataPath.toString)
+      spark.read.table("source").write.mode(mode)
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format("delta")
+        .save(deltaLog.dataPath.toString)
     }
   }
 
@@ -180,10 +253,16 @@ trait DeltaInsertIntoTest
     val mode: SaveMode = SaveMode.Overwrite
     val byName: Boolean = false
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit =
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit =
       spark.read.table("source").write
         .mode(mode)
         .option("partitionOverwriteMode", "dynamic")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .format("delta")
         .insertInto("target")
   }
 
@@ -193,8 +272,15 @@ trait DeltaInsertIntoTest
     val mode: SaveMode = SaveMode.Append
     val byName: Boolean = true
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").writeTo("target").append()
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      spark.read.table("source")
+        .writeTo("target")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .append()
     }
   }
 
@@ -204,8 +290,15 @@ trait DeltaInsertIntoTest
     val mode: SaveMode = SaveMode.Overwrite
     val byName: Boolean = true
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").writeTo("target").overwrite(col(whereCol) === lit(whereValue))
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      spark.read.table("source")
+        .writeTo("target")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .overwrite(col(whereCol) === lit(whereValue))
     }
   }
 
@@ -215,8 +308,15 @@ trait DeltaInsertIntoTest
     override val mode: SaveMode = SaveMode.Overwrite
     val byName: Boolean = true
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
-      spark.read.table("source").writeTo("target").overwritePartitions()
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      spark.read.table("source")
+        .writeTo("target")
+        .option("mergeSchema", withSchemaEvolution.toString)
+        .overwritePartitions()
     }
   }
 
@@ -226,13 +326,18 @@ trait DeltaInsertIntoTest
     override val mode: SaveMode = SaveMode.Append
     val byName: Boolean = true
     val isSQL: Boolean = false
-    def runInsert(columns: Seq[String], whereCol: String, whereValue: Int): Unit = {
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
       val tablePath = DeltaLog.forTable(spark, TableIdentifier("target")).dataPath
       val checkpointLocation = new Path(tablePath, "_checkpoint")
       val query = spark.readStream
         .table("source")
         .writeStream
         .option("checkpointLocation", checkpointLocation.toString)
+        .option("mergeSchema", withSchemaEvolution.toString)
         .format("delta")
         .trigger(Trigger.AvailableNow())
         .toTable("target")
@@ -305,17 +410,20 @@ trait DeltaInsertIntoTest
 
   /**
    * Test runner to cover INSERT operations defined above.
-   * @param name           Test name
-   * @param initialData    Initial data used to create the table.
-   * @param partitionBy    Partition columns for the initial table.
-   * @param insertData     Additional data to be inserted.
-   * @param overwriteWhere Where clause for overwrite PARTITION / REPLACE WHERE (as
-   *                       colName -> value)
-   * @param expectedResult Expected result, see [[ExpectedResult]] above.
-   * @param includeInserts List of insert types to run the test with. Defaults to all inserts.
-   * @param excludeInserts List of insert types to exclude when running the test. Defaults to no
-   *                       inserts excluded.
-   * @param confs          Custom spark confs to set before running the insert operation.
+   * @param name                Test name
+   * @param initialData         Initial data used to create the table.
+   * @param partitionBy         Partition columns for the initial table.
+   * @param insertData          Additional data to be inserted.
+   * @param overwriteWhere      Where clause for overwrite PARTITION / REPLACE WHERE (as
+   *                            colName -> value)
+   * @param expectedResult      Expected result, see [[ExpectedResult]] above.
+   * @param includeInserts      List of insert types to run the test with.
+   *                            Defaults to all inserts.
+   * @param excludeInserts      List of insert types to exclude when running the test.
+   *                            Defaults to no  inserts excluded.
+   * @param confs               Custom spark confs to set before running the insert
+   *                            operation.
+   * @param withSchemaEvolution Whether to enable Automatic Schema Evolution.
    */
   def testInserts[T](name: String)(
       initialData: TestData,
@@ -325,7 +433,8 @@ trait DeltaInsertIntoTest
       expectedResult: ExpectedResult[T],
       includeInserts: Set[Insert] = allInsertTypes,
       excludeInserts: Set[Insert] = Set.empty,
-      confs: Seq[(String, String)] = Seq.empty): Unit = {
+      confs: Seq[(String, String)] = Seq.empty,
+      withSchemaEvolution: Boolean = false): Unit = {
     val inserts = includeInserts.filterNot(excludeInserts)
     assert(inserts.nonEmpty, s"Test '$name' doesn't cover any inserts. Please check the " +
       "includeInserts/excludeInserts sets and ensure at least one insert is included.")
@@ -347,7 +456,8 @@ trait DeltaInsertIntoTest
             insert.runInsert(
               columns = insertData.schema.map(f => QuotingUtils.quoteIfNeeded(f.name)),
               whereCol = overwriteWhere._1,
-              whereValue = overwriteWhere._2
+              whereValue = overwriteWhere._2,
+              withSchemaEvolution = withSchemaEvolution
             )
 
           withSQLConf(confs: _*) {

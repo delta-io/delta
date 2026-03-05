@@ -209,7 +209,7 @@ public class TransactionImpl implements Transaction {
 
   @Override
   public Row getTransactionState(Engine engine) {
-    return TransactionStateRow.of(metadata, dataPath.toString(), maxRetries);
+    return TransactionStateRow.of(metadata, protocol, dataPath.toString(), maxRetries);
   }
 
   @Override
@@ -359,11 +359,11 @@ public class TransactionImpl implements Transaction {
     return maxRetries + 1; // +1 because the first attempt is a try, not a retry.
   }
 
-  private boolean isBlindAppend() {
+  private Optional<Boolean> isBlindAppend() {
     // TODO: for now we hard code this to false to avoid erroneously setting this to true for a
     //  non-blind-append operation. We should revisit how to safely set this to true for actual
     //  blind appends.
-    return false;
+    return Optional.of(false);
   }
 
   private void updateMetadata(Metadata metadata) {
@@ -595,11 +595,11 @@ public class TransactionImpl implements Transaction {
     return new CommitInfo(
         generateInCommitTimestampForFirstCommitAttempt(engine, commitAttemptStartTime),
         commitAttemptStartTime, /* timestamp */
-        "Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo, /* engineInfo */
-        operation.getDescription(), /* description */
+        Optional.of("Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo), /* engineInfo */
+        Optional.of(operation.getDescription()), /* description */
         getOperationParameters(), /* operationParameters */
         isBlindAppend(), /* isBlindAppend */
-        txnId.toString(), /* txnId */
+        Optional.of(txnId.toString()), /* txnId */
         emptyMap() /* operationMetrics */);
   }
 

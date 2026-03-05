@@ -54,7 +54,7 @@ object RowCommitVersion {
     }
 
     val materializedColumnName = MaterializedRowCommitVersion.getMaterializedColumnNameOrThrow(
-      snapshot.protocol, snapshot.metadata, snapshot.deltaLog.tableId)
+      snapshot.protocol, snapshot.metadata, snapshot.deltaLog.unsafeVolatileTableId)
 
     val rowCommitVersionColumn =
       DeltaTableUtils.getFileMetadataColumn(dataFrame).getField(METADATA_STRUCT_FIELD_NAME)

@@ -55,6 +55,18 @@ import org.apache.spark.util.SerializableConfiguration
  *  - populated a column from the deletion vector of this file (if exists) to indicate
  *    whether the row is deleted or not according to the deletion vector. Consumers
  *    of this scan can use the column values to filter out the deleted rows.
+ *
+ * @param protocolMetadataAdapter Adapter providing protocol and metadata info for the table
+ * @param nullableRowTrackingConstantFields If true, row tracking constant fields (e.g., base row
+ *                                          ID, default row commit version) are nullable in schema
+ * @param nullableRowTrackingGeneratedFields If true, row tracking generated fields are nullable
+ * @param optimizationsEnabled Whether to enable optimizations (file splitting, predicate pushdown)
+ * @param tablePath Table path for deletion vector support; None disables DV processing
+ * @param isCDCRead Whether this is a CDC (Change Data Capture) read
+ * @param useMetadataRowIndexOpt Controls row index source for DV filtering. When provided,
+ *                               must match optimizationsEnabled (true enables _metadata.row_index
+ *                               and file splitting; false uses internal counter, no splitting).
+ *                               When None, reads from session config.
  */
 abstract class DeltaParquetFileFormatBase(
     protected val protocolMetadataAdapter: ProtocolMetadataAdapter,
@@ -62,14 +74,13 @@ abstract class DeltaParquetFileFormatBase(
     protected val nullableRowTrackingGeneratedFields: Boolean = false,
     protected val optimizationsEnabled: Boolean = true,
     protected val tablePath: Option[String] = None,
-    protected val isCDCRead: Boolean = false)
+    protected val isCDCRead: Boolean = false,
+    protected val useMetadataRowIndexOpt: Option[Boolean] = None)
   extends ParquetFileFormat with Logging {
 
   // Validate either we have all arguments for DV enabled read or none of them.
   if (hasTablePath) {
-    SparkSession.getActiveSession.map { session =>
-      val useMetadataRowIndex =
-        session.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX)
+    useMetadataRowIndexOpt.foreach { useMetadataRowIndex =>
       require(useMetadataRowIndex == optimizationsEnabled,
         "Wrong arguments for Delta table scan with deletion vectors")
     }
@@ -149,8 +160,9 @@ abstract class DeltaParquetFileFormatBase(
       options: Map[String, String],
       hadoopConf: Configuration): PartitionedFile => Iterator[InternalRow] = {
 
-    val useMetadataRowIndexConf = DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX
-    val useMetadataRowIndex = sparkSession.sessionState.conf.getConf(useMetadataRowIndexConf)
+    // Use explicitly provided value if available, otherwise read from config
+    val useMetadataRowIndex = useMetadataRowIndexOpt.getOrElse(
+      sparkSession.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX))
 
     val parquetDataReader: PartitionedFile => Iterator[InternalRow] =
       super.buildReaderWithPartitionValues(
@@ -532,7 +544,10 @@ case class DeltaParquetFileFormat(
     nullableRowTrackingGeneratedFields = nullableRowTrackingGeneratedFields,
     optimizationsEnabled = optimizationsEnabled,
     tablePath = tablePath,
-    isCDCRead = isCDCRead) {
+    isCDCRead = isCDCRead,
+    // V1: capture config at construction, used in buildReaderWithPartitionValues
+    useMetadataRowIndexOpt = SparkSession.getActiveSession.map(
+      _.sessionState.conf.getConf(DeltaSQLConf.DELETION_VECTORS_USE_METADATA_ROW_INDEX))) {
 
   /**
    * We sometimes need to replace FileFormat within LogicalPlans, so we have to override

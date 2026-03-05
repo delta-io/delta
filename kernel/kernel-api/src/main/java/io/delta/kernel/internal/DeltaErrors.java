@@ -153,6 +153,15 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException resolvedEndVersionAfterMaxCatalogVersion(
+      String tablePath, long resolvedEndVersion, long maxCatalogVersion) {
+    String message =
+        String.format(
+            "%s: Resolved end version to %s which is after max catalog version %s",
+            tablePath, resolvedEndVersion, maxCatalogVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
