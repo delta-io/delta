@@ -27,6 +27,7 @@ import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -88,6 +89,16 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           .collect(Collectors.toMap(Function.identity(), k -> SUPPORTED));
 
   private static final String EXTERNAL_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
+
+  /**
+   * Returns true if the Unity Catalog Spark version >0.4.0 so that it supports complex data types
+   * in columns and partition index.
+   */
+  private static boolean ucSparkNewerThan040() {
+    final int[] VER_0_4_0 = {0, 4, 0};
+    int[] ucSparkVersion = getUnityCatalogSparkVersion();
+    return Arrays.compare(ucSparkVersion, VER_0_4_0) > 0;
+  }
 
   String tempDir;
   private Set<String> tablesToCleanUp = new HashSet<>();
@@ -309,8 +320,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     if (replaceTable) {
       // First, create a different table to replace.
       sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+          "CREATE TABLE %s USING DELTA %s AS SELECT %s AS col1",
+          fullTableName,
+          MANAGED_TBLPROPERTIES_CLAUSE_OTHER,
+          // Older version UC Spark client can't support Decimal type
+          ucSparkNewerThan040() ? "0.1" : "1");
       tablesToCleanUp.add(fullTableName);
     }
 
@@ -343,7 +357,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           comment,
           options.getExternalTableLocation(),
           withCluster,
-          options.getClusterColumn());
+          options.getClusterColumn(),
+          options.getPartitionColumn());
     }
   }
 
@@ -437,6 +452,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
+    if (!ucSparkNewerThan040() && tableType == TableType.MANAGED) {
+      // Older UC Spark package can't support uploading complex types to UC server for managed table
+      return;
+    }
     String schema =
         // Numeric types
         "col_tinyint TINYINT, col_smallint SMALLINT, col_int INT, col_bigint BIGINT, "
@@ -520,6 +539,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testTableWithComplexTypes(TableType tableType) throws Exception {
+    if (!ucSparkNewerThan040() && tableType == TableType.MANAGED) {
+      // Older UC Spark package can't support uploading complex types to UC server for managed table
+      return;
+    }
     String schema =
         "id INT, arr ARRAY<INT>, "
             + "map_col MAP<STRING, INT>, "
@@ -594,6 +617,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         comment,
         externalTableLocation,
         false,
+        Optional.empty(),
         Optional.empty());
   }
 
@@ -605,7 +629,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String comment,
       String externalTableLocation,
       boolean withCluster,
-      Optional<String> clusterColumn)
+      Optional<String> clusterColumn,
+      Optional<String> partitionColumn)
       throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
@@ -628,9 +653,23 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // updated later and that would cause problem.
     List<ColumnInfo> columns = tableInfo.getColumns();
     assertThat(columns).isNotNull();
-    assertThat(columns).isEmpty();
 
     if (tableType == TableType.MANAGED) {
+      assertThat(columns).isNotEmpty();
+      List<String> columnNamesFromServer =
+          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
+      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+      // Partition index is only set after UC-Spark 0.4.0
+      if (ucSparkNewerThan040() && partitionColumn.isPresent()) {
+        List<ColumnInfo> matchingColumns =
+            columns.stream()
+                .filter(c -> c.getName().equals(partitionColumn.get()))
+                .collect(Collectors.toList());
+        assertThat(matchingColumns).hasSize(1);
+        assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
+      } else {
+        assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
+      }
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
       tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
@@ -688,6 +727,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                           && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
               .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
       assertThat(unexpectedTablePropertiesFromServer).isEmpty();
+    } else {
+      assertThat(columns).isEmpty();
     }
 
     // Also verify table using DESC EXTENDED

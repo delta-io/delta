@@ -32,6 +32,7 @@ import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.util.Properties;
+import lombok.SneakyThrows;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
 import org.junit.jupiter.api.AfterAll;
@@ -336,5 +337,20 @@ public abstract class UnityCatalogSupport {
   /** Recursively deletes a directory and all its contents. */
   private void deleteRecursively(File file) {
     FileUtils.deleteQuietly(file);
+  }
+
+  /** Returns Unity Catalog Spark version, like [0, 4, 0]. */
+  @SneakyThrows
+  protected static int[] getUnityCatalogSparkVersion() {
+    String version =
+        Class.forName("io.unitycatalog.spark.UCSingleCatalog")
+            .getPackage()
+            .getImplementationVersion();
+    if (version == null) return null;
+    String[] parts = version.split("[.\\-]", 4);
+    int major = Integer.parseInt(parts[0]);
+    int minor = Integer.parseInt(parts[1]);
+    int patch = Integer.parseInt(parts[2]);
+    return new int[] {major, minor, patch};
   }
 }
