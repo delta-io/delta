@@ -338,7 +338,7 @@ case class CreateDeltaTableCommand(
         clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
           txn, taggedCommitData.actions),
         // Only recording "true" to reduce noise in DESCRIBE HISTORY when it doesn't apply.
-        isV1SaveAsTableOverwrite = if (isV1Writer) Some(true) else None
+        isV1SaveAsTableOverwrite = if (isV1WriterSaveAsTableOverwrite) Some(true) else None
       )
       (taggedCommitData, op)
     }
