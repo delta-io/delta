@@ -25,6 +25,7 @@ import io.delta.spark.internal.v2.utils.ExpressionUtils;
 import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
 import org.apache.spark.sql.sources.Filter;
@@ -44,6 +45,7 @@ public class SparkScanBuilder
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final Optional<Statistics> catalogStats;
   private final CaseInsensitiveStringMap options;
   private final Set<String> partitionColumnSet;
   private StructType requiredDataSchema;
@@ -71,12 +73,14 @@ public class SparkScanBuilder
       DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
+      Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
     this.kernelScanBuilder = initialSnapshot.getScanBuilder();
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
+    this.catalogStats = requireNonNull(catalogStats, "catalogStats is null");
     this.options = requireNonNull(options, "options is null");
     this.requiredDataSchema = this.dataSchema;
     this.partitionColumnSet =
@@ -167,6 +171,7 @@ public class SparkScanBuilder
         pushedKernelPredicates,
         dataFilters,
         kernelScanBuilder.build(),
+        catalogStats,
         options);
   }
 
