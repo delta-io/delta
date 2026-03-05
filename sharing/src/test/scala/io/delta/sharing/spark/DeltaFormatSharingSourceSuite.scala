@@ -314,7 +314,7 @@ class DeltaFormatSharingSourceSuite
             """"conf":{},""" +
             """"sourceMetadataInfo":{}}"""
         val offsetContent =
-          s"v2\n$offsetMetadataJson\n0:$legacyOffsetJson"
+          s"v1\n$offsetMetadataJson\n$legacyOffsetJson"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val offsetBatchPath = new Path(
           new Path(checkpointPath, StreamingCheckpointConstants.DIR_NAME_OFFSETS), "0")
@@ -465,7 +465,7 @@ class DeltaFormatSharingSourceSuite
             "\"index\":-1," +
             "\"isStartingVersion\":false}"
         val offset0Content =
-          s"v2\n$offsetMetadataJson\n0:$legacyOffset0Json"
+          s"v1\n$offsetMetadataJson\n$legacyOffset0Json"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val offset0Path = new Path(new Path(
           checkpointPath, offsetsDir), "0")
@@ -491,7 +491,7 @@ class DeltaFormatSharingSourceSuite
             "\"index\":-1," +
             "\"isStartingVersion\":false}"
         val offset1Content =
-          s"v2\n$offsetMetadataJson\n0:$legacyOffset1Json"
+          s"v1\n$offsetMetadataJson\n$legacyOffset1Json"
             .getBytes(java.nio.charset.StandardCharsets.UTF_8)
         val offset1Path = new Path(new Path(
           checkpointPath, offsetsDir), "1")
