@@ -70,6 +70,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
+    "startingTimestamp",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
@@ -110,7 +111,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === read options ===
     "skip change commits",
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "startingTimestamp",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
 
     // === Data Loss Detection ===
