@@ -24,6 +24,7 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
+import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -2995,5 +2996,28 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     } finally {
       spark.conf().unset(configKey);
     }
+  }
+
+  @Test
+  public void testIsInterruptedByStop() {
+    // Direct ClosedByInterruptException -> true
+    assertThat(SparkMicroBatchStream.isInterruptedByStop(new ClosedByInterruptException()))
+        .isTrue();
+
+    // ClosedByInterruptException wrapped one level deep -> true
+    assertThat(
+            SparkMicroBatchStream.isInterruptedByStop(
+                new RuntimeException("wrapper", new ClosedByInterruptException())))
+        .isTrue();
+
+    // InterruptedException wrapped one level deep -> true
+    assertThat(
+            SparkMicroBatchStream.isInterruptedByStop(
+                new RuntimeException("wrapper", new InterruptedException())))
+        .isTrue();
+
+    // Plain RuntimeException with no interrupt cause -> false
+    assertThat(SparkMicroBatchStream.isInterruptedByStop(new RuntimeException("unrelated")))
+        .isFalse();
   }
 }

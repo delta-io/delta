@@ -477,22 +477,15 @@ public class SparkMicroBatchStream
    * {@link io.delta.kernel.exceptions.KernelEngineException}, which is not an {@link
    * InterruptedException}, so Spark's own {@code isInterruptedByStop} check misses it.
    *
-   * <p>This method detects both cases by (1) checking the thread interrupt flag, which {@link
-   * ClosedByInterruptException} sets but does not clear, and (2) walking the full cause chain
-   * looking for either {@link ClosedByInterruptException} or {@link InterruptedException}.
+   * <p>This method checks the exception itself and its direct cause for either {@link
+   * ClosedByInterruptException} or {@link InterruptedException}.
    */
-  private static boolean isInterruptedByStop(Throwable t) {
-    if (Thread.currentThread().isInterrupted()) {
-      return true;
-    }
-    Throwable cause = t;
-    while (cause != null) {
-      if (cause instanceof ClosedByInterruptException || cause instanceof InterruptedException) {
-        return true;
-      }
-      cause = cause.getCause();
-    }
-    return false;
+  static boolean isInterruptedByStop(Throwable t) {
+    Throwable cause = t.getCause();
+    return t instanceof ClosedByInterruptException
+        || t instanceof InterruptedException
+        || cause instanceof ClosedByInterruptException
+        || cause instanceof InterruptedException;
   }
 
   ///////////////////////
