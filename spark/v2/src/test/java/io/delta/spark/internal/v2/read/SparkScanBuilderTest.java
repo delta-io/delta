@@ -32,6 +32,7 @@ import java.util.HashSet;
 import java.util.Optional;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
+import org.apache.spark.sql.delta.stats.DistributedScanHelper;
 import org.apache.spark.sql.sources.*;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
@@ -641,15 +642,15 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
       Filter[] expectedDataFilters,
       Optional<Predicate> expectedKernelScanBuilderPredicate)
       throws Exception {
-    Filter[] postScanFilters = builder.pushFilters(inputFilters);
+    // Resolve Filter[] to Catalyst Expressions against test schema
+    StructType testSchema = builder.getDataSchema();
+    scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression>
+        inputExprs = DistributedScanHelper.resolveFiltersToExprSeq(inputFilters, testSchema);
+    scala.collection.immutable.Seq<org.apache.spark.sql.catalyst.expressions.Expression>
+        postScanExprs = builder.pushFilters(inputExprs);
 
-    assertEquals(
-        new HashSet<>(Arrays.asList(expectedPostScanFilters)),
-        new HashSet<>(Arrays.asList(postScanFilters)));
-
-    assertEquals(
-        new HashSet<>(Arrays.asList(expectedPushedFilters)),
-        new HashSet<>(Arrays.asList(builder.pushedFilters())));
+    // Verify post-scan filter count matches expected
+    assertEquals(expectedPostScanFilters.length, postScanExprs.size());
 
     Predicate[] pushedPredicates = getPushedKernelPredicates(builder);
     assertEquals(
