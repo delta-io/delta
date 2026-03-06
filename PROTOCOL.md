@@ -2575,6 +2575,11 @@ timestamp without timezone | Encoded as `{year}-{month}-{day} {hour}:{minute}:{s
 boolean | Encoded as the string "true" or "false"
 binary | Encoded as a string of escaped binary values. For example, `"\u0001\u0002\u0003"`
 
+Note: Readers should interpret empty strings in non-nullable string partition columns as empty
+strings (not as illegal NULL values that would trigger a query error), and writers are encouraged to
+block creation of nullable string partition columns in order to avoid ambiguity between `""` and
+`NULL` values. Otherwise, an empty string stored in a nullable string column will read back as NULL.
+
 Note: A timestamp value in a partition value may be stored in one of the following ways:
 1. Without a timezone, where the timestamp should be interpreted using the time zone of the system which wrote to the table.
 2. Adjusted to UTC and stored in ISO8601 format.
