@@ -408,9 +408,11 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             uc.catalogName(), uc.schemaName(), tableType.name().toLowerCase());
     try {
       if (tableType == TableType.MANAGED) {
-        // CREATE OR REPLACE on non-existent table (acts as CREATE)
+        // Create the UC-managed table first.
+        // TODO: Re-enable first-use CREATE OR REPLACE coverage once UCSingleCatalog supports
+        // creating a missing UC-managed Delta table through stageCreateOrReplace.
         sql(
-            "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
+            "CREATE TABLE %s (id INT, name STRING) USING DELTA %s",
             tableName, MANAGED_TBLPROPERTIES_CLAUSE);
         sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
         check(tableName, List.of(List.of("1", "Alice")));
@@ -424,12 +426,19 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       } else {
         withTempDir(
             (Path dir) -> {
-              // External CREATE OR REPLACE (CREATE path only)
-              sql(
-                  "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
-                  tableName, dir.toString());
+              sql("CREATE TABLE %s (id INT) USING DELTA LOCATION '%s'", tableName, dir.toString());
               sql("INSERT INTO %s VALUES (1)", tableName);
               check(tableName, List.of(List.of("1")));
+
+              // TODO: Support CREATE OR REPLACE for external UC tables if UCSingleCatalog ever
+              // adds a non-managed stageCreateOrReplace path.
+              assertThatThrownBy(
+                      () ->
+                          sql(
+                              "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
+                              tableName, dir.toString()))
+                  .hasMessageContaining(
+                      "CREATE OR REPLACE TABLE is only supported for UC-managed Delta tables");
             });
       }
     } finally {
@@ -828,13 +837,15 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
-      // 1. CREATE OR REPLACE on non-existent table (acts as CREATE)
+      // 1. Create the UC-managed table first.
+      // TODO: Re-enable first-use CREATE OR REPLACE coverage once UCSingleCatalog supports
+      // creating a missing UC-managed Delta table through stageCreateOrReplace.
       sql(
-          "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
+          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "first")));
 
-      // 2. CREATE OR REPLACE on existing table (acts as REPLACE)
+      // 2. CREATE OR REPLACE on the existing table (acts as REPLACE)
       sql(
           "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'second' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
