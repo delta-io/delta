@@ -32,12 +32,7 @@ import java.util.Properties
 import scala.collection.JavaConverters._
 
 /**
- * Integration test that verifies delta-spark resolved from Maven correctly includes
- * all kernel module dependencies (delta-kernel-api, delta-kernel-defaults,
- * delta-kernel-unitycatalog) by running a real UC-backed Delta workload.
- *
- * If kernel dependencies are missing from the published POM, this test will fail
- * with ClassNotFoundException at runtime.
+ * Example of testing streaming read from UC managed table with OSS UC 
  */
 object UnityCatalogQuickstart {
 
