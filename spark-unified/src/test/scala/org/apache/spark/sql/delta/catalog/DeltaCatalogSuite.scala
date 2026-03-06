@@ -21,20 +21,23 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import java.io.File
+import java.nio.file.Files
 import java.util.Locale
 
 /**
  * Unit tests for DeltaCatalog's V2 connector routing logic.
  *
- * Verifies that DeltaCatalog correctly routes table loading based on
+ * Verifies that DeltaCatalog correctly routes table loading and creation based on
  * DeltaSQLConf.V2_ENABLE_MODE:
  * - STRICT mode: Kernel's SparkTable (V2 connector)
+ * - AUTO mode: DeltaTableV2 (V1 connector) and kernel create only for UC-managed tables
  * - NONE mode (default): DeltaTableV2 (V1 connector)
  */
 class DeltaCatalogSuite extends DeltaSQLCommandTest {
 
   private val modeTestCases = Seq(
     ("STRICT", classOf[SparkTable], "Kernel SparkTable"),
+    ("AUTO", classOf[DeltaTableV2], "DeltaTableV2"),
     ("NONE", classOf[DeltaTableV2], "DeltaTableV2")
   )
 
@@ -77,6 +80,107 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
           assert(table.getClass == expectedClass,
             s"Mode $mode should return ${expectedClass.getSimpleName} for path-based table")
         }
+      }
+    }
+  }
+
+  test("path-based table with mode=STRICT creates via kernel and keeps expected table type") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        sql(s"CREATE TABLE delta.`$path` (id INT, name STRING) USING delta")
+
+        val commitFile = new File(path, "_delta_log/00000000000000000000.json")
+        assert(commitFile.exists(), "Delta log commit file should exist")
+
+        val commitJson = new String(Files.readAllBytes(commitFile.toPath))
+        assert(commitJson.contains(DeltaCatalog.ENGINE_INFO),
+          s"Commit should contain engineInfo '${DeltaCatalog.ENGINE_INFO}' " +
+            s"but was: $commitJson")
+
+        val catalog = spark.sessionState.catalogManager.v2SessionCatalog
+          .asInstanceOf[DeltaCatalog]
+        val ident = org.apache.spark.sql.connector.catalog.Identifier
+          .of(Array("delta"), path)
+        val table = catalog.loadTable(ident)
+        assert(table.getClass == classOf[SparkTable],
+          s"Mode STRICT should return ${classOf[SparkTable].getSimpleName} after create")
+      }
+    }
+  }
+
+  test("path-based table with mode=AUTO does not create via kernel") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "AUTO") {
+        sql(s"CREATE TABLE delta.`$path` (id INT, name STRING) USING delta")
+
+        val commitFile = new File(path, "_delta_log/00000000000000000000.json")
+        assert(commitFile.exists(), "Delta log commit file should exist")
+
+        val commitJson = new String(Files.readAllBytes(commitFile.toPath))
+        assert(!commitJson.contains(DeltaCatalog.ENGINE_INFO),
+          s"Mode AUTO should not use kernel engineInfo '${DeltaCatalog.ENGINE_INFO}' " +
+            s"for path-based create, but was: $commitJson")
+      }
+    }
+  }
+
+  test("path-based CTAS with mode=STRICT and CTAS POC gate enabled commits via kernel") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+
+      withSQLConf(
+        DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT",
+        DeltaSQLConf.V2_CTAS_USE_V1_WRITER_POC_ENABLED.key -> "true") {
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path`
+             |USING delta
+             |AS SELECT 1 AS id, 'a' AS name
+             |""".stripMargin)
+
+        val rows = sql(s"SELECT * FROM delta.`$path`").collect()
+        assert(rows.length == 1)
+        assert(rows.head.getInt(0) == 1)
+        assert(rows.head.getString(1) == "a")
+
+        val commitFile = new File(path, "_delta_log/00000000000000000000.json")
+        assert(commitFile.exists(), "Delta log commit file should exist")
+        val commitJson = new String(Files.readAllBytes(commitFile.toPath))
+        assert(commitJson.contains(DeltaCatalog.ENGINE_INFO),
+          s"CTAS POC should use kernel engineInfo '${DeltaCatalog.ENGINE_INFO}', but was: $commitJson")
+      }
+    }
+  }
+
+  test("path-based CTAS with mode=STRICT and CTAS POC gate disabled falls back from kernel") {
+    withTempDir { tempDir =>
+      val path = tempDir.getAbsolutePath
+
+      withSQLConf(
+        DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT",
+        DeltaSQLConf.V2_CTAS_USE_V1_WRITER_POC_ENABLED.key -> "false") {
+        sql(
+          s"""
+             |CREATE TABLE delta.`$path`
+             |USING delta
+             |AS SELECT 2 AS id, 'b' AS name
+             |""".stripMargin)
+
+        val rows = sql(s"SELECT * FROM delta.`$path`").collect()
+        assert(rows.length == 1)
+        assert(rows.head.getInt(0) == 2)
+        assert(rows.head.getString(1) == "b")
+
+        val commitFile = new File(path, "_delta_log/00000000000000000000.json")
+        assert(commitFile.exists(), "Delta log commit file should exist")
+        val commitJson = new String(Files.readAllBytes(commitFile.toPath))
+        assert(!commitJson.contains(DeltaCatalog.ENGINE_INFO),
+          s"CTAS POC gate disabled should fall back from kernel engineInfo '${DeltaCatalog.ENGINE_INFO}', " +
+            s"but was: $commitJson")
       }
     }
   }

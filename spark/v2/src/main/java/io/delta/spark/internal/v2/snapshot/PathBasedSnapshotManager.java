@@ -21,12 +21,17 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
@@ -133,7 +138,8 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
   }
 
   @Override
-  public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
+  public CommitRange getTableChanges(
+      Engine kernelEngine, long startVersion, Optional<Long> endVersion) {
     CommitRangeBuilder builder =
         TableManager.loadCommitRange(
             tablePath, CommitRangeBuilder.CommitBoundary.atVersion(startVersion));
@@ -143,6 +149,23 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
           builder.withEndBoundary(CommitRangeBuilder.CommitBoundary.atVersion(endVersion.get()));
     }
 
-    return builder.build(engine);
+    return builder.build(kernelEngine);
+  }
+
+  @Override
+  public Transaction buildCreateTableTransaction(
+      StructType kernelSchema,
+      Map<String, String> tableProperties,
+      Optional<DataLayoutSpec> dataLayoutSpec,
+      String engineInfo) {
+    CreateTableTransactionBuilder builder =
+        TableManager.buildCreateTableTransaction(tablePath, kernelSchema, engineInfo);
+    if (!tableProperties.isEmpty()) {
+      builder = builder.withTableProperties(tableProperties);
+    }
+    if (dataLayoutSpec.isPresent()) {
+      builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
+    }
+    return builder.build(kernelEngine);
   }
 }

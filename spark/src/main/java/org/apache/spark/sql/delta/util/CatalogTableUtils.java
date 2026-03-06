@@ -94,10 +94,25 @@ public final class CatalogTableUtils {
     if (properties == null || properties.isEmpty()) {
       return false;
     }
-    boolean isUCBacked = properties.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
-    boolean isCatalogManaged = isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_MANAGED)
-        || isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_OWNED_PREVIEW);
+    boolean isUCBacked =
+        hasProperty(properties, UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+            || hasProperty(properties, UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    boolean isCatalogManaged = isCatalogManagedFromProperties(properties);
     return isUCBacked && isCatalogManaged;
+  }
+
+  /**
+   * Checks whether the table is catalog-managed based on a properties map.
+   *
+   * <p>Supports both raw keys and DSv2 option-prefixed variants (for example, {@code
+   * option.delta.feature.catalogManaged}).
+   */
+  public static boolean isCatalogManagedFromProperties(Map<String, String> properties) {
+    if (properties == null || properties.isEmpty()) {
+      return false;
+    }
+    return isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_MANAGED)
+        || isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_OWNED_PREVIEW);
   }
 
   /**
@@ -111,11 +126,23 @@ public final class CatalogTableUtils {
       Map<String, String> tableProperties, String featureKey) {
     requireNonNull(tableProperties, "tableProperties is null");
     requireNonNull(featureKey, "featureKey is null");
-    String featureValue = tableProperties.get(featureKey);
+    String featureValue = getProperty(tableProperties, featureKey);
     if (featureValue == null) {
       return false;
     }
     return featureValue.equalsIgnoreCase(SUPPORTED);
+  }
+
+  private static String getProperty(Map<String, String> properties, String key) {
+    String value = properties.get(key);
+    if (value != null) {
+      return value;
+    }
+    return properties.get("option." + key);
+  }
+
+  private static boolean hasProperty(Map<String, String> properties, String key) {
+    return properties.containsKey(key) || properties.containsKey("option." + key);
   }
 
   /**
@@ -136,4 +163,3 @@ public final class CatalogTableUtils {
     return CollectionConverters.asJava(scalaProps);
   }
 }
-

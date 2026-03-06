@@ -64,7 +64,7 @@ class UCManagedTableSnapshotManagerSuite
     val ex3 = intercept[NullPointerException] {
       new UCManagedTableSnapshotManager(client, tableInfo, null)
     }
-    assert(ex3.getMessage == "engine is null")
+    assert(ex3.getMessage == "kernelEngine is null")
   }
 
   // ==================== loadLatestSnapshot ====================

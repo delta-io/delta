@@ -84,6 +84,9 @@ public class DirectoryCreationUtils {
   /** Creates directory using engine filesystem client, throws on failure. */
   private static void createDirectoryOrThrow(Engine engine, String directoryPath)
       throws IOException {
+    if (shouldSkipExplicitDirectoryCreation(directoryPath)) {
+      return;
+    }
     try {
       if (!engine.getFileSystemClient().mkdirs(directoryPath)) {
         throw new RuntimeException("Failed to create directory: " + directoryPath);
@@ -91,5 +94,17 @@ public class DirectoryCreationUtils {
     } catch (Exception e) {
       throw new IOException("Creating directories for path " + directoryPath, e);
     }
+  }
+
+  /**
+   * S3-style object stores don't require directory markers before writing files and `mkdirs` may
+   * require list permissions that are not needed for normal writes.
+   */
+  private static boolean shouldSkipExplicitDirectoryCreation(String directoryPath) {
+    String scheme = new Path(directoryPath).toUri().getScheme();
+    if (scheme == null) {
+      return false;
+    }
+    return "s3".equalsIgnoreCase(scheme) || "s3a".equalsIgnoreCase(scheme);
   }
 }

@@ -16,15 +16,22 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.spark.internal.v2.catalog.CreateTableCommitCoordinator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
+import io.delta.kernel.utils.CloseableIterable;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.StagedTable;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
+import org.apache.spark.sql.delta.util.CatalogTableUtils;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -63,6 +70,101 @@ import org.apache.spark.sql.connector.catalog.Table;
  * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
+
+  /** Engine info string used in the Delta log commit when the kernel path is used. */
+  static final String ENGINE_INFO = "kernel-spark-dsv2";
+
+  /**
+   * Creates a Delta table using the kernel-based commit path when enabled by {@link DeltaV2Mode}.
+   *
+   * <p>Routing logic based on {@link DeltaV2Mode}:
+   *
+   * <ul>
+   *   <li>Mode-enabled + Delta provider: Commits version 0 via Delta Kernel, then finalizes the
+   *       catalog entry via the delegate catalog.
+   *   <li>Otherwise: Delegates to the V1 path in {@link AbstractDeltaCatalog}.
+   * </ul>
+   *
+   * @param ident The identifier of the table to create.
+   * @param schema The schema for the new table.
+   * @param partitions Partition transforms for the table.
+   * @param properties Table properties including location, provider, etc.
+   * @return The created Table (SparkTable in STRICT mode, V1-created Table otherwise).
+   */
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!(mode.shouldUseKernelMetadataOnlyCreate(properties)
+        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+        && (isUnityCatalog() || isPathIdentifier(ident)))) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+    boolean isPathTable = isPathIdentifier(ident);
+    CreateTableCommitCoordinator.commitCreateTableVersion0(
+        ident,
+        schema,
+        partitions,
+        properties,
+        spark(),
+        name(),
+        ENGINE_INFO,
+        isPathTable,
+        CloseableIterable.emptyIterable());
+
+    if (!isPathTable) {
+      // Strip credentials from properties before passing to the UC delegate. The delegate needs
+      // catalog coordination keys (location, provider, is_managed_location) but NOT transient
+      // credentials (fs.s3a.init.access.key, fs.unitycatalog.auth.token, etc.).
+      // In the V1 path, CatalogTable.properties never contains fs.* keys because
+      // CreateDeltaTableCommand filters them via DeltaTableUtils.validDeltaTableHadoopPrefixes.
+      createCatalogTable(
+          ident,
+          schema,
+          partitions,
+          CreateTableCommitCoordinator.filterCredentialProperties(properties));
+      return loadTable(ident);
+    }
+    return loadPathTable(ident);
+  }
+
+  @Override
+  public StagedTable stageCreate(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    boolean isPathTable = isPathIdentifier(ident);
+    boolean isUcManagedTable =
+        isUnityCatalog() && CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties);
+    if (!(mode.shouldUseKernelCtasPoc(properties)
+        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+        && (isPathTable || isUcManagedTable))) {
+      return super.stageCreate(ident, schema, partitions, properties);
+    }
+    Consumer<Map<String, String>> catalogRegistrar = null;
+    if (isUcManagedTable) {
+      catalogRegistrar =
+          filteredProps -> {
+            // Register/finalize the staged UC table after the v0 commit succeeds.
+            createCatalogTable(ident, schema, partitions, filteredProps);
+          };
+    }
+    return new KernelBackfilledStagedCreateTable(
+        ident,
+        schema,
+        partitions,
+        properties,
+        spark(),
+        name(),
+        ENGINE_INFO,
+        isPathTable,
+        catalogRegistrar);
+  }
 
   /**
    * Loads a Delta table that is registered in the catalog.
