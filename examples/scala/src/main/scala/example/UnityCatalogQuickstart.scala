@@ -124,12 +124,6 @@ object UnityCatalogQuickstart {
 
       spark.sql("INSERT INTO unity.default.test_table VALUES (1, 'hello'), (2, 'world')")
 
-      // Switch to STRICT mode before streaming read. STRICT forces ApplyV2Streaming
-      // to rewrite StreamingRelation to StreamingRelationV2 with SparkTable, which
-      // loads kernel classes (io.delta.kernel.*). If kernel deps are missing from the
-      // published POM, this will fail with NoClassDefFoundError.
-      spark.conf.set("spark.databricks.delta.v2.enableMode", "STRICT")
-
       val stream = spark.readStream
         .table("unity.default.test_table")
         .writeStream
@@ -140,7 +134,6 @@ object UnityCatalogQuickstart {
       stream.awaitTermination(10000)
       stream.stop()
 
-      spark.conf.set("spark.databricks.delta.v2.enableMode", "AUTO")
       spark.sql("DROP TABLE IF EXISTS unity.default.test_table")
     } finally {
       spark.stop()
