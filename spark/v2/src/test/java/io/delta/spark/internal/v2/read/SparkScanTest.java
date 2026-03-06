@@ -1063,6 +1063,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
     // avgLen is used for sizeInBytes estimation regardless of CBO setting
+    spark.conf().set("spark.sql.cbo.enabled", "false");
     Identifier id = Identifier.of(new String[] {"default"}, tblName);
     SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 

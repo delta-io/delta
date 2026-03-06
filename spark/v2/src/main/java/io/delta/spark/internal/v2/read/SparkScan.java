@@ -218,15 +218,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     // (for numRows/columnStats) with planned file stats (for sizeInBytes).
     // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
     // conf.cboEnabled || conf.planStatsEnabled.
-    boolean planStatsEnabled = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-    if (planStatsEnabled && catalogStats.isPresent()) {
+    boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+    if (useCatalogStats && catalogStats.isPresent()) {
       final Statistics stats = catalogStats.get();
       return new Statistics() {
         @Override
         public OptionalLong sizeInBytes() {
-          // Use the more accurate size from planned files if available,
-          // otherwise fall back to catalog stats
-          return plannedBytes > 0 ? OptionalLong.of(plannedBytes) : stats.sizeInBytes();
+          // Planned file size is authoritative (even if 0 for an empty table)
+          return OptionalLong.of(plannedBytes);
         }
 
         @Override
@@ -323,7 +322,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     }
     Map<String, OptionalLong> result = new HashMap<>();
     for (Map.Entry<NamedReference, ColumnStatistics> entry : colStats.entrySet()) {
-      result.put(entry.getKey().describe(), entry.getValue().avgLen());
+      result.put(entry.getKey().fieldNames()[0], entry.getValue().avgLen());
     }
     return result;
   }
@@ -548,13 +547,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
-        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates);
+        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
+        && Objects.equals(catalogStats, that.catalogStats);
   }
 
   @Override
   public int hashCode() {
     int result =
         Objects.hash(
+            catalogStats,
             initialSnapshot.getPath(),
             initialSnapshot.getVersion(),
             dataSchema,

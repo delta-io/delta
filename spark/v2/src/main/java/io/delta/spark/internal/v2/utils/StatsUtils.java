@@ -124,11 +124,11 @@ public final class StatsUtils {
               .orElse(OptionalLong.empty());
       OptionalLong avgLen =
           toJavaOptional(stat.avgLen())
-              .map(v -> OptionalLong.of((Long) v))
+              .map(v -> OptionalLong.of(((Number) v).longValue()))
               .orElse(OptionalLong.empty());
       OptionalLong maxLen =
           toJavaOptional(stat.maxLen())
-              .map(v -> OptionalLong.of((Long) v))
+              .map(v -> OptionalLong.of(((Number) v).longValue()))
               .orElse(OptionalLong.empty());
 
       ColumnStatistics v2ColStats =
