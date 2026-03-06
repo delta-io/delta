@@ -1263,7 +1263,10 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val df = if (keepNumRecords) {
+    val forceCollectRowCount =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+    val shouldCollectStats = keepNumRecords || forceCollectRowCount
+    val df = if (shouldCollectStats) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
@@ -1278,7 +1281,36 @@ trait DataSkippingReaderBase
     }
     val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
-    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
+    // Compute row count if we have stats available and forceCollectRowCount is enabled
+    val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+      sumRowCounts(files)
+    } else {
+      (None, None)
+    }
+    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), rowCount, Some(files.size),
+      logicalRowCount)
+  }
+
+  /**
+   * Sums up the numPhysicalRecords and numLogicalRecords from the given AddFile objects.
+   * Returns (None, None) if any file is missing physical record stats.
+   * Returns (Some(physical), None) if any file is missing logical record stats.
+   */
+  private def sumRowCounts(files: Seq[AddFile]): (Option[Long], Option[Long]) = {
+    var physicalRows = 0L
+    var logicalRows = 0L
+    var physicalMissing = false
+    var logicalMissing = false
+    files.foreach { file =>
+      physicalMissing = physicalMissing || file.numPhysicalRecords.isEmpty
+      logicalMissing = logicalMissing || file.numLogicalRecords.isEmpty
+      physicalRows += file.numPhysicalRecords.getOrElse(0L)
+      logicalRows += file.numLogicalRecords.getOrElse(0L)
+    }
+    (
+      if (physicalMissing) None else Some(physicalRows),
+      if (logicalMissing) None else Some(logicalRows)
+    )
   }
 
   /**
@@ -1335,13 +1367,24 @@ trait DataSkippingReaderBase
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
+        val forceCollectRowCount =
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+        val shouldCollectStats = keepNumRecords || forceCollectRowCount
+        lazy val files = getAllFiles(shouldCollectStats)
+        // Compute row count if forceCollectRowCount is enabled
+        val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+          sumRowCounts(files)
+        } else {
+          (None, None)
+        }
         val dataSize = DataSize(
           bytesCompressed = sizeInBytesIfKnown,
-          rows = None,
-          files = numOfFilesIfKnown)
+          rows = rowCount,
+          files = numOfFilesIfKnown,
+          logicalRows = logicalRowCount)
         return DeltaScan(
           version = version,
-          files = getAllFiles(keepNumRecords),
+          files = files,
           total = dataSize,
           partition = dataSize,
           scanned = dataSize)(
