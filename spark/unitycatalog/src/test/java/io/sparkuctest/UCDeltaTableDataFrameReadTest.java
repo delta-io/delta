@@ -132,8 +132,6 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
         });
   }
 
-  // Helpers
-
   private List<Integer> ids(org.apache.spark.sql.Dataset<Row> df) {
     return df.collectAsList().stream().map(r -> r.getInt(0)).collect(Collectors.toList());
   }
