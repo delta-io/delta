@@ -639,7 +639,7 @@ trait OptimizeCompactionSuiteBase extends QueryTest
     df.format("delta").mode("append").save(tablePath)
   }
 
-  test("optimize on a catalog owned managed table should fail") {
+  test("optimize on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
       checkError(
         intercept[DeltaUnsupportedOperationException] {
