@@ -119,6 +119,9 @@ public class CatalogManagedTable extends AbstractKernelTable {
     // TODO remove this when CCv2 client supports update properties.
     //      currently updating properties from outside encounters
     //      "A table's Delta metadata can only be changed from a cluster or warehouse"
+    if (!properties.isEmpty()) {
+      LOG.warn("properties will be ignored");
+    }
     return super.commit(actions, appId, txnId, Map.of());
   }
 

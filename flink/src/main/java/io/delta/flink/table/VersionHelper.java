@@ -17,6 +17,7 @@
 package io.delta.flink.table;
 
 import java.util.Map;
+import java.util.Objects;
 
 /** Collect related library versions that needs to be reported */
 public class VersionHelper {
@@ -26,6 +27,8 @@ public class VersionHelper {
     String flinkVersion = flinkPkg.getImplementationVersion();
     Package kernelPkg = io.delta.kernel.Table.class.getPackage();
     String kernelVersion = kernelPkg.getImplementationVersion();
-    return Map.of("flink", flinkVersion, "delta-kernel", kernelVersion);
+    return Map.of(
+        "flink", Objects.toString(flinkVersion, "unknown"),
+        "delta-kernel", Objects.toString(kernelVersion, "unknown"));
   }
 }

@@ -40,7 +40,7 @@ import org.apache.flink.configuration.Configuration;
  */
 public class TableConf implements Serializable {
 
-  private static final long serialVersionUID = 1024L;
+  private static final long serialVersionUID = 1L;
 
   /** Probability in [0.0, 1.0] to create a checkpoint on a commit. */
   public static final ConfigOption<Double> CHECKPOINT_FREQUENCY =
@@ -75,7 +75,7 @@ public class TableConf implements Serializable {
    * @param conf raw configuration map; must not be null
    */
   public TableConf(Map<String, String> conf) {
-    raw = Objects.requireNonNull(conf, "conf");
+    raw = new HashMap<>(Objects.requireNonNull(conf, "conf"));
     cfg = Configuration.fromMap(raw);
 
     validate();

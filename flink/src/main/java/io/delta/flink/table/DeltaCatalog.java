@@ -110,13 +110,13 @@ public interface DeltaCatalog extends Serializable {
   class TableDescriptor {
 
     /** The logical identifier used to resolve the table. */
-    public String tableId;
+    String tableId;
 
     /** A stable UUID that uniquely identifies the table. */
-    public String uuid;
+    String uuid;
 
     /** The normalized physical location of the table. */
-    public URI tablePath;
+    URI tablePath;
 
     public TableDescriptor() {}
 
@@ -124,6 +124,18 @@ public interface DeltaCatalog extends Serializable {
       this.tableId = tableId;
       this.uuid = uuid;
       this.tablePath = tablePath;
+    }
+
+    public String getTableId() {
+      return tableId;
+    }
+
+    public String getUuid() {
+      return uuid;
+    }
+
+    public URI getTablePath() {
+      return tablePath;
     }
   }
 }

@@ -16,7 +16,6 @@
 
 package io.delta.flink.table;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.failsafe.function.CheckedSupplier;
@@ -236,7 +235,7 @@ public class UnityCatalog implements DeltaCatalog {
     }
   }
 
-  protected <RET> RET withRetry(CheckedSupplier<RET> body) {
+  protected <RET> RET withErrorHandling(CheckedSupplier<RET> body) {
     // TODO implement retry
     try {
       return body.get();
@@ -253,11 +252,11 @@ public class UnityCatalog implements DeltaCatalog {
             default:
               throw new RuntimeException(apiException);
           }
-        } catch (JsonProcessingException ex) {
-          throw new RuntimeException(ex);
+        } catch (Exception ex) {
+          throw ExceptionUtils.wrap(ex);
         }
       }
-      throw new RuntimeException(e);
+      throw ExceptionUtils.wrap(e);
     }
   }
 
@@ -274,7 +273,7 @@ public class UnityCatalog implements DeltaCatalog {
   @Override
   public TableDescriptor getTable(String tableName) {
     Objects.requireNonNull(tableName);
-    return withRetry(
+    return withErrorHandling(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
           TableInfo tableInfo = tablesApi.getTable(tableName, null, null);
@@ -309,7 +308,7 @@ public class UnityCatalog implements DeltaCatalog {
     Objects.requireNonNull(schema);
     Objects.requireNonNull(partitions);
     Objects.requireNonNull(properties);
-    withRetry(
+    withErrorHandling(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
           // Obtain names
@@ -397,7 +396,7 @@ public class UnityCatalog implements DeltaCatalog {
    */
   @Override
   public Map<String, String> getCredentials(String tableId) {
-    return withRetry(
+    return withErrorHandling(
         () -> {
           TemporaryCredentialsApi credentialsApi = new TemporaryCredentialsApi(apiClient);
           TemporaryCredentials credentials =
@@ -431,7 +430,7 @@ public class UnityCatalog implements DeltaCatalog {
    * ==================================*/
 
   public List<String> listSchemas() {
-    return withRetry(
+    return withErrorHandling(
         () -> {
           SchemasApi schemasApi = new SchemasApi(apiClient);
           return schemasApi.listSchemas(this.name, Integer.MAX_VALUE, null).getSchemas().stream()
@@ -441,7 +440,7 @@ public class UnityCatalog implements DeltaCatalog {
   }
 
   public SchemaInfo getSchema(String name) {
-    return withRetry(
+    return withErrorHandling(
         () -> {
           SchemasApi schemasApi = new SchemasApi(apiClient);
           return schemasApi.getSchema(String.format("%s.%s", getName(), name));
@@ -449,7 +448,7 @@ public class UnityCatalog implements DeltaCatalog {
   }
 
   public List<String> listTables(String schema) {
-    return withRetry(
+    return withErrorHandling(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
           return tablesApi.listTables(getName(), schema, Integer.MAX_VALUE, "").getTables().stream()
@@ -459,7 +458,7 @@ public class UnityCatalog implements DeltaCatalog {
   }
 
   public TableInfo getTableDetail(String tableId) {
-    return withRetry(
+    return withErrorHandling(
         () -> {
           TablesApi tablesApi = new TablesApi(apiClient);
           return tablesApi.getTable(tableId, false, false);
