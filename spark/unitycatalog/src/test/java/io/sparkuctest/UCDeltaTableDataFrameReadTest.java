@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.stream.Collectors;
+import org.apache.spark.sql.DataFrameReader;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 
 /**
@@ -51,8 +53,7 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
         tableType,
         tableName -> {
           sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
-          assertThat(ids(spark().read().format("delta").table(tableName).orderBy("id")))
-              .containsExactly(1, 2, 3);
+          assertThat(ids(deltaDFReader().table(tableName).orderBy("id"))).containsExactly(1, 2, 3);
         });
   }
 
@@ -66,14 +67,7 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
           sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
           long v1 = currentVersion(tableName);
           sql("INSERT INTO %s VALUES (4), (5)", tableName);
-          assertThat(
-                  ids(
-                      spark()
-                          .read()
-                          .format("delta")
-                          .option("versionAsOf", v1)
-                          .table(tableName)
-                          .orderBy("id")))
+          assertThat(ids(deltaDFReader().option("versionAsOf", v1).table(tableName).orderBy("id")))
               .containsExactly(1, 2, 3);
         });
   }
@@ -89,13 +83,7 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
           String ts = currentTimestamp(tableName);
           sql("INSERT INTO %s VALUES (4), (5)", tableName);
           assertThat(
-                  ids(
-                      spark()
-                          .read()
-                          .format("delta")
-                          .option("timestampAsOf", ts)
-                          .table(tableName)
-                          .orderBy("id")))
+                  ids(deltaDFReader().option("timestampAsOf", ts).table(tableName).orderBy("id")))
               .containsExactly(1, 2, 3);
         });
   }
@@ -132,7 +120,11 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
         });
   }
 
-  private List<Integer> ids(org.apache.spark.sql.Dataset<Row> df) {
+  private DataFrameReader deltaDFReader() {
+    return spark().read().format("delta");
+  }
+
+  private List<Integer> ids(Dataset<Row> df) {
     return df.collectAsList().stream().map(r -> r.getInt(0)).collect(Collectors.toList());
   }
 

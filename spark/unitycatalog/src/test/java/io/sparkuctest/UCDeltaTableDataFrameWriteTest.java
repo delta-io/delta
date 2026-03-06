@@ -29,6 +29,7 @@ import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -174,9 +175,8 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  @TestAllTableTypes
-  public void testWriteToCreateNewManagedTable(TableType tableType) throws Exception {
-    if (tableType == TableType.EXTERNAL) return;
+  @Test
+  public void testWriteToCreateNewManagedTable() throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
     String tableName = uc.catalogName() + "." + uc.schemaName() + ".write_to_create_test";
     try {
@@ -191,8 +191,13 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
     }
   }
 
+  // TODO: Enable testMergeSchema for UC_REMOTE=true once UC managed tables support schema
+  // evolution (mergeSchema). Currently, saveAsTable with mergeSchema triggers a schema change
+  // that requires UC to update the table metadata, which is not yet supported for managed tables.
   @TestAllTableTypes
   public void testMergeSchema(TableType tableType) throws Exception {
+    Assumptions.assumeFalse(
+        isUCRemoteConfigured(), "mergeSchema not yet supported for UC managed tables remotely");
     withNewTable(
         "merge_schema_test",
         "id INT",
