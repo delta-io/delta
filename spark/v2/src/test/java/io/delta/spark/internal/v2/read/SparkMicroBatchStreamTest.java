@@ -2739,17 +2739,21 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         /* filters= */ emptySeq);
   }
 
-  /** Helper method to create a SparkMicroBatchStream with default empty values for testing. */
+  /** Helper method to create a SparkMicroBatchStream with default values for testing. */
   private SparkMicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
+    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    StructType tableSchema =
+        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+            snapshot.getSchema());
     return new SparkMicroBatchStream(
         snapshotManager,
-        snapshotManager.loadLatestSnapshot(),
+        snapshot,
         hadoopConf,
         spark,
         options,
         /* tablePath= */ "",
-        /* dataSchema= */ new StructType(),
+        /* dataSchema= */ tableSchema,
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
