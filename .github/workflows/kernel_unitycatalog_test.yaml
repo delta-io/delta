@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'build.sbt'
+      - 'build/sbt-config/repositories'
       - 'version.sbt'
       - 'kernel/**/*.scala'
       - 'kernel/**/*.java'
@@ -12,6 +13,7 @@ on:
   pull_request:
     paths:
       - 'build.sbt'
+      - 'build/sbt-config/repositories'
       - 'version.sbt'
       - 'kernel/**/*.scala'
       - 'kernel/**/*.java'
@@ -31,6 +33,12 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
+      - name: Setup Unity Catalog for testing
+        run: |
+          git clone https://github.com/unitycatalog/unitycatalog.git /tmp/unitycatalog
+          cd /tmp/unitycatalog
+          git checkout main
+          ./build/sbt clean package publishM2
       - name: Run Unity tests with coverage
         run: |
-          ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
+          ./build/sbt -DunityCatalogVersion=0.5.0-SNAPSHOT "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
