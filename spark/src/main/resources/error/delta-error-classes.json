@@ -359,6 +359,12 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CDC_NON_CONSTANT_ARGUMENT" : {
+    "message" : [
+      "The <parameterName> argument (position <pos>) of the <functionName> function requires a constant value, but got a non-constant expression: <sqlExpr>."
+    ],
+    "sqlState" : "42601"
+  },
   "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
     "message" : [
       "Configuration delta.enableChangeDataFeed cannot be set. Change data feed from Delta is not yet available."
@@ -370,6 +376,12 @@
       "CDC read start/end parameters cannot be null. Please provide a valid version or timestamp."
     ],
     "sqlState" : "22004"
+  },
+  "DELTA_CDC_START_VERSION_AFTER_LATEST" : {
+    "message" : [
+      "Start version <start> for change data feed exceeds the latest table version <latest>."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
@@ -2909,6 +2921,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION" : {
+    "message" : [
+      "<operation> is blocked by the catalog for Catalog-Managed tables."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
       "",
@@ -3187,12 +3205,6 @@
   "DELTA_UNSUPPORTED_TYPE_CHANGE_IN_SCHEMA" : {
     "message" : [
       "Unable to operate on this table because an unsupported type change was applied. Field <fieldName> was changed from <fromType> to <toType>."
-    ],
-    "sqlState" : "0AKDC"
-  },
-  "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE" : {
-    "message" : [
-      "Running vacuum on catalog-managed tables is currently not supported."
     ],
     "sqlState" : "0AKDC"
   },

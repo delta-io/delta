@@ -223,6 +223,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_EMPTY_FILE_CHECK_THROW_ENABLED =
+    buildConf("emptyFileCheck.throwEnabled")
+      .internal()
+      .doc("When true, throws IllegalStateException if a commit contains AddFile actions " +
+        "referencing parquet files with size 0 bytes. " +
+        "When false, only logs. Logging always occurs regardless of this setting.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_NULL_PARTITION_CHECK_THROW_ENABLED =
     buildConf("nullPartitionCheck.throwEnabled")
       .internal()
@@ -248,9 +257,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc(
         """
-          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
-          |The field is unstable, so including it can lead semantic violations for equals and
-          |hashCode.""".stripMargin)
+          |Include the deltaLog.unsafeVolatileTableId field in equals and hashCode for
+          |TahoeLogFileIndex. The field is unstable, so including it can lead semantic violations
+          |for equals and hashCode.""".stripMargin)
       .booleanConf
       // TODO: Phase this out towards `false` eventually remove the flag altogether again.
       .createWithDefault(true)
@@ -457,6 +466,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .intConf
       .checkValue(_ >= 0, "maxNonConflictCommitAttempts has to be positive")
       .createWithDefault(10)
+
+  val DELTA_CONFLICT_CHECKER_ENFORCE_FEATURE_ENABLEMENT_VALIDATION =
+    buildConf("conflictChecker.enforceConcurrentFeatureEnablement.enabled")
+      .internal()
+      .doc("When enabled, the conflict checker will enforce that features that are marked " +
+        "as failing concurrent transactions at upgrade, will fail any conflicting commits with " +
+        "their enablement protocol changes.")
+      .booleanConf
+      .createWithDefault(false)
 
   val FEATURE_ENABLEMENT_CONFLICT_RESOLUTION_ENABLED =
     buildConf("featureEnablement.conflictResolution.enabled")
@@ -2903,6 +2921,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_SHARING_FORCE_DELTA_FORMAT =
     buildConf("spark.sql.delta.sharing.forceDeltaFormat")
       .doc("Force queries to use delta format when no responseFormat is specified.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
+    buildConf("spark.sql.delta.sharing.streamingAutoResolveResponseFormat")
+      .doc("When true, auto-resolve Delta Sharing streaming source format by calling getMetadata " +
+        "on the table and using the server's responded format (parquet or delta). When false, " +
+        "use the responseFormat option from the user.")
       .internal()
       .booleanConf
       .createWithDefault(false)

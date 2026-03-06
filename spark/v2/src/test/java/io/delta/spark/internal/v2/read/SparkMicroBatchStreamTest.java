@@ -24,6 +24,7 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -1799,7 +1800,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       throws Exception {
     // Negative values are rejected during DeltaOptions parsing, before getStartingVersion is
     // called.
-    assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("-1"));
+    assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("startingVersion", "-1"));
   }
 
   /**
@@ -1909,7 +1910,8 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     // dsv1
     DeltaLog freshDeltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource =
-        createDeltaSource(freshDeltaLog, testTablePath, createDeltaOptions(startingVersion));
+        createDeltaSource(
+            freshDeltaLog, testTablePath, createDeltaOptions("startingVersion", startingVersion));
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // dsv2
@@ -1917,7 +1919,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
-            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
+            snapshotManager,
+            new Configuration(),
+            createDeltaOptions("startingVersion", startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -1925,6 +1929,129 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         dsv2Result,
         Optional.of(Long.parseLong(startingVersion)),
         "Protocol validation fallback with non-recreatable version");
+  }
+
+  /**
+   * Test that verifies parity between DSv1 DeltaSource.getStartingVersion and DSv2
+   * SparkMicroBatchStream.getStartingVersion when using startingTimestamp option.
+   *
+   * <p>Uses ICT (In-Commit Timestamps) so we can read exact commit timestamps from the delta log
+   * and test the boundary case where startingTimestamp exactly equals a commit time.
+   */
+  @Test
+  public void testGetStartingVersionFromTimestamp(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_starting_timestamp_" + System.nanoTime();
+
+    // Enable ICT so commit timestamps are deterministic and stored in the delta log
+    sql(
+        "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'"
+            + " TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
+        testTableName, testTablePath); // Version 0
+
+    String beforeV1TS = new Timestamp(System.currentTimeMillis()).toString();
+    // Version 1
+    sql("INSERT INTO %s VALUES (1, 'User1')", testTableName);
+    Thread.sleep(10);
+    String betweenV1V2TS = new Timestamp(System.currentTimeMillis()).toString();
+    // Version 2
+    sql("INSERT INTO %s VALUES (2, 'User2')", testTableName);
+    Thread.sleep(10);
+    String afterV2TS = new Timestamp(System.currentTimeMillis()).toString();
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+
+    // Read exact commit timestamps from the delta log for boundary testing
+    scala.collection.Seq<DeltaHistory> history =
+        deltaLog.history().getHistory(0L, scala.Option.apply(2L), scala.Option.empty());
+    java.util.Map<Long, Timestamp> versionTimestamps = new java.util.HashMap<>();
+    for (int i = 0; i < history.size(); i++) {
+      DeltaHistory entry = history.apply(i);
+      long version = (long) entry.version().get();
+      versionTimestamps.put(version, entry.timestamp());
+    }
+    String v1ExactTS = versionTimestamps.get(1L).toString();
+    String v2ExactTS = versionTimestamps.get(2L).toString();
+
+    class TimestampTestCase {
+      final String timestamp;
+      final long expectedVersion;
+      final String message;
+
+      TimestampTestCase(String timestamp, long expectedVersion, String message) {
+        this.timestamp = timestamp;
+        this.expectedVersion = expectedVersion;
+        this.message = message;
+      }
+    }
+
+    TimestampTestCase[] testCases = {
+      new TimestampTestCase(beforeV1TS, 1L, "timestamp between v0 and v1 should return version 1"),
+      new TimestampTestCase(
+          v1ExactTS, 1L, "timestamp exactly at v1 commit time should return version 1"),
+      new TimestampTestCase(
+          betweenV1V2TS, 2L, "timestamp between v1 and v2 should return version 2"),
+      new TimestampTestCase(
+          v2ExactTS, 2L, "timestamp exactly at v2 commit time should return version 2")
+    };
+    for (TimestampTestCase testCase : testCases) {
+      String timestamp = testCase.timestamp;
+      long expectedVersion = testCase.expectedVersion;
+      String message = testCase.message;
+
+      // dsv1
+      DeltaSource deltaSource =
+          createDeltaSource(
+              deltaLog, testTablePath, createDeltaOptions("startingTimestamp", timestamp));
+      scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+      // dsv2
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, new Configuration());
+      SparkMicroBatchStream dsv2Stream =
+          createTestStreamWithDefaults(
+              snapshotManager,
+              new Configuration(),
+              createDeltaOptions("startingTimestamp", timestamp));
+      Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+      compareStartingVersionResults(dsv1Result, dsv2Result, Optional.of(expectedVersion), message);
+    }
+
+    // dsv1
+    DeltaSource deltaSource =
+        createDeltaSource(
+            deltaLog, testTablePath, createDeltaOptions("startingTimestamp", afterV2TS));
+    DeltaAnalysisException dsv1Exception =
+        assertThrows(
+            DeltaAnalysisException.class,
+            deltaSource::getStartingVersion,
+            String.format(
+                "DSv1 should throw when no commit after timestamp and not allow out of range"));
+
+    // dsv2
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
+    SparkMicroBatchStream dsv2Stream =
+        createTestStreamWithDefaults(
+            snapshotManager,
+            new Configuration(),
+            createDeltaOptions("startingTimestamp", afterV2TS));
+    DeltaAnalysisException dsv2Exception =
+        assertThrows(
+            DeltaAnalysisException.class,
+            dsv2Stream::getStartingVersion,
+            String.format(
+                "DSv2 should throw when no commit after timestamp and not allow out of range"));
+
+    assertEquals(
+        dsv1Exception.getErrorClass(),
+        dsv2Exception.getErrorClass(),
+        "v1 connector and v2 connector should throw the same error class when no commit after timestamp and not allow out of range");
+    assertEquals(
+        dsv1Exception.getMessageParameters(),
+        dsv2Exception.getMessageParameters(),
+        "v1 connector and v2 connector should throw the same error messages when no commit after timestamp and not allow out of range");
   }
 
   // ================================================================================================
@@ -2756,15 +2883,15 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
   }
 
-  /** Helper method to create DeltaOptions with startingVersion for testing. */
-  private DeltaOptions createDeltaOptions(String startingVersionValue) {
-    if (startingVersionValue == null) {
+  /** Helper method to create DeltaOptions with read option for testing. */
+  private DeltaOptions createDeltaOptions(String optionName, String optionValue) {
+    if (optionName == null || optionValue == null) {
       // Empty options
       return emptyDeltaOptions();
     } else {
-      // Create Scala Map with startingVersion
+      // Create Scala Map with read option
       scala.collection.immutable.Map<String, String> scalaMap =
-          Map$.MODULE$.<String, String>empty().updated("startingVersion", startingVersionValue);
+          Map$.MODULE$.<String, String>empty().updated(optionName, optionValue);
       return new DeltaOptions(scalaMap, spark.sessionState().conf());
     }
   }
@@ -2779,7 +2906,8 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     // DSv1: Create DeltaSource and get starting version
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource =
-        createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
+        createDeltaSource(
+            deltaLog, testTablePath, createDeltaOptions("startingVersion", startingVersion));
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // DSv2: Create SparkMicroBatchStream and get starting version
@@ -2787,7 +2915,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
-            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
+            snapshotManager,
+            new Configuration(),
+            createDeltaOptions("startingVersion", startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);

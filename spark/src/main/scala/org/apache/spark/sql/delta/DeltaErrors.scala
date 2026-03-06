@@ -553,6 +553,15 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  /** Throwable used when a non-constant expression is used as a version/timestamp arg in CDC. */
+  def cdcNonConstantArgument(
+      fnName: String, paramName: String, position: Int, expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+      messageParameters = Array(s"`$paramName`", position.toString, s"`$fnName`", expr.sql)
+    )
+  }
+
   /** Throwable used when a null 'start' or 'end' is provided in CDC reads. */
   def nullRangeBoundaryInCDCRead(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
@@ -572,9 +581,9 @@ trait DeltaErrorsBase
    * Throwable used for invalid CDC 'start' and 'latest' options, where latest < start
    */
   def startVersionAfterLatestVersion(start: Long, latest: Long): Throwable = {
-    new IllegalArgumentException(
-      s"Provided Start version($start) for reading change data is invalid. " +
-        s"Start version cannot be greater than the latest version of the table($latest).")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CDC_START_VERSION_AFTER_LATEST",
+      messageParameters = Array(start.toString, latest.toString))
   }
 
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
@@ -3888,10 +3897,10 @@ trait DeltaErrorsBase
     case other => other.simpleString
   }
 
-  def deltaCannotVacuumManagedTable(): Throwable = {
+  def operationBlockedOnCatalogManagedTable(operation: String): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
-      messageParameters = Array.empty)
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+      messageParameters = Array(operation))
   }
 
   def deltaCannotCreateCatalogManagedTable(): Throwable = {
