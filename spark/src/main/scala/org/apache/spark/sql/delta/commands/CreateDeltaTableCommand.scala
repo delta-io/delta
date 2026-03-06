@@ -140,25 +140,20 @@ case class CreateDeltaTableCommand(
     val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
       DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
-    // For UC-managed tables, existingTableOpt is always None because UC tables
-    // aren't registered in the session catalog. Use tableWithLocation (which has
-    // the catalog name) so DeltaLog resolves via catalog instead of path-based
-    // access (which is blocked for catalog-managed tables).
+    // For UC-managed tables, existingTableOpt is usually None because the
+    // session catalog does not own the table. Fall back to tableWithLocation
+    // so DeltaLog resolves through the catalog identifier instead of by path.
     val catalogTableForDeltaLog = existingTableOpt.orElse(
       Option.when(allowCatalogManaged)(tableWithLocation))
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
       sparkSession, catalogTableForDeltaLog, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
-    // For UC-managed RTAS, the catalog injects UC table ID properties into the CatalogTable
-    // properties. Strip them before validation since they are system-injected, not user-specified.
-    val propsForValidation = tableWithLocation.properties -
-      UC_TABLE_ID_KEY - UC_TABLE_ID_KEY_OLD
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
       spark = sparkSession,
       tableExists = deltaLog.tableExists,
       query = query,
-      catalogTableProperties = propsForValidation,
+      catalogTableProperties = tableWithLocation.properties,
       existingTableSnapshotOpt =
         if (deltaLog.tableExists) Some(deltaLog.unsafeVolatileSnapshot) else None)
 
@@ -463,10 +458,13 @@ case class CreateDeltaTableCommand(
         createActionsForNewTableOrVerify()
 
       case TableCreationModes.CreateOrReplace
-        if !tableExistsInCatalog && txn.readVersion == -1 =>
-        // Table doesn't exist in catalog AND no Delta log at location.
-        // If the table doesn't exist, CREATE OR REPLACE must provide
-        // a schema.
+        if !tableExistsInCatalog && (!allowCatalogManaged || txn.readVersion == -1) =>
+        // Non-catalog tables keep the historical CREATE OR REPLACE behavior:
+        // absence from the catalog is sufficient to take the "create/verify"
+        // path, even when a Delta log already exists at the location. For
+        // catalog-managed tables, only a truly new log (readVersion == -1)
+        // should take this branch; an existing UC table must fall through to
+        // the REPLACE path below.
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
         }
@@ -765,9 +763,9 @@ case class CreateDeltaTableCommand(
   }
 
   /**
-   * UC-managed REPLACE/RTAS cannot commit a Metadata action until metadata updates are atomically
-   * synchronized with the catalog. If the command preserves metadata, we skip the metadata update;
-   * otherwise we fail early before writing any new files.
+   * For catalog-managed REPLACE/RTAS, Delta can safely replace data only if the
+   * existing catalog-owned metadata stays unchanged. If the command would change
+   * metadata, fail before writing files instead of drifting from the catalog.
    *
    * @return true if the caller should skip `updateMetadataForNewTableInReplace`.
    */
@@ -896,13 +894,15 @@ case class CreateDeltaTableCommand(
       }
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
-      var newMetadata = getProvidedMetadata(tableDesc, schema.json)
-      // For UC-managed RTAS, strip the UC table ID from new
-      // metadata. updateMetadataForNewTableInReplace will
-      // preserve it from the existing snapshot.
-      val cleanedConfig = newMetadata.configuration -
-        UC_TABLE_ID_KEY - UC_TABLE_ID_KEY_OLD
-      newMetadata = newMetadata.copy(configuration = cleanedConfig)
+      var newMetadata = getProvidedMetadata(table, schema.json)
+      if (allowCatalogManaged) {
+        // Do not treat the UC table ID as new metadata for REPLACE.
+        // updateMetadataForNewTableInReplace keeps the existing ID
+        // from the current snapshot.
+        val cleanedConfig = newMetadata.configuration -
+          UC_TABLE_ID_KEY - UC_TABLE_ID_KEY_OLD
+        newMetadata = newMetadata.copy(configuration = cleanedConfig)
+      }
       val updatedConfig =
         UniversalFormat.enforceDependenciesInConfiguration(
           sparkSession,
@@ -926,11 +926,11 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    // For RTAS on an existing catalog-owned table, the commit coordinator needs
-    // the CatalogTable to resolve via CatalogAndIdentifier. Without it, the lazy
-    // readSnapshotTableCommitCoordinatorClientOpt fails with
-    // "Couldn't locate commit coordinator".
-    val catalogTableOpt = if (isReplace && deltaLog.tableExists) {
+    // Existing catalog-owned REPLACE/RTAS must start the transaction with the
+    // CatalogTable, so the commit coordinator resolves from CatalogAndIdentifier
+    // instead of a path-only view of the table. Keep path-based REPLACE on the
+    // legacy path: it has no catalog entry and should not be treated as one.
+    val catalogTableOpt = if (allowCatalogManaged && isReplace && deltaLog.tableExists) {
       Some(tableWithLocation)
     } else {
       None
