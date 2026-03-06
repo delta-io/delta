@@ -42,6 +42,8 @@ import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.utils.SerializableReadOnlySnapshot;
+import io.delta.spark.internal.v2.utils.SparkRowToKernelRow;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
 import java.sql.Timestamp;
@@ -50,6 +52,7 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -72,6 +75,7 @@ import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.storage.StorageLevel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
@@ -159,7 +163,11 @@ public class SparkMicroBatchStream
   private final AtomicReference<InitialSnapshotCache> cachedInitialSnapshot =
       new AtomicReference<>(null);
 
+  private final AtomicReference<DataFrameSnapshotCache> cachedDataFrameSnapshot =
+      new AtomicReference<>(null);
+
   private final int maxInitialSnapshotFiles;
+  private final boolean useDataFrameBasedInitialSnapshot;
 
   public SparkMicroBatchStream(
       DeltaSnapshotManager snapshotManager,
@@ -209,6 +217,12 @@ public class SparkMicroBatchStream
                 .sessionState()
                 .conf()
                 .getConf(DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES());
+    this.useDataFrameBasedInitialSnapshot =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.DELTA_STREAMING_USE_DATAFRAME_INITIAL_SNAPSHOT());
 
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
@@ -455,6 +469,14 @@ public class SparkMicroBatchStream
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
+    invalidateDataFrameCache();
+  }
+
+  private void invalidateDataFrameCache() {
+    DataFrameSnapshotCache prev = cachedDataFrameSnapshot.getAndSet(null);
+    if (prev != null) {
+      prev.close();
+    }
   }
 
   ///////////////////////
@@ -1099,6 +1121,10 @@ public class SparkMicroBatchStream
    * @return An iterator of IndexedFile representing the snapshot files
    */
   private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
+    if (useDataFrameBasedInitialSnapshot) {
+      return getSnapshotFilesViaDataFrame(version);
+    }
+
     InitialSnapshotCache cache = cachedInitialSnapshot.get();
 
     if (cache != null && cache.version != null && cache.version == version) {
@@ -1111,6 +1137,76 @@ public class SparkMicroBatchStream
         new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
 
     return Utils.toCloseableIterator(indexedFiles.iterator());
+  }
+
+  private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(long version) {
+    DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
+    if (dfCache != null && dfCache.getVersion() == version) {
+      return dataFrameToIndexedFiles(dfCache.getSortedAddFiles(), version);
+    }
+
+    invalidateDataFrameCache();
+
+    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
+    SerializableReadOnlySnapshot serSnapshot =
+        SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
+
+    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
+    Dataset<org.apache.spark.sql.Row> df =
+        spark
+            .createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA)
+            .orderBy("modificationTime", "path")
+            .persist(StorageLevel.MEMORY_AND_DISK());
+
+    dfCache = new DataFrameSnapshotCache(version, df);
+    cachedDataFrameSnapshot.set(dfCache);
+
+    return dataFrameToIndexedFiles(df, version);
+  }
+
+  /**
+   * Converts a sorted DataFrame of AddFile rows into a lazy CloseableIterator of IndexedFiles,
+   * wrapped with BEGIN/END sentinels. Uses toLocalIterator() to stream rows from executors to the
+   * driver one at a time, avoiding pulling all data into driver memory.
+   */
+  private static CloseableIterator<IndexedFile> dataFrameToIndexedFiles(
+      Dataset<org.apache.spark.sql.Row> df, long version) {
+
+    java.util.Iterator<org.apache.spark.sql.Row> localIter = df.toLocalIterator();
+
+    return new CloseableIterator<IndexedFile>() {
+      private boolean sentBegin = false;
+      private boolean sentEnd = false;
+      private long index = 0;
+
+      @Override
+      public boolean hasNext() {
+        return !sentEnd;
+      }
+
+      @Override
+      public IndexedFile next() {
+        if (!sentBegin) {
+          sentBegin = true;
+          return new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null);
+        }
+
+        if (localIter.hasNext()) {
+          org.apache.spark.sql.Row sparkRow = localIter.next();
+          io.delta.kernel.data.Row kernelRow =
+              new SparkRowToKernelRow(sparkRow, AddFile.SCHEMA_WITHOUT_STATS);
+          return new IndexedFile(version, index++, new AddFile(kernelRow));
+        }
+
+        sentEnd = true;
+        return new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null);
+      }
+
+      @Override
+      public void close() throws IOException {
+        // toLocalIterator() resources are managed by Spark
+      }
+    };
   }
 
   /** Loads snapshot files at the specified version. */
