@@ -114,13 +114,12 @@ object UnityCatalogQuickstart {
       .getOrCreate()
 
     try {
-      val tablePath = new File(tableDir, "test_table").getAbsolutePath
       val checkpointPath = new File(tableDir, "checkpoint").getAbsolutePath
 
       spark.sql(
         s"""CREATE TABLE unity.default.test_table (id BIGINT, data STRING)
            |USING DELTA
-           |LOCATION '$tablePath'""".stripMargin)
+           |TBLPROPERTIES('delta.feature.catalogManaged' = 'supported')""".stripMargin)
 
       spark.sql("INSERT INTO unity.default.test_table VALUES (1, 'hello'), (2, 'world')")
 
