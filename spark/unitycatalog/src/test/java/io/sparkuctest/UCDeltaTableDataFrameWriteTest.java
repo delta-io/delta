@@ -277,8 +277,6 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  // Helpers
-
   private Dataset<Row> intDf(Integer... ids) {
     return spark()
         .createDataFrame(
