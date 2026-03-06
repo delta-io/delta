@@ -20,7 +20,6 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
-import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
@@ -121,7 +120,7 @@ public interface DeltaSnapshotManager {
    * empty actions (metadata-only CREATE TABLE) or non-empty actions (future CTAS/RTAS/REPLACE
    * flows).
    *
-   * @param schema the Delta Kernel schema for the new table
+   * @param kernelSchema the Delta Kernel schema for the new table
    * @param tableProperties table properties to persist in metadata
    * @param dataLayoutSpec optional layout spec for partitioning or clustering
    * @param engineInfo engine info string to persist in commit metadata
@@ -132,23 +131,4 @@ public interface DeltaSnapshotManager {
       Map<String, String> tableProperties,
       Optional<DataLayoutSpec> dataLayoutSpec,
       String engineInfo);
-
-  /**
-   * Configures the given builder with optional table properties and data layout spec, then builds
-   * the transaction. Shared across {@link PathBasedSnapshotManager} and {@link
-   * io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotManager}.
-   */
-  static Transaction configureAndBuildTransaction(
-      CreateTableTransactionBuilder builder,
-      Map<String, String> tableProperties,
-      Optional<DataLayoutSpec> dataLayoutSpec,
-      Engine kernelEngine) {
-    if (!tableProperties.isEmpty()) {
-      builder = builder.withTableProperties(tableProperties);
-    }
-    if (dataLayoutSpec.isPresent()) {
-      builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
-    }
-    return builder.build(kernelEngine);
-  }
 }

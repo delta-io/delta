@@ -30,6 +30,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerUtils;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -192,7 +193,7 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
     CreateTableTransactionBuilder builder =
         ucCatalogManagedClient.buildCreateTableTransaction(
             tableId, tablePath, kernelSchema, engineInfo);
-    return DeltaSnapshotManager.configureAndBuildTransaction(
+    return SnapshotManagerUtils.configureAndBuildTransaction(
         builder, tableProperties, dataLayoutSpec, engine);
   }
 }

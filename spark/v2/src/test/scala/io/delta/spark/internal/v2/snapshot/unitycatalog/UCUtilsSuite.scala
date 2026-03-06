@@ -200,7 +200,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
     val exception = intercept[IllegalArgumentException] {
       UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, props, CATALOG_ALPHA, spark)
     }
-    assert(exception.getMessage.contains("ucTableId"))
+    assert(exception.getMessage.contains(UC_TABLE_ID_KEY))
   }
 
   test("extractTableInfoForCreate: happy path extracts correct table info") {

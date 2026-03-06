@@ -22,7 +22,6 @@ import io.delta.spark.internal.v2.snapshot.unitycatalog.UCManagedTableSnapshotMa
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 import org.apache.spark.sql.SparkSession;
@@ -74,19 +73,11 @@ public final class SnapshotManagerFactory {
    *
    * @param tablePath resolved table path for the new table
    * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
-   * @param properties create-table properties (including UC metadata for managed tables)
-   * @param catalogName Spark catalog name used to resolve UC configuration
-   * @param spark Spark session used for UC config resolution
+   * @param ucTableInfo optional UC metadata for catalog-managed tables
    * @return a {@link DeltaSnapshotManager} appropriate for the new table type
    */
   public static DeltaSnapshotManager forCreateTable(
-      String tablePath,
-      Engine kernelEngine,
-      Map<String, String> properties,
-      String catalogName,
-      SparkSession spark) {
-    Optional<UCTableInfo> ucTableInfo =
-        UCUtils.extractTableInfoForCreate(tablePath, properties, catalogName, spark);
+      String tablePath, Engine kernelEngine, Optional<UCTableInfo> ucTableInfo) {
     if (ucTableInfo.isPresent()) {
       return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
     }

@@ -159,7 +159,7 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
       String engineInfo) {
     CreateTableTransactionBuilder builder =
         TableManager.buildCreateTableTransaction(tablePath, kernelSchema, engineInfo);
-    return DeltaSnapshotManager.configureAndBuildTransaction(
+    return SnapshotManagerUtils.configureAndBuildTransaction(
         builder, tableProperties, dataLayoutSpec, kernelEngine);
   }
 }
