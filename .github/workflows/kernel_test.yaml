@@ -77,15 +77,20 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
+      - name: install java 17 for Unity Catalog setup
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Setup Unity Catalog for testing
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
       # Run integration tests with JDK 11, as they have no Spark dependency
-      - name: install java
+      - name: install java 11 for integration tests
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"
           java-version: "11"
-      - name: Setup Unity Catalog for testing
-        run: |
-          bash project/scripts/setup_unitycatalog_main.sh
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
