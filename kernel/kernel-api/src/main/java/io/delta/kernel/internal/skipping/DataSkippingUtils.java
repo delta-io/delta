@@ -286,6 +286,33 @@ public class DataSkippingUtils {
         return constructNotDataSkippingFilters(
             asPredicate(getUnaryChild(dataFilters)), schemaHelper);
 
+        // Translate ST_INTERSECT_BOXES(geoCol, qXmin, qYmin, qXmax, qYmax) into
+        // ST_INTERSECT_BOXES_ON_STATS(minStatCol, maxStatCol, qXmin, qYmin, qXmax, qYmax).
+        // minStatCol / maxStatCol are standard minValues / maxValues entries whose values are
+        // WKT POINT strings "POINT [Z|M|ZM] (x y [...])" representing the bbox corners.
+      case STIntersectBoxes.NAME:
+        if (dataFilters instanceof STIntersectBoxes) {
+          STIntersectBoxes stib = (STIntersectBoxes) dataFilters;
+          Column geoCol = stib.getGeoColumn();
+          if (!schemaHelper.isGeoSkippingEligibleColumn(geoCol)) {
+            break;
+          }
+          Column minCol = schemaHelper.getGeoStatMinColumn(geoCol);
+          Column maxCol = schemaHelper.getGeoStatMaxColumn(geoCol);
+          List<Expression> children =
+              Arrays.asList(
+                  minCol,
+                  maxCol,
+                  Literal.ofDouble(stib.getQueryXmin()),
+                  Literal.ofDouble(stib.getQueryYmin()),
+                  Literal.ofDouble(stib.getQueryXmax()),
+                  Literal.ofDouble(stib.getQueryYmax()));
+          Set<Column> referencedCols = new HashSet<>(Arrays.asList(minCol, maxCol));
+          return Optional.of(
+              new DataSkippingPredicate(STIntersectBoxes.STATS_NAME, children, referencedCols));
+        }
+        break;
+
         // TODO more expressions
     }
     return Optional.empty();
