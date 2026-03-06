@@ -75,10 +75,8 @@ def prepare(root_dir, spark_version):
         delete_if_exists(os.path.expanduser(f"~/{filepath}/cache/io.delta"))
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
-    packages = ["spark/publishM2", "storage/publishM2"]
     sbt_command = sbt_command + [f"-DsparkVersion={spark_version}"]
-    packages = packages + ["connectCommon/publishM2", "connectServer/publishM2"]
-    run_cmd(sbt_command + ["clean"] + packages, stream_output=True)
+    run_cmd(sbt_command + ["clean", "publishM2"], stream_output=True)
 
 
 def get_local_package(package_name, spark_version, root_dir):
