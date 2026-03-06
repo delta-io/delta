@@ -849,43 +849,42 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    // Enable CBO
-    spark.conf().set("spark.sql.cbo.enabled", "true");
-    try {
-      Identifier id = Identifier.of(new String[] {"default"}, tblName);
-      SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 
-      SparkScanBuilder builder =
-          (SparkScanBuilder)
-              sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-      SparkScan scan = (SparkScan) builder.build();
-      Statistics stats = scan.estimateStatistics();
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
 
-      // Should have numRows from catalog stats
-      assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
-      assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
+          // Should have numRows from catalog stats
+          assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
+          assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
 
-      // sizeInBytes should still come from planned files (more accurate)
-      assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-      assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+          // sizeInBytes should still come from planned files (more accurate)
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
 
-      // Should have column stats
-      Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
-      assertNotNull(colStats, "columnStats should not be null");
-      assertFalse(colStats.isEmpty(), "columnStats should not be empty");
+          // Should have column stats
+          Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
+          assertNotNull(colStats, "columnStats should not be null");
+          assertFalse(colStats.isEmpty(), "columnStats should not be empty");
 
-      // Check that column stats contain expected columns
-      ColumnStatistics idStats = colStats.get(FieldReference.apply("id"));
-      assertNotNull(idStats, "id column stats should be present");
-      assertTrue(idStats.nullCount().isPresent(), "id nullCount should be present");
-      assertTrue(idStats.distinctCount().isPresent(), "id distinctCount should be present");
-      assertTrue(idStats.min().isPresent(), "id min should be present");
-      assertTrue(idStats.max().isPresent(), "id max should be present");
-      assertEquals(1, idStats.min().get(), "id min should be 1");
-      assertEquals(2, idStats.max().get(), "id max should be 2");
-    } finally {
-      spark.conf().set("spark.sql.cbo.enabled", "false");
-    }
+          // Check that column stats contain expected columns
+          ColumnStatistics idStats = colStats.get(FieldReference.apply("id"));
+          assertNotNull(idStats, "id column stats should be present");
+          assertTrue(idStats.nullCount().isPresent(), "id nullCount should be present");
+          assertTrue(idStats.distinctCount().isPresent(), "id distinctCount should be present");
+          assertTrue(idStats.min().isPresent(), "id min should be present");
+          assertTrue(idStats.max().isPresent(), "id max should be present");
+          assertEquals(1, idStats.min().get(), "id min should be 1");
+          assertEquals(2, idStats.max().get(), "id max should be 2");
+        });
   }
 
   @Test
@@ -907,26 +906,30 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    // Disable CBO (default)
-    spark.conf().set("spark.sql.cbo.enabled", "false");
-    Identifier id = Identifier.of(new String[] {"default"}, tblName);
-    SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 
-    SparkScanBuilder builder =
-        (SparkScanBuilder) sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-    SparkScan scan = (SparkScan) builder.build();
-    Statistics stats = scan.estimateStatistics();
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
 
-    // With CBO disabled, numRows should be empty (matching V1 behavior)
-    assertFalse(stats.numRows().isPresent(), "numRows should be empty with CBO disabled");
+          // With CBO disabled, numRows should be empty (matching V1 behavior)
+          assertFalse(stats.numRows().isPresent(), "numRows should be empty with CBO disabled");
 
-    // sizeInBytes should still come from planned files
-    assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-    assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+          // sizeInBytes should still come from planned files
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
   }
 
   @Test
-  public void testEstimateStatisticsWithoutCatalogStats(@TempDir File tempDir) {
+  public void testEstimateStatisticsWithoutCatalogStats(@TempDir File tempDir) throws Exception {
     // Path-based table has no catalog stats
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_no_catalog";
@@ -935,25 +938,25 @@ public class SparkScanTest extends DeltaV2TestBase {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
 
-    spark.conf().set("spark.sql.cbo.enabled", "true");
-    try {
-      // Path-based table — no catalog table, no stats
-      Identifier id = Identifier.of(new String[] {"default"}, tblName);
-      SparkTable sparkTable = new SparkTable(id, path);
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          // Path-based table — no catalog table, no stats
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, path);
 
-      SparkScanBuilder builder =
-          (SparkScanBuilder)
-              sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-      SparkScan scan = (SparkScan) builder.build();
-      Statistics stats = scan.estimateStatistics();
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
 
-      // Without catalog stats, numRows should be empty
-      assertFalse(stats.numRows().isPresent(), "numRows should be empty for path-based table");
-      assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-      assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
-    } finally {
-      spark.conf().set("spark.sql.cbo.enabled", "false");
-    }
+          // Without catalog stats, numRows should be empty
+          assertFalse(stats.numRows().isPresent(), "numRows should be empty for path-based table");
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
   }
 
   @Test
@@ -1001,34 +1004,34 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    spark.conf().set("spark.sql.cbo.enabled", "true");
-    try {
-      Identifier id = Identifier.of(new String[] {"default"}, tblName);
-      SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 
-      SparkScanBuilder builder =
-          (SparkScanBuilder)
-              sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-      SparkScan scan = (SparkScan) builder.build();
-      Statistics stats = scan.estimateStatistics();
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
 
-      assertTrue(stats.numRows().isPresent(), "numRows should be present");
-      assertEquals(3L, stats.numRows().getAsLong(), "numRows should be 3");
+          assertTrue(stats.numRows().isPresent(), "numRows should be present");
+          assertEquals(3L, stats.numRows().getAsLong(), "numRows should be 3");
 
-      // Verify column stats include both data and partition columns
-      Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
-      assertNotNull(colStats.get(FieldReference.apply("id")), "id stats should be present");
-      assertNotNull(colStats.get(FieldReference.apply("part")), "part stats should be present");
+          // Verify column stats include both data and partition columns
+          Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
+          assertNotNull(colStats.get(FieldReference.apply("id")), "id stats should be present");
+          assertNotNull(colStats.get(FieldReference.apply("part")), "part stats should be present");
 
-      // Check partition column stats
-      ColumnStatistics partStats = colStats.get(FieldReference.apply("part"));
-      assertTrue(partStats.min().isPresent(), "part min should be present");
-      assertTrue(partStats.max().isPresent(), "part max should be present");
-      assertEquals(1, partStats.min().get(), "part min should be 1");
-      assertEquals(2, partStats.max().get(), "part max should be 2");
-    } finally {
-      spark.conf().set("spark.sql.cbo.enabled", "false");
-    }
+          // Check partition column stats
+          ColumnStatistics partStats = colStats.get(FieldReference.apply("part"));
+          assertTrue(partStats.min().isPresent(), "part min should be present");
+          assertTrue(partStats.max().isPresent(), "part max should be present");
+          assertEquals(1, partStats.min().get(), "part min should be 1");
+          assertEquals(2, partStats.max().get(), "part max should be 2");
+        });
   }
 
   @Test
@@ -1063,44 +1066,51 @@ public class SparkScanTest extends DeltaV2TestBase {
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
     // avgLen is used for sizeInBytes estimation regardless of CBO setting
-    spark.conf().set("spark.sql.cbo.enabled", "false");
-    Identifier id = Identifier.of(new String[] {"default"}, tblName);
-    SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 
-    SparkScanBuilder builder =
-        (SparkScanBuilder) sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
 
-    // Prune to only 'name' column to trigger column projection estimation
-    StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
-    builder.pruneColumns(prunedSchema);
+          // Prune to only 'name' column to trigger column projection estimation
+          StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
+          builder.pruneColumns(prunedSchema);
 
-    SparkScan scan = (SparkScan) builder.build();
+          SparkScan scan = (SparkScan) builder.build();
 
-    long totalBytes = getTotalBytes(scan);
-    long estimatedSize = getEstimatedSizeInBytes(scan);
-    assertTrue(totalBytes > 0, "totalBytes should be positive");
+          long totalBytes = getTotalBytes(scan);
+          long estimatedSize = getEstimatedSizeInBytes(scan);
+          assertTrue(totalBytes > 0, "totalBytes should be positive");
 
-    // Schema: dataSchema = (id INT, name STRING), partitionSchema = empty
-    // readSchema = (name STRING) after pruning
-    //
-    // With avgLen=5 for name (STRING: avgLen + 12 = 17, vs defaultSize 20):
-    //   fullSchemaRowSize = 8 + (4 [INT default] + 17 [STRING avgLen]) = 29
-    //   outputRowSize     = 8 + 17 = 25
-    //   estimated = (totalBytes * 25) / 29
-    //
-    // Without avgLen (defaultSize only):
-    //   fullSchemaRowSize = 8 + (4 + 20) = 32
-    //   outputRowSize     = 8 + 20 = 28
-    //   estimated = (totalBytes * 28) / 32
-    long expectedWithAvgLen = (totalBytes * 25) / 29;
-    long expectedWithoutAvgLen = (totalBytes * 28) / 32;
+          // Schema: dataSchema = (id INT, name STRING), partitionSchema = empty
+          // readSchema = (name STRING) after pruning
+          //
+          // With avgLen=5 for name (STRING: avgLen + 12 = 17, vs defaultSize 20):
+          //   fullSchemaRowSize = 8 + (4 [INT default] + 17 [STRING avgLen]) = 29
+          //   outputRowSize     = 8 + 17 = 25
+          //   estimated = (totalBytes * 25) / 29
+          //
+          // Without avgLen (defaultSize only):
+          //   fullSchemaRowSize = 8 + (4 + 20) = 32
+          //   outputRowSize     = 8 + 20 = 28
+          //   estimated = (totalBytes * 28) / 32
+          long expectedWithAvgLen = (totalBytes * 25) / 29;
+          long expectedWithoutAvgLen = (totalBytes * 28) / 32;
 
-    assertEquals(
-        expectedWithAvgLen, estimatedSize, "estimatedSize should use avgLen from catalog stats");
-    assertNotEquals(
-        expectedWithoutAvgLen,
-        estimatedSize,
-        "estimatedSize should differ from defaultSize-only calculation");
+          assertEquals(
+              expectedWithAvgLen,
+              estimatedSize,
+              "estimatedSize should use avgLen from catalog stats");
+          assertNotEquals(
+              expectedWithoutAvgLen,
+              estimatedSize,
+              "estimatedSize should differ from defaultSize-only calculation");
+        });
   }
 
   @Test
@@ -1113,26 +1123,26 @@ public class SparkScanTest extends DeltaV2TestBase {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
 
-    spark.conf().set("spark.sql.cbo.enabled", "true");
-    try {
-      CatalogTable catalogTable =
-          spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tblName));
-      Identifier id = Identifier.of(new String[] {"default"}, tblName);
-      SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          CatalogTable catalogTable =
+              spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tblName));
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 
-      SparkScanBuilder builder =
-          (SparkScanBuilder)
-              sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
-      SparkScan scan = (SparkScan) builder.build();
-      Statistics stats = scan.estimateStatistics();
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
 
-      // Without catalog stats, we fall back to file-only stats
-      assertFalse(stats.numRows().isPresent(), "numRows should be empty without catalog stats");
-      assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
-      assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
-    } finally {
-      spark.conf().set("spark.sql.cbo.enabled", "false");
-    }
+          // Without catalog stats, we fall back to file-only stats
+          assertFalse(stats.numRows().isPresent(), "numRows should be empty without catalog stats");
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})
