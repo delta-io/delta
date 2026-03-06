@@ -1452,7 +1452,7 @@ object DeltaRelation extends DeltaLogging {
 
 object AppendDelta {
   def unapply(a: AppendData): Option[(DataSourceV2Relation, DeltaTableV2)] = {
-    if (a.query.resolved) {
+    if (a.query.resolved && !a.needSchemaEvolution) {
       a.table match {
         case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
           Some((r, r.table.asInstanceOf[DeltaTableV2]))
@@ -1466,7 +1466,7 @@ object AppendDelta {
 
 object OverwriteDelta {
   def unapply(o: OverwriteByExpression): Option[(DataSourceV2Relation, DeltaTableV2)] = {
-    if (o.query.resolved) {
+    if (o.query.resolved && !o.needSchemaEvolution) {
       o.table match {
         case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
           Some((r, r.table.asInstanceOf[DeltaTableV2]))
@@ -1480,7 +1480,7 @@ object OverwriteDelta {
 
 object DynamicPartitionOverwriteDelta {
   def unapply(o: OverwritePartitionsDynamic): Option[(DataSourceV2Relation, DeltaTableV2)] = {
-    if (o.query.resolved) {
+    if (o.query.resolved && !o.needSchemaEvolution) {
       o.table match {
         case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
           Some((r, r.table.asInstanceOf[DeltaTableV2]))
@@ -1509,6 +1509,7 @@ case class DeltaDynamicPartitionOverwriteCommand(
     isByName: Boolean,
     analyzedQuery: Option[LogicalPlan] = None) extends RunnableCommand with V2WriteCommand {
 
+  override val withSchemaEvolution: Boolean = false
   override def child: LogicalPlan = query
 
   override def withNewQuery(newQuery: LogicalPlan): DeltaDynamicPartitionOverwriteCommand = {

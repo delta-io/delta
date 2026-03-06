@@ -1708,11 +1708,11 @@ abstract class DeltaInsertIntoTests(
           DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
           SQLConf.STORE_ASSIGNMENT_POLICY.key -> "strict") {
         // ordering should still match
-        intercept[AnalysisException] {
+        intercept[SparkException] {
           doInsert(t1, complexSchema.select("struct", "long"))
         }
 
-        intercept[AnalysisException] {
+        intercept[SparkException] {
           doInsert(t1, complexSchema.select("struct", "long", "string"))
         }
 
