@@ -10,4 +10,10 @@ rm -rf "$UC_DIR"
 git clone "$UC_REPO" "$UC_DIR"
 cd "$UC_DIR"
 git checkout "$UC_REF"
-./build/sbt clean package publishM2
+./build/sbt \
+  "set client / Compile / packageDoc / publishArtifact := false" \
+  clean \
+  client/generate \
+  client/publishM2 \
+  server/publishM2 \
+  spark/publishM2
