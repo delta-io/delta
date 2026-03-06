@@ -15,10 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  # Point SBT to our cache directories for consistency
-  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
-
 jobs:
   test:
     name: "DK: Shard ${{ matrix.shard }}"
@@ -32,6 +28,7 @@ jobs:
       NUM_SHARDS: 4
       DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
       TEST_PARALLELISM_COUNT: 4
+      SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
     steps:
       - name: Show runner specs
         run: |
@@ -68,6 +65,9 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      - name: Setup Unity Catalog for testing
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -83,6 +83,9 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "11"
+      - name: Setup Unity Catalog for testing
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
       - name: Run integration tests
         run: |
           cd kernel/examples && python run-kernel-examples.py --use-local
