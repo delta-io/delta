@@ -386,15 +386,17 @@ case class DeltaFormatSharingSource(
 
   override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
     logInfo(s"latestOffset with startOffset($startOffset), limit($limit)")
+    // startOffset is null for initialSnapshot.
+    val (startDeltaSourceOffsetOpt, wasConvertedFromLegacy) =
+      Option(startOffset).map(forceToDeltaSourceOffset) match {
+        case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
+        case None => (None, false)
+      }
     // When DVs are enabled on a shared table with an existing
     // LegacySource streaming query, the query fails. On restart
     // this Source is freshly instantiated so
     // latestProcessedEndOffsetOption is None. We must use the
     // legacy offset as the starting point to fetch files.
-    val maybeConvertedDeltaSourceOffset =
-      Option(startOffset).map(forceToDeltaSourceOffset)
-    val startDeltaSourceOffsetOpt = maybeConvertedDeltaSourceOffset.map(_._1)
-    val wasConvertedFromLegacy = maybeConvertedDeltaSourceOffset.exists(_._2)
     val deltaSourceOffset =
       if (latestProcessedEndOffsetOption.isEmpty &&
         startDeltaSourceOffsetOpt.nonEmpty && wasConvertedFromLegacy) {
