@@ -239,10 +239,13 @@ lazy val root = (project in file("."))
       "-deprecation",
       "-feature"
     ),
+    // Conditionally exclude IcebergCompatV2.scala when supportIceberg is "false"
     Compile / unmanagedSources / excludeFilter := {
-      var filter: FileFilter = HiddenFileFilter
-      if (getSupportIceberg.value == "false") filter = filter || "IcebergCompatV2.scala"
-      filter
+      if (getSupportIceberg.value == "false") {
+        HiddenFileFilter || "IcebergCompatV2.scala"
+      } else {
+        HiddenFileFilter
+      }
     },
     java17Settings
   )
