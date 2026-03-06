@@ -99,6 +99,5 @@ jobs:
         env:
           SPARK_PACKAGE_SUFFIX: ${{ steps.spark-details.outputs.spark_package_suffix }}
           SPARK_VERSION: ${{ steps.spark-details.outputs.spark_full_version }}
-          RUN_UC_INTEGRATION_TEST: "true"
         run: |
           cd examples/scala && build/sbt "++ $SCALA_VERSION runMain example.UnityCatalogQuickstart"
