@@ -114,8 +114,6 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
         });
   }
 
-  // Helpers
-
   private String checkpoint() throws IOException {
     return Files.createTempDirectory("delta-streaming-ck-").toString();
   }
