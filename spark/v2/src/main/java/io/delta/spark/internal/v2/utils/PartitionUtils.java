@@ -211,9 +211,9 @@ public class PartitionUtils {
             .map(DeletionVectorSchemaContext::getSchemaWithDvColumn)
             .orElse(readDataSchema);
 
-    // TODO(https://github.com/delta-io/delta/issues/5859): Enable vectorized reader for DV tables
+    // Vectorized reader is supported for DV tables using ColumnVectorWithFilter
     boolean enableVectorizedReader =
-        !isTableSupportDv && ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
+        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
