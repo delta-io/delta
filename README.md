@@ -112,6 +112,7 @@ We also adhere to the [Delta Lake Code of Conduct](https://github.com/delta-io/d
 ## Building
 
 Delta Lake is compiled using [SBT](https://www.scala-sbt.org/1.x/docs/Command-Line-Reference.html).
+Ensure that your Java version is at least 17.
 
 To compile, run
 
