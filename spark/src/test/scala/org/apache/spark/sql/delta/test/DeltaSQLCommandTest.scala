@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.test
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import io.delta.sql.DeltaSparkSessionExtension
 
 import org.apache.spark.SparkConf
@@ -26,14 +27,23 @@ import org.apache.spark.sql.test.SharedSparkSession
 /**
  * A trait for tests that are testing a fully set up SparkSession with all of Delta's requirements,
  * such as the configuration of the DeltaCatalog and the addition of all Delta extensions.
+ *
+ * The V2 connector enable mode can be controlled via the `DELTA_V2_ENABLE_MODE` environment
+ * variable. Valid values are "NONE", "AUTO", and "STRICT". When not set, the default from
+ * [[DeltaSQLConf.V2_ENABLE_MODE]] ("AUTO") is used. This allows different CI workflows to
+ * run tests against different connector modes without code changes.
  */
 trait DeltaSQLCommandTest extends SharedSparkSession {
 
   override protected def sparkConf: SparkConf = {
-    super.sparkConf
+    val conf = super.sparkConf
       .set(StaticSQLConf.SPARK_SESSION_EXTENSIONS.key,
         classOf[DeltaSparkSessionExtension].getName)
       .set(SQLConf.V2_SESSION_CATALOG_IMPLEMENTATION.key,
         classOf[DeltaCatalog].getName)
+    sys.env.get("DELTA_V2_ENABLE_MODE").foreach { mode =>
+      conf.set(DeltaSQLConf.V2_ENABLE_MODE.key, mode)
+    }
+    conf
   }
 }
