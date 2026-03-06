@@ -1126,35 +1126,15 @@ public class SparkMicroBatchStream
       querySchema = querySchema.add(field);
     }
 
-    // Check that both schemas have the same set of column names.
+    // Use full schema equality (field names, types, nullability, metadata) to detect any
+    // incompatible schema change between query analysis time and the current snapshot.
     // Note: both querySchema (from Spark analyzer) and snapshotSchema (from kernel's
     // Snapshot.getSchema()) use logical column names, so this comparison is safe even with
     // column mapping enabled.
-    // TODO(#5319): Decide how to handle nullability and data type changes (e.g., type widening).
-    // TODO(#5319): Add partition column change detection.
-    Set<String> queryColumns = collectFieldNames(querySchema, "");
-    Set<String> snapshotColumns = collectFieldNames(snapshotSchema, "");
-
-    if (!queryColumns.equals(snapshotColumns)) {
+    // TODO(#5319): add tests for type widening, partition column, & nullability changes.
+    if (!querySchema.equals(snapshotSchema)) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
     }
-  }
-
-  /**
-   * Recursively collects all field names from a schema using dot-notation for nested fields. For
-   * example, a schema with fields (a: INT, b: STRUCT<x: INT, y: INT>) produces {"a", "b", "b.x",
-   * "b.y"}.
-   */
-  private Set<String> collectFieldNames(StructType schema, String prefix) {
-    Set<String> names = new HashSet<>();
-    for (StructField field : schema.fields()) {
-      String fullName = prefix.isEmpty() ? field.name() : prefix + "." + field.name();
-      names.add(fullName);
-      if (field.dataType() instanceof StructType) {
-        names.addAll(collectFieldNames((StructType) field.dataType(), fullName));
-      }
-    }
-    return names;
   }
 
   /**
