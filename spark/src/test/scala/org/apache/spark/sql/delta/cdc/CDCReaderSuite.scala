@@ -269,11 +269,10 @@ class CDCReaderSuite
 
   testQuietly("invalid range - start after last version of CDF") {
     withTempDir { dir =>
-      val log = DeltaLog.forTable(spark, dir.getAbsolutePath)
       spark.range(10).write.format("delta").save(dir.getAbsolutePath)
       spark.range(20).write.format("delta").mode("append").save(dir.getAbsolutePath)
 
-      val e = intercept[IllegalArgumentException] {
+      val e = intercept[DeltaIllegalArgumentException] {
         spark.read.format("delta")
           .option("readChangeFeed", "true")
           .option("startingVersion", Long.MaxValue)
@@ -281,8 +280,12 @@ class CDCReaderSuite
           .load(dir.toString)
           .count()
       }
-      assert(e.getMessage ==
-        DeltaErrors.startVersionAfterLatestVersion(Long.MaxValue, 1).getMessage)
+      checkError(
+        e,
+        condition = "DELTA_CDC_START_VERSION_AFTER_LATEST",
+        sqlState = "22003",
+        parameters = Map("start" -> Long.MaxValue.toString, "latest" -> "1")
+      )
     }
   }
 

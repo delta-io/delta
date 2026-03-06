@@ -581,9 +581,9 @@ trait DeltaErrorsBase
    * Throwable used for invalid CDC 'start' and 'latest' options, where latest < start
    */
   def startVersionAfterLatestVersion(start: Long, latest: Long): Throwable = {
-    new IllegalArgumentException(
-      s"Provided Start version($start) for reading change data is invalid. " +
-        s"Start version cannot be greater than the latest version of the table($latest).")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CDC_START_VERSION_AFTER_LATEST",
+      messageParameters = Array(start.toString, latest.toString))
   }
 
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
