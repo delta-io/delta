@@ -112,15 +112,19 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         isPathTable,
         CloseableIterable.emptyIterable());
 
-    // Register the table with the catalog (UC delegate) and return a SparkTable.
+    // Register the table with the catalog (UC delegate).
+    // For UC-managed tables, avoid immediately re-loading through the kernel snapshot path here:
+    // the commit coordinator may still report "no accepted commits yet" for the freshly-created
+    // table even though version 0 already exists on storage. The returned Table from the delegate
+    // is sufficient for CREATE TABLE completion, and subsequent explicit loadTable() calls go
+    // through the normal routing once catalog state is fully visible.
     // For path-based tables (delta.`/path`): no catalog registration is needed.
     if (!isPathTable) {
-      createCatalogTable(
+      return createCatalogTable(
           ident,
           schema,
           partitions,
           CreateTableCommitCoordinator.filterCredentialProperties(properties));
-      return loadTable(ident);
     }
     return loadPathTable(ident);
   }
