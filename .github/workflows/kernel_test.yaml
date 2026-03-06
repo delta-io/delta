@@ -57,7 +57,7 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}
+          key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}-uc-main-v1
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then

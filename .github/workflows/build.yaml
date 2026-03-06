@@ -33,7 +33,7 @@ jobs:
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          key: delta-sbt-cache-cross-spark
+          key: delta-sbt-cache-cross-spark-uc-main-v1
 
       - name: Setup Unity Catalog for testing
         run: |

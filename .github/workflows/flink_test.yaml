@@ -43,7 +43,7 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-flink
+          key: sbt-flink-uc-main-v1
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
