@@ -17,15 +17,25 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.lang.reflect.InvocationTargetException
+import java.util.{ArrayList => JArrayList, HashMap => JHashMap}
 import java.util.concurrent.TimeUnit
 
+import scala.collection.JavaConverters._
 import scala.util.Try
 
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.constraints.Constraints
 import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperties
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.actions.{
+  Action,
+  AddFile,
+  Metadata,
+  Protocol,
+  RemoveFile,
+  TableFeatureProtocolUtils
+}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
@@ -88,6 +98,11 @@ case class CreateDeltaTableCommand(
 
   @transient
   private lazy val sc: SparkContext = SparkContext.getOrCreate()
+  private val kernelCreateEngineInfo = "kernel-spark-dsv2"
+  private val kernelCreateCoordinatorClass =
+    "io.delta.spark.internal.v2.catalog.CreateTableCommitCoordinator"
+  private val kernelCreateCoordinatorMethod =
+    "commitCreateTableVersion0FromLegacyWriterActions"
 
   override lazy val metrics = Map[String, SQLMetric](
     "numCopiedFiles" -> createMetric(sc, "number of files copied"),
@@ -350,10 +365,125 @@ case class CreateDeltaTableCommand(
     var txnToReturn = txn
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
-      val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
-      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      val ctasSchema = updatedWriter.data.schema.asNullable
+      val (taggedCommitData, op) = doDeltaWrite(updatedWriter, ctasSchema)
+      val committedWithKernel =
+        shouldUseKernelCreateTableAsSelectPoc(sparkSession, tableWithLocation) &&
+        commitCreateTableAsSelectWithKernel(
+          sparkSession,
+          tableWithLocation,
+          ctasSchema,
+          taggedCommitData.actions)
+      if (!committedWithKernel) {
+        txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      }
     }
     txnToReturn
+  }
+
+  private def shouldUseKernelCreateTableAsSelectPoc(
+      sparkSession: SparkSession,
+      tableWithLocation: CatalogTable): Boolean = {
+    val conf = sparkSession.sessionState.conf
+    if (!conf.getConf(DeltaSQLConf.V2_CTAS_USE_V1_WRITER_POC_ENABLED)) {
+      return false
+    }
+    if (operation != TableCreationModes.Create || isV1WriterSaveAsTableOverwrite) {
+      return false
+    }
+    if (!allowCatalogManaged) {
+      return false
+    }
+    val mode = new DeltaV2Mode(conf)
+    mode.shouldUseKernelMetadataOnlyCreate(tableWithLocation.storage.properties.asJava)
+  }
+
+  private def commitCreateTableAsSelectWithKernel(
+      sparkSession: SparkSession,
+      tableWithLocation: CatalogTable,
+      ctasSchema: StructType,
+      actions: Seq[Action]): Boolean = {
+    val fileActionJson = new JArrayList[String]()
+    actions.foreach {
+      case add: AddFile => fileActionJson.add(add.json)
+      case remove: RemoveFile => fileActionJson.add(remove.json)
+      case _ =>
+    }
+
+    val coordinatorProperties = new JHashMap[String, String]()
+    tableWithLocation.properties.foreach { case (k, v) => coordinatorProperties.put(k, v) }
+    tableWithLocation.storage.properties.foreach { case (k, v) => coordinatorProperties.put(k, v) }
+    normalizeCoordinatorPropertiesForKernelCreate(coordinatorProperties)
+    val catalogName = tableWithLocation.identifier.catalog.getOrElse(
+      sparkSession.sessionState.catalogManager.currentCatalog.name())
+
+    try {
+      val coordinatorClass = Utils.classForName(kernelCreateCoordinatorClass)
+      val coordinatorMethod = coordinatorClass.getMethod(
+        kernelCreateCoordinatorMethod,
+        classOf[String],
+        classOf[StructType],
+        classOf[java.util.List[_]],
+        classOf[java.util.Map[_, _]],
+        classOf[SparkSession],
+        classOf[String],
+        classOf[String],
+        classOf[java.util.List[_]]
+      )
+      coordinatorMethod.invoke(
+        null,
+        tableWithLocation.location.toString,
+        ctasSchema,
+        tableWithLocation.partitionColumnNames.asJava,
+        coordinatorProperties,
+        sparkSession,
+        catalogName,
+        kernelCreateEngineInfo,
+        fileActionJson)
+      true
+    } catch {
+      case _: ClassNotFoundException | _: NoSuchMethodException =>
+        logInfo(
+          log"Kernel CTAS POC coordinator is unavailable; falling back to the legacy commit path.")
+        false
+      case e: InvocationTargetException =>
+        throw Option(e.getCause).getOrElse(e)
+    }
+  }
+
+  /**
+   * Normalizes create properties for the reflected spark-v2 coordinator call.
+   *
+   * Some callers only populate UC markers under `option.*`. Older coordinator builds only inspect
+   * unprefixed keys, so add unprefixed aliases to make UC-managed create detection robust.
+   */
+  private def normalizeCoordinatorPropertiesForKernelCreate(
+      properties: JHashMap[String, String]): Unit = {
+    val normalized = new JHashMap[String, String]()
+    properties.asScala.foreach { case (key, value) =>
+      normalized.putIfAbsent(key, value)
+      if (key.startsWith("option.") && key.length > "option.".length) {
+        normalized.putIfAbsent(key.stripPrefix("option."), value)
+      }
+    }
+    // Bridge legacy ucTableId key to the current io.unitycatalog.tableId key.
+    if (normalized.containsKey("ucTableId") &&
+        !normalized.containsKey("io.unitycatalog.tableId")) {
+      normalized.put("io.unitycatalog.tableId", normalized.get("ucTableId"))
+    }
+    // CTAS (staged create) can reach this point without propagating delta.feature.catalogManaged
+    // in table properties even for UC managed creates. Ensure the UC marker check in the
+    // coordinator path sees a catalog-managed feature flag when this command is already gated by
+    // allowCatalogManaged.
+    if (allowCatalogManaged &&
+        !normalized.containsKey("delta.feature.catalogManaged") &&
+        !normalized.containsKey("option.delta.feature.catalogManaged") &&
+        !normalized.containsKey("delta.feature.catalogOwned-preview") &&
+        !normalized.containsKey("option.delta.feature.catalogOwned-preview")) {
+      normalized.put("delta.feature.catalogManaged", "supported")
+    }
+    properties.clear()
+    properties.putAll(normalized)
   }
 
   /**

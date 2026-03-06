@@ -3133,6 +3133,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValues(Set("AUTO", "NONE", "STRICT"))
       .createWithDefault("AUTO")
 
+  val V2_CTAS_USE_V1_WRITER_POC_ENABLED =
+    buildConf("v2.ctas.useV1WriterPoc.enabled")
+      .internal()
+      .doc(
+        "POC gate for CREATE TABLE AS SELECT: generate file actions with the legacy writer " +
+          "path and commit version 0 through Kernel/CCv2 when v2 mode allows it.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES =
     buildConf("streaming.initialSnapshotMaxFiles")
       .internal()
