@@ -1045,7 +1045,11 @@ public class SparkMicroBatchStream
     if (shouldTrackSchema) {
       throw (RuntimeException)
           DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
-              spark, sparkOldSchema, sparkNewSchema, !validatedDuringStreamStart);
+              spark,
+              sparkOldSchema,
+              sparkNewSchema,
+              !validatedDuringStreamStart,
+              /* isV2DataSource= */ true);
     }
   }
 
