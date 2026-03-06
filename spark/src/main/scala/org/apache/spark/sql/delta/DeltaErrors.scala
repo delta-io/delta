@@ -3598,6 +3598,7 @@ trait DeltaErrorsBase
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
         icebergCompatVersion.toString,
+        icebergCompatVersion.toString,
         icebergCompatVersion.toString
       ),
       cause
