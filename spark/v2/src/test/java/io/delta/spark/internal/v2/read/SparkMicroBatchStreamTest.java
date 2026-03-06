@@ -2999,25 +2999,24 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testIsInterruptedByStop() {
-    // Direct ClosedByInterruptException -> true
-    assertThat(SparkMicroBatchStream.isInterruptedByStop(new ClosedByInterruptException()))
-        .isTrue();
-
-    // ClosedByInterruptException wrapped one level deep -> true
+  public void testFindClosedByInterruptCause() {
+    // KernelEngineException wrapping ClosedByInterruptException -> present
+    ClosedByInterruptException cbie = new ClosedByInterruptException();
     assertThat(
-            SparkMicroBatchStream.isInterruptedByStop(
-                new RuntimeException("wrapper", new ClosedByInterruptException())))
-        .isTrue();
+            SparkMicroBatchStream.findClosedByInterruptCause(
+                new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)))
+        .isPresent()
+        .contains(cbie);
 
-    // InterruptedException wrapped one level deep -> true
+    // Plain RuntimeException -> empty
+    assertThat(SparkMicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")))
+        .isEmpty();
+
+    // KernelEngineException wrapping a different IOException -> empty
     assertThat(
-            SparkMicroBatchStream.isInterruptedByStop(
-                new RuntimeException("wrapper", new InterruptedException())))
-        .isTrue();
-
-    // Plain RuntimeException with no interrupt cause -> false
-    assertThat(SparkMicroBatchStream.isInterruptedByStop(new RuntimeException("unrelated")))
-        .isFalse();
+            SparkMicroBatchStream.findClosedByInterruptCause(
+                new io.delta.kernel.exceptions.KernelEngineException(
+                    "readJsonFile", new java.io.FileNotFoundException("missing"))))
+        .isEmpty();
   }
 }
