@@ -895,7 +895,9 @@ public class SparkMicroBatchStream
     }
 
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreFileDeletion (deprecated)
-    // A check on the source table that disallows commits that only include deletes to the data.
+    // A check on the source table that disallows changes on the source data. */
+    boolean shouldAllowChanges = false;
+    // A check on the source table that disallows commits that only include deletes to the data. */
     boolean shouldAllowDeletes = options.ignoreDeletes();
 
     boolean seenFileAdd = false;
@@ -946,7 +948,7 @@ public class SparkMicroBatchStream
     }
 
     if (removeFileActionPath != null) {
-      if (seenFileAdd) {
+      if (seenFileAdd && !shouldAllowChanges) {
         // Commit contains data changes (adds + removes) and changes are disallowed.
         // TODO(#5319): log CommitInfo action's operation instead of path
         throw (RuntimeException)
