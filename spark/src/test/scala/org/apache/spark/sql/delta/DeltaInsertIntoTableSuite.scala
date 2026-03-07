@@ -168,14 +168,17 @@ class DeltaInsertIntoSQLSuite
     // true (due to case sensitivity) so that we call resolveQueryColumnsByName and hit the right
     // code path.
 
-    // when the number of columns does not match, throw an arity mismatch error.
+    // Although there is a missing column (a != A), the default missing column checking behavior is
+    // case insensitive, so this does not throw a missing column error, but instead fails due to
+    // schemaEvolution being disabled.
     testInsertByNameError(
       targetSchema = "(A int)",
-      expectedErrorClass = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS")
+      expectedErrorClass = "DELTA_METADATA_MISMATCH")
 
-    // when the number of columns matches, but the names do not, throw a missing column error.
+    // when the number of columns matches, but the names do not, a missing column will be detected,
+    // but will still pass the check due to the column having a default null value.
     testInsertByNameError(
-      targetSchema = "(A int, c int)", expectedErrorClass = "DELTA_MISSING_COLUMN")
+      targetSchema = "(A int, c int)", expectedErrorClass = "DELTA_METADATA_MISMATCH")
   }
 
   dynamicOverwriteTest("insertInto: dynamic overwrite by name") {

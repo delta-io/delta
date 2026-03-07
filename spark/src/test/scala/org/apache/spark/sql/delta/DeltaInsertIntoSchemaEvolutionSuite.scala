@@ -96,9 +96,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       withSchemaEvolution = schemaEvolution
     )
 
-
-    // Adding new top-level columns with schema evolution is allowed for all inserts except SQL
-    // inserts by name, but dataframe inserts by name don't support implicit casting and will fail
+    // Adding new top-level columns with schema evolution is allowed for all inserts,
+    // but dataframe inserts by name don't support implicit casting and will fail
     // due to the type mismatch.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
@@ -117,7 +116,10 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsByPosition + StreamingInsert,
+      includeInserts = insertsByPosition ++ Set(
+        SQLInsertByName(SaveMode.Append),
+        SQLInsertByName(SaveMode.Overwrite),
+        StreamingInsert),
       withSchemaEvolution = schemaEvolution
     )
 
@@ -137,32 +139,6 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-      withSchemaEvolution = schemaEvolution
-    )
-
-    testInserts(s"insert with extra top-level column and implicit cast," +
-      s"schemaEvolution=$schemaEvolution")(
-      initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
-      partitionBy = Seq("a"),
-      overwriteWhere = "a" -> 1,
-      insertData = TestData("a int, b long, c int", Seq("""{ "a": 1, "b": 4, "c": 5  }""")),
-      expectedResult = ExpectedResult.Failure(ex => {
-        checkError(
-          ex,
-          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
-          parameters = Map(
-            "tableName" -> s"`$catalogName`.`default`.`target`",
-            "tableColumns" -> "`a`, `b`",
-            "dataColumns" -> "`a`, `b`, `c`"
-          ))
-      }),
-      includeInserts = insertsSQL.intersect(insertsByName) -- Set(
-        // It's not possible to specify a column that doesn't exist in the target using SQL with an
-        // explicit column list.
-        SQLInsertColList(SaveMode.Append),
-        SQLInsertColList(SaveMode.Overwrite),
-        SQLInsertOverwritePartitionColList
-      ),
       withSchemaEvolution = schemaEvolution
     )
 
