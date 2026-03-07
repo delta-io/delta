@@ -16,10 +16,13 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,11 +35,13 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
+import org.opentest4j.TestAbortedException;
 
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
@@ -81,13 +86,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
                 () -> {
                   try {
                     method.invoke(this, tableType);
-                  } catch (java.lang.reflect.InvocationTargetException e) {
+                  } catch (InvocationTargetException e) {
                     // Unwrap so JUnit sees the original exception. Without this,
                     // TestAbortedException (thrown by Assumptions) gets wrapped and
                     // JUnit treats the test as failed instead of skipped.
                     Throwable cause = e.getCause();
-                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
-                    if (cause instanceof Error) throw (Error) cause;
+                    if (cause instanceof TestAbortedException) throw (TestAbortedException) cause;
                     throw e;
                   }
                 }));
@@ -332,6 +336,31 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Returns the timestamp of the current (latest) version. */
   protected String currentTimestamp(String tableName) {
     return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains {@code
+   * expectedMessage}.
+   */
+  protected void assertThrowsWithCauseContaining(
+      String expectedMessage, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                if (t.getMessage() != null && t.getMessage().contains(expectedMessage)) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing '"
+                      + expectedMessage
+                      + "' but got: "
+                      + e.getMessage(),
+                  e);
+            });
   }
 
   /** Helper to build an expected row as a list of string values. */
