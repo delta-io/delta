@@ -205,10 +205,15 @@ public class SparkGoldenTableTest {
           new StringEndsWith("city", "York"),
         },
         // expected pushed filters
-        new Filter[] {new GreaterThan("cnt", 10), new EqualTo("date", "2025-09-01")},
+        new Filter[] {
+          new GreaterThan("cnt", 10),
+          new StringStartsWith("name", "foo"),
+          new EqualTo("date", "2025-09-01")
+        },
         // expected pushed kernel predicates
         new Predicate[] {
           new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo")),
           new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))
         },
         // expected data filters
@@ -217,7 +222,10 @@ public class SparkGoldenTableTest {
         Optional.of(
             new Predicate(
                 "AND",
-                new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                new Predicate(
+                    "AND",
+                    new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                    new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
                 new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))));
 
     // case 2: OR and NOT filters
@@ -240,11 +248,17 @@ public class SparkGoldenTableTest {
         },
         // expected pushed filters
         new Filter[] {
+          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
           new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
           new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
+          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected pushed kernel predicates
         new Predicate[] {
+          new Predicate(
+              "OR",
+              new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+              new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
           new Predicate(
               "OR",
               new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
@@ -254,7 +268,13 @@ public class SparkGoldenTableTest {
               new Predicate(
                   "AND",
                   new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
-                  new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))))
+                  new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))),
+          new Predicate(
+              "NOT",
+              new Predicate(
+                  "OR",
+                  new Predicate("=", new Column("name"), Literal.ofString("foo")),
+                  new Predicate("STARTS_WITH", new Column("city"), Literal.ofString("New"))))
         },
         // expected data filters
         new Filter[] {
@@ -264,19 +284,39 @@ public class SparkGoldenTableTest {
           new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected kernel scan builder predicate
+        // reduce(And::new) over 4 predicates gives left-associative nesting:
+        // AND(AND(AND(pred1, pred2), pred3), pred4)
         Optional.of(
             new Predicate(
                 "AND",
                 new Predicate(
-                    "OR",
-                    new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
-                    new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
+                    "AND",
+                    new Predicate(
+                        "AND",
+                        new Predicate(
+                            "OR",
+                            new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                            new Predicate(
+                                "STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
+                        new Predicate(
+                            "OR",
+                            new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
+                            new Predicate(
+                                "=", new Column("date"), Literal.ofString("2025-10-01")))),
+                    new Predicate(
+                        "NOT",
+                        new Predicate(
+                            "AND",
+                            new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
+                            new Predicate(
+                                "=", new Column("date"), Literal.ofString("2025-09-01"))))),
                 new Predicate(
                     "NOT",
                     new Predicate(
-                        "AND",
-                        new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
-                        new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))))));
+                        "OR",
+                        new Predicate("=", new Column("name"), Literal.ofString("foo")),
+                        new Predicate(
+                            "STARTS_WITH", new Column("city"), Literal.ofString("New")))))));
 
     // check SupportsRuntimeV2Filtering
     // city = 'hz' AND date = '20180520'

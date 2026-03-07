@@ -153,11 +153,19 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     checkSupportsPushDownFilters(
         builder,
         new Filter[] {new StringStartsWith("name", "test")}, // input filters
-        new Filter[] {new StringStartsWith("name", "test")}, // expected post-scan filters
-        new Filter[] {}, // expected pushed filters
-        new Predicate[] {}, // expected pushed kernel predicates
+        new Filter[] {
+          new StringStartsWith("name", "test")
+        }, // expected post-scan filters (data filter)
+        new Filter[] {new StringStartsWith("name", "test")}, // expected pushed filters
+        new Predicate[] {
+          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("test"))
+        }, // expected pushed kernel predicates
         new Filter[] {new StringStartsWith("name", "test")}, // expected data filters
-        Optional.empty() // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "STARTS_WITH",
+                new Column("name"),
+                Literal.ofString("test"))) // expected kernelScanBuilder.predicate
         );
   }
 
@@ -204,13 +212,20 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         // expected post-scan filters
         new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
         // expected pushed filters
-        new Filter[] {new EqualTo("id", 100)},
+        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
         // expected pushed kernel predicates
-        new Predicate[] {new Predicate("=", new Column("id"), Literal.ofInt(100))},
+        new Predicate[] {
+          new Predicate("=", new Column("id"), Literal.ofInt(100)),
+          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("test"))
+        },
         // expected data filters
         new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
         // expected kernelScanBuilder.predicate
-        Optional.of(new Predicate("=", new Column("id"), Literal.ofInt(100))));
+        Optional.of(
+            new Predicate(
+                "AND",
+                new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("test")))));
   }
 
   @Test
@@ -242,11 +257,17 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     checkSupportsPushDownFilters(
         builder,
         new Filter[] {new StringStartsWith("dep_id", "1")}, // input filters
-        new Filter[] {new StringStartsWith("dep_id", "1")}, // expected
-        new Filter[] {}, // expected pushed filters
-        new Predicate[] {}, // expected pushed kernel predicates
+        new Filter[] {}, // expected post-scan filters (partition filter, fully pushed)
+        new Filter[] {new StringStartsWith("dep_id", "1")}, // expected pushed filters
+        new Predicate[] {
+          new Predicate("STARTS_WITH", new Column("dep_id"), Literal.ofString("1"))
+        }, // expected pushed kernel predicates
         new Filter[] {}, // expected data filters
-        Optional.empty() // expected kernelScanBuilder.predicate
+        Optional.of(
+            new Predicate(
+                "STARTS_WITH",
+                new Column("dep_id"),
+                Literal.ofString("1"))) // expected kernelScanBuilder.predicate
         );
   }
 
@@ -292,15 +313,22 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
           new StringStartsWith("dep_id", "1") // unsupported
         },
         // expected post-scan filters
-        new Filter[] {new StringStartsWith("dep_id", "1")},
+        new Filter[] {},
         // expected pushed filters
-        new Filter[] {new EqualTo("dep_id", 1)},
+        new Filter[] {new EqualTo("dep_id", 1), new StringStartsWith("dep_id", "1")},
         // expected pushed kernel predicates
-        new Predicate[] {new Predicate("=", new Column("dep_id"), Literal.ofInt(1))},
+        new Predicate[] {
+          new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+          new Predicate("STARTS_WITH", new Column("dep_id"), Literal.ofString("1"))
+        },
         // expected data filters
         new Filter[] {},
         // expected kernelScanBuilder.predicate
-        Optional.of(new Predicate("=", new Column("dep_id"), Literal.ofInt(1))));
+        Optional.of(
+            new Predicate(
+                "AND",
+                new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                new Predicate("STARTS_WITH", new Column("dep_id"), Literal.ofString("1")))));
   }
 
   @Test
@@ -325,25 +353,29 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         // expected pushed filters
         new Filter[] {
           new EqualTo("id", 100), // data filter, supported
+          new StringStartsWith("name", "foo"), // data filter, supported
           new GreaterThan("dep_id", 1) // partition filter, supported
         },
         // expected pushed kernel predicates
         new Predicate[] {
           new Predicate("=", new Column("id"), Literal.ofInt(100)),
+          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo")),
           new Predicate(">", new Column("dep_id"), Literal.ofInt(1))
         },
         // expected data filters
         new Filter[] {
           new EqualTo("id", 100), // data filter, supported
-          new StringStartsWith("name", "foo") // data filter, unsupported
+          new StringStartsWith("name", "foo") // data filter, supported
         },
         // expected kernelScanBuilder.predicate
         Optional.of(
             new Predicate(
                 "AND",
-                Arrays.asList(
+                new Predicate(
+                    "AND",
                     new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                    new Predicate(">", new Column("dep_id"), Literal.ofInt(1))))));
+                    new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
+                new Predicate(">", new Column("dep_id"), Literal.ofInt(1)))));
   }
 
   @Test
@@ -389,13 +421,24 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         // expected post-scan filters
         new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
         // expected pushed filters
-        new Filter[] {},
+        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
         // expected pushed kernel predicates
-        new Predicate[] {},
+        new Predicate[] {
+          new Predicate(
+              "OR",
+              Arrays.asList(
+                  new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                  new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))))
+        },
         // expected data filters
         new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
         // expected kernelScanBuilder.predicate
-        Optional.empty());
+        Optional.of(
+            new Predicate(
+                "OR",
+                Arrays.asList(
+                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                    new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))))));
   }
 
   @Test
@@ -457,19 +500,24 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
               new GreaterThan("dep_id", 2))
         },
         // expected post-scan filters
+        new Filter[] {},
+        // expected pushed filters
         new Filter[] {
           new Or(
               new And(new EqualTo("dep_id", 1), new StringStartsWith("dep_id", "1")),
               new GreaterThan("dep_id", 2))
         },
-        // expected pushed filters
-        new Filter[] {},
         // expected pushed kernel predicates
         new Predicate[] {
           new Predicate(
               "OR",
               Arrays.asList(
-                  new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                  new Predicate(
+                      "AND",
+                      Arrays.asList(
+                          new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                          new Predicate(
+                              "STARTS_WITH", new Column("dep_id"), Literal.ofString("1")))),
                   new Predicate(">", new Column("dep_id"), Literal.ofInt(2))))
         },
         // expected data filters
@@ -479,7 +527,12 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             new Predicate(
                 "OR",
                 Arrays.asList(
-                    new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                    new Predicate(
+                        "AND",
+                        Arrays.asList(
+                            new Predicate("=", new Column("dep_id"), Literal.ofInt(1)),
+                            new Predicate(
+                                "STARTS_WITH", new Column("dep_id"), Literal.ofString("1")))),
                     new Predicate(">", new Column("dep_id"), Literal.ofInt(2))))));
   }
 
@@ -623,13 +676,29 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         // expected post-scan filters
         new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
         // expected pushed filters
-        new Filter[] {},
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
         // expected pushed kernel predicates
-        new Predicate[] {},
+        new Predicate[] {
+          new Predicate(
+              "NOT",
+              new Predicate(
+                  "OR",
+                  Arrays.asList(
+                      new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                      new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo")))))
+        },
         // expected data filters
         new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
         // expected kernelScanBuilder.predicate
-        Optional.empty());
+        Optional.of(
+            new Predicate(
+                "NOT",
+                new Predicate(
+                    "OR",
+                    Arrays.asList(
+                        new Predicate("=", new Column("id"), Literal.ofInt(100)),
+                        new Predicate(
+                            "STARTS_WITH", new Column("name"), Literal.ofString("foo")))))));
   }
 
   private void checkSupportsPushDownFilters(
