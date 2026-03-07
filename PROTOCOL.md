@@ -2099,7 +2099,7 @@ All of these actions are stored as their individual columns in parquet as struct
 Checkpoints must not preserve [commit provenance information](#commit-provenance-information) nor [change data](#add-cdc-file) actions.
 
 Within the checkpoint, the `add` struct may or may not contain the following columns based on the configuration of the table:
- - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a required field when the table is partitioned and the table property `delta.checkpoint.writeStatsAsStruct` is set to `true`. If the table is not partitioned, this column can be omitted. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
+ - partitionValues_parsed: In this struct, the column names correspond to the partition columns and the values are stored in their corresponding data type. This is a required field when the table is partitioned and the table property `delta.checkpoint.writeStatsAsStruct` is set to `true`. If the table is not partitioned, this column can be omitted. When `delta.checkpoint.writeStatsAsStruct` is set to `false` (which is the default), this column should be omitted. For example, for partition columns `year`, `month` and `event` with data types `int`, `int` and `string` respectively, the schema for this field will look like:
 
  ```
 |-- add: struct
