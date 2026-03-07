@@ -257,10 +257,6 @@ case class CreateDeltaTableCommand(
       createTableFunc)
 
 
-    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata) &&
-        !txnUsedForCommit.containsPostCommitHook(IcebergConverterHook)) {
-      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
-    }
 
     if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
         !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
