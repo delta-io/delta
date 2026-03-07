@@ -29,6 +29,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.stats.StatisticsCollection;
+import org.apache.spark.sql.streaming.StreamingQuery;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -218,5 +219,46 @@ public class V2StreamingReadTest extends V2TestBase {
             RowFactory.create(9));
 
     assertDataEquals(actualRows, expectedRows);
+  }
+
+  /**
+   * Verifies that stopping a V2 streaming query does not surface an exception.
+   *
+   * <p>When Spark stops a streaming query it calls {@link Thread#interrupt()} on the micro-batch
+   * thread. If that thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log
+   * JSON files via NIO channels, the interrupt causes a {@link
+   * java.nio.channels.ClosedByInterruptException} wrapped in a {@code KernelEngineException}. The
+   * fix in {@code SparkMicroBatchStream.latestOffset()} re-wraps this as an {@link
+   * java.io.UncheckedIOException} so Spark's {@code isInterruptedByStop} recognizes it as a clean
+   * shutdown.
+   */
+  @Test
+  public void testStreamingQueryStopDoesNotSurfaceException(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Write data
+    spark
+        .createDataFrame(Arrays.asList(RowFactory.create(1, "Alice", 100.0)), TEST_SCHEMA)
+        .write()
+        .format("delta")
+        .save(tablePath);
+
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+    StreamingQuery query =
+        streamingDF
+            .writeStream()
+            .format("memory")
+            .queryName("test_stop_no_exception")
+            .outputMode("append")
+            .start();
+
+    query.processAllAvailable();
+    query.stop();
+
+    // The stop should be clean — no exception should have been captured
+    assertTrue(query.exception().isEmpty(), "Expected no exception after query.stop()");
   }
 }
