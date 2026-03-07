@@ -41,6 +41,9 @@ import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
+import org.apache.spark.sql.connector.read.partitioning.KeyGroupedPartitioning;
+import org.apache.spark.sql.connector.read.partitioning.Partitioning;
+import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
@@ -51,7 +54,11 @@ import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
+public class SparkScan
+    implements Scan,
+        SupportsReportStatistics,
+        SupportsRuntimeV2Filtering,
+        SupportsReportPartitioning {
 
   /** Supported streaming options for the V2 connector. */
   private static final List<String> SUPPORTED_STREAMING_OPTIONS =
@@ -437,6 +444,33 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               String.join(", ", unsupportedOptions),
               String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
     }
+  }
+
+  @Override
+  public Partitioning outputPartitioning() {
+    // If no partition columns, return unknown partitioning
+    if (partitionSchema.fields().length == 0) {
+      return new UnknownPartitioning(0);
+    }
+
+    ensurePlanned();
+
+    // Create partition key expressions from partition schema
+    org.apache.spark.sql.connector.expressions.Expression[] keys =
+        Arrays.stream(partitionSchema.fields())
+            .map(
+                field ->
+                    (org.apache.spark.sql.connector.expressions.Expression)
+                        FieldReference.column(field.name()))
+            .toArray(org.apache.spark.sql.connector.expressions.Expression[]::new);
+
+    // Count unique partition values by grouping files by their partition values
+    Set<InternalRow> uniquePartitions = new HashSet<>();
+    for (PartitionedFile file : partitionedFiles) {
+      uniquePartitions.add(file.partitionValues());
+    }
+
+    return new KeyGroupedPartitioning(keys, uniquePartitions.size());
   }
 
   @Override
