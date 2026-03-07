@@ -239,7 +239,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
-    Optional<Statistics> v2Stats =
+    Optional<Statistics> catalogStats =
         catalogTable
             .flatMap(ct -> toJavaOptional(ct.stats()))
             .map(
@@ -254,7 +254,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
-        v2Stats,
+        catalogStats,
         merged);
   }
 
