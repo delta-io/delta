@@ -453,7 +453,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
         "The following streaming options are not supported: [readchangefeed]. "
-            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, excludeRegex].",
+            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreDeletes, excludeRegex].",
         exception.getMessage());
   }
 
