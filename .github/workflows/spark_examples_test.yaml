@@ -96,3 +96,11 @@ jobs:
           build/sbt clean
           build/sbt -DsparkVersion=${{ steps.spark-details.outputs.spark_full_version }} publishM2
           cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
+      - name: Run UC Delta Integration Test
+        # Verifies that delta-spark resolved from Maven local includes all kernel module
+        # dependencies transitively by running a real UC-backed Delta workload.
+        env:
+          SPARK_PACKAGE_SUFFIX: ${{ steps.spark-details.outputs.spark_package_suffix }}
+          SPARK_VERSION: ${{ steps.spark-details.outputs.spark_full_version }}
+        run: |
+          cd examples/scala && build/sbt "++ $SCALA_VERSION runMain example.UnityCatalogQuickstart"

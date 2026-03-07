@@ -361,9 +361,10 @@
   },
   "DELTA_CDC_NON_CONSTANT_ARGUMENT" : {
     "message" : [
-      "The <parameterName> argument (position <pos>) of the <functionName> function requires a constant value, but got a non-constant expression: <sqlExpr>."
+      "The <argumentName> argument (position <pos>) of the <functionName> function requires a constant value, but got a non-constant expression: <sqlExpr>.",
+      ""
     ],
-    "sqlState" : "42601"
+    "sqlState" : "42K0H"
   },
   "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
     "message" : [
