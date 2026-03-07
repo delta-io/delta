@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -55,12 +56,14 @@ import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
+import org.apache.spark.sql.delta.TypeWidening;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -213,7 +216,7 @@ public class SparkMicroBatchStream
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
                 this.snapshotAtSourceInit.getMetadata().getConfiguration())
-            != ColumnMapping.ColumnMappingMode.NONE;
+            != ColumnMappingMode.NONE;
     boolean isTypeWideningSupportedInProtocol =
         this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
             || this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_FEATURE);
@@ -925,7 +928,32 @@ public class SparkMicroBatchStream
               newMetadata.getId(), oldMetadata.getId());
     }
 
-    // TODO(#5319): schema tracking for non-additive schema changes
+    // Partition column change will be ignored if user enable the unsafe flag
+    Seq<String> newPartitionColumns, oldPartitionColumns;
+    if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
+      newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+      oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+    } else {
+      newPartitionColumns =
+          CollectionConverters.asScala(
+                  VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
+                      .map(Object::toString)
+                      .collect(Collectors.toList()))
+              .toSeq();
+      oldPartitionColumns =
+          CollectionConverters.asScala(
+                  VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
+                      .map(Object::toString)
+                      .collect(Collectors.toList()))
+              .toSeq();
+    }
+
+    checkNonAdditiveSchemaChanges(
+        oldMetadata,
+        newMetadata,
+        oldPartitionColumns,
+        newPartitionColumns,
+        validatedDuringStreamStart);
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -938,25 +966,6 @@ public class SparkMicroBatchStream
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       boolean backfilling = version < snapshotAtSourceInit.getVersion();
-      // Partition column change will be ignored if user enable the unsafe flag
-      Seq<String> newPartitionColumns, oldPartitionColumns;
-      if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
-        newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
-        oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
-      } else {
-        newPartitionColumns =
-            CollectionConverters.asScala(
-                    VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toList()))
-                .toSeq();
-        oldPartitionColumns =
-            CollectionConverters.asScala(
-                    VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toList()))
-                .toSeq();
-      }
 
       DeltaStreamUtils.SchemaCompatibilityResult checkResult =
           DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
@@ -979,6 +988,68 @@ public class SparkMicroBatchStream
                 Some.apply(version),
                 options.containsStartingVersionOrTimestamp());
       }
+    }
+  }
+
+  // TODO(#5319): schema tracking for non-additive schema changes
+  // TODO(#5319): Extract the entire non-additive schema check into a static utility and share it
+  // with v1 by refactoring DeltaColumnMapping.hasNoColumnMappingSchemaChanges so it can be reused
+  // by both v1 and v2.
+  // Non-additive schema changes include rename column, drop column and change column type
+  private void checkNonAdditiveSchemaChanges(
+      Metadata oldMetadata,
+      Metadata newMetadata,
+      Seq<String> oldPartitionColumns,
+      Seq<String> newPartitionColumns,
+      boolean validatedDuringStreamStart) {
+    StructType sparkNewSchema =
+        SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema());
+    StructType sparkOldSchema =
+        SchemaUtils.convertKernelSchemaToSparkSchema(oldMetadata.getSchema());
+
+    boolean shouldTrackSchema;
+    if (schemaReadOptions.typeWideningEnabled()
+        && schemaReadOptions.enableSchemaTrackingForTypeWidening()
+        && TypeWidening.containsWideningTypeChanges(sparkOldSchema, sparkNewSchema)) {
+      // If schema tracking is enabled for type widening, we will detect widening type changes and
+      // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
+      // DROP/RENAME for column mapping.
+      shouldTrackSchema = true;
+    } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
+      shouldTrackSchema = false;
+    } else {
+      ColumnMappingMode NONE = ColumnMappingMode.NONE;
+      ColumnMappingMode oldMode =
+          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
+      ColumnMappingMode newMode =
+          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
+      if (oldMode != NONE && newMode != NONE) {
+        Preconditions.checkArgument(oldMode == newMode, "changing mode is not supported");
+        shouldTrackSchema =
+            DeltaColumnMapping.hasColMappingOrPartitionSchemaChange(
+                sparkNewSchema,
+                sparkOldSchema,
+                newPartitionColumns,
+                oldPartitionColumns,
+                /* isBothColumnMappingEnabled */ true);
+      } else if (oldMode == NONE && newMode != NONE) {
+        // TODO(#5319): We should disallow user to upgrade column mapping mode for now since we
+        // don't support schema tracking
+        shouldTrackSchema = true;
+      } else {
+        // Prohibit reading across a downgrade.
+        shouldTrackSchema = oldMode != NONE && newMode == NONE;
+      }
+    }
+
+    if (shouldTrackSchema) {
+      throw (RuntimeException)
+          DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+              spark,
+              sparkOldSchema,
+              sparkNewSchema,
+              !validatedDuringStreamStart,
+              /* isV2DataSource= */ true);
     }
   }
 

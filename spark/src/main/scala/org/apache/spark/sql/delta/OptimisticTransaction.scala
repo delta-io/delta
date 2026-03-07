@@ -1433,11 +1433,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
         newMode = _newMetadata.columnMappingMode
       )
 
+      val isBothColumnMappingEnabled =
+        _newMetadata.columnMappingMode != NoMapping &&
+          _currentMetadata.columnMappingMode != NoMapping
+
       def dropColumnOp: Boolean = DeltaColumnMapping.isDropColumnOperation(
-        _newMetadata, _currentMetadata)
+        _newMetadata.schema, _currentMetadata.schema, isBothColumnMappingEnabled)
 
       def renameColumnOp: Boolean = DeltaColumnMapping.isRenameColumnOperation(
-        _newMetadata, _currentMetadata)
+        _newMetadata.schema, _currentMetadata.schema, isBothColumnMappingEnabled)
 
       def columnMappingChange: Boolean = isColumnMappingUpgrade || dropColumnOp || renameColumnOp
 

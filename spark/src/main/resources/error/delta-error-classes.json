@@ -2554,6 +2554,15 @@
     ],
     "sqlState" : "42KD4"
   },
+  "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2" : {
+    "message" : [
+      "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
+      "Non-additive schema change handling is not supported in Delta source v2 yet.",
+      "For further information and possible next steps to resolve this issue, please review the documentation at <docLink>",
+      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
+    ],
+    "sqlState" : "42KD4"
+  },
   "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG" : {
     "message" : [
       "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
