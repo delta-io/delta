@@ -9,18 +9,26 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.TableIdentifier;
+import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
+import org.apache.spark.sql.catalyst.catalog.CatalogStatistics;
+import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.LiteralValue;
+import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.filter.Predicate;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.Statistics;
+import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
@@ -793,5 +801,357 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  // ================================================================================================
+  // Tests for catalog statistics propagation
+  // ================================================================================================
+
+  /**
+   * Helper to inject CatalogStatistics into a catalog table via alterTableStats. This is needed
+   * because ANALYZE TABLE is not supported for V2 tables in the test environment.
+   */
+  private CatalogTable injectCatalogStats(String tblName, CatalogStatistics stats)
+      throws Exception {
+    TableIdentifier tableId = new TableIdentifier(tblName);
+    spark.sessionState().catalog().alterTableStats(tableId, scala.Option.apply(stats));
+    return spark.sessionState().catalog().getTableMetadata(tableId);
+  }
+
+  @Test
+  public void testEstimateStatisticsWithCatalogStats_cboEnabled(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_cbo_enabled";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, value DOUBLE) USING delta LOCATION '%s'",
+            tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a', 1.0), (2, 'b', 2.0)", tblName));
+
+    // Inject catalog stats with column stats for "id"
+    CatalogColumnStat idColStat =
+        new CatalogColumnStat(
+            scala.Option.apply(scala.math.BigInt.apply(2L)), // distinctCount
+            scala.Option.apply("1"), // min
+            scala.Option.apply("2"), // max
+            scala.Option.apply(scala.math.BigInt.apply(0L)), // nullCount
+            scala.Option.apply((Object) 4L), // avgLen
+            scala.Option.apply((Object) 4L), // maxLen
+            scala.Option.empty(), // histogram
+            CatalogColumnStat.VERSION());
+
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(1024L),
+            scala.Option.apply(scala.math.BigInt.apply(2L)),
+            buildColStatsMap(new String[] {"id"}, new CatalogColumnStat[] {idColStat}));
+
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // Should have numRows from catalog stats
+          assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
+          assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
+
+          // sizeInBytes should still come from planned files (more accurate)
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+
+          // Should have column stats
+          Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
+          assertNotNull(colStats, "columnStats should not be null");
+          assertFalse(colStats.isEmpty(), "columnStats should not be empty");
+
+          // Check that column stats contain expected columns
+          ColumnStatistics idStats = colStats.get(FieldReference.apply("id"));
+          assertNotNull(idStats, "id column stats should be present");
+          assertTrue(idStats.nullCount().isPresent(), "id nullCount should be present");
+          assertTrue(idStats.distinctCount().isPresent(), "id distinctCount should be present");
+          assertTrue(idStats.min().isPresent(), "id min should be present");
+          assertTrue(idStats.max().isPresent(), "id max should be present");
+          assertEquals(1, idStats.min().get(), "id min should be 1");
+          assertEquals(2, idStats.max().get(), "id max should be 2");
+        });
+  }
+
+  @Test
+  public void testEstimateStatisticsWithCatalogStats_cboDisabled(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_cbo_disabled";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
+
+    // Inject catalog stats
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(512L),
+            scala.Option.apply(scala.math.BigInt.apply(2L)),
+            scala.collection.immutable.Map$.MODULE$.empty());
+
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // With CBO disabled, numRows should be empty (matching V1 behavior)
+          assertFalse(stats.numRows().isPresent(), "numRows should be empty with CBO disabled");
+
+          // sizeInBytes should still come from planned files
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
+  }
+
+  @Test
+  public void testEstimateStatisticsWithoutCatalogStats(@TempDir File tempDir) throws Exception {
+    // Path-based table has no catalog stats
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_no_catalog";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          // Path-based table — no catalog table, no stats
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, path);
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // Without catalog stats, numRows should be empty
+          assertFalse(stats.numRows().isPresent(), "numRows should be empty for path-based table");
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
+  }
+
+  @Test
+  public void testEstimateStatisticsWithPartitionedTableAndCatalogStats(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_partitioned";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING, part INT) USING delta "
+                + "PARTITIONED BY (part) LOCATION '%s'",
+            tblName, path));
+    spark.sql(
+        String.format("INSERT INTO %s VALUES (1, 'a', 1), (2, 'b', 1), (3, 'c', 2)", tblName));
+
+    // Inject catalog stats with column stats for both data and partition columns
+    CatalogColumnStat idColStat =
+        new CatalogColumnStat(
+            scala.Option.apply(scala.math.BigInt.apply(3L)),
+            scala.Option.apply("1"),
+            scala.Option.apply("3"),
+            scala.Option.apply(scala.math.BigInt.apply(0L)),
+            scala.Option.empty(),
+            scala.Option.empty(),
+            scala.Option.empty(),
+            CatalogColumnStat.VERSION());
+
+    CatalogColumnStat partColStat =
+        new CatalogColumnStat(
+            scala.Option.apply(scala.math.BigInt.apply(2L)),
+            scala.Option.apply("1"),
+            scala.Option.apply("2"),
+            scala.Option.apply(scala.math.BigInt.apply(0L)),
+            scala.Option.empty(),
+            scala.Option.empty(),
+            scala.Option.empty(),
+            CatalogColumnStat.VERSION());
+
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(2048L),
+            scala.Option.apply(scala.math.BigInt.apply(3L)),
+            buildColStatsMap(
+                new String[] {"id", "part"}, new CatalogColumnStat[] {idColStat, partColStat}));
+
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          assertTrue(stats.numRows().isPresent(), "numRows should be present");
+          assertEquals(3L, stats.numRows().getAsLong(), "numRows should be 3");
+
+          // Verify column stats include both data and partition columns
+          Map<NamedReference, ColumnStatistics> colStats = stats.columnStats();
+          assertNotNull(colStats.get(FieldReference.apply("id")), "id stats should be present");
+          assertNotNull(colStats.get(FieldReference.apply("part")), "part stats should be present");
+
+          // Check partition column stats
+          ColumnStatistics partStats = colStats.get(FieldReference.apply("part"));
+          assertTrue(partStats.min().isPresent(), "part min should be present");
+          assertTrue(partStats.max().isPresent(), "part max should be present");
+          assertEquals(1, partStats.min().get(), "part min should be 1");
+          assertEquals(2, partStats.max().get(), "part max should be 2");
+        });
+  }
+
+  @Test
+  public void testEstimatedSizeUsesAvgLenFromCatalogStats(@TempDir File tempDir) throws Exception {
+    // Verify that computeEstimatedSizeWithColumnProjection uses avgLen from catalog stats
+    // instead of defaultSize(), mirroring EstimationUtils.getSizePerRow() (#5952).
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_avglen";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'bb'), (3, 'ccc')", tblName));
+
+    // Create column stats with avgLen=5 for 'name' (STRING defaultSize is 20)
+    CatalogColumnStat nameColStat =
+        new CatalogColumnStat(
+            scala.Option.empty(),
+            scala.Option.empty(),
+            scala.Option.empty(),
+            scala.Option.empty(),
+            scala.Option.apply((Object) 5L), // avgLen = 5 (vs STRING defaultSize 20)
+            scala.Option.empty(),
+            scala.Option.empty(),
+            CatalogColumnStat.VERSION());
+
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(1024L),
+            scala.Option.apply(scala.math.BigInt.apply(3L)),
+            buildColStatsMap(new String[] {"name"}, new CatalogColumnStat[] {nameColStat}));
+
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    // avgLen is used for sizeInBytes estimation regardless of CBO setting
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+
+          // Prune to only 'name' column to trigger column projection estimation
+          StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
+          builder.pruneColumns(prunedSchema);
+
+          SparkScan scan = (SparkScan) builder.build();
+
+          long totalBytes = getTotalBytes(scan);
+          long estimatedSize = getEstimatedSizeInBytes(scan);
+          assertTrue(totalBytes > 0, "totalBytes should be positive");
+
+          // Schema: dataSchema = (id INT, name STRING), partitionSchema = empty
+          // readSchema = (name STRING) after pruning
+          //
+          // With avgLen=5 for name (STRING: avgLen + 12 = 17, vs defaultSize 20):
+          //   fullSchemaRowSize = 8 + (4 [INT default] + 17 [STRING avgLen]) = 29
+          //   outputRowSize     = 8 + 17 = 25
+          //   estimated = (totalBytes * 25) / 29
+          //
+          // Without avgLen (defaultSize only):
+          //   fullSchemaRowSize = 8 + (4 + 20) = 32
+          //   outputRowSize     = 8 + 20 = 28
+          //   estimated = (totalBytes * 28) / 32
+          long expectedWithAvgLen = (totalBytes * 25) / 29;
+          long expectedWithoutAvgLen = (totalBytes * 28) / 32;
+
+          assertEquals(
+              expectedWithAvgLen,
+              estimatedSize,
+              "estimatedSize should use avgLen from catalog stats");
+          assertNotEquals(
+              expectedWithoutAvgLen,
+              estimatedSize,
+              "estimatedSize should differ from defaultSize-only calculation");
+        });
+  }
+
+  @Test
+  public void testEstimateStatisticsWithoutAnalyze(@TempDir File tempDir) throws Exception {
+    // Table exists in catalog but no stats were injected
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_no_analyze";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a')", tblName));
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          CatalogTable catalogTable =
+              spark.sessionState().catalog().getTableMetadata(new TableIdentifier(tblName));
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // Without catalog stats, we fall back to file-only stats
+          assertFalse(stats.numRows().isPresent(), "numRows should be empty without catalog stats");
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
+  }
+
+  @SuppressWarnings({"rawtypes", "unchecked"})
+  private static scala.collection.immutable.Map<String, CatalogColumnStat> buildColStatsMap(
+      String[] keys, CatalogColumnStat[] values) {
+    scala.collection.mutable.Builder b = scala.collection.immutable.Map$.MODULE$.newBuilder();
+    for (int i = 0; i < keys.length; i++) {
+      b.$plus$eq(new scala.Tuple2<>(keys[i], values[i]));
+    }
+    return (scala.collection.immutable.Map<String, CatalogColumnStat>) b.result();
   }
 }
