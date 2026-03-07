@@ -51,20 +51,15 @@ class DelegatingLogStoreSuite
   private def testDelegatingLogStore(
       scheme: String,
       sparkConf: SparkConf,
-      expClassName: String,
-      expAdaptor: Boolean): Unit = {
+      expClassName: String): Unit = {
     withSparkSession(SparkSession.builder.config(sparkConf).getOrCreate()) { spark =>
       val sc = spark.sparkContext
       val delegatingLogStore = new DelegatingLogStore(sc.hadoopConfiguration)
       val actualLogStore = delegatingLogStore.getDelegate(
         new Path(s"${scheme}://dummy"))
-      if (expAdaptor) {
-        assert(actualLogStore.isInstanceOf[LogStoreAdaptor])
-        assert(actualLogStore.asInstanceOf[LogStoreAdaptor]
-          .logStoreImpl.getClass.getName == expClassName)
-      } else {
-        assert(actualLogStore.getClass.getName == expClassName)
-      }
+      assert(actualLogStore.isInstanceOf[LogStoreAdaptor])
+      assert(actualLogStore.asInstanceOf[LogStoreAdaptor]
+        .logStoreImpl.getClass.getName == expClassName)
     }
   }
 
@@ -73,36 +68,43 @@ class DelegatingLogStoreSuite
     testDelegatingLogStore(
       scheme,
       constructSparkConf(Seq.empty), // we set no custom LogStore confs
-      expClassName,
-      expAdaptor = true // all default implementations are from delta-storage
+      expClassName
     )
   }
 
   /** Test LogStore resolution with a customized scheme conf */
-  private def testCustomSchemeResolution(
-      scheme: String, className: String, expAdaptor: Boolean): Unit = {
+  private def testCustomSchemeResolution(scheme: String, className: String): Unit = {
+
+    // Deprecated Scala class names are redirected to Java implementations
+    val expectedClassName = className match {
+      case "org.apache.spark.sql.delta.storage.S3SingleDriverLogStore" =>
+        "io.delta.storage.S3SingleDriverLogStore"
+      case "org.apache.spark.sql.delta.storage.AzureLogStore" =>
+        "io.delta.storage.AzureLogStore"
+      case "org.apache.spark.sql.delta.storage.HDFSLogStore" =>
+        "io.delta.storage.HDFSLogStore"
+      case other => other
+    }
+
     val sparkPrefixKey = LogStore.logStoreSchemeConfKey(scheme)
     val nonSparkPrefixKey = sparkPrefixKey.stripPrefix("spark.")
     // only set spark-prefixed key
     testDelegatingLogStore(
       scheme,
       constructSparkConf(Seq((sparkPrefixKey, className))),
-      className, // we expect our custom-set LogStore class
-      expAdaptor
+      expectedClassName // we expect our custom-set LogStore class
     )
     // only set non-spark-prefixed key
     testDelegatingLogStore(
       scheme,
       constructSparkConf(Seq((nonSparkPrefixKey, className))),
-      className, // we expect our custom-set LogStore class
-      expAdaptor
+      expectedClassName // we expect our custom-set LogStore class
     )
     // set both
     testDelegatingLogStore(
       scheme,
       constructSparkConf(Seq((nonSparkPrefixKey, className), (sparkPrefixKey, className))),
-      className, // we expect our custom-set LogStore class
-      expAdaptor
+      expectedClassName // we expect our custom-set LogStore class
     )
   }
 
@@ -136,17 +138,16 @@ class DelegatingLogStoreSuite
         "io.delta.storage.S3SingleDriverLogStore",
         "io.delta.storage.AzureLogStore",
         "io.delta.storage.HDFSLogStore",
-        // deprecated (scala) classes
-        classOf[org.apache.spark.sql.delta.storage.S3SingleDriverLogStore].getName,
-        classOf[org.apache.spark.sql.delta.storage.AzureLogStore].getName,
-        classOf[org.apache.spark.sql.delta.storage.HDFSLogStore].getName,
+        // deprecated Scala class names (redirected to Java implementations)
+        "org.apache.spark.sql.delta.storage.S3SingleDriverLogStore",
+        "org.apache.spark.sql.delta.storage.AzureLogStore",
+        "org.apache.spark.sql.delta.storage.HDFSLogStore",
         customLogStoreClassName)) {
 
         // we set spark.delta.logStore.${scheme}.impl -> $store
         testCustomSchemeResolution(
           scheme,
-          store,
-          expAdaptor = store.contains("io.delta.storage") || store == customLogStoreClassName)
+          store)
       }
     }
   }
