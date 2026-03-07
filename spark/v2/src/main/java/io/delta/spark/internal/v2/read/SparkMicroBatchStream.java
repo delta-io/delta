@@ -885,23 +885,35 @@ public class SparkMicroBatchStream
         return;
       }
     }
-    // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
+
+    // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreFileDeletion (deprecated)
+    /** A check on the source table that disallows changes on the source data. */
+    boolean shouldAllowChanges = false;
+    /** A check on the source table that disallows commits that only include deletes to the data. */
+    boolean shouldAllowDeletes = options.ignoreDeletes();
+
+    boolean seenFileAdd = false;
+    Metadata metadataAction = null;
+    String removeFileActionPath = null;
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
         ColumnarBatch batch = actionsIter.next();
         int numRows = batch.getSize();
-        Metadata metadataAction = null;
         for (int rowId = 0; rowId < numRows; rowId++) {
-          // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
-          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
-          if (removeOpt.isPresent()) {
-            RemoveFile removeFile = removeOpt.get();
-            throw (RuntimeException)
-                DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
+          // Track AddFile(dataChange=true); record if there is a file add.
+          Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
+          if (addOpt.isPresent()) {
+            seenFileAdd = true;
           }
 
-          // RULE 2: If commit has Metadata, check read-incompatible schema changes.
+          // Track RemoveFile(dataChange=true); record the first path for error reporting.
+          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+          if (removeOpt.isPresent() && removeFileActionPath == null) {
+            removeFileActionPath = removeOpt.get().getPath();
+          }
+
+          // Check Metadata for read-incompatible schema changes.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
             Metadata metadata = metadataOpt.get();
@@ -925,6 +937,18 @@ public class SparkMicroBatchStream
       }
     } catch (IOException e) {
       throw new RuntimeException("Failed to process commit at version " + version, e);
+    }
+
+    if (removeFileActionPath != null) {
+      if (seenFileAdd && !shouldAllowChanges) {
+        // Commit contains data changes (adds + removes) and changes are disallowed.
+        throw (RuntimeException)
+            DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
+      } else if (!seenFileAdd && !shouldAllowDeletes) {
+        // Commit contains only removes (deletes) and deletes are disallowed.
+        throw (RuntimeException)
+            DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath, tablePath);
+      }
     }
   }
 
