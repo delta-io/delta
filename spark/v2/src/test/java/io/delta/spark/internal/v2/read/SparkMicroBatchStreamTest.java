@@ -2998,6 +2998,13 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     }
   }
 
+  /**
+   * Simulates the Kernel integration path where {@code DefaultJsonHandler.hasNext()} wraps a {@link
+   * ClosedByInterruptException} inside a {@link io.delta.kernel.exceptions.KernelEngineException}.
+   * Verifies that {@code findClosedByInterruptCause} extracts the interrupt cause so {@code
+   * latestOffset()} can re-throw it as {@link java.io.UncheckedIOException} for Spark's {@code
+   * isInterruptedByStop}.
+   */
   @Test
   public void testFindClosedByInterruptCause() {
     // KernelEngineException wrapping ClosedByInterruptException -> present
