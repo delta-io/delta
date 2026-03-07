@@ -21,12 +21,17 @@ import io.delta.kernel.CommitRange;
 import io.delta.kernel.CommitRangeBuilder;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.TableManager;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.util.ArrayList;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.annotation.Experimental;
@@ -144,5 +149,17 @@ public class PathBasedSnapshotManager implements DeltaSnapshotManager {
     }
 
     return builder.build(engine);
+  }
+
+  @Override
+  public Transaction buildCreateTableTransaction(
+      StructType kernelSchema,
+      Map<String, String> tableProperties,
+      Optional<DataLayoutSpec> dataLayoutSpec,
+      String engineInfo) {
+    CreateTableTransactionBuilder builder =
+        TableManager.buildCreateTableTransaction(tablePath, kernelSchema, engineInfo);
+    return SnapshotManagerUtils.configureAndBuildTransaction(
+        builder, tableProperties, dataLayoutSpec, kernelEngine);
   }
 }
