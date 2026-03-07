@@ -451,6 +451,8 @@ case class CreateDeltaTableCommand(
       }
     }
 
+    val tableExistsInDeltaLog = txn.readVersion >= 0
+
     // We are defining a table using the Create or Replace Table statements.
     val actionsToCommit = operation match {
       case TableCreationModes.Create =>
@@ -458,11 +460,11 @@ case class CreateDeltaTableCommand(
         createActionsForNewTableOrVerify()
 
       case TableCreationModes.CreateOrReplace
-        if !tableExistsInCatalog && (!allowCatalogManaged || txn.readVersion == -1) =>
+        if !tableExistsInCatalog && (!allowCatalogManaged || !tableExistsInDeltaLog) =>
         // Non-catalog tables keep the historical CREATE OR REPLACE behavior:
         // absence from the catalog is sufficient to take the "create/verify"
         // path, even when a Delta log already exists at the location. For
-        // catalog-managed tables, only a truly new log (readVersion == -1)
+        // catalog-managed tables, only a truly new log
         // should take this branch; an existing UC table must fall through to
         // the REPLACE path below.
         if (tableWithLocation.schema.isEmpty) {
@@ -477,7 +479,7 @@ case class CreateDeltaTableCommand(
         }
         // This can happen if someone deleted files from the filesystem but
         // the table still exists in the catalog.
-        if (txn.readVersion == -1 && tableExistsInCatalog) {
+        if (!tableExistsInDeltaLog && tableExistsInCatalog) {
           throw DeltaErrors.metadataAbsentForExistingCatalogTable(
             tableWithLocation.identifier.toString, txn.deltaLog.logPath.toString)
         }

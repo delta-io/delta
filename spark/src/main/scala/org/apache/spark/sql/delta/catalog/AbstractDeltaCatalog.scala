@@ -154,31 +154,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
+    // Keep the catalog name on UC identifiers. The boolean
+    // isUnityCatalog tells us which path we are on, but not
+    // which catalog this CatalogTable should belong to.
     val id = {
       val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
       if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id).orElse {
-      // For UC tables, the session catalog doesn't track them,
-      // so getExistingTableIfExists always returns None. Try
-      // loading from the UC catalog to get the existing table
-      // with vended credentials in its storage properties.
-      if (isUnityCatalog) {
-        try {
-          super.loadTable(ident) match {
-            case v1: V1Table
-                if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
-              Some(v1.catalogTable)
-            case _ => None
-          }
-        } catch {
-          case _: NoSuchTableException => None
-        }
-      } else {
-        None
-      }
-    }
+    val existingTableOpt = getExistingTableIfExists(ident, id)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -224,9 +208,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
-      // For UC tables being created (not yet in catalog),
-      // fall back to tableDesc so DeltaLog resolves via
-      // catalog name instead of path-based access.
+      // For a new UC table, there is no existing CatalogTable yet.
+      // Use tableDesc so DeltaLog still resolves through the catalog
+      // identifier instead of falling back to path-based access.
       val deltaLogTableOpt = existingTableOpt.orElse(
         Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
@@ -583,8 +567,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties = validatedConfigurations)
   }
 
-  /** Checks if a table already exists for the provided identifier. */
-  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+  /** Checks SessionCatalog/HMS for an existing table. */
+  private def getExistingSessionCatalogTableIfExists(
+      table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
@@ -600,6 +585,32 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Some(oldTable)
     } else {
       None
+    }
+  }
+
+  /** Checks if a table already exists for the provided identifier in SessionCatalog/HMS. */
+  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+    getExistingSessionCatalogTableIfExists(table)
+  }
+
+  /** Checks for an existing Delta table, including the delegated UC catalog when needed. */
+  private def getExistingTableIfExists(
+      ident: Identifier,
+      table: TableIdentifier): Option[CatalogTable] = {
+    getExistingSessionCatalogTableIfExists(table).orElse {
+      if (isUnityCatalog) {
+        try {
+          super.loadTable(ident) match {
+            case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+              Some(v1.catalogTable)
+            case _ => None
+          }
+        } catch {
+          case _: NoSuchTableException => None
+        }
+      } else {
+        None
+      }
     }
   }
 
