@@ -43,7 +43,7 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-flink
+          key: sbt-flink-uc-main-v1
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
@@ -51,6 +51,9 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      - name: Setup Unity Catalog for testing
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test

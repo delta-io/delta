@@ -154,11 +154,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       Option(allTableProperties.get("location"))
     }
+    // Keep the catalog name on UC identifiers. The boolean
+    // isUnityCatalog tells us which path we are on, but not
+    // which catalog this CatalogTable should belong to.
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    val existingTableOpt = getExistingTableIfExists(ident, id)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -204,8 +208,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      // For a new UC table, there is no existing CatalogTable yet.
+      // Use tableDesc so DeltaLog still resolves through the catalog
+      // identifier instead of falling back to path-based access.
+      val deltaLogTableOpt = existingTableOpt.orElse(
+        Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, deltaLogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -558,8 +567,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties = validatedConfigurations)
   }
 
-  /** Checks if a table already exists for the provided identifier. */
-  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+  /** Checks SessionCatalog/HMS for an existing table. */
+  private def getExistingSessionCatalogTableIfExists(
+      table: TableIdentifier): Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
@@ -575,6 +585,32 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Some(oldTable)
     } else {
       None
+    }
+  }
+
+  /** Checks if a table already exists for the provided identifier in SessionCatalog/HMS. */
+  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+    getExistingSessionCatalogTableIfExists(table)
+  }
+
+  /** Checks for an existing Delta table, including the delegated UC catalog when needed. */
+  private def getExistingTableIfExists(
+      ident: Identifier,
+      table: TableIdentifier): Option[CatalogTable] = {
+    getExistingSessionCatalogTableIfExists(table).orElse {
+      if (isUnityCatalog) {
+        try {
+          super.loadTable(ident) match {
+            case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+              Some(v1.catalogTable)
+            case _ => None
+          }
+        } catch {
+          case _: NoSuchTableException => None
+        }
+      } else {
+        None
+      }
     }
   }
 
@@ -649,11 +685,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     override def commitStagedChanges(): Unit = recordFrameProfile(
         "DeltaCatalog", "commitStagedChanges") {
       val conf = spark.sessionState.conf
+      val isUC = isUnityCatalog || properties.containsKey("test.simulateUC")
       val (props, sqlWriteOptions) = getTablePropsAndWriteOptions(properties)
       if (writeOptions.isEmpty && sqlWriteOptions.nonEmpty) {
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      if (isUC) {
+        props.remove("test.simulateUC")
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,

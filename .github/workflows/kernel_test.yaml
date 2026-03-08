@@ -15,10 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  # Point SBT to our cache directories for consistency
-  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
-
 jobs:
   test:
     name: "DK: Shard ${{ matrix.shard }}"
@@ -32,6 +28,7 @@ jobs:
       NUM_SHARDS: 4
       DISABLE_UNIDOC: true # Another unidoc workflow will test unidoc.
       TEST_PARALLELISM_COUNT: 4
+      SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
     steps:
       - name: Show runner specs
         run: |
@@ -60,7 +57,7 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}
+          key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}-uc-main-v1
       - name: Check cache status
         run: |
           if [ "${{ steps.cache-sbt.outputs.cache-hit }}" == "true" ]; then
@@ -68,6 +65,9 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      - name: Setup Unity Catalog for testing
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -77,8 +77,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v3
+      - name: install java 17 for Unity Catalog setup
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Setup Unity Catalog for testing
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
       # Run integration tests with JDK 11, as they have no Spark dependency
-      - name: install java
+      - name: install java 11 for integration tests
         uses: actions/setup-java@v3
         with:
           distribution: "zulu"

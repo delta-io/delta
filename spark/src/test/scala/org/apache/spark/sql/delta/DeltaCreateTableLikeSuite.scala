@@ -320,6 +320,40 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
+  test("catalog-managed CREATE OR REPLACE creates missing tables") {
+    withTempDir { dir =>
+      withTable("t") {
+        def getCatalogTable: CatalogTable = {
+          val storage = CatalogStorageFormat.empty.copy(
+            locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+          val catalogTableTarget = CatalogTable(
+            identifier = TableIdentifier("t"),
+            tableType = CatalogTableType.MANAGED,
+            storage = storage,
+            provider = Some("delta"),
+            schema = new StructType().add("id", "long"))
+          new DeltaCatalog()
+            .verifyTableAndSolidify(
+              tableDesc = catalogTableTarget,
+              query = None,
+              maybeClusterBySpec = None)
+        }
+
+        val command = CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None,
+          mode = SaveMode.ErrorIfExists,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace,
+          allowCatalogManaged = true,
+          createTableFunc = None)
+
+        command.run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+      }
+    }
+  }
+
   test("CREATE TABLE LIKE where sourceTable is a json table") {
     val srcTbl = "srcTbl"
     val targetTbl = "targetTbl"
