@@ -74,8 +74,6 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -507,14 +505,8 @@ public class SparkMicroBatchStream
       throw e;
     }
 
-    long maxSplitBytes =
-        PartitionUtils.calculateMaxSplitBytes(
-            spark, totalBytesToRead, partitionedFiles.size(), sqlConf);
-    // Partitions files into Spark FilePartitions.
-    Seq<FilePartition> filePartitions =
-        FilePartition$.MODULE$.getFilePartitions(
-            spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+    return PartitionUtils.planInputPartitions(
+        spark, partitionedFiles, totalBytesToRead, hadoopConf, sqlConf);
   }
 
   @Override
