@@ -408,16 +408,17 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             uc.catalogName(), uc.schemaName(), tableType.name().toLowerCase());
     try {
       if (tableType == TableType.MANAGED) {
-        // Create the UC-managed table first.
-        // TODO: Re-enable first-use CREATE OR REPLACE coverage once UCSingleCatalog supports
-        // creating a missing UC-managed Delta table through stageCreateOrReplace.
+        // CREATE OR REPLACE on a missing managed table should create it.
         sql(
-            "CREATE TABLE %s (id INT, name STRING) USING DELTA %s",
+            "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
             tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+        assertUCTableInfo(
+            tableType, tableName, List.of("id", "name"), Map.of(), null, null);
+
         sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
         check(tableName, List.of(List.of("1", "Alice")));
 
-        // CREATE OR REPLACE on existing table with same schema
+        // CREATE OR REPLACE on existing table with same schema should still replace.
         sql(
             "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
             tableName, MANAGED_TBLPROPERTIES_CLAUSE);
@@ -837,11 +838,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
-      // 1. Create the UC-managed table first.
-      // TODO: Re-enable first-use CREATE OR REPLACE coverage once UCSingleCatalog supports
-      // creating a missing UC-managed Delta table through stageCreateOrReplace.
+      // 1. CREATE OR REPLACE on a missing UC-managed table should create it.
       sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
+          "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "first")));
 

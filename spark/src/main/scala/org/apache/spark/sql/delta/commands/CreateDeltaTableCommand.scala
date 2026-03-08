@@ -46,7 +46,6 @@ import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
@@ -462,15 +461,8 @@ case class CreateDeltaTableCommand(
 
       case TableCreationModes.CreateOrReplace
         if !tableExistsInCatalog =>
-        if (allowCatalogManaged) {
-          val ident = Identifier.of(
-            tableWithLocation.identifier.database.toArray,
-            tableWithLocation.identifier.table)
-          throw DeltaErrors.cannotReplaceMissingTableException(ident)
-        }
-        // Non-catalog tables keep the historical CREATE OR REPLACE behavior:
-        // absence from the catalog is sufficient to take the "create/verify"
-        // path, even when a Delta log already exists at the location.
+        // CREATE OR REPLACE on a missing table should fall back to CREATE semantics,
+        // including catalog-managed tables that have been staged as new managed creates.
         if (tableWithLocation.schema.isEmpty) {
           throw DeltaErrors.schemaNotProvidedException
         }

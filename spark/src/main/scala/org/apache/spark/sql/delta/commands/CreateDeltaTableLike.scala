@@ -117,11 +117,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
-      case TableCreationModes.CreateOrReplace if allowCatalogManaged =>
-        if (!tableExistsInCatalog) {
-          val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-          throw DeltaErrors.cannotReplaceMissingTableException(ident)
-        }
       case TableCreationModes.CreateOrReplace if createTableFunc.isDefined =>
         createTableFunc.get.apply(cleaned)
       case TableCreationModes.CreateOrReplace =>
