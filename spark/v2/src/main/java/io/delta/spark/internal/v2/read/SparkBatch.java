@@ -27,13 +27,10 @@ import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructType;
-import scala.collection.JavaConverters;
 
 public class SparkBatch implements Batch {
   private final Snapshot snapshot;
@@ -81,15 +78,8 @@ public class SparkBatch implements Batch {
 
   @Override
   public InputPartition[] planInputPartitions() {
-    SparkSession sparkSession = SparkSession.active();
-    long maxSplitBytes =
-        PartitionUtils.calculateMaxSplitBytes(
-            sparkSession, totalBytes, partitionedFiles.size(), sqlConf);
-
-    scala.collection.Seq<FilePartition> filePartitions =
-        FilePartition$.MODULE$.getFilePartitions(
-            sparkSession, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+    return PartitionUtils.planInputPartitions(
+        SparkSession.active(), partitionedFiles, totalBytes, hadoopConf, sqlConf);
   }
 
   @Override
