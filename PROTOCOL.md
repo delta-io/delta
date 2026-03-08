@@ -320,7 +320,7 @@ Because a multi-part checkpoint cannot be created atomically (e.g. vulnerable to
 
 Checkpoints for a given version must only be created after the associated delta file has been successfully written.
 
-#### Sidecar Files
+### Sidecar Files
 
 A sidecar file contains file actions. These files are in parquet format and they must have unique names.
 These are then [linked](#sidecar-file-information) to checkpoints. Refer to [V2 checkpoint spec](#v2-spec)
