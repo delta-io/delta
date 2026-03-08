@@ -320,11 +320,9 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
-  test("catalog-managed CREATE OR REPLACE creates the backing catalog entry for a new table") {
+  test("catalog-managed CREATE OR REPLACE rejects missing tables") {
     withTempDir { dir =>
       withTable("t") {
-        var createTableCalls = 0
-
         def getCatalogTable: CatalogTable = {
           val storage = CatalogStorageFormat.empty.copy(
             locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
@@ -341,23 +339,21 @@ class DeltaCreateTableLikeSuite extends QueryTest
               maybeClusterBySpec = None)
         }
 
-        CreateDeltaTableCommand(
+        val command = CreateDeltaTableCommand(
           getCatalogTable,
           existingTableOpt = None,
           mode = SaveMode.ErrorIfExists,
           query = None,
           operation = TableCreationModes.CreateOrReplace,
           allowCatalogManaged = true,
-          createTableFunc = Some { catalogTable =>
-            createTableCalls += 1
-            spark.sessionState.catalog.createTable(
-              catalogTable,
-              ignoreIfExists = false,
-              validateLocation = false)
-          }).run(spark)
+          createTableFunc = None)
 
-        assert(createTableCalls === 1)
-        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+        val err = intercept[DeltaAnalysisException] {
+          command.run(spark)
+        }
+        checkError(err, "DELTA_CANNOT_REPLACE_MISSING_TABLE", "42P01",
+          Map("tableName" -> "default.t"))
+        assert(!spark.sessionState.catalog.tableExists(TableIdentifier("t")))
       }
     }
   }

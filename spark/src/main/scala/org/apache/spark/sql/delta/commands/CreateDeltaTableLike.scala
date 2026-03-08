@@ -16,14 +16,11 @@
 
 package org.apache.spark.sql.delta.commands
 
-import io.unitycatalog.client.ApiException
-
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
-import org.apache.spark.sql.catalyst.analysis.TableAlreadyExistsException
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
@@ -83,22 +80,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     }
   }
 
-  private def isTableAlreadyExists(t: Throwable): Boolean = {
-    // UC createTable may wrap its concrete "already exists" error,
-    // so walk the cause chain instead of checking only the top-level
-    // exception type.
-    Iterator.iterate(Option(t))(_.flatMap(e => Option(e.getCause)))
-      .takeWhile(_.nonEmpty)
-      .map(_.get)
-      .exists {
-        case _: TableAlreadyExistsException => true
-        case e: ApiException =>
-          Option(e.getResponseBody).exists(
-            _.contains("ALREADY_EXISTS"))
-        case _ => false
-      }
-  }
-
   /**
    * Here we disambiguate the catalog alterations we need to do based on the table operation, and
    * whether we have reached here through legacy code or DataSourceV2 code paths.
@@ -137,22 +118,9 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace if allowCatalogManaged =>
-        // CREATE OR REPLACE on a catalog-managed table may have already committed
-        // the Delta log by the time we reach this callback, so Delta-log existence
-        // is not the right signal here. Only create the backing catalog entry when
-        // the catalog lookup was missing at analysis time.
         if (!tableExistsInCatalog) {
-          val createTable = createTableFunc.getOrElse { catalogTable =>
-            spark.sessionState.catalog.createTable(
-              catalogTable,
-              ignoreIfExists = false,
-              validateLocation = false)
-          }
-          try {
-            createTable.apply(cleaned)
-          } catch {
-            case e: Throwable if isTableAlreadyExists(e) => ()
-          }
+          val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
         }
       case TableCreationModes.CreateOrReplace if createTableFunc.isDefined =>
         createTableFunc.get.apply(cleaned)
