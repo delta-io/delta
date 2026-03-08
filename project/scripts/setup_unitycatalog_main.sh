@@ -4,7 +4,7 @@ set -euo pipefail
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/TimothyW553/unitycatalog.git}"
-UC_REF="${UC_REF:-e62c6dce03d2ff2e263914c29a66b760aef84ce8}"
+UC_REF="${UC_REF:-df625f15384cc5dddeedb185e3fea9b98966552f}"
 
 rm -rf "$UC_DIR"
 git clone "$UC_REPO" "$UC_DIR"
