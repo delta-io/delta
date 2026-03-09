@@ -47,6 +47,15 @@ trait DeltaSQLConfUtils {
  */
 trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
+  // Values for flags that also support log-only mode.
+  final object BooleanStringOrLogOnly {
+    final val FALSE = "false"
+    final val TRUE = "true"
+    final val LOG_ONLY = "log-only"
+
+    final val VALUES = Set(FALSE, TRUE, LOG_ONLY)
+  }
+
   object DeltaBreakingChangeEnum {
     val OFF = "OFF"
     val LOG_ONLY = "LOG_ONLY"
@@ -215,6 +224,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "the data columns.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_PARTITION_COLUMN_CHANGE_CHECK = buildConf("partitionColumnChangeCheck")
+    .internal()
+    .doc("""Controls the validation behavior when changes to partition columns are detected.
+           |Possible values:
+           |  - "false": Disables validation for partition column changes.
+           |  - "true": Enables validation and throws an error if an illegal change is detected.
+           |  - "log-only": Logs the detected illegal change but does not block the operation.
+           |""".stripMargin)
+    .stringConf
+    .transform(_.toLowerCase(Locale.ROOT))
+    .checkValues(BooleanStringOrLogOnly.VALUES)
+    .createWithDefault(
+      if (DeltaUtils.isTesting) {
+        BooleanStringOrLogOnly.TRUE
+      } else {
+        BooleanStringOrLogOnly.LOG_ONLY
+      }
+    )
 
   val DELTA_COMMIT_VALIDATION_ENABLED =
     buildConf("commitValidation.enabled")
