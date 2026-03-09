@@ -73,6 +73,7 @@ import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
@@ -1126,13 +1127,9 @@ public class SparkMicroBatchStream
       querySchema = querySchema.add(field);
     }
 
-    // Use full schema equality (field names, types, nullability, metadata) to detect any
-    // incompatible schema change between query analysis time and the current snapshot.
-    // Note: both querySchema (from Spark analyzer) and snapshotSchema (from kernel's
-    // Snapshot.getSchema()) use logical column names, so this comparison is safe even with
-    // column mapping enabled.
+    // Compare the structural schema of the analysis-time schema and snapshot schema.
     // TODO(#5319): add tests for type widening, partition column, & nullability changes.
-    if (!querySchema.equals(snapshotSchema)) {
+    if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
     }
   }
