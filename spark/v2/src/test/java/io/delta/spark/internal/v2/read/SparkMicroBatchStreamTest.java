@@ -24,6 +24,7 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
+import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -2995,5 +2996,34 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     } finally {
       spark.conf().unset(configKey);
     }
+  }
+
+  /**
+   * Simulates the Kernel integration path where {@code DefaultJsonHandler.hasNext()} wraps a {@link
+   * ClosedByInterruptException} inside a {@link io.delta.kernel.exceptions.KernelEngineException}.
+   * Verifies that {@code findClosedByInterruptCause} extracts the interrupt cause so {@code
+   * latestOffset()} can re-throw it as {@link java.io.UncheckedIOException} for Spark's {@code
+   * isInterruptedByStop}.
+   */
+  @Test
+  public void testFindClosedByInterruptCause() {
+    // KernelEngineException wrapping ClosedByInterruptException -> present
+    ClosedByInterruptException cbie = new ClosedByInterruptException();
+    assertThat(
+            SparkMicroBatchStream.findClosedByInterruptCause(
+                new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)))
+        .isPresent()
+        .contains(cbie);
+
+    // Plain RuntimeException -> empty
+    assertThat(SparkMicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")))
+        .isEmpty();
+
+    // KernelEngineException wrapping a different IOException -> empty
+    assertThat(
+            SparkMicroBatchStream.findClosedByInterruptCause(
+                new io.delta.kernel.exceptions.KernelEngineException(
+                    "readJsonFile", new java.io.FileNotFoundException("missing"))))
+        .isEmpty();
   }
 }

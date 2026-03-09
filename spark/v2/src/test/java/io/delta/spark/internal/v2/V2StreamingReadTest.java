@@ -22,6 +22,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import org.apache.spark.sql.*;
@@ -29,6 +32,7 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.stats.StatisticsCollection;
+import org.apache.spark.sql.streaming.StreamingQuery;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -218,5 +222,83 @@ public class V2StreamingReadTest extends V2TestBase {
             RowFactory.create(9));
 
     assertDataEquals(actualRows, expectedRows);
+  }
+
+  /**
+   * Verifies that stopping a V2 streaming query does not surface an exception.
+   *
+   * <p>When Spark stops a streaming query it calls {@link Thread#interrupt()} on the micro-batch
+   * thread. If that thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log
+   * JSON files via NIO channels, the interrupt causes a {@link
+   * java.nio.channels.ClosedByInterruptException} wrapped in a {@code KernelEngineException}. The
+   * fix in {@code SparkMicroBatchStream.latestOffset()} and {@code
+   * SparkMicroBatchStream.planInputPartitions()} re-wraps this as an {@link
+   * java.io.UncheckedIOException} so Spark's {@code isInterruptedByStop} recognizes it as a clean
+   * shutdown.
+   */
+  @Test
+  public void testStreamingQueryStopDoesNotSurfaceException(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    // Write data
+    spark
+        .createDataFrame(Arrays.asList(RowFactory.create(1, "Alice", 100.0)), TEST_SCHEMA)
+        .write()
+        .format("delta")
+        .save(tablePath);
+
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+
+    StreamingQuery query =
+        streamingDF
+            .writeStream()
+            .format("memory")
+            .queryName("test_stop_no_exception")
+            .outputMode("append")
+            .start();
+
+    // Continuously write new commits so latestOffset() keeps reading fresh delta log JSON files
+    // via NIO. This ensures Thread.interrupt() from stop() is likely to arrive while a channel
+    // is open inside DefaultJsonHandler.hasNext(), directly exercising the fix.
+    ExecutorService writer = Executors.newSingleThreadExecutor();
+    try {
+      writer.submit(
+          () -> {
+            for (int i = 0; i < 100; i++) {
+              try {
+                spark
+                    .createDataFrame(
+                        Arrays.asList(RowFactory.create(i + 2, "User" + i, (double) i * 10)),
+                        TEST_SCHEMA)
+                    .write()
+                    .format("delta")
+                    .mode("append")
+                    .save(tablePath);
+                Thread.sleep(20);
+              } catch (Exception ignored) {
+                return;
+              }
+            }
+          });
+
+      // Let the query process a few batches with active NIO reads before stopping.
+      Thread.sleep(300);
+      query.stop();
+    } finally {
+      writer.shutdownNow();
+      writer.awaitTermination(5, TimeUnit.SECONDS);
+    }
+
+    // Release cached DeltaLog references so @TempDir cleanup can delete the directory.
+    DeltaLog.clearCache();
+
+    // The stop should be clean — no exception should have been captured
+    assertTrue(
+        query.exception().isEmpty(),
+        () ->
+            "Expected no exception after query.stop(), but got: "
+                + query.exception().get().toString());
   }
 }
