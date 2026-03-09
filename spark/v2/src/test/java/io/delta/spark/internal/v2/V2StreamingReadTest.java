@@ -294,6 +294,10 @@ public class V2StreamingReadTest extends V2TestBase {
     DeltaLog.clearCache();
 
     // The stop should be clean — no exception should have been captured
-    assertTrue(query.exception().isEmpty(), "Expected no exception after query.stop()");
+    assertTrue(
+        query.exception().isEmpty(),
+        () ->
+            "Expected no exception after query.stop(), but got: "
+                + query.exception().get().toString());
   }
 }
