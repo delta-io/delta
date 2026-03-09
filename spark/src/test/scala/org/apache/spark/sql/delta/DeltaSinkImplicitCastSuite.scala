@@ -21,12 +21,12 @@ import java.sql.{Date, Timestamp}
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.Relocated.StreamExecution
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 
-import org.apache.spark.{SparkArithmeticException, SparkThrowable}
+import org.apache.spark.{SparkArithmeticException, SparkConf, SparkThrowable}
 import org.apache.spark.sql.{DataFrame, Encoder, Row}
 import org.apache.spark.sql.errors.QueryExecutionErrors.toSQLType
 import org.apache.spark.sql.functions.{col, lit}
@@ -122,7 +122,7 @@ abstract class DeltaSinkImplicitCastSuiteBase extends DeltaSinkTest {
  * Covers handling implicit casting to handle type mismatches when writing data to a Delta sink.
  */
 class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
-  with CoordinatedCommitsBaseSuite {
+  with CatalogOwnedTestBaseSuite {
   import testImplicits._
 
   test(s"write wider type - long -> int") {
@@ -554,10 +554,14 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
   }
 }
 
-class DeltaSinkImplicitCastWithCoordinatedCommitsBatch1Suite extends DeltaSinkImplicitCastSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+class DeltaSinkImplicitCastWithCatalogManagedBatch1Suite extends DeltaSinkImplicitCastSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaSinkImplicitCastWithCoordinatedCommitsBatch100Suite extends DeltaSinkImplicitCastSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class DeltaSinkImplicitCastWithCatalogManagedBatch2Suite extends DeltaSinkImplicitCastSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaSinkImplicitCastWithCatalogManagedBatch100Suite extends DeltaSinkImplicitCastSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
