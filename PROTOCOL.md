@@ -903,6 +903,8 @@ Property | Description
 
 When neither property is set, statistics are collected for the first 32 leaf columns in the table schema (excluding partition columns).
 
+For [clustered tables](#clustered-table), all clustering columns must be included in the set of columns for which statistics are collected, whether determined by `delta.dataSkippingStatsColumns`, `delta.dataSkippingNumIndexedCols`, or the default.
+
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
 
@@ -1365,7 +1367,8 @@ Enablement:
 When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
 - Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
-- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action.
+  Clustering columns must be included in the set of columns for which statistics are collected (see [Statistics Collection Properties](#statistics-collection-properties)).
   If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
 - When a clustering implementation clusters files, writers must set the name of the clustering implementation in the `clusteringProvider` field when adding `add` actions for clustered files.
   - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
