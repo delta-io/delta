@@ -73,6 +73,8 @@ import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -224,6 +226,7 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
+    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
   }
 
   @Override
@@ -1104,6 +1107,31 @@ public class SparkMicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Validates that the analysis-time schema matches the latest snapshot schema. This catches cases
+   * where the table schema changed after the streaming query was analyzed, and the user restarts
+   * the stream with a stale DataFrame.
+   *
+   * @param dataSchema data columns from analysis time (excludes partition columns)
+   * @param partitionSchema partition columns from analysis time
+   * @param snapshotSchema full table schema from the latest snapshot at stream start
+   */
+  private void validateSchemaCompatibilityOnStartup(
+      StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
+    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
+    // StructType is immutable — add() returns a new instance without modifying the original.
+    StructType querySchema = dataSchema;
+    for (StructField field : partitionSchema.fields()) {
+      querySchema = querySchema.add(field);
+    }
+
+    // Compare the structural schema of the analysis-time schema and snapshot schema.
+    // TODO(#5319): add tests for type widening, partition column, & nullability changes.
+    if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
+    }
   }
 
   /**
