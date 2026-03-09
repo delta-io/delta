@@ -117,24 +117,21 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         if (!allowCatalogManaged) {
           UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
         }
-      case TableCreationModes.CreateOrReplace if createTableFunc.isDefined =>
-        if (tableExistsInCatalog) {
-          if (!allowCatalogManaged) {
-            UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
-          }
-        } else {
-          createTableFunc.get.apply(cleaned)
-        }
       case TableCreationModes.CreateOrReplace =>
         if (tableExistsInCatalog) {
           if (!allowCatalogManaged) {
             UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
           }
         } else {
-          spark.sessionState.catalog.createTable(
-            cleaned,
-            ignoreIfExists = false,
-            validateLocation = false)
+          createTableFunc match {
+            case Some(createFunc) =>
+              createFunc(cleaned)
+            case None =>
+              spark.sessionState.catalog.createTable(
+                cleaned,
+                ignoreIfExists = false,
+                validateLocation = false)
+          }
         }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
