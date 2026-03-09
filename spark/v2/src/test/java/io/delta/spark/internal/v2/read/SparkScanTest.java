@@ -151,6 +151,22 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testGetTablePathReturnsTablePath() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    String retrievedPath = scan.getTablePath();
+    assertNotNull(retrievedPath, "getTablePath should not return null");
+    // getTablePath returns file URI with trailing slash; tablePath is from tempDir
+    String expectedUri = new File(tablePath).toURI().toString();
+    String expectedPath = expectedUri.endsWith("/") ? expectedUri : expectedUri + "/";
+    assertEquals(
+        expectedPath,
+        retrievedPath,
+        "getTablePath should return path matching table location (with trailing slash)");
+  }
+
+  @Test
   public void testGetConfigurationWithHadoopOptions() {
     // Pass Hadoop options and verify they appear in the returned Configuration
     Map<String, String> optionsWithHadoop = new HashMap<>();
