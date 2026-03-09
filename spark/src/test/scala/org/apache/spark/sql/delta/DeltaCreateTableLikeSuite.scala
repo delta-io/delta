@@ -35,7 +35,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{LongType, StructField, StructType}
 
 class DeltaCreateTableLikeSuite extends QueryTest
   with SharedSparkSession
@@ -423,6 +423,38 @@ class DeltaCreateTableLikeSuite extends QueryTest
       assert(err.getMessage.contains(
         "Replacing a catalog-managed table with different properties"))
       assert(err.getMessage.contains("delta.feature.allowcolumndefaults"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE rejects explicit nullability changes") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG NOT NULL) USING DELTA")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        tableDesc = existingTable.copy(
+          schema = StructType(Seq(StructField("id", LongType, nullable = true)))),
+        query = None,
+        maybeClusterBySpec = None)
+
+      val command = CreateDeltaTableCommand(
+        updatedTable,
+        existingTableOpt = Some(existingTable),
+        mode = SaveMode.Overwrite,
+        query = None,
+        operation = TableCreationModes.CreateOrReplace,
+        allowCatalogManaged = true,
+        createTableFunc = None)
+
+      val err = intercept[DeltaAnalysisException] {
+        command.run(spark)
+      }
+      assert(err.getMessage.contains(
+        "Replacing a catalog-managed table with a different schema"))
       assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
     }

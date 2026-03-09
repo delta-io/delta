@@ -780,13 +780,17 @@ case class CreateDeltaTableCommand(
     val existingSchema =
       DeltaTableUtils.removeInternalDeltaMetadata(
         sparkSession, existingMetadata.schema)
-    // Compare with .asNullable: the incoming DataFrame schema
-    // may have all-nullable columns (e.g. from SELECT *), but
-    // the table has NOT NULL constraints. Since this method
-    // preserves existing metadata, the constraints are kept.
+    // Query-derived schemas (for example from CTAS/RTAS SELECT output) may mark every column
+    // nullable even when the table metadata keeps NOT NULL constraints, so compare those
+    // nullability-insensitively. Explicit DDL schemas should preserve nullability exactly.
+    val (existingSchemaToCompare, requestedSchemaToCompare) = if (query.isDefined) {
+      (existingSchema.asNullable, schema.asNullable)
+    } else {
+      (existingSchema, schema)
+    }
     val schemaDifferences = SchemaUtils.reportDifferences(
-      existingSchema.asNullable,
-      schema.asNullable)
+      existingSchemaToCompare,
+      requestedSchemaToCompare)
     if (schemaDifferences.nonEmpty) {
       throw DeltaErrors.operationNotSupportedException(
         "Replacing a catalog-managed table with a " +
@@ -887,8 +891,9 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
-      // If this catalog-managed replace preserves existing metadata, skip the normal metadata
-      // overwrite below; otherwise this helper throws when the command tries to change metadata.
+      // If this catalog-managed replace preserves existing metadata, skip all metadata updates
+      // below and keep using the snapshot metadata; otherwise this helper throws when the command
+      // tries to change metadata.
       if (catalogManagedReplacePreservesMetadata(
           sparkSession, txn, tableDesc, schema)) {
         return

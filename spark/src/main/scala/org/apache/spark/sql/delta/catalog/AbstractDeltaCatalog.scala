@@ -166,11 +166,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     // `getExistingTableIfExists` only checks the V1 SessionCatalog entry for `id`, while
     // `getExistingTableFromDelegatedCatalog` asks the delegated V2 catalog to resolve the original
-    // `ident`. We need the fallback because catalog-managed tables may be resolvable through the
-    // delegated catalog even when SessionCatalog does not surface them; in that case REPLACE /
-    // CREATE OR REPLACE should still reuse the existing table metadata and storage location.
-    val existingTableOpt =
-      getExistingTableIfExists(id).orElse(getExistingTableFromDelegatedCatalog(ident))
+    // `ident`. We only need the fallback for REPLACE / CREATE OR REPLACE, where catalog-managed
+    // tables may be resolvable through the delegated catalog even when SessionCatalog does not
+    // surface them, and the command still needs to reuse the existing metadata and location.
+    val existingTableOpt = getExistingTableIfExists(id).orElse {
+      operation match {
+        case TableCreationModes.Replace | TableCreationModes.CreateOrReplace =>
+          getExistingTableFromDelegatedCatalog(ident)
+        case TableCreationModes.Create =>
+          None
+      }
+    }
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -216,6 +222,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      // Fall back to the new descriptor only for catalog-managed create paths where no existing
+      // catalog table is available yet. Replace paths should resolve `existingTableOpt` above so
+      // DeltaLog uses the existing table metadata and location.
       val deltaLogTableOpt = existingTableOpt.orElse(
         Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(

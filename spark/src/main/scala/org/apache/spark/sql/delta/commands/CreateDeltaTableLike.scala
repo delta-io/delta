@@ -94,9 +94,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     val tableExistsInCatalog = existingTableOpt.isDefined
+    def updateExistingTableCatalog(): Unit = {
+      if (!allowCatalogManaged) {
+        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+      }
+    }
     // For catalog-managed CREATE OR REPLACE, skip the catalog update when the table already
     // exists and the Delta commit did not change metadata. In that case there is nothing new to
-    // write back to the catalog, and invoking the create/update path would be redundant.
+    // write back to the catalog. This intentionally also skips the HMS schema-alter path below,
+    // because catalog-managed tables do not rely on that flow here.
     if (allowCatalogManaged && operation == TableCreationModes.CreateOrReplace &&
         tableExistsInCatalog && didNotChangeMetadata) {
       return
@@ -117,14 +123,10 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
           throw DeltaErrors.cannotReplaceMissingTableException(ident)
         }
-        if (!allowCatalogManaged) {
-          UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
-        }
+        updateExistingTableCatalog()
       case TableCreationModes.CreateOrReplace =>
         if (tableExistsInCatalog) {
-          if (!allowCatalogManaged) {
-            UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
-          }
+          updateExistingTableCatalog()
         } else {
           createTableFunc match {
             case Some(createFunc) =>
