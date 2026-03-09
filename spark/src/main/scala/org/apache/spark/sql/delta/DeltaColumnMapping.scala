@@ -777,7 +777,8 @@ trait DeltaColumnMappingBase extends DeltaLogging {
    */
   def hasNoColumnMappingSchemaChanges(newMetadata: Metadata, oldMetadata: Metadata,
       allowUnsafeReadOnPartitionChanges: Boolean = false): Boolean = {
-    def hasSchemaChange(newMetadata: Metadata, oldMetadata: Metadata): Boolean = {
+    def hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata: Metadata,
+        oldMetadata: Metadata): Boolean = {
       val isBothColumnMappingEnabled =
         newMetadata.columnMappingMode != NoMapping && oldMetadata.columnMappingMode != NoMapping
       hasColMappingOrPartitionSchemaChange(
@@ -793,7 +794,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
     if (oldMode != NoMapping && newMode != NoMapping) {
       require(oldMode == newMode, "changing mode is not supported")
       // Both changes are post column mapping enabled
-      !hasSchemaChange(newMetadata, oldMetadata)
+      !hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata, oldMetadata)
     } else if (oldMode == NoMapping && newMode != NoMapping) {
       // The old metadata does not have column mapping while the new metadata does, in this case
       // we assume an upgrade has happened in between.
@@ -810,7 +811,7 @@ trait DeltaColumnMappingBase extends DeltaLogging {
           Map(DeltaConfigs.COLUMN_MAPPING_MODE.key -> newMetadata.columnMappingMode.name)
       )
       // use the same check
-      !hasSchemaChange(newMetadata, upgradedMetadata)
+      !hasColMappingOrPartitionSchemaChangeByMetadata(newMetadata, upgradedMetadata)
     } else {
       // Prohibit reading across a downgrade.
       val isDowngrade = oldMode != NoMapping && newMode == NoMapping

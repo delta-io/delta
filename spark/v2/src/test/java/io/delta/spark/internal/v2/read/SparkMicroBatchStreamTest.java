@@ -2329,10 +2329,18 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
 
-      assertEquals(
-          dsv1Exception.getErrorClass(),
-          dsv2Exception.getErrorClass(),
-          "v1 connector and v2 connector should throw the same error class on forward-fill non-additive schema changes");
+      // TODO(#5319): assertEqual after schema tracking log is supported
+      String expectedPrefix = "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE";
+      assertTrue(
+          dsv1Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v1 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv1Exception.getErrorClass()));
+      assertTrue(
+          dsv2Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v2 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv2Exception.getErrorClass()));
       assertEquals(
           dsv1Exception.getMessageParameters(),
           dsv2Exception.getMessageParameters(),
@@ -2435,10 +2443,18 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               },
               String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
 
-      assertEquals(
-          dsv1Exception.getErrorClass(),
-          dsv2Exception.getErrorClass(),
-          "v1 connector and v2 connector should throw the same error class on backfill non-additive schema changes");
+      // TODO(#5319): assertEqual after schema tracking log is supported
+      String expectedPrefix = "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE";
+      assertTrue(
+          dsv1Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v1 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv1Exception.getErrorClass()));
+      assertTrue(
+          dsv2Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v2 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv2Exception.getErrorClass()));
       assertEquals(
           dsv1Exception.getMessageParameters(),
           dsv2Exception.getMessageParameters(),
@@ -2530,10 +2546,18 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             element ->
                 element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
 
-    assertEquals(
-        dsv1Exception.getErrorClass(),
-        dsv2Exception.getErrorClass(),
-        "v1 connector and v2 connector should throw the same error class on stream start schema changes");
+    // TODO(#5319): assertEqual after schema tracking log is supported
+    String expectedPrefix = "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE";
+    assertTrue(
+        dsv1Exception.getErrorClass().startsWith(expectedPrefix),
+        String.format(
+            "v1 connector error class should start with %s, but got: %s",
+            expectedPrefix, dsv1Exception.getErrorClass()));
+    assertTrue(
+        dsv2Exception.getErrorClass().startsWith(expectedPrefix),
+        String.format(
+            "v2 connector error class should start with %s, but got: %s",
+            expectedPrefix, dsv2Exception.getErrorClass()));
     assertEquals(
         dsv1Exception.getMessageParameters(),
         dsv2Exception.getMessageParameters(),
