@@ -24,8 +24,8 @@ import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.catalyst.util.CharVarcharUtils
+import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.types.StructType
 
 /**
@@ -156,6 +156,11 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     } else if (allowCatalogManaged) {
       // Setting table properties is required for creating catalogManaged tables.
       table.copy(
+        // Here we use snapshot.schema instead of table.schema because it reflects the actual
+        // committed state of the table.
+        // Delta does not have a distinct storage type for Char/Varchar; in snapshots, they are
+        // represented in String type with extra type metadata. We convert them to back to the
+        // original Char/Varchar types when storing them in the catalog.
         schema = CharVarcharUtils.getRawSchema(snapshot.schema),
         partitionColumnNames = snapshot.metadata.partitionColumns,
         properties = UpdateCatalog.updatedProperties(snapshot),

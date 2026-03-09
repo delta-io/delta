@@ -48,6 +48,7 @@ import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
@@ -452,10 +453,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
-    if (!ucSparkNewerThan040() && tableType == TableType.MANAGED) {
-      // Older UC Spark package can't support uploading complex types to UC server for managed table
-      return;
-    }
+    Assumptions.assumeTrue(
+        ucSparkNewerThan040() || tableType != TableType.MANAGED,
+        "Older UC Spark package can't support uploading complex types to UC server for managed table");
     String schema =
         // Numeric types
         "col_tinyint TINYINT, col_smallint SMALLINT, col_int INT, col_bigint BIGINT, "
@@ -539,10 +539,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testTableWithComplexTypes(TableType tableType) throws Exception {
-    if (!ucSparkNewerThan040() && tableType == TableType.MANAGED) {
-      // Older UC Spark package can't support uploading complex types to UC server for managed table
-      return;
-    }
+    Assumptions.assumeTrue(
+        ucSparkNewerThan040() || tableType != TableType.MANAGED,
+        "Older UC Spark package can't support uploading complex types to UC server for managed table");
     String schema =
         "id INT, arr ARRAY<INT>, "
             + "map_col MAP<STRING, INT>, "

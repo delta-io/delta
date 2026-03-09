@@ -20,6 +20,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
+import io.unitycatalog.client.VersionUtils;
 import io.unitycatalog.client.api.CatalogsApi;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.auth.TokenProvider;
@@ -340,13 +341,8 @@ public abstract class UnityCatalogSupport {
   }
 
   /** Returns Unity Catalog Spark version, like [0, 4, 0]. */
-  @SneakyThrows
   protected static int[] getUnityCatalogSparkVersion() {
-    String version =
-        Class.forName("io.unitycatalog.spark.UCSingleCatalog")
-            .getPackage()
-            .getImplementationVersion();
-    if (version == null) return null;
+    String version = Preconditions.checkNotNull(VersionUtils.VERSION);
     String[] parts = version.split("[.\\-]", 4);
     int major = Integer.parseInt(parts[0]);
     int minor = Integer.parseInt(parts[1]);
