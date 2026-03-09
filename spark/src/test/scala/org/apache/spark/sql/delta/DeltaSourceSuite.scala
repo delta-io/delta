@@ -39,7 +39,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -858,8 +858,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         StopStream,
         AssertOnQuery { _ =>
           Utils.deleteRecursively(inputDir)
-          if (coordinatedCommitsEnabledInTests) {
-            deleteTableFromCommitCoordinator(tablePath)
+          // This test deletes and recreates a table at the same path. The InMemoryCommitCoordinator
+          // keys on logPath, so stale coordinator state from the old table must be cleared before
+          // the new table is created. In production, UC handles table lifecycle management, so
+          // explicit coordinator cleanup is not needed.
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            deleteCatalogOwnedTableFromCommitCoordinator(tablePath)
           }
           val deltaLog = DeltaLog.forTable(spark, tablePath)
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
@@ -897,7 +901,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       def writeFile(name: String, content: String): AddFile = {
         FileUtils.write(new File(inputDir, name), content)
-        AddFile(name, Map.empty, content.length, System.currentTimeMillis(), dataChange = true)
+        // CatalogManaged (CCv2) tables auto-enable row tracking, which requires numRecords in
+        // AddFile stats to assign base row IDs. Without numRecords, the commit fails with
+        // DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS.
+        AddFile(name, Map.empty, content.length, System.currentTimeMillis(), dataChange = true,
+          stats = s"""{"numRecords": 1}""")
       }
 
       def commitFiles(files: AddFile*): Unit = {
@@ -2380,14 +2388,22 @@ object MonotonicallyIncreasingTimestampFS {
   val scheme = s"MonotonicallyIncreasingTimestampFS"
 }
 
-class DeltaSourceWithCoordinatedCommitsBatch1Suite extends DeltaSourceSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+// Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.
+// Batch size 1 triggers a backfill on every commit (commitVersion % 1 == 0), testing the most
+// granular backfill path. Batch size 2 triggers backfill every other commit, testing the boundary
+// between backfilled and unbackfilled commits. Batch size 100 leaves most commits unbackfilled,
+// testing the production-like path where streaming must read from both the commit coordinator
+// and the filesystem. This follows the same pattern as other CatalogManaged (CCv2) test suites
+// (DeltaLogSuite, DeltaCDCStreamSuite, etc.).
+
+class DeltaSourceWithCatalogManagedBatch1Suite extends DeltaSourceSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaSourceWithCoordinatedCommitsBatch10Suite extends DeltaSourceSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+class DeltaSourceWithCatalogManagedBatch2Suite extends DeltaSourceSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaSourceWithCoordinatedCommitsBatch100Suite extends DeltaSourceSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class DeltaSourceWithCatalogManagedBatch100Suite extends DeltaSourceSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
