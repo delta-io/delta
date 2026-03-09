@@ -22,6 +22,9 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.LongStream;
 import org.apache.spark.sql.*;
@@ -255,8 +258,40 @@ public class V2StreamingReadTest extends V2TestBase {
             .outputMode("append")
             .start();
 
-    query.processAllAvailable();
-    query.stop();
+    // Continuously write new commits so latestOffset() keeps reading fresh delta log JSON files
+    // via NIO. This ensures Thread.interrupt() from stop() is likely to arrive while a channel
+    // is open inside DefaultJsonHandler.hasNext(), directly exercising the fix.
+    ExecutorService writer = Executors.newSingleThreadExecutor();
+    try {
+      writer.submit(
+          () -> {
+            for (int i = 0; i < 100; i++) {
+              try {
+                spark
+                    .createDataFrame(
+                        Arrays.asList(RowFactory.create(i + 2, "User" + i, (double) i * 10)),
+                        TEST_SCHEMA)
+                    .write()
+                    .format("delta")
+                    .mode("append")
+                    .save(tablePath);
+                Thread.sleep(20);
+              } catch (Exception ignored) {
+                return;
+              }
+            }
+          });
+
+      // Let the query process a few batches with active NIO reads before stopping.
+      Thread.sleep(300);
+      query.stop();
+    } finally {
+      writer.shutdownNow();
+      writer.awaitTermination(5, TimeUnit.SECONDS);
+    }
+
+    // Release cached DeltaLog references so @TempDir cleanup can delete the directory.
+    DeltaLog.clearCache();
 
     // The stop should be clean — no exception should have been captured
     assertTrue(query.exception().isEmpty(), "Expected no exception after query.stop()");
