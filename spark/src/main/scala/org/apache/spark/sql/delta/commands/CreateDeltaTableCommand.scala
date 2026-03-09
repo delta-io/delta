@@ -832,6 +832,8 @@ case class CreateDeltaTableCommand(
         ClusteredTableUtils.PROP_CLUSTERING_COLUMNS)
         .map(_.toLowerCase(Locale.ROOT))
 
+    // Normalize properties for comparison by dropping internal/non-user-facing keys and
+    // lowercasing the remaining property names.
     def normalizeProperties(
         props: Map[String, String]): Map[String, String] = {
       var normalized = filterColumnMappingProperties(props)
@@ -885,6 +887,8 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
+      // If this catalog-managed replace preserves existing metadata, skip the normal metadata
+      // overwrite below; otherwise this helper throws when the command tries to change metadata.
       if (catalogManagedReplacePreservesMetadata(
           sparkSession, txn, tableDesc, schema)) {
         return
@@ -914,6 +918,8 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
+    // For catalog-managed REPLACE, pass the catalog table into the transaction so it can reuse
+    // the existing catalog-backed table state.
     val catalogTableOpt = if (allowCatalogManaged && isReplace && deltaLog.tableExists) {
       Some(tableWithLocation)
     } else {

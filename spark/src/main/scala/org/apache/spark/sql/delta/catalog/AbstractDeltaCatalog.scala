@@ -164,9 +164,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    // In Unity Catalog, the delegated catalog can already resolve an existing Delta table even
-    // when the SessionCatalog lookup above misses it. Fall back to the delegated catalog so
-    // REPLACE / CREATE OR REPLACE reuses the existing table metadata and storage location.
+    // `getExistingTableIfExists` only checks the V1 SessionCatalog entry for `id`, while
+    // `getExistingTableFromDelegatedCatalog` asks the delegated V2 catalog to resolve the original
+    // `ident`. We need the fallback because catalog-managed tables may be resolvable through the
+    // delegated catalog even when SessionCatalog does not surface them; in that case REPLACE /
+    // CREATE OR REPLACE should still reuse the existing table metadata and storage location.
     val existingTableOpt =
       getExistingTableIfExists(id).orElse(getExistingTableFromDelegatedCatalog(ident))
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
@@ -592,8 +594,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   /**
    * Returns an existing Delta table by querying the delegated catalog when SessionCatalog lookup
-   * is not sufficient, for example when CREATE OR REPLACE needs to reuse the existing table
-   * metadata and location.
+   * is not sufficient, for example when SessionCatalog does not surface an existing
+   * catalog-managed table that CREATE OR REPLACE needs to reuse.
    *
    * This is only needed for catalog-managed tables, where the delegated catalog may resolve a
    * Delta table that is not surfaced through [[getExistingTableIfExists]].
