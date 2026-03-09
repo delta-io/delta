@@ -155,10 +155,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Option(allTableProperties.get("location"))
     }
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      if (isUnityCatalog) base.copy(catalog = Some(name())) else base
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    val existingTableOpt =
+      getExistingTableIfExists(id).orElse(getExistingTableFromDelegatedCatalog(ident))
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -204,8 +206,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      val deltaLogTableOpt = existingTableOpt.orElse(
+        Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, deltaLogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -578,6 +582,23 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  private def getExistingTableFromDelegatedCatalog(
+      ident: Identifier): Option[CatalogTable] = {
+    if (isUnityCatalog) {
+      try {
+        super.loadTable(ident) match {
+          case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+            Some(v1.catalogTable)
+          case _ => None
+        }
+      } catch {
+        case _: NoSuchTableException => None
+      }
+    } else {
+      None
+    }
+  }
+
   private def getTablePropsAndWriteOptions(properties: util.Map[String, String])
   : (util.Map[String, String], Map[String, String]) = {
     val props = new util.HashMap[String, String]()
@@ -654,6 +675,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      if (isUnityCatalog) {
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,
