@@ -21,7 +21,11 @@ import java.net.URI
 import java.util.UUID
 
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
-import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
+import org.apache.spark.sql.delta.commands.{
+  CreateDeltaTableCommand,
+  CreateDeltaTableLike,
+  TableCreationModes
+}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.scalatest.exceptions.TestFailedException
 
@@ -317,6 +321,110 @@ class DeltaCreateTableLikeSuite extends QueryTest
           operation = TableCreationModes.Create).run(spark)
         assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
       }
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE creates missing tables") {
+    withTempDir { dir =>
+      withTable("t") {
+        def getCatalogTable: CatalogTable = {
+          val storage = CatalogStorageFormat.empty.copy(
+            locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
+          val catalogTableTarget = CatalogTable(
+            identifier = TableIdentifier("t"),
+            tableType = CatalogTableType.MANAGED,
+            storage = storage,
+            provider = Some("delta"),
+            schema = new StructType().add("id", "long"))
+          new DeltaCatalog()
+            .verifyTableAndSolidify(
+              tableDesc = catalogTableTarget,
+              query = None,
+              maybeClusterBySpec = None)
+        }
+
+        val command = CreateDeltaTableCommand(
+          getCatalogTable,
+          existingTableOpt = None,
+          mode = SaveMode.ErrorIfExists,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace,
+          allowCatalogManaged = true,
+          createTableFunc = None)
+
+        command.run(spark)
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+      }
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE skips catalog create callback " +
+      "when metadata is unchanged") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG) USING DELTA")
+
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      var createCallbackCalls = 0
+
+      val command = new CreateDeltaTableLike {
+        override val table: CatalogTable = existingTable
+        override val existingTableOpt: Option[CatalogTable] = Some(existingTable)
+        override val operation: TableCreationModes.CreationMode =
+          TableCreationModes.CreateOrReplace
+        override val mode: SaveMode = SaveMode.ErrorIfExists
+        override val allowCatalogManaged: Boolean = true
+
+        def runUpdateCatalog(): Unit = {
+          updateCatalog(
+            spark,
+            table,
+            snapshot,
+            query = None,
+            didNotChangeMetadata = true,
+            createTableFunc = Some((_: CatalogTable) => {
+              createCallbackCalls += 1
+            }))
+        }
+      }
+
+      command.runUpdateCatalog()
+      assert(createCallbackCalls === 0)
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE rejects explicit protocol property changes") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG) USING DELTA")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        tableDesc = existingTable.copy(
+          schema = snapshot.metadata.schema,
+          properties = existingTable.properties ++ Map(
+            "delta.feature.allowColumnDefaults" -> "supported")),
+        query = None,
+        maybeClusterBySpec = None)
+
+      val command = CreateDeltaTableCommand(
+        updatedTable,
+        existingTableOpt = Some(existingTable),
+        mode = SaveMode.Overwrite,
+        query = None,
+        operation = TableCreationModes.CreateOrReplace,
+        allowCatalogManaged = true,
+        createTableFunc = None)
+
+      val err = intercept[DeltaAnalysisException] {
+        command.run(spark)
+      }
+      assert(err.getMessage.contains(
+        "Replacing a catalog-managed table with different properties"))
+      assert(err.getMessage.contains("delta.feature.allowcolumndefaults"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
     }
   }
 
