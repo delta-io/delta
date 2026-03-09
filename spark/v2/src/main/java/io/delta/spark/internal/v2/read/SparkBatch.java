@@ -128,7 +128,9 @@ public class SparkBatch implements Batch {
           FilePartition$.MODULE$.getFilePartitions(
               sparkSession, JavaConverters.asScalaBuffer(filesInPartition).toSeq(), maxSplitBytes);
 
-      // Wrap each FilePartition in a DeltaInputPartition with the partition key
+      // Wrap each FilePartition in a DeltaInputPartition with the partition key.
+      // Re-index partitions with a global counter because getFilePartitions returns 0-based
+      // indices within each partition group, but we need unique indices across all groups.
       for (FilePartition fp : JavaConverters.seqAsJavaList(filePartitions)) {
         FilePartition reindexedPartition = new FilePartition(partitionIndex++, fp.files());
         result.add(new DeltaInputPartition(reindexedPartition, partitionKey));

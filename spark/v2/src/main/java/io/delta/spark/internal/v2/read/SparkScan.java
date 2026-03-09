@@ -464,13 +464,10 @@ public class SparkScan
                         FieldReference.column(field.name()))
             .toArray(org.apache.spark.sql.connector.expressions.Expression[]::new);
 
-    // Count unique partition values by grouping files by their partition values
-    Set<InternalRow> uniquePartitions = new HashSet<>();
-    for (PartitionedFile file : partitionedFiles) {
-      uniquePartitions.add(file.partitionValues());
-    }
-
-    return new KeyGroupedPartitioning(keys, uniquePartitions.size());
+    // numPartitions is not used by Spark's KeyGroupedPartitioning handling (Spark derives
+    // partition count from the actual InputPartition[] with HasPartitionKey), so we use the
+    // file count as a reasonable upper-bound estimate.
+    return new KeyGroupedPartitioning(keys, partitionedFiles.size());
   }
 
   @Override

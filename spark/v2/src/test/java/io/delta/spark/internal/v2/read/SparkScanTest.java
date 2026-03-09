@@ -839,24 +839,28 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(5, kgp.numPartitions(), "Should have 5 unique partition values");
   }
 
-  @Test
-  public void testOutputPartitioningForNonPartitionedTable(@TempDir File tempDir) {
-    // Non-partitioned table should return UnknownPartitioning
-    String nonPartTableName = "deltatbl_nonpartitioned";
+  /** Creates a non-partitioned table with sample data and returns a SparkScan for it. */
+  private SparkScan createNonPartitionedScan(File tempDir, String tableName) {
     spark.sql(
         String.format(
             "CREATE TABLE `%s` (id INT, name STRING) USING delta LOCATION '%s'",
-            nonPartTableName, tempDir.getAbsolutePath()));
-    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", nonPartTableName));
+            tableName, tempDir.getAbsolutePath()));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
 
     SparkTable nonPartTable =
         new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, nonPartTableName),
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
             tempDir.getAbsolutePath(),
             options);
 
     SparkScanBuilder builder = (SparkScanBuilder) nonPartTable.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    return (SparkScan) builder.build();
+  }
+
+  @Test
+  public void testOutputPartitioningForNonPartitionedTable(@TempDir File tempDir) {
+    // Non-partitioned table should return UnknownPartitioning
+    SparkScan scan = createNonPartitionedScan(tempDir, "deltatbl_nonpartitioned");
 
     Partitioning partitioning = scan.outputPartitioning();
 
@@ -934,21 +938,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testPlanInputPartitionsReturnsFilePartitionForNonPartitionedTable(
       @TempDir File tempDir) {
-    String nonPartTableName = "deltatbl_nonpartitioned_batch";
-    spark.sql(
-        String.format(
-            "CREATE TABLE `%s` (id INT, name STRING) USING delta LOCATION '%s'",
-            nonPartTableName, tempDir.getAbsolutePath()));
-    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", nonPartTableName));
-
-    SparkTable nonPartTable =
-        new SparkTable(
-            Identifier.of(new String[] {"spark_catalog", "default"}, nonPartTableName),
-            tempDir.getAbsolutePath(),
-            options);
-
-    SparkScanBuilder builder = (SparkScanBuilder) nonPartTable.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
+    SparkScan scan = createNonPartitionedScan(tempDir, "deltatbl_nonpartitioned_batch");
     Batch batch = scan.toBatch();
 
     InputPartition[] partitions = batch.planInputPartitions();
