@@ -109,20 +109,33 @@ trait CreateDeltaTableLike extends SQLConfHelper {
             ignoreIfExists = tableExistsInCatalog || mode == SaveMode.Ignore,
             validateLocation = false)
         }
-      case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
-        if tableExistsInCatalog && !allowCatalogManaged =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
-      case TableCreationModes.Replace if !tableExistsInCatalog =>
-        val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-        throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.Replace =>
+        if (!tableExistsInCatalog) {
+          val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        }
+        if (!allowCatalogManaged) {
+          UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        }
       case TableCreationModes.CreateOrReplace if createTableFunc.isDefined =>
-        createTableFunc.get.apply(cleaned)
+        if (tableExistsInCatalog) {
+          if (!allowCatalogManaged) {
+            UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+          }
+        } else {
+          createTableFunc.get.apply(cleaned)
+        }
       case TableCreationModes.CreateOrReplace =>
-        spark.sessionState.catalog.createTable(
-          cleaned,
-          ignoreIfExists = false,
-          validateLocation = false)
+        if (tableExistsInCatalog) {
+          if (!allowCatalogManaged) {
+            UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+          }
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = false,
+            validateLocation = false)
+        }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
