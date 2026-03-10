@@ -194,7 +194,7 @@ public class SparkGoldenTableTest {
         // input filters
         new Filter[] {
           new GreaterThan("cnt", 10), // supported data filter
-          new StringStartsWith("name", "foo"), // unsupported data filter
+          new StringStartsWith("name", "foo"), // supported data filter
           new EqualTo("date", "2025-09-01"), // supported partition filter
           new StringEndsWith("city", "York"), // unsupported partition filter
         },
