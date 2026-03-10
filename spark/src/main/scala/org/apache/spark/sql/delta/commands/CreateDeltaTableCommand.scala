@@ -845,6 +845,9 @@ case class CreateDeltaTableCommand(
     def normalizeProperties(
         props: Map[String, String]): Map[String, String] = {
       var normalized = filterColumnMappingProperties(props)
+      // Protocol versions are stored in the transaction protocol rather than metadata
+      // configuration, so drop them before comparing user-visible properties here.
+      normalized = Protocol.filterProtocolPropsFromTableProps(normalized)
       if (ClusteredTableUtils.isSupported(txn.protocol)) {
         normalized =
           ClusteredTableUtils.removeInternalTableProperties(

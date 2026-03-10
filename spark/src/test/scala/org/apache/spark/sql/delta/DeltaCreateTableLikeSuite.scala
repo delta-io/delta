@@ -393,7 +393,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
-  test("catalog-managed CREATE OR REPLACE rejects explicit protocol property changes") {
+  test("catalog-managed CREATE OR REPLACE rejects explicit user property changes") {
     withTable("t") {
       spark.sql("CREATE TABLE t (id LONG) USING DELTA")
       spark.sql("INSERT INTO t VALUES (1)")
@@ -404,7 +404,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
         tableDesc = existingTable.copy(
           schema = snapshot.metadata.schema,
           properties = existingTable.properties ++ Map(
-            "delta.feature.allowColumnDefaults" -> "supported")),
+            "delta.appendOnly" -> "true")),
         query = None,
         maybeClusterBySpec = None)
 
@@ -422,9 +422,41 @@ class DeltaCreateTableLikeSuite extends QueryTest
       }
       assert(err.getMessage.contains(
         "Replacing a catalog-managed table with different properties"))
-      assert(err.getMessage.contains("delta.feature.allowcolumndefaults"))
+      assert(err.getMessage.contains("delta.appendonly"))
       assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE allows existing protocol properties") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG) USING DELTA")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        tableDesc = existingTable.copy(
+          schema = snapshot.metadata.schema,
+          properties = existingTable.properties ++ Map(
+            "delta.minReaderVersion" -> snapshot.protocol.minReaderVersion.toString,
+            "delta.minWriterVersion" -> snapshot.protocol.minWriterVersion.toString)),
+        query = None,
+        maybeClusterBySpec = None)
+
+      val command = CreateDeltaTableCommand(
+        updatedTable,
+        existingTableOpt = Some(existingTable),
+        mode = SaveMode.Overwrite,
+        query = None,
+        operation = TableCreationModes.CreateOrReplace,
+        allowCatalogManaged = true,
+        createTableFunc = None)
+
+      command.run(spark)
+
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore + 1)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
     }
   }
 
