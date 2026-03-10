@@ -106,7 +106,7 @@ class DeltaAnalysis(session: SparkSession)
         targetAttrs = r.output,
         deltaTable = d,
         writeOptions = a.writeOptions,
-        allowColumnArityMismatch = true)
+        allowSchemaEvolution = true)
       if (projection != a.query) {
         a.copy(query = projection)
       } else {
@@ -292,7 +292,7 @@ class DeltaAnalysis(session: SparkSession)
         targetAttrs = r.output,
         deltaTable = d,
         writeOptions = o.writeOptions,
-        allowColumnArityMismatch = true)
+        allowSchemaEvolution = true)
       if (projection != o.query) {
         val aliases = AttributeMap(o.query.output.zip(projection.output).collect {
           case (l: AttributeReference, r: AttributeReference) if !l.sameRef(r) => (l, r)
@@ -323,7 +323,7 @@ class DeltaAnalysis(session: SparkSession)
           targetAttrs = r.output,
           deltaTable = d,
           writeOptions = o.writeOptions,
-          allowColumnArityMismatch = true)
+          allowSchemaEvolution = true)
       } else {
         o.query
       }
@@ -989,12 +989,18 @@ class DeltaAnalysis(session: SparkSession)
       targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2,
       writeOptions: Map[String, String],
-      allowColumnArityMismatch: Boolean = false): LogicalPlan = {
-    insertIntoByNameMissingColumn(query, targetAttrs, deltaTable, allowColumnArityMismatch)
+      allowSchemaEvolution: Boolean = false): LogicalPlan = {
+    // Schema evolution is only effective when mergeSchema is enabled in write options AND
+    // the feature is enabled via SQL conf.
+    val effectiveSchemaEvolution = allowSchemaEvolution &&
+      new DeltaOptions(deltaTable.options ++ writeOptions, conf).canMergeSchema &&
+      session.conf.get(DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED)
+
+    insertIntoByNameMissingColumn(query, targetAttrs, deltaTable, effectiveSchemaEvolution)
 
     // This is called before resolveOutputColumns in postHocResolutionRules, so we need to duplicate
     // the schema validation here.
-    if (!allowColumnArityMismatch && query.output.length > targetAttrs.length) {
+    if (!effectiveSchemaEvolution && query.output.length > targetAttrs.length) {
       throw QueryCompilationErrors.cannotWriteTooManyColumnsToTableError(
         tableName = deltaTable.name(),
         expected = targetAttrs.map(_.name),
@@ -1004,9 +1010,10 @@ class DeltaAnalysis(session: SparkSession)
     val project = query.output.map { attr =>
       val targetAttr = targetAttrs.find(t => session.sessionState.conf.resolver(t.name, attr.name))
         .getOrElse {
-          if (allowColumnArityMismatch) {
+          if (effectiveSchemaEvolution) {
             attr
           } else {
+            // Extra columns in the source are not allowed when schema evolution is disabled.
             throw DeltaErrors.missingColumn(attr, targetAttrs)
           }
         }
@@ -1102,7 +1109,7 @@ class DeltaAnalysis(session: SparkSession)
       query: LogicalPlan,
       targetAttrs: Seq[Attribute],
       deltaTable: DeltaTableV2,
-      allowColumnArityMismatch: Boolean = false): Unit = {
+      allowSchemaEvolution: Boolean = false): Unit = {
     // When allowing the source schema to contain extra columns, it can still
     // be missing required columns from the target schema.
     //
@@ -1114,7 +1121,7 @@ class DeltaAnalysis(session: SparkSession)
     //   Target: [a, b]
     //   Source: [a, x, y]
     // Since the source has 3 columns vs target's 2, but is missing column b, this should be caught.
-    if (allowColumnArityMismatch || query.output.length < targetAttrs.length) {
+    if (allowSchemaEvolution || query.output.length < targetAttrs.length) {
       val userSpecifiedNames = if (session.sessionState.conf.caseSensitiveAnalysis) {
         query.output.map(a => (a.name, a)).toMap
       } else {
