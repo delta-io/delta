@@ -476,7 +476,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
       // Schema log's schema is respected
       val schemaLog = getDefaultSchemaLog()
-      val newSchema = PersistedMetadata(log.tableId, 0,
+      val newSchema = PersistedMetadata(log.unsafeVolatileTableId, 0,
         makeMetadata(
           new StructType().add("a", StringType, true)
             .add("b", StringType, true)
@@ -656,7 +656,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       Execute { _ => addData(10 until 15) },
       ExpectMetadataEvolutionException,
       AssertOnQuery { q =>
-        val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+        val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
         offset.index == indexWhenSchemaLogIsUpdated
       }
     )
@@ -735,7 +735,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       ProcessAllAvailable(),
       CheckAnswer((10 until 15).map(i => (i.toString, i.toString)): _*),
       AssertOnQuery { q =>
-        val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+        val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
         // bumped from file action, no pending schema change
         offset.reservoirVersion == v1 + 1 &&
           offset.index == DeltaSourceOffset.BASE_INDEX &&
@@ -753,7 +753,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       // No more new data
       CheckAnswer((10 until 15).map(i => (i.toString, i.toString)): _*),
       AssertOnQuery { q =>
-        val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+        val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
         // latest offset should have a schema attached and evolved set to true
         // note the reservoir version has not changed
         offset.reservoirVersion == v1 + 1 &&
@@ -1170,7 +1170,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTerminationIgnoreError,
         CheckAnswer((0 until 5).map(i => (i.toString, i.toString)): _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           // bumped from file action
           offset.reservoirVersion == schemaChangeVersion &&
             offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX &&
@@ -1188,7 +1188,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTerminationIgnoreError,
         CheckAnswer(Nil: _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           // still stuck, but the pending schema change is marked as evolved
           offset.reservoirVersion == schemaChangeVersion &&
             offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
@@ -1218,7 +1218,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTermination,
         CheckAnswer((5 until 10).map(i => (i.toString)): _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           // bumped by file action, and since it's an non schema change, just clear schema change
           offset.reservoirVersion == v2 + 1 &&
             offset.index == DeltaSourceOffset.BASE_INDEX
@@ -1239,7 +1239,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTermination,
         CheckAnswer(Nil: _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v2 + 1 &&
             offset.index == DeltaSourceOffset.METADATA_CHANGE_INDEX
         }
@@ -1253,7 +1253,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTerminationIgnoreError,
         CheckAnswer(Nil: _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v3 &&
             offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
         },
@@ -1301,7 +1301,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTerminationIgnoreError,
         CheckAnswer((0 until 5).map(_.toString).map(i => (i, i)): _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           offset.reservoirVersion == schemaChangeVersion &&
             // schema change marked as evolved
             offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
@@ -1321,7 +1321,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTermination,
         CheckAnswer((5 until 10).map(i => (i.toString)): _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           // schema change cleared because it's a non-schema change offset
           offset.reservoirVersion == latestVersion + 1 &&
             offset.index == DeltaSourceOffset.BASE_INDEX
@@ -1344,7 +1344,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AwaitTerminationIgnoreError,
         CheckAnswer(Nil: _*),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v3 &&
             offset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX
         },
@@ -1393,7 +1393,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         CheckAnswer(Seq(4).map(_.toString).map(i => (i, i)): _*),
         AssertOnQuery { q =>
           q.availableOffsets.size == 1 && {
-            val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
+            val offset = DeltaSourceOffset(
+              log.unsafeVolatileTableId, q.availableOffsets.values.head)
             offset.reservoirVersion == v5 + 1 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
@@ -1409,7 +1410,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         AssertOnQuery { q =>
           // size is 1 because commit removes previous offset
           q.availableOffsets.size == 1 && {
-            val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
+            val offset = DeltaSourceOffset(
+              log.unsafeVolatileTableId, q.availableOffsets.values.head)
             offset.reservoirVersion == v5 + 2 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
@@ -1424,7 +1426,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         ProcessAllAvailableIgnoreError,
         AssertOnQuery { q =>
           q.availableOffsets.size == 1 && {
-            val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
+            val offset = DeltaSourceOffset(
+              log.unsafeVolatileTableId, q.availableOffsets.values.head)
             offset.reservoirVersion == v5 + 3 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
@@ -1439,7 +1442,8 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         ProcessAllAvailableIgnoreError,
         AssertOnQuery { q =>
           q.availableOffsets.size == 1 && {
-            val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
+            val offset = DeltaSourceOffset(
+              log.unsafeVolatileTableId, q.availableOffsets.values.head)
             offset.reservoirVersion == v5 + 4 && offset.index == indexWhenSchemaLogIsUpdated
           }
         },
@@ -1486,7 +1490,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       CheckAnswer(Seq(4).map(_.toString).map(i => (i, i)): _*),
       AssertOnQuery { q =>
         q.availableOffsets.size == 1 && {
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.head)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.head)
           offset.reservoirVersion == v5 + 1 && offset.index == indexWhenSchemaLogIsUpdated
         }
       },
@@ -1522,7 +1526,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       CheckAnswer((0 until 5).map(_.toString).map(i => (i, i)): _*),
       AssertOnQuery { q =>
         assert(q.availableOffsets.size == 1)
-        val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+        val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
         offset.reservoirVersion == v0 + 1 &&
           offset.index == DeltaSourceOffset.BASE_INDEX
       }
@@ -1560,7 +1564,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
         ProcessAllAvailableIgnoreError,
         CheckAnswer(("5", "5")),
         AssertOnQuery { q =>
-          val offset = DeltaSourceOffset(log.tableId, q.availableOffsets.values.last)
+          val offset = DeltaSourceOffset(log.unsafeVolatileTableId, q.availableOffsets.values.last)
           offset.reservoirVersion == v2 &&
             offset.index == indexWhenSchemaLogIsUpdated
         },
@@ -1819,13 +1823,13 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       Some(getDefaultSchemaLog()))
 
     def getLatestOffset(source: DeltaSource, start: Option[Offset] = None): DeltaSourceOffset =
-      DeltaSourceOffset(log.tableId,
+      DeltaSourceOffset(log.unsafeVolatileTableId,
         source.latestOffset(start.orNull, source.getDefaultReadLimit))
 
     // Initialize the schema log to skip initialization failure
     getDefaultSchemaLog().writeNewMetadata(
       PersistedMetadata(
-        log.tableId,
+        log.unsafeVolatileTableId,
         0L,
         s0.metadata,
         s0.protocol,
@@ -1891,7 +1895,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val s0 = log.update()
       val schemaLog = getDefaultSchemaLog()
       schemaLog.writeNewMetadata(
-        PersistedMetadata(log.tableId, s0.version, s0.metadata, s0.protocol,
+        PersistedMetadata(log.unsafeVolatileTableId, s0.version, s0.metadata, s0.protocol,
           sourceMetadataPath = "")
       )
 
@@ -2202,7 +2206,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED.key -> "false") {
       // Schema log's schema is respected
       val schemaLog = getDefaultSchemaLog()
-      val s0 = PersistedMetadata(log.tableId, 0,
+      val s0 = PersistedMetadata(log.unsafeVolatileTableId, 0,
         makeMetadata(
           new StructType().add("a", StringType, true)
             .add("b", StringType, true)

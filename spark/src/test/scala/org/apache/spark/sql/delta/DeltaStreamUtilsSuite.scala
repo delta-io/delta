@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta
 import java.sql.Timestamp
 
 import org.apache.spark.SparkFunSuite
-import org.apache.spark.sql.test.SharedSparkSession
 
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils
 

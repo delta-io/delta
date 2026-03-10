@@ -121,11 +121,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tableName)).map(_._2))
   }
 
-  def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
-    assert(expectedFormat ==
-      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
-  }
-
   def assertJsonPredicateHints(tableName: String, expectedHints: Seq[String]): Unit = {
     assert(expectedHints ==
       TestClientForDeltaFormatSharing.jsonPredicateHints.filter(_._1.contains(tableName)).map(_._2)

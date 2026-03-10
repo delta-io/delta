@@ -1725,9 +1725,8 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
-        if (catalogOwnedDefaultCreationEnabledInTests) {
-          cancel("VACUUM is not supported on catalog owned managed tables")
-        }
+        assume(!catalogOwnedDefaultCreationEnabledInTests,
+          "VACUUM is blocked on catalog-managed tables")
 
         // VACUUM
         withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {

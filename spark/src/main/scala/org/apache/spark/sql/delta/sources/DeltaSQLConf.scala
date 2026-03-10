@@ -47,6 +47,15 @@ trait DeltaSQLConfUtils {
  */
 trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
+  // Values for flags that also support log-only mode.
+  final object BooleanStringOrLogOnly {
+    final val FALSE = "false"
+    final val TRUE = "true"
+    final val LOG_ONLY = "log-only"
+
+    final val VALUES = Set(FALSE, TRUE, LOG_ONLY)
+  }
+
   object DeltaBreakingChangeEnum {
     val OFF = "OFF"
     val LOG_ONLY = "LOG_ONLY"
@@ -216,6 +225,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_PARTITION_COLUMN_CHANGE_CHECK = buildConf("partitionColumnChangeCheck")
+    .internal()
+    .doc("""Controls the validation behavior when changes to partition columns are detected.
+           |Possible values:
+           |  - "false": Disables validation for partition column changes.
+           |  - "true": Enables validation and throws an error if an illegal change is detected.
+           |  - "log-only": Logs the detected illegal change but does not block the operation.
+           |""".stripMargin)
+    .stringConf
+    .transform(_.toLowerCase(Locale.ROOT))
+    .checkValues(BooleanStringOrLogOnly.VALUES)
+    .createWithDefault(
+      if (DeltaUtils.isTesting) {
+        BooleanStringOrLogOnly.TRUE
+      } else {
+        BooleanStringOrLogOnly.LOG_ONLY
+      }
+    )
+
   val DELTA_COMMIT_VALIDATION_ENABLED =
     buildConf("commitValidation.enabled")
       .internal()
@@ -257,9 +285,9 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc(
         """
-          |Include the deltaLog.tableId field in equals and hashCode for TahoeLogFileIndex.
-          |The field is unstable, so including it can lead semantic violations for equals and
-          |hashCode.""".stripMargin)
+          |Include the deltaLog.unsafeVolatileTableId field in equals and hashCode for
+          |TahoeLogFileIndex. The field is unstable, so including it can lead semantic violations
+          |for equals and hashCode.""".stripMargin)
       .booleanConf
       // TODO: Phase this out towards `false` eventually remove the flag altogether again.
       .createWithDefault(true)
@@ -2921,6 +2949,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_SHARING_FORCE_DELTA_FORMAT =
     buildConf("spark.sql.delta.sharing.forceDeltaFormat")
       .doc("Force queries to use delta format when no responseFormat is specified.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT =
+    buildConf("spark.sql.delta.sharing.streamingAutoResolveResponseFormat")
+      .doc("When true, auto-resolve Delta Sharing streaming source format by calling getMetadata " +
+        "on the table and using the server's responded format (parquet or delta). When false, " +
+        "use the responseFormat option from the user.")
       .internal()
       .booleanConf
       .createWithDefault(false)

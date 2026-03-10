@@ -57,8 +57,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true),
-              DataTypes.createStructField("name", DataTypes.StringType, true),
-              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+              DataTypes.createStructField("name", DataTypes.StringType, true)
             });
     StructType partitionSchema =
         DataTypes.createStructType(
@@ -101,8 +100,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true),
-              DataTypes.createStructField("name", DataTypes.StringType, true),
-              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+              DataTypes.createStructField("name", DataTypes.StringType, true)
             });
     StructType partitionSchema =
         DataTypes.createStructType(
@@ -679,8 +677,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         DataTypes.createStructType(
             new StructField[] {
               DataTypes.createStructField("id", DataTypes.IntegerType, true),
-              DataTypes.createStructField("name", DataTypes.StringType, true),
-              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+              DataTypes.createStructField("name", DataTypes.StringType, true)
             });
     StructType partitionSchema =
         DataTypes.createStructType(

@@ -114,8 +114,6 @@ lazy val commonSettings = Seq(
   },
 
   testOptions += Tests.Argument("-oF"),
-  // Generate JUnit XML test reports in target/test-reports/
-  Test / testOptions += Tests.Argument("-u", "target/test-reports"),
 
   // Unidoc settings: by default dont document any source file
   unidocSourceFilePatterns := Nil,
@@ -575,19 +573,39 @@ lazy val spark = (project in file("spark-unified"))
       allMappings.distinct
     },
 
-    // Exclude internal modules from published POM
+    // Exclude internal modules from published POM and add kernel dependencies.
+    // Kernel modules are transitive through sparkV2 (an internal module), so they
+    // are lost when sparkV2 is filtered out. We re-add them explicitly here.
     pomPostProcess := { node =>
       val internalModules = internalModuleNames.value
+      val ver = version.value
       import scala.xml._
       import scala.xml.transform._
+
+      def kernelDependencyNode(artifactId: String): Elem = {
+        <dependency>
+          <groupId>io.delta</groupId>
+          <artifactId>{artifactId}</artifactId>
+          <version>{ver}</version>
+        </dependency>
+      }
+
+      val kernelDeps = Seq(
+        kernelDependencyNode("delta-kernel-api"),
+        kernelDependencyNode("delta-kernel-defaults"),
+        kernelDependencyNode("delta-kernel-unitycatalog")
+      )
+
       new RuleTransformer(new RewriteRule {
         override def transform(n: Node): Seq[Node] = n match {
-          case e: Elem if e.label == "dependency" =>
-            val artifactId = (e \ "artifactId").text
-            // Check if artifactId starts with any internal module name
-            // (e.g., "delta-spark-v1_4.1_2.13" starts with "delta-spark-v1")
-            val isInternal = internalModules.exists(module => artifactId.startsWith(module))
-            if (isInternal) Seq.empty else Seq(n)
+          case e: Elem if e.label == "dependencies" =>
+            val filtered = e.child.filter {
+              case child: Elem if child.label == "dependency" =>
+                val artifactId = (child \ "artifactId").text
+                !internalModules.exists(module => artifactId.startsWith(module))
+              case _ => true
+            }
+            Seq(e.copy(child = filtered ++ kernelDeps))
           case _ => Seq(n)
         }
       }).transform(node).head
