@@ -640,25 +640,18 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       s"'generateUpdateExpressions' should return expressions that are aligned with the column " +
         s"list. Expected size: ${targetSchema.size}, actual size: ${updateExprs.length}")
     val schemaWithExprs = targetSchema.zip(updateExprs)
-    val shouldReplaceUnresolvedExpr = conf.getConf(
-      DeltaSQLConf.DELTA_GENERATED_COLUMN_REPLACE_UNRESOLVED_EXPR)
     val exprsForProject = schemaWithExprs.flatMap {
       case (field, Some(expr)) =>
-        // If expr is unresolved (e.g., incompatible Cast created by castIfNeeded), fall back to
-        // the original attribute from updateTarget to keep fakePlan resolved. This lets generated
-        // column expressions resolve normally. The invalid expression remains in updateExprs and
-        // will be caught by CheckAnalysis with the correct type error.
-        val effectiveExpr = if (!shouldReplaceUnresolvedExpr || expr.resolved) {
-          expr
-        } else {
-          updateTarget.output.find(a => conf.resolver(a.name, field.name)).getOrElse(expr)
-        }
         val exprForProject = Alias(effectiveExpr, field.name)()
         Some(exprForProject.exprId -> exprForProject)
       case (_, None) => None
     }.toMap
     // Create a fake Project to resolve the generation expressions
     val fakePlan = Project(exprsForProject.values.toArray[NamedExpression], updateTarget)
+    if (conf.getConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN)) {
+      sparkSession.sessionState.analyzer.checkAnalysis(fakePlan)
+    }
+
     schemaWithExprs.map {
       case (_, Some(expr)) => expr
       case (targetCol, None) =>
