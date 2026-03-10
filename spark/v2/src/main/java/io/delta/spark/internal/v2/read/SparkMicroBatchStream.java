@@ -942,6 +942,7 @@ public class SparkMicroBatchStream
     if (removeFileActionPath != null) {
       if (seenFileAdd && !shouldAllowChanges) {
         // Commit contains data changes (adds + removes) and changes are disallowed.
+        // TODO(#5319): log CommitInfo action's operation instead of path
         throw (RuntimeException)
             DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
       } else if (!seenFileAdd && !shouldAllowDeletes) {

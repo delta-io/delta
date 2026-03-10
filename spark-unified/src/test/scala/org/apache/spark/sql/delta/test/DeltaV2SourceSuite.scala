@@ -54,6 +54,10 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "SC-11561: can consume new data without update",
     "Delta sources don't write offsets with null json",
 
+    // === read options ===
+    "streaming with ignoreDeletes = true skips delete-only commits",
+    "streaming with ignoreDeletes = true still fails on change commits",
+
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
     "add column: restarting with stale DataFrame should fail",
