@@ -917,23 +917,68 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testPlanInputPartitionsGroupsFilesByPartition() {
-    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+  public void testPlanInputPartitionsGroupsFilesByPartition(@TempDir File tempDir) {
+    // Create a table with multiple files per partition to actually exercise the grouping logic
+    // in planPartitionedInputPartitions (the default test table has 1 file per partition,
+    // which would pass even without grouping).
+    String multiFileTableName = "deltatbl_multifile_partitioned";
+    spark.sql(
+        String.format(
+            "CREATE TABLE `%s` (id INT, data STRING, part INT) USING delta "
+                + "LOCATION '%s' PARTITIONED BY (part)",
+            multiFileTableName, tempDir.getAbsolutePath()));
+    // Insert in separate statements to create multiple files per partition
+    spark.sql(
+        String.format("INSERT INTO `%s` VALUES (1, 'a', 1), (2, 'b', 2)", multiFileTableName));
+    spark.sql(
+        String.format("INSERT INTO `%s` VALUES (3, 'c', 1), (4, 'd', 2)", multiFileTableName));
+    spark.sql(String.format("INSERT INTO `%s` VALUES (5, 'e', 1)", multiFileTableName));
+    // Now part=1 has 3 files, part=2 has 2 files
+
+    SparkTable multiFileTable =
+        new SparkTable(
+            Identifier.of(new String[] {"spark_catalog", "default"}, multiFileTableName),
+            tempDir.getAbsolutePath(),
+            options);
+
+    SparkScanBuilder builder = (SparkScanBuilder) multiFileTable.newScanBuilder(options);
     SparkScan scan = (SparkScan) builder.build();
     Batch batch = scan.toBatch();
 
     InputPartition[] partitions = batch.planInputPartitions();
 
-    // Verify that all partitions with the same partition key are grouped
+    // Verify all partitions are DeltaInputPartition with partition keys
     Map<InternalRow, List<DeltaInputPartition>> partitionsByKey = new HashMap<>();
     for (InputPartition p : partitions) {
+      assertTrue(p instanceof DeltaInputPartition);
       DeltaInputPartition dp = (DeltaInputPartition) p;
       partitionsByKey.computeIfAbsent(dp.partitionKey(), k -> new ArrayList<>()).add(dp);
     }
 
-    // The test table has 5 unique partition values (each row is in a different partition)
-    assertEquals(
-        5, partitionsByKey.size(), "Should have 5 unique partition keys matching 5 unique combos");
+    // Should have exactly 2 unique partition keys (part=1 and part=2)
+    assertEquals(2, partitionsByKey.size(), "Should have 2 unique partition keys");
+
+    // Verify that the grouping actually produced multiple DeltaInputPartitions for a single
+    // partition key (since multiple files exist per partition and each gets its own
+    // FilePartition at default maxSplitBytes)
+    int totalPartitions = partitions.length;
+    assertTrue(
+        totalPartitions > 2,
+        "With 5 files across 2 partitions, should have more than 2 input partitions, "
+            + "got "
+            + totalPartitions);
+
+    // Verify all DeltaInputPartitions with the same key share the same partition key instance
+    for (Map.Entry<InternalRow, List<DeltaInputPartition>> entry : partitionsByKey.entrySet()) {
+      List<DeltaInputPartition> group = entry.getValue();
+      InternalRow expectedKey = group.get(0).partitionKey();
+      for (DeltaInputPartition dp : group) {
+        assertEquals(
+            expectedKey,
+            dp.partitionKey(),
+            "All partitions in the same group should have equal partition keys");
+      }
+    }
   }
 
   @Test

@@ -451,6 +451,11 @@ public class SparkScan
    * Called by V2ScanPartitioningAndOrdering during logical optimization to extract partition keys.
    * Together with HasPartitionKey on DeltaInputPartition, this enables Spark to eliminate shuffles
    * for joins and aggregations on partition columns.
+   *
+   * <p>Note: This method triggers scan file materialization via {@link #ensurePlanned()} because
+   * {@code numPartitions} is derived from the planned file count. Since Spark calls this during
+   * logical optimization (before {@link #toBatch()}), this changes when planning occurs compared to
+   * the non-partitioned path. This is functionally correct as {@code ensurePlanned} is idempotent.
    */
   @Override
   public Partitioning outputPartitioning() {
