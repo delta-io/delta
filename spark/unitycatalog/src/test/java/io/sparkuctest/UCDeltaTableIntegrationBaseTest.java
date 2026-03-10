@@ -314,9 +314,9 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
   }
 
-  /** Returns the timestamp of the current (latest) version. */
-  protected String currentTimestamp(String tableName) {
-    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  /** Helper to build an expected row as a list of string values. */
+  protected static List<String> row(String... values) {
+    return List.of(values);
   }
 
   /** Functional interface for test code that takes a temporary directory. */
