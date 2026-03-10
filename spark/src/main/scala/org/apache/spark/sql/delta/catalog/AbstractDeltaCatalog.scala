@@ -555,7 +555,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
     val schema = query.map { plan =>
-      assert(tableDesc.schema.isEmpty, "Can't specify table schema in CTAS.")
+      assert(tableDesc.schema.isEmpty ||
+        tableDesc.schema == plan.schema.asNullable,
+        "Can't specify table schema in CTAS.")
       plan.schema.asNullable
     }.getOrElse(tableDesc.schema)
 
