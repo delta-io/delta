@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.hooks
 
-import com.fasterxml.jackson.annotation.JsonProperty
 import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.http.HttpHeaders
@@ -26,29 +25,6 @@ import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.impl.client.{CloseableHttpClient, HttpClientBuilder}
 import org.apache.http.util.EntityUtils
 import org.apache.spark.sql.SparkSession
-
-/**
- * Top-level request body for POST /api/2.1/unity-catalog/delta/preview/metrics.
- *
- * @param tableId UUID of the UC-managed Delta table
- * @param report  The commit metrics, wrapped in a typed report envelope
- */
-case class ReportDeltaMetricsRequest(
-    @JsonProperty("table_id") tableId: String,
-    @JsonProperty("report") report: CommitReportEnvelope)
-
-/**
- * Envelope that matches the server's @JsonSubTypes WRAPPER_OBJECT format.
- * Serializes as: { "commit_report": { ... } }
- */
-case class CommitReportEnvelope(
-    @JsonProperty("commit_report") commitReport: CommitReport)
-
-/**
- * Skeleton payload for transport wiring validation. The full metrics payload
- * is added in a follow-up change.
- */
-case class CommitReport()
 
 /**
  * HTTP client for sending commit metrics to the UC PO endpoint.

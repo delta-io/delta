@@ -18,7 +18,6 @@ package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
-import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 
@@ -56,7 +55,8 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
         throw new IllegalStateException("UC-managed table must have a table ID")
       }
 
-      val request = buildRequest(tableId, txn.committedActions, txn.committedVersion)
+      val request = ReportDeltaMetrics.buildRequest(
+        tableId, txn.committedActions, txn.committedVersion)
       val catalogName = catalogTable.flatMap(_.identifier.catalog)
       POMetricsClient.sendMetrics(spark, request, catalogName = catalogName)
 
@@ -73,20 +73,6 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
           log"version ${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}: " +
           log"${MDC(DeltaLogKeys.ERROR, e.getMessage)}", e)
     }
-  }
-
-  // ---------------------------------------------------------------------------
-  // Request builder - package-private for direct testing without Delta infrastructure
-  // ---------------------------------------------------------------------------
-
-  private[hooks] def buildRequest(
-      tableId: String,
-      _committedActions: Seq[Action],
-      _committedVersion: Long): ReportDeltaMetricsRequest = {
-    ReportDeltaMetricsRequest(
-      tableId = tableId,
-      report = CommitReportEnvelope(CommitReport())
-    )
   }
 
   override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
