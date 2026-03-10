@@ -1199,7 +1199,6 @@ public class SparkMicroBatchStream
     }
 
     // Compare the structural schema of the analysis-time schema and snapshot schema.
-    // TODO(#5319): add tests for type widening, partition column, & nullability changes.
     if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
     }

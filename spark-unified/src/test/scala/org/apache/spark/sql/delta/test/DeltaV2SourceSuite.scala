@@ -123,7 +123,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === Schema Evolution ===
     // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
-    // for datasource v2 such that we can adopt the two schema changes without refresh the dataframe
+    //  for datasource v2 such that we can adopt the two schema changes without refreshing the
+    //  dataframe
     "relax nullability: restarting with stale DataFrame should recover",
     "type widening: restarting with stale DataFrame should recover",
 
