@@ -834,9 +834,9 @@ public class SparkScanTest extends DeltaV2TestBase {
     }
     assertTrue(keyNames.containsAll(Arrays.asList("date", "city", "part")));
 
-    // The test table has 5 rows across 5 unique partition values
-    // (each row has a unique combination of date, city, part)
-    assertEquals(5, kgp.numPartitions(), "Should have 5 unique partition values");
+    // numPartitions returns partitionedFiles.size() (file count, not unique partition count).
+    // In this test data, each partition has one file, so file count equals partition count.
+    assertEquals(5, kgp.numPartitions(), "Should have 5 files (one per partition)");
   }
 
   /** Creates a non-partitioned table with sample data and returns a SparkScan for it. */
@@ -882,10 +882,11 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertTrue(partitioning instanceof KeyGroupedPartitioning);
 
     KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
+    // numPartitions returns partitionedFiles.size() (file count); here each partition has one file.
     assertEquals(
         2,
         kgp.numPartitions(),
-        "After filtering to city=hz, should have 2 unique partition values");
+        "After filtering to city=hz, should have 2 files (one per partition)");
   }
 
   // ================================================================================================

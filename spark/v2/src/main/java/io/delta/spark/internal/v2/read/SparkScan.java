@@ -446,6 +446,12 @@ public class SparkScan
     }
   }
 
+  /**
+   * Reports partition key expressions to Spark so it can recognize partition-aligned data layout.
+   * Called by V2ScanPartitioningAndOrdering during logical optimization to extract partition keys.
+   * Together with HasPartitionKey on DeltaInputPartition, this enables Spark to eliminate shuffles
+   * for joins and aggregations on partition columns.
+   */
   @Override
   public Partitioning outputPartitioning() {
     // If no partition columns, return unknown partitioning

@@ -109,6 +109,8 @@ public class SparkBatch implements Batch {
    */
   private InputPartition[] planPartitionedInputPartitions(
       SparkSession sparkSession, long maxSplitBytes) {
+    // Note: Using InternalRow as map key relies on GenericInternalRow's value-based
+    // equals()/hashCode(), which is what PartitionUtils.getPartitionRow() returns.
     Map<InternalRow, List<PartitionedFile>> filesByPartition = new LinkedHashMap<>();
     for (PartitionedFile file : partitionedFiles) {
       InternalRow partitionKey = file.partitionValues();
