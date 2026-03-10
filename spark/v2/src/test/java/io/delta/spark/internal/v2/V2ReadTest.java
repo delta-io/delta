@@ -119,27 +119,35 @@ public class V2ReadTest extends V2TestBase {
             "INSERT INTO delta.`%s` VALUES (1, 'a', 1), (2, 'b', 1), (3, 'c', 2), (4, 'd', 3)",
             tablePath));
 
-    // Disable broadcast join so Spark must use shuffle or partition-aware join
+    // Disable broadcast join so Spark must use shuffle or partition-aware join.
+    // Enable V2 bucketing so Spark recognizes KeyGroupedPartitioning from
+    // SupportsReportPartitioning (default is false in Spark 4.0, true in 4.1).
     withSQLConf(
         "spark.sql.autoBroadcastJoinThreshold",
         "-1",
-        () -> {
-          // Self-join on partition column via DSv2 catalog
-          String joinQuery =
-              str(
-                  "SELECT a.id, b.data FROM dsv2.delta.`%s` a "
-                      + "JOIN dsv2.delta.`%s` b ON a.part = b.part",
-                  tablePath, tablePath);
+        () ->
+            withSQLConf(
+                "spark.sql.sources.v2.bucketing.enabled",
+                "true",
+                () -> {
+                  // Self-join on partition column via DSv2 catalog
+                  String joinQuery =
+                      str(
+                          "SELECT a.id, b.data FROM dsv2.delta.`%s` a "
+                              + "JOIN dsv2.delta.`%s` b ON a.part = b.part",
+                          tablePath, tablePath);
 
-          String explainOutput = spark.sql(joinQuery).queryExecution().executedPlan().toString();
+                  String explainOutput =
+                      spark.sql(joinQuery).queryExecution().executedPlan().toString();
 
-          // With SupportsReportPartitioning + HasPartitionKey, Spark should recognize both
-          // sides are KeyGroupedPartitioned on 'part' and skip the shuffle (no Exchange node)
-          assertFalse(
-              explainOutput.contains("Exchange"),
-              "Expected no Exchange (shuffle) in plan for partition-aligned join, but found one."
-                  + "\nPlan:\n"
-                  + explainOutput);
-        });
+                  // With SupportsReportPartitioning + HasPartitionKey, Spark should recognize
+                  // both sides are KeyGroupedPartitioned on 'part' and skip the shuffle
+                  // (no Exchange node)
+                  assertFalse(
+                      explainOutput.contains("Exchange"),
+                      "Expected no Exchange (shuffle) in plan for partition-aligned join, "
+                          + "but found one.\nPlan:\n"
+                          + explainOutput);
+                }));
   }
 }
