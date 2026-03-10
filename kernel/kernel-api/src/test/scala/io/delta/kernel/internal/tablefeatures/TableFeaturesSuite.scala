@@ -56,6 +56,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   val writerOnlyFeatures = Seq(
     "allowColumnDefaults",
     "appendOnly",
+    "checkpointProtection",
     "invariants",
     "checkConstraints",
     "generatedColumns",
@@ -68,7 +69,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "inCommitTimestamp",
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
-    "clustering")
+    "clustering",
+    "materializePartitionColumns")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -202,6 +204,7 @@ class TableFeaturesSuite extends AnyFunSuite {
   })
 
   Seq(
+    "checkpointProtection",
     "domainMetadata",
     "vacuumProtocolCheck",
     "clustering",
@@ -264,6 +267,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     // these features are enabled
     val expected = Seq(
       "catalogManaged",
+      "checkpointProtection",
       "columnMapping",
       "allowColumnDefaults",
       "v2Checkpoint",
@@ -289,7 +293,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       "variantType-preview",
       "variantType",
       "variantShredding-preview",
-      "geospatial")
+      "geospatial",
+      "materializePartitionColumns")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -646,6 +651,11 @@ class TableFeaturesSuite extends AnyFunSuite {
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with clustering",
     new Protocol(3, 7, emptySet(), singleton("clustering")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with materializePartitionColumns",
+    new Protocol(3, 7, emptySet(), singleton("materializePartitionColumns")),
     testMetadata())
 
   checkWriteSupported(

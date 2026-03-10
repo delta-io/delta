@@ -145,11 +145,21 @@ class DeltaIncrementalSetTransactionsSuite
         withSQLConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true") {
           DeltaLog.clearCache()
           commitSetTxn(deltaLog, "app-1", version = 2, lastUpdated = 2) // 2nd commit
-          // By default, commit doesn't trigger stateReconstruction and so the
-          // incremental CRC won't have setTransactions present until `setTransactions` API is
-          // explicitly invoked before the commit.
-          assert(deltaLog.update().checksumOpt.get.setTransactions.isEmpty) // crc has no set-txn
-          assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = false)
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // For CatalogOwned tables with Row Tracking enabled (QoL feature), the commit DOES
+            // trigger state reconstruction via RowId.assignFreshRowIds -> extractHighWatermark ->
+            // domainMetadata access. This sets _computedStateTriggered=true, causing
+            // setTransactions to be included in the CRC immediately (not lazily as in the
+            // non-CatalogOwned case).
+            assert(deltaLog.update().checksumOpt.get.setTransactions.nonEmpty) // crc has set-txn
+            assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = true)
+          } else {
+            // By default, commit doesn't trigger stateReconstruction and so the
+            // incremental CRC won't have setTransactions present until `setTransactions` API is
+            // explicitly invoked before the commit.
+            assert(deltaLog.update().checksumOpt.get.setTransactions.isEmpty) // crc has no set-txn
+            assertSetTransactions(deltaLog, expectedTxns = Map("app-1" -> 2), viaCRC = false)
+          }
           DeltaLog.clearCache()
 
           // Do commit after forcing computeState. Now SetTransaction tracking will start.
@@ -213,26 +223,41 @@ class DeltaIncrementalSetTransactionsSuite
           DeltaLog.clearCache()
           withSQLConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC.key -> "true") {
             commitSetTxn(log, "app-1", version = 1, lastUpdated = 1)
-            // During 1st commit, the feature is enabled. But still the new commit crc shouldn't
-            // contain the [[SetTransaction]] actions as we don't have an estimate of how many
-            // [[SetTransaction]] actions might be already part of this table till now.
-            // So incremental computation of [[SetTransaction]] won't trigger.
-            assert(log.update().checksumOpt.flatMap(_.setTransactions).isEmpty)
+            if (catalogOwnedDefaultCreationEnabledInTests) {
+              // For CatalogOwned tables with Row Tracking enabled (QoL feature), the commit DOES
+              // trigger state reconstruction via RowId.assignFreshRowIds, which sets
+              // _computedStateTriggered=true, causing setTransactions to be included in CRC.
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty)
+            } else {
+              // During 1st commit, the feature is enabled. But still the new commit crc shouldn't
+              // contain the [[SetTransaction]] actions as we don't have an estimate of how many
+              // [[SetTransaction]] actions might be already part of this table till now.
+              // So incremental computation of [[SetTransaction]] won't trigger.
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).isEmpty)
+            }
 
             if (computeStatePreloaded) {
               // Calling `validateChecksum` will pre-load the computeState
               log.update().validateChecksum()
             }
-            // During 2nd commit, we have following 2 cases:
-            // 1. If `computeStatePreloaded` is set, then the Snapshot has already calculated
-            //    computeState and so we have estimate of number of SetTransactions till this point.
-            //    So next commit will trigger incremental computation of [[SetTransaction]].
-            // 2. If `computeStatePreloaded` is not set, then Snapshot doesn't have computeState
-            //    pre-computed. So next commit will not trigger incremental computation of
-            //    [[SetTransaction]].
+
             commitSetTxn(log, "app-1", version = 100, lastUpdated = 1)
-            assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty ===
-              computeStatePreloaded)
+            if (catalogOwnedDefaultCreationEnabledInTests) {
+              // For CatalogOwned tables with Row Tracking enabled, state reconstruction is
+              // triggered during every commit (via RowId.assignFreshRowIds), so setTransactions are
+              // always included in CRC regardless of whether computeState was preloaded.
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty)
+            } else {
+              // During 2nd commit, we have following 2 cases:
+              // 1. If `computeStatePreloaded` is set, then the Snapshot has already calculated
+              //    computeState, and so we have estimate of number of SetTransactions till this
+              //    point. So next commit will trigger incremental computation of [[SetTransaction]]
+              // 2. If `computeStatePreloaded` is not set, then Snapshot doesn't have computeState
+              //    pre-computed. So next commit will not trigger incremental computation of
+              //    [[SetTransaction]].
+              assert(log.update().checksumOpt.flatMap(_.setTransactions).nonEmpty ===
+                computeStatePreloaded)
+            }
           }
         }
       }

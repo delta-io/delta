@@ -239,8 +239,7 @@ class AutoCompactExecutionSuite extends
     checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
-  // TODO: Re-enable this test after fixing Variant data skipping in Spark 4.1.0+
-  ignore("variant auto compact kicks in when enabled - table config") {
+  test("variant auto compact kicks in when enabled - table config") {
     withTempDir { dir =>
       withSQLConf(
           "spark.databricks.delta.properties.defaults.autoOptimize.autoCompact" -> "true",
@@ -252,8 +251,7 @@ class AutoCompactExecutionSuite extends
     }
   }
 
-  // TODO: Re-enable this test after fixing Variant data skipping in Spark 4.1.0+
-  ignore("variant auto compact kicks in when enabled - session config") {
+  test("variant auto compact kicks in when enabled - session config") {
     withTempDir { dir =>
       withSQLConf(
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",
@@ -377,11 +375,6 @@ class AutoCompactConfigurationIdColumnMappingSuite extends AutoCompactConfigurat
 class AutoCompactExecutionIdColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableIdMode {
   override def runAllTests: Boolean = true
-  // TODO: these tests need to be fixed for Spark master
-  override def skipTests: Seq[String] = Seq(
-    "variant auto compact kicks in when enabled - table config",
-    "variant auto compact kicks in when enabled - session config"
-  )
 }
 
 class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigurationSuite
@@ -392,10 +385,5 @@ class AutoCompactConfigurationNameColumnMappingSuite extends AutoCompactConfigur
 class AutoCompactExecutionNameColumnMappingSuite extends AutoCompactExecutionSuite
   with DeltaColumnMappingEnableNameMode {
   override def runAllTests: Boolean = true
-  // TODO: these tests need to be fixed for Spark master
-  override def skipTests: Seq[String] = Seq(
-    "variant auto compact kicks in when enabled - table config",
-    "variant auto compact kicks in when enabled - session config"
-  )
 }
 

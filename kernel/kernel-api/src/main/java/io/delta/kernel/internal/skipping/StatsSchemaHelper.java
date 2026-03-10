@@ -63,9 +63,15 @@ public class StatsSchemaHelper {
   public static boolean isSkippingEligibleDataType(DataType dataType) {
     return SKIPPING_ELIGIBLE_TYPE_NAMES.contains(dataType.toString())
         ||
-        // DecimalType is eligible but since its string includes scale + precision it needs to
-        // be matched separately
+        // DecimalType is eligible, but since its string includes scale + precision, it needs to
+        // be matched separately.
         dataType instanceof DecimalType
+        ||
+        // StringType is eligible, but since its string can include collation info, it needs to
+        // be matched separately.
+        dataType instanceof StringType;
+        // Geometry type is eligble, but since it has SRID (and algorithm information), it needs
+        // to be matched separately.
         || dataType instanceof GeometryType
         || dataType instanceof GeographyType;
   }
@@ -276,7 +282,6 @@ public class StatsSchemaHelper {
           add("date");
           add("timestamp");
           add("timestamp_ntz");
-          add("string");
         }
       };
 

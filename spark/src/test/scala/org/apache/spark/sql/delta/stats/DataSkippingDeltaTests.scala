@@ -889,6 +889,8 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   test("data skipping stats before and after optimize") {
+      assume(!catalogOwnedDefaultCreationEnabledInTests,
+        "OPTIMIZE is blocked on catalog-managed tables")
       val tempDir = Utils.createTempDir()
       var r = DeltaLog.forTable(spark, new Path(tempDir.getCanonicalPath))
 
@@ -1812,38 +1814,37 @@ trait DataSkippingDeltaTestsBase extends QueryTest
     }
   }
 
-  // TODO: Re-enable this test after fixing Variant data skipping in Spark 4.1.0+
-  // The test fails because VariantType now extends AtomicType in Spark 4.1.0+,
-  // which causes issues with the data skipping logic due to Variant's physical representation
-  // as a struct in Parquet files.
-  ignore("data skipping by stats - variant type") {
-    withTable("tbl") {
-      sql("""CREATE TABLE tbl(v VARIANT,
-              v_struct STRUCT<v: VARIANT>,
-              null_v VARIANT,
-              null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
-      sql("""INSERT INTO tbl (SELECT
-          parse_json(cast(id as string)),
-          named_struct('v', parse_json(cast(id as string))),
-          cast(null as variant),
-          named_struct('v', cast(null as variant))
-          FROM range(100))""")
+  test("data skipping by stats - variant type") {
+    Seq(false, true).foreach { pushVariantIntoScan =>
+      withSQLConf(SQLConf.PUSH_VARIANT_INTO_SCAN.key -> pushVariantIntoScan.toString) {
+        val tableName = s"tbl_$pushVariantIntoScan"
+        withTable(tableName) {
+          sql(s"""CREATE TABLE $tableName(v VARIANT,
+                  v_struct STRUCT<v: VARIANT>,
+                  null_v VARIANT,
+                  null_v_struct STRUCT<v: VARIANT>) USING DELTA""")
+          sql(s"""INSERT INTO $tableName (SELECT
+              parse_json(cast(id as string)),
+              named_struct('v', parse_json(cast(id as string))),
+              cast(null as variant),
+              named_struct('v', cast(null as variant))
+              FROM range(100))""")
 
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("tbl", None, None))
-      val hits = Seq(
-        "v IS NOT NULL",
-        "v_struct.v IS NOT NULL",
-        "null_v IS NULL",
-        "null_v_struct.v IS NULL"
-      )
-      val misses = Seq(
-        "v IS NULL",
-        "v_struct.v IS NULL",
-        "null_v IS NOT NULL",
-        "null_v_struct.v IS NOT NULL"
-      )
-      val data = spark.sql("select * from tbl").collect().toSeq.toString
-      checkSkipping(deltaLog, hits, misses, data, false)
+          val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName, None, None))
+          val hits = Seq(
+            "v IS NOT NULL",
+            "v_struct.v IS NOT NULL",
+            "null_v IS NULL",
+            "null_v_struct.v IS NULL")
+          val misses = Seq(
+            "v IS NULL",
+            "v_struct.v IS NULL",
+            "null_v IS NOT NULL",
+            "null_v_struct.v IS NOT NULL")
+          val data = spark.sql(s"select * from $tableName").collect().toSeq.toString
+          checkSkipping(deltaLog, hits, misses, data, false)
+        }
+      }
     }
   }
 
@@ -1977,8 +1978,13 @@ trait DataSkippingDeltaTestsBase extends QueryTest
   }
 
   protected def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
+        s""""nullCount":{"$colName":0},"tightBounds":true}""".stripMargin
+    } else {
       s"""{"numRecords":1,"minValues":{"$colName":$index},"maxValues":{"$colName":$index},""" +
         s""""nullCount":{"$colName":0}}""".stripMargin
+    }
   }
 
   test("data skipping get specific files with Stats API") {
@@ -2299,9 +2305,17 @@ trait DataSkippingDeltaTestsUtils extends PredicateHelper {
     if (predicate == "True") return Seq(Literal.TrueLiteral)
 
     val filtered = spark.read.format("delta").load(deltaLog.dataPath.toString).where(predicate)
-    filtered
-      .queryExecution
-      .optimizedPlan
+
+    val optimizedPlan = filtered.queryExecution.optimizedPlan
+
+    // When pushVariantIntoScan = true, the plan is transformed such that a projection is inserted
+    // at the top of the plan. Therefore, the filter node is lower in the plan.
+    val filterNode = optimizedPlan.collectFirst {
+      case f: Filter => f
+    }.getOrElse {
+      optimizedPlan
+    }
+    filterNode
       .expressions
       .flatMap(splitConjunctivePredicates)
   }
@@ -2413,8 +2427,13 @@ trait DataSkippingDeltaIdColumnMappingTests extends DataSkippingDeltaTests
 
   override def expectedStatsForFile(index: Int, colName: String, deltaLog: DeltaLog): String = {
     val x = colName.phy(deltaLog)
+    if (deltaLog.unsafeVolatileSnapshot.protocol.isFeatureSupported(DeletionVectorsTableFeature)) {
+      s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
+        s""""nullCount":{"$x":0},"tightBounds":true}""".stripMargin
+    } else {
       s"""{"numRecords":1,"minValues":{"$x":$index},"maxValues":{"$x":$index},""" +
         s""""nullCount":{"$x":0}}""".stripMargin
+    }
   }
 }
 

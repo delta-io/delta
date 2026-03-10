@@ -3,16 +3,17 @@
 Cross-Spark Version Build Testing
 
 Tests the Delta Lake build system by validating JAR file names for:
-1. Default publish (publishM2) - should publish ALL modules
-2. Spark-specific publish (runOnlyForReleasableSparkModules) - should publish only Spark-dependent modules
+1. Default publish (publishM2) - publishes ALL modules WITH Spark suffix
+2. Backward-compat publish (skipSparkSuffix=true) - publishes WITHOUT suffix
+3. Full cross-version workflow publishes both with and without suffix
 
 Usage:
     python project/tests/test_cross_spark_publish.py
 
 The script will:
-1. Test default publishM2 command publishes all modules for default Spark version
-2. Test runOnlyForReleasableSparkModules command publishes only Spark-dependent modules
-3. Test full cross-version build workflow
+1. Test default publishM2 command publishes all modules WITH Spark suffix
+2. Test skipSparkSuffix=true publishes WITHOUT suffix (backward compatibility)
+3. Test full cross-version build workflow (both with and without suffix)
 4. Exit with status 0 on success, 1 on failure
 """
 
@@ -34,32 +35,41 @@ SPARK_RELATED_JAR_TEMPLATES = [
     "delta-connect-client{suffix}_2.13-{version}.jar",
     "delta-connect-server{suffix}_2.13-{version}.jar",
     "delta-sharing-spark{suffix}_2.13-{version}.jar",
-    "delta-contribs{suffix}_2.13-{version}.jar",
 ]
 
-# Spark-related modules that are only compiled with one Spark version 4.0
-# These modules will get a version suffix based on whether 4.0 is the default version.
-SPARK_4_0_ONLY_JAR_TEMPLATES = [
+# Iceberg-related modules - only built for Spark versions with supportIceberg=true
+# delta-iceberg has no Spark suffix (always delta-iceberg_2.13) because it only supports Spark 4.0
+DELTA_ICEBERG_JAR_TEMPLATES = [
+    "delta-iceberg_2.13-{version}.jar",
+]
+
+# Hudi-related modules - only built for Spark versions with supportHudi=true
+# delta-hudi has no Spark suffix (always delta-hudi_2.13)
+DELTA_HUDI_JAR_TEMPLATES = [
     "delta-hudi_2.13-{version}.jar",
-    "delta-iceberg{suffix}_2.13-{version}.jar",
 ]
 
 # Non-spark-related modules (built once, same for all Spark versions)
 # Template format: {version} = Delta version (e.g., "3.4.0-SNAPSHOT")
 NON_SPARK_RELATED_JAR_TEMPLATES = [
-    # Java-only modules (no Scala version)
     "delta-storage-{version}.jar",
     "delta-kernel-api-{version}.jar",
     "delta-kernel-defaults-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
-    "delta-kernel-unitycatalog-{version}.jar"
+    "delta-kernel-unitycatalog-{version}.jar",
+    "delta-contribs_2.13-{version}.jar",
 ]
 
 
 @dataclass
 class SparkVersionSpec:
-    """Configuration for a specific Spark version."""
+    """Configuration for a specific Spark version.
+
+    Mirrors the SparkVersionSpec in CrossSparkVersions.scala.
+    """
     suffix: str  # e.g., "" for default, "_X.Y" for other versions
+    support_iceberg: bool = False  # Whether this Spark version supports iceberg integration
+    support_hudi: bool = True  # Whether this Spark version supports hudi integration
 
     def __post_init__(self):
         """Generate JAR templates with the suffix applied."""
@@ -69,30 +79,39 @@ class SparkVersionSpec:
             for jar in SPARK_RELATED_JAR_TEMPLATES
         ]
 
-        # Generate Spark-4.0-only JAR templates with the suffix
-        self.spark_4_0_only_jars = [
-            jar.format(suffix=self.suffix, version="{version}")
-            for jar in SPARK_4_0_ONLY_JAR_TEMPLATES
-        ]
+        # Iceberg JARs have no Spark suffix (always delta-iceberg_2.13)
+        if self.support_iceberg:
+            self.iceberg_jars = list(DELTA_ICEBERG_JAR_TEMPLATES)
+        else:
+            self.iceberg_jars = []
+
+        # Hudi JARs have no Spark suffix (always delta-hudi_2.13)
+        if self.support_hudi:
+            self.hudi_jars = list(DELTA_HUDI_JAR_TEMPLATES)
+        else:
+            self.hudi_jars = []
 
         # Non-Spark-related JAR templates are the same for all Spark versions
         self.non_spark_related_jars = list(NON_SPARK_RELATED_JAR_TEMPLATES)
 
     @property
     def all_jars(self) -> List[str]:
-        """All JAR templates for this Spark version (Spark-related + non-Spark-related)."""
-        return self.spark_related_jars + self.non_spark_related_jars + self.spark_4_0_only_jars
+        """All JAR templates for this Spark version."""
+        return self.spark_related_jars + self.non_spark_related_jars + self.iceberg_jars + self.hudi_jars
 
 
 # Spark versions to test (key = full version string, value = spec with suffix)
+# By default, ALL versions get a Spark suffix (e.g., delta-spark_4.0_2.13)
+# skipSparkSuffix=true removes the suffix (used during release for backward compat)
+# These should mirror CrossSparkVersions.scala
 SPARK_VERSIONS: Dict[str, SparkVersionSpec] = {
-    "4.0.1": SparkVersionSpec(""),      # Default Spark version without suffix
-    "4.1.0": SparkVersionSpec("_4.1")
+    "4.0.1": SparkVersionSpec(suffix="_4.0", support_iceberg=True, support_hudi=True),
+    "4.1.0": SparkVersionSpec(suffix="_4.1", support_iceberg=False, support_hudi=False)
 }
 
-# The default Spark version (no suffix in artifact names)
+# The default Spark version
 # This is intentionally hardcoded here to explicitly test the default version.
-DEFAULT_SPARK = "4.0.1"
+DEFAULT_SPARK = "4.1.0"
 
 
 def substitute_xversion(jar_templates: List[str], delta_version: str) -> Set[str]:
@@ -191,11 +210,11 @@ class CrossSparkPublishTest:
         return False
 
     def test_default_publish(self) -> bool:
-        """Default publishM2 should publish ALL modules for default Spark version."""
+        """Default publishM2 should publish ALL modules WITH Spark suffix."""
         spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
 
         print("\n" + "="*70)
-        print(f"TEST: Default publishM2 (should publish ALL modules for Spark {DEFAULT_SPARK})")
+        print(f"TEST: Default publishM2 (should publish ALL modules WITH suffix for Spark {DEFAULT_SPARK})")
         print("="*70)
 
         self.clean_maven_cache()
@@ -206,65 +225,79 @@ class CrossSparkPublishTest:
         ):
             return False
 
+        # Default behavior: all Spark-dependent modules have suffix (e.g., delta-spark_4.0_2.13)
         expected = substitute_xversion(spark_spec.all_jars, self.delta_version)
-        return self.validate_jars(expected, "Default publishM2")
+        return self.validate_jars(expected, "Default publishM2 (with suffix)")
 
-    def test_run_only_for_spark_modules(self) -> bool:
-        """runOnlyForReleasableSparkModules should publish only Spark-dependent modules."""
-        spark_version = "4.0.1"
-        spark_spec = SPARK_VERSIONS[spark_version]
+    def test_backward_compat_publish(self) -> bool:
+        """skipSparkSuffix=true should publish ALL modules WITHOUT Spark suffix."""
+        # Create a spec without suffix for backward compatibility
+        # Uses the same iceberg support as the default Spark version
+        default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
+        spark_spec_no_suffix = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg, support_hudi=default_spark_spec.support_hudi)
 
         print("\n" + "="*70)
-        print(f"TEST: runOnlyForReleasableSparkModules (should publish only Spark-dependent modules for Spark {spark_version})")
+        print(f"TEST: skipSparkSuffix=true (backward compatibility - no suffix)")
         print("="*70)
 
         self.clean_maven_cache()
 
         if not self.run_sbt_command(
-            f"Running: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\"",
-            ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForReleasableSparkModules publishM2"]
+            "Running: build/sbt -DskipSparkSuffix=true publishM2",
+            ["build/sbt", "-DskipSparkSuffix=true", "publishM2"]
         ):
             return False
 
-        expected = substitute_xversion(spark_spec.spark_related_jars, self.delta_version) | \
-            substitute_xversion(spark_spec.spark_4_0_only_jars, self.delta_version)
-
-        return self.validate_jars(expected, "runOnlyForReleasableSparkModules")
+        # Expect artifacts WITHOUT suffix (e.g., delta-spark_2.13 instead of delta-spark_4.0_2.13)
+        expected = substitute_xversion(spark_spec_no_suffix.all_jars, self.delta_version)
+        return self.validate_jars(expected, "skipSparkSuffix=true (backward compat)")
 
     def test_cross_spark_workflow(self) -> bool:
-        """Full cross-Spark workflow (publishM2 + runOnlyForReleasableSparkModules)."""
-        default_spec = SPARK_VERSIONS[DEFAULT_SPARK]
-
+        """Full cross-Spark workflow: backward-compat (no suffix) + all versions (with suffix)."""
         print("\n" + "="*70)
-        print("TEST: Cross-Spark Workflow (all Spark versions)")
+        print("TEST: Cross-Spark Workflow (backward-compat + all non-master with suffix)")
         print("="*70)
 
         self.clean_maven_cache()
 
-        # Step 1: Publish all modules for default Spark version
+        # Step 1: Publish all modules WITHOUT suffix (backward compatibility)
         if not self.run_sbt_command(
-            f"Step 1: build/sbt publishM2 (Spark {DEFAULT_SPARK} - all modules)",
-            ["build/sbt", "publishM2"]
+            "Step 1: build/sbt -DskipSparkSuffix=true publishM2 (backward compat, no suffix)",
+            ["build/sbt", "-DskipSparkSuffix=true", "publishM2"]
         ):
             return False
 
-        # Step 2: Publish only Spark-dependent modules for other Spark versions
+        # Step 2: Publish Spark-dependent modules WITH suffix for each non-master version
         for spark_version, spark_spec in SPARK_VERSIONS.items():
-            if spark_version == DEFAULT_SPARK:
-                continue  # Skip default, already published
+            # Skip master/snapshot versions
+            if "SNAPSHOT" in spark_version:
+                continue
 
             if not self.run_sbt_command(
-                f"Step 2: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\" (Spark {spark_version} - Spark-dependent only)",
+                f"Step 2: build/sbt -DsparkVersion={spark_version} \"runOnlyForReleasableSparkModules publishM2\" (with suffix)",
                 ["build/sbt", f"-DsparkVersion={spark_version}", "runOnlyForReleasableSparkModules publishM2"]
             ):
                 return False
 
-        # Build expected JARs: Spark-related for all versions + non-Spark-related once
+        # Build expected JARs:
+        # 1. All modules WITHOUT suffix (from Step 1 - backward compat)
+        # 2. Spark-dependent modules WITH suffix for each non-master version (from Step 2)
+        # 3. Iceberg/Hudi JARs for supported versions (no Spark suffix)
         expected = set()
-        for spark_spec in SPARK_VERSIONS.values():
+
+        # Step 1: All modules without suffix (uses default Spark version's iceberg support)
+        default_spark_spec = SPARK_VERSIONS[DEFAULT_SPARK]
+        no_suffix_spec = SparkVersionSpec(suffix="", support_iceberg=default_spark_spec.support_iceberg, support_hudi=default_spark_spec.support_hudi)
+        expected.update(substitute_xversion(no_suffix_spec.all_jars, self.delta_version))
+
+        # Step 2: Spark-dependent modules WITH suffix for each non-master version
+        for spark_version, spark_spec in SPARK_VERSIONS.items():
+            if "SNAPSHOT" in spark_version:
+                continue  # Skip master/snapshot
+
             expected.update(substitute_xversion(spark_spec.spark_related_jars, self.delta_version))
-        expected.update(substitute_xversion(SPARK_VERSIONS[DEFAULT_SPARK].non_spark_related_jars, self.delta_version))
-        expected.update(substitute_xversion(SPARK_VERSIONS["4.0.1"].spark_4_0_only_jars, self.delta_version))
+            expected.update(substitute_xversion(spark_spec.iceberg_jars, self.delta_version))
+            expected.update(substitute_xversion(spark_spec.hudi_jars, self.delta_version))
 
         return self.validate_jars(expected, "Cross-Spark Workflow")
 
@@ -556,7 +589,7 @@ def main():
 
         # Run all build tests
         build_test1_passed = build_test.test_default_publish()
-        build_test2_passed = build_test.test_run_only_for_spark_modules()
+        build_test2_passed = build_test.test_backward_compat_publish()
         build_test3_passed = build_test.test_cross_spark_workflow()
 
         # Summary
@@ -569,9 +602,9 @@ def main():
         print(f"  Released Spark Versions Output:         {'✓ PASSED' if script_test3_passed else '✗ FAILED'}")
         print(f"  Get Field Functionality:                {'✓ PASSED' if script_test4_passed else '✗ FAILED'}")
         print("\nPart 2: Cross-Spark Build Tests")
-        print(f"  Default publishM2:                      {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
-        print(f"  runOnlyForReleasableSparkModules:       {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
-        print(f"  Cross-Spark Workflow:                   {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
+        print(f"  Default publishM2 (with suffix):        {'✓ PASSED' if build_test1_passed else '✗ FAILED'}")
+        print(f"  skipSparkSuffix (backward compat):      {'✓ PASSED' if build_test2_passed else '✗ FAILED'}")
+        print(f"  Cross-Spark Workflow (both):            {'✓ PASSED' if build_test3_passed else '✗ FAILED'}")
         print("="*70)
 
         all_tests_passed = (

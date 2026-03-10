@@ -27,9 +27,10 @@ class IcebergRESTCatalogPlanningClientFactory extends ServerSidePlanningClientFa
       spark: SparkSession,
       metadata: ServerSidePlanningMetadata): ServerSidePlanningClient = {
 
-    val endpointUri = metadata.planningEndpointUri
+    val baseUri = metadata.planningEndpointUri
     val token = metadata.authToken.getOrElse("")
+    val catalogName = metadata.catalogName
 
-    new IcebergRESTCatalogPlanningClient(endpointUri, token)
+    new IcebergRESTCatalogPlanningClient(baseUri, catalogName, token)
   }
 }

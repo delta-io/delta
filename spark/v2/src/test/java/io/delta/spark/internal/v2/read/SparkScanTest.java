@@ -2,7 +2,7 @@ package io.delta.spark.internal.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Expression;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -23,12 +24,13 @@ import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-public class SparkScanTest extends SparkDsv2TestBase {
+public class SparkScanTest extends DeltaV2TestBase {
 
   private static String tablePath;
   private static final String tableName = "deltatbl_partitioned";
@@ -92,6 +94,124 @@ public class SparkScanTest extends SparkDsv2TestBase {
   // a full set of cities in the golden table, repsents all partitions
   protected static final List<String> allCities =
       Arrays.asList("city=hz", "city=sh", "city=bj", "city=sz");
+
+  // ===============================================================================================
+  // Tests for getDataSchema, getPartitionSchema, getReadDataSchema, getOptions, getConfiguration
+  // ===============================================================================================
+
+  @Test
+  public void testGetDataSchemaPartitionSchemaReadDataSchemaOptionsConfiguration() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Table schema: (part INT, date STRING, city STRING, name STRING, cnt INT)
+    // Partition columns: (date STRING, city STRING, part INT)
+    // Data columns: (name STRING, cnt INT)
+    StructType dataSchema = scan.getDataSchema();
+    StructType partitionSchema = scan.getPartitionSchema();
+    StructType readDataSchema = scan.getReadDataSchema();
+    CaseInsensitiveStringMap scanOptions = scan.getOptions();
+    Configuration configuration = scan.getConfiguration();
+
+    assertEquals(2, dataSchema.fields().length, "dataSchema should have 2 fields (name, cnt)");
+    assertNotNull(dataSchema.fieldNames());
+    assertTrue(
+        Arrays.asList(dataSchema.fieldNames()).containsAll(Arrays.asList("name", "cnt")),
+        "dataSchema should contain name and cnt");
+
+    assertEquals(
+        3,
+        partitionSchema.fields().length,
+        "partitionSchema should have 3 fields (date, city, part)");
+    assertTrue(
+        Arrays.asList(partitionSchema.fieldNames())
+            .containsAll(Arrays.asList("date", "city", "part")),
+        "partitionSchema should contain date, city, part");
+
+    assertEquals(
+        dataSchema,
+        readDataSchema,
+        "readDataSchema should equal dataSchema without column pruning");
+
+    assertNotNull(scanOptions, "options should not be null");
+    assertEquals(options, scanOptions, "options should match the scan options");
+
+    assertNotNull(configuration, "configuration should not be null");
+    // Verify configuration matches expected: built from same options via Spark session
+    Configuration expectedConf =
+        spark.sessionState().newHadoopConfWithOptions(ScalaUtils.toScalaMap(options));
+    assertEquals(
+        expectedConf.get("fs.defaultFS"),
+        configuration.get("fs.defaultFS"),
+        "fs.defaultFS should match expected");
+    assertEquals(
+        expectedConf.get("fs.default.name"),
+        configuration.get("fs.default.name"),
+        "fs.default.name should match expected");
+  }
+
+  @Test
+  public void testGetTablePathReturnsTablePath() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    String retrievedPath = scan.getTablePath();
+    assertNotNull(retrievedPath, "getTablePath should not return null");
+    // getTablePath returns file URI with trailing slash; tablePath is from tempDir
+    String expectedUri = new File(tablePath).toURI().toString();
+    String expectedPath = expectedUri.endsWith("/") ? expectedUri : expectedUri + "/";
+    assertEquals(
+        expectedPath,
+        retrievedPath,
+        "getTablePath should return path matching table location (with trailing slash)");
+  }
+
+  @Test
+  public void testGetConfigurationWithHadoopOptions() {
+    // Pass Hadoop options and verify they appear in the returned Configuration
+    Map<String, String> optionsWithHadoop = new HashMap<>();
+    optionsWithHadoop.put("fs.file.impl.disable.cache", "true");
+    optionsWithHadoop.put("dfs.replication", "2");
+    CaseInsensitiveStringMap optionsWithHadoopMap = new CaseInsensitiveStringMap(optionsWithHadoop);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(optionsWithHadoopMap);
+    SparkScan scan = (SparkScan) builder.build();
+    Configuration configuration = scan.getConfiguration();
+
+    assertEquals(
+        "true",
+        configuration.get("fs.file.impl.disable.cache"),
+        "Hadoop option fs.file.impl.disable.cache should flow through to Configuration");
+    assertEquals(
+        "2",
+        configuration.get("dfs.replication"),
+        "Hadoop option dfs.replication should flow through to Configuration");
+  }
+
+  @Test
+  public void testGetReadDataSchemaWithColumnPruning() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("date", DataTypes.StringType)
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    StructType dataSchema = scan.getDataSchema();
+    StructType readDataSchema = scan.getReadDataSchema();
+
+    assertEquals(2, dataSchema.fields().length, "dataSchema should still have 2 fields");
+    assertEquals(
+        1,
+        readDataSchema.fields().length,
+        "readDataSchema should have 1 field (name) after pruning cnt");
+    assertEquals("name", readDataSchema.fields()[0].name());
+  }
 
   @Test
   public void testDPP_singleFilter() throws Exception {
@@ -228,11 +348,15 @@ public class SparkScanTest extends SparkDsv2TestBase {
     // make a copy for comparison after DPP
     beforeDppFiles = new ArrayList<>(beforeDppFiles);
     long beforeDppTotalBytes = getTotalBytes(sparkScan);
+    long beforeDppEstimatedSize = getEstimatedSizeInBytes(sparkScan);
     assert (beforeDppFiles.size() == 5);
+    // Without column pruning, estimatedSizeInBytes should equal totalBytes
+    assertEquals(beforeDppTotalBytes, beforeDppEstimatedSize);
 
     sparkScan.filter(runtimeFilters);
     List<PartitionedFile> afterDppFiles = getPartitionedFiles(sparkScan);
     long afterDppTotalBytes = getTotalBytes(sparkScan);
+    long afterDppEstimatedSize = getEstimatedSizeInBytes(sparkScan);
     assert (beforeDppFiles.containsAll(afterDppFiles));
     assert (beforeDppTotalBytes >= afterDppTotalBytes);
 
@@ -251,6 +375,8 @@ public class SparkScanTest extends SparkDsv2TestBase {
     assertEquals(expectedPartitionFilesAfterDpp.size(), afterDppFiles.size());
     assertEquals(new HashSet<>(expectedPartitionFilesAfterDpp), new HashSet<>(afterDppFiles));
     assertEquals(expectedTotalBytesAfterDpp, afterDppTotalBytes);
+    // Without column pruning, estimatedSizeInBytes should equal totalBytes after filtering too
+    assertEquals(afterDppTotalBytes, afterDppEstimatedSize);
   }
 
   private static List<PartitionedFile> getPartitionedFiles(SparkScan scan) throws Exception {
@@ -263,6 +389,13 @@ public class SparkScanTest extends SparkDsv2TestBase {
   private static long getTotalBytes(SparkScan scan) throws Exception {
     scan.estimateStatistics(); // ensurePlanned
     Field field = SparkScan.class.getDeclaredField("totalBytes");
+    field.setAccessible(true);
+    return (long) field.get(scan);
+  }
+
+  private static long getEstimatedSizeInBytes(SparkScan scan) throws Exception {
+    scan.estimateStatistics(); // ensurePlanned
+    Field field = SparkScan.class.getDeclaredField("estimatedSizeInBytes");
     field.setAccessible(true);
     return (long) field.get(scan);
   }
@@ -312,7 +445,7 @@ public class SparkScanTest extends SparkDsv2TestBase {
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
         "The following streaming options are not supported: [readchangefeed]. "
-            + "Supported options are: [startingVersion, maxFilesPerTrigger, maxBytesPerTrigger].",
+            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger].",
         exception.getMessage());
   }
 
@@ -387,6 +520,293 @@ public class SparkScanTest extends SparkDsv2TestBase {
     SparkScan scan2 = (SparkScan) builder2.build();
 
     // Same options but different filters should not be equal and hashCodes should differ
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  // ================================================================================================
+  // Tests for estimated size with column projection
+  // ================================================================================================
+
+  @Test
+  public void testEstimatedSizeMatchesStatistics() throws Exception {
+    // Test that estimateStatistics().sizeInBytes() returns the estimatedSizeInBytes field
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    long estimatedSizeFromStats = scan.estimateStatistics().sizeInBytes().getAsLong();
+    long estimatedSizeFromField = getEstimatedSizeInBytes(scan);
+
+    assertEquals(estimatedSizeFromField, estimatedSizeFromStats);
+  }
+
+  @Test
+  public void testEstimatedSizeWithColumnPruning() throws Exception {
+    // Test that with column pruning, estimatedSizeInBytes is computed correctly
+    // Table schema: (part INT, date STRING, city STRING, name STRING, cnt INT)
+    // Partition columns: (date STRING, city STRING, part INT)
+    // Data columns: (name STRING, cnt INT)
+    //
+    // Formula: estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize
+    // Where:
+    //   ROW_OVERHEAD = 8
+    //   dataSchema.defaultSize() = 20 (STRING) + 4 (INT) = 24
+    //   partitionSchema.defaultSize() = 20 + 20 + 4 = 44
+    //   fullSchemaRowSize = 8 + 24 + 44 = 76
+    //
+    // With pruning to only 'name' column:
+    //   readDataSchema.defaultSize() = 20 (STRING only)
+    //   readSchema().defaultSize() = 20 + 44 = 64
+    //   outputRowSize = 8 + 64 = 72
+    //   estimatedBytes = (totalBytes * 72) / 76
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+
+    // Prune columns to only include 'name' (a data column) and partition columns
+    // This simulates: SELECT name, date, city, part FROM table
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType) // only one data column
+            .add("date", DataTypes.StringType) // partition columns are always included
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    long totalBytes = getTotalBytes(scan);
+    long estimatedSize = getEstimatedSizeInBytes(scan);
+
+    // Calculate expected estimated size using the formula
+    // outputRowSize = 8 + 64 = 72, fullSchemaRowSize = 8 + 24 + 44 = 76
+    // Note: We don't use Math.max(1, ...) here because totalBytes is guaranteed to be large enough
+    // (parquet files with actual data) that the division result won't be zero.
+    long expectedEstimatedSize = (totalBytes * 72) / 76;
+
+    assertTrue(totalBytes > 0, "totalBytes should be positive");
+    assertEquals(
+        expectedEstimatedSize,
+        estimatedSize,
+        String.format(
+            "estimatedSize should be (totalBytes * 72) / 76 = (%d * 72) / 76 = %d",
+            totalBytes, expectedEstimatedSize));
+  }
+
+  @Test
+  public void testEstimatedSizeWithColumnPruningAndFiltering() throws Exception {
+    // Test that column pruning and runtime filtering work together correctly
+    // Using same formula as testEstimatedSizeWithColumnPruning:
+    //   estimatedBytes = (totalBytes * 72) / 76
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+
+    // Prune columns to only include 'name' column
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("date", DataTypes.StringType)
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Get initial stats with column pruning
+    long initialTotalBytes = getTotalBytes(scan);
+    long initialEstimatedSize = getEstimatedSizeInBytes(scan);
+
+    // Verify initial estimated size matches formula
+    // Note: No Math.max(1, ...) needed - totalBytes from parquet files is large enough
+    long expectedInitialEstimated = (initialTotalBytes * 72) / 76;
+    assertEquals(
+        expectedInitialEstimated,
+        initialEstimatedSize,
+        "Initial estimatedSize should match formula");
+
+    // Apply a runtime filter
+    scan.filter(new Predicate[] {cityPredicate}); // city=hz
+
+    // After filtering, verify both values are updated correctly
+    long afterFilterTotalBytes = getTotalBytes(scan);
+    long afterFilterEstimatedSize = getEstimatedSizeInBytes(scan);
+
+    // Verify estimated size matches formula with new totalBytes
+    long expectedAfterFilterEstimated = (afterFilterTotalBytes * 72) / 76;
+    assertEquals(
+        expectedAfterFilterEstimated,
+        afterFilterEstimatedSize,
+        "After filter, estimatedSize should match formula with new totalBytes");
+
+    // Verify both values were reduced
+    assertTrue(afterFilterTotalBytes < initialTotalBytes, "totalBytes should be reduced");
+    assertTrue(afterFilterEstimatedSize < initialEstimatedSize, "estimatedSize should be reduced");
+  }
+
+  @Test
+  public void testEstimatedSizeZeroAfterFilteringOutAllFiles() throws Exception {
+    // Test that filtering out all files results in zero for both sizes
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Apply filter that matches nothing
+    scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
+
+    long afterFilterTotalBytes = getTotalBytes(scan);
+    long afterFilterEstimatedSize = getEstimatedSizeInBytes(scan);
+
+    assertEquals(0, afterFilterTotalBytes, "totalBytes should be 0 after filtering out all files");
+    assertEquals(
+        0, afterFilterEstimatedSize, "estimatedSize should be 0 after filtering out all files");
+    assertEquals(
+        0,
+        scan.estimateStatistics().sizeInBytes().getAsLong(),
+        "Statistics sizeInBytes should be 0 after filtering out all files");
+  }
+
+  // ================================================================================================
+  // Tests for equals and hashCode with runtime filters
+  // ================================================================================================
+
+  @Test
+  public void testEqualsAndHashCodeWithSameRuntimeFilter() {
+    // Same filter applied to both scans (same instance)
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {cityPredicate});
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithEquivalentRuntimeFilters() {
+    // Equivalent filters (different instances)
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+
+    Predicate cityPredicateCopy =
+        new Predicate(
+            "=",
+            new Expression[] {
+              FieldReference.apply("city"), LiteralValue.apply("hz", DataTypes.StringType)
+            });
+    scan2.filter(new Predicate[] {cityPredicateCopy});
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithMultipleRuntimeFiltersInSameOrder() {
+    // Multiple filters in same order
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate, datePredicate});
+    scan2.filter(new Predicate[] {cityPredicate, datePredicate});
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithIdempotentRuntimeFilters() {
+    // Filter idempotency - applying same filter once vs twice
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {cityPredicate}); // Apply same filter twice
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithSeparateRuntimeFilterCalls() {
+    // Multiple separate filter() calls vs single call with multiple filters
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan1.filter(new Predicate[] {datePredicate});
+    scan2.filter(new Predicate[] {cityPredicate, datePredicate});
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithRuntimeFiltersInDifferentOrder() {
+    // Same filters in different order (order-independent)
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate, datePredicate});
+    scan2.filter(new Predicate[] {datePredicate, cityPredicate});
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithNonPartitionColumnRuntimeFilters() {
+    // Non-partition column predicates should not affect equality
+    // Only partition column predicates should be tracked
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    // cityPredicate is on partition column, dataPredicate is on non-partition column (cnt)
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {cityPredicate, dataPredicate});
+
+    // They should be equal because dataPredicate doesn't produce an evaluator
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testNotEqualsWithDifferentRuntimeFilters() {
+    // Different filters
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan1.filter(new Predicate[] {cityPredicate});
+    scan2.filter(new Predicate[] {datePredicate});
+
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testNotEqualsWithAndWithoutRuntimeFilter() {
+    // One with filter, one without
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    scan2.filter(new Predicate[] {cityPredicate});
+
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
   }

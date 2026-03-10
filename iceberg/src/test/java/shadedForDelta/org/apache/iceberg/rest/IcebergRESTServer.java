@@ -171,6 +171,51 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Get the limit (min-rows-requested) captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public Long getCapturedLimit() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedMinRowsRequested();
+  }
+
+  /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * For test verification.
+   */
+  public Boolean getCapturedCaseSensitive() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedCaseSensitive();
+  }
+
+  /**
+   * Get the request path captured from the most recent /plan request.
+   * Delegates to adapter. For test verification of endpoint construction.
+   */
+  public String getCapturedPlanRequestPath() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedPlanRequestPath();
+  }
+
+  /**
+   * Set test credentials to inject into /plan responses.
+   * Used for testing credential extraction in clients.
+   *
+   * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
+   */
+  public void setTestCredentials(Map<String, String> credentials) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestCredentials(credentials);
+  }
+
+  /**
+   * Set test residual expression to inject into /plan responses.
+   * When set, all FileScanTasks in the response will have this residual expression
+   * instead of the default (alwaysTrue). Used for testing client-side residual validation.
+   *
+   * @param residual The residual expression to inject, or null to use the default
+   */
+  public void setTestResidual(shadedForDelta.org.apache.iceberg.expressions.Expression residual) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestResidual(residual);
+  }
+
+  /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {

@@ -466,6 +466,15 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature CHECKPOINT_PROTECTION_W_FEATURE =
+      new CheckpointProtectionTableFeature();
+
+  private static class CheckpointProtectionTableFeature extends TableFeature.WriterFeature {
+    CheckpointProtectionTableFeature() {
+      super("checkpointProtection", /* minWriterVersion = */ 7);
+    }
+  }
+
   /**
    * Support reading / metadata writes on tables with the feature. Don't support writing new data
    * rows with default values. Don't allow updating the types of columns with default values.
@@ -517,6 +526,15 @@ public class TableFeatures {
 
   static final TableFeature GEOSPATIAL_RW_FEATURE = new GeoSpatialTableFeature();
 
+  public static final TableFeature MATERIALIZE_PARTITION_COLUMNS_W_FEATURE =
+      new MaterializePartitionColumnsFeature();
+
+  private static class MaterializePartitionColumnsFeature extends TableFeature.WriterFeature {
+    MaterializePartitionColumnsFeature() {
+      super("materializePartitionColumns", /* minWriterVersion = */ 7);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -536,6 +554,7 @@ public class TableFeatures {
               ALLOW_COLUMN_DEFAULTS_W_FEATURE,
               APPEND_ONLY_W_FEATURE,
               CATALOG_MANAGED_RW_FEATURE,
+              CHECKPOINT_PROTECTION_W_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -549,6 +568,7 @@ public class TableFeatures {
               IDENTITY_COLUMNS_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               INVARIANTS_W_FEATURE,
+              MATERIALIZE_PARTITION_COLUMNS_W_FEATURE,
               ROW_TRACKING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE,

@@ -575,6 +575,76 @@ public class SparkGoldenTableTest {
   }
 
   @Test
+  public void testVariantTypeTable() {
+    String tablePath = goldenTablePath("spark-variant-checkpoint");
+    Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+
+    // Verify schema: id (long) + 6 variant/nested-variant columns
+    StructType schema = df.schema();
+    assertEquals(7, schema.fields().length);
+    assertEquals(DataTypes.LongType, schema.apply("id").dataType());
+    assertEquals(DataTypes.VariantType, schema.apply("v").dataType());
+    assertEquals(
+        DataTypes.createArrayType(DataTypes.VariantType, true),
+        schema.apply("array_of_variants").dataType());
+    assertEquals(
+        DataTypes.createStructType(
+            new StructField[] {
+              new StructField(
+                  "v", DataTypes.VariantType, true, org.apache.spark.sql.types.Metadata.empty())
+            }),
+        schema.apply("struct_of_variants").dataType());
+    assertEquals(
+        DataTypes.createMapType(DataTypes.StringType, DataTypes.VariantType, true),
+        schema.apply("map_of_variants").dataType());
+
+    // Verify row count: 100 base rows + 2 appended rows
+    assertEquals(102, df.count());
+
+    // Verify id values are readable (non-variant column)
+    List<Row> ids = df.select("id").orderBy("id").limit(3).collectAsList();
+    assertEquals(0L, ids.get(0).getLong(0));
+    assertEquals(0L, ids.get(1).getLong(0));
+    assertEquals(1L, ids.get(2).getLong(0));
+
+    // Verify all variant column values. Each variant value is parse_json('{"key": id}'),
+    // so variant_get(..., '$.key', 'long') must equal id for all rows.
+    // - v:                                  direct variant
+    // - array_of_variants[0]:               first element (indices 1, 3 are null)
+    // - struct_of_variants.v:               struct field
+    // - map_of_variants[CAST(id AS STRING)]: map value by string key
+    // - array_of_struct_of_variants[0].v:   first struct element's variant field
+    // - struct_of_array_of_variants.v[1]:   struct's array field at index 1 (index 0 is null)
+    long matchingRows =
+        df.where(
+                "variant_get(v, '$.key', 'long') = id"
+                    + " AND variant_get(array_of_variants[0], '$.key', 'long') = id"
+                    + " AND variant_get(struct_of_variants.v, '$.key', 'long') = id"
+                    + " AND variant_get(map_of_variants[CAST(id AS STRING)], '$.key', 'long') = id"
+                    + " AND variant_get(array_of_struct_of_variants[0].v, '$.key', 'long') = id"
+                    + " AND variant_get(struct_of_array_of_variants.v[1], '$.key', 'long') = id")
+            .count();
+    assertEquals(102, matchingRows);
+
+    // Verify known null values within variant columns:
+    // - array_of_variants[1] and [3]:          null array elements
+    // - map_of_variants['nullKey']:             null map value
+    // - array_of_struct_of_variants[1].v:       non-null struct but null variant field
+    // - array_of_struct_of_variants[2]:         null struct element
+    // - struct_of_array_of_variants.v[0]:       null first element of struct's array field
+    long nullMatchingRows =
+        df.where(
+                "array_of_variants[1] IS NULL"
+                    + " AND array_of_variants[3] IS NULL"
+                    + " AND map_of_variants['nullKey'] IS NULL"
+                    + " AND array_of_struct_of_variants[1].v IS NULL"
+                    + " AND array_of_struct_of_variants[2] IS NULL"
+                    + " AND struct_of_array_of_variants.v[0] IS NULL")
+            .count();
+    assertEquals(102, nullMatchingRows);
+  }
+
+  @Test
   public void testAllGoldenTables() {
     List<String> tableNames = getAllGoldenTableNames();
     List<String> unsupportedTables =
@@ -598,10 +668,7 @@ public class SparkGoldenTableTest {
             "deltalog-state-reconstruction-from-checkpoint-missing-metadata",
             // [DELTA_STATE_RECOVER_ERROR] The protocol of your Delta table could not be recovered
             // while Reconstructing
-            "deltalog-state-reconstruction-from-checkpoint-missing-protocol",
-            // Answer mismatch
-            "dv-partitioned-with-checkpoint",
-            "dv-with-columnmapping");
+            "deltalog-state-reconstruction-from-checkpoint-missing-protocol");
 
     for (String tableName : tableNames) {
       if (unsupportedTables.contains(tableName)) {

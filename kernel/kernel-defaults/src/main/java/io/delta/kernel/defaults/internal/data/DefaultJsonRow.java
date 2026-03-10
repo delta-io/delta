@@ -25,12 +25,12 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.internal.DefaultKernelUtils;
 import io.delta.kernel.defaults.internal.data.vector.DefaultGenericVector;
 import io.delta.kernel.internal.util.InternalUtils;
+import io.delta.kernel.internal.util.TimestampUtils;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
 import java.sql.Date;
 import java.time.Instant;
 import java.time.OffsetDateTime;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -255,7 +255,7 @@ public class DefaultJsonRow implements Row {
     if (dataType instanceof TimestampType) {
       throwIfTypeMismatch("timestamp", jsonValue.isTextual(), jsonValue);
       Instant time = OffsetDateTime.parse(jsonValue.textValue()).toInstant();
-      return ChronoUnit.MICROS.between(Instant.EPOCH, time);
+      return TimestampUtils.toEpochMicros(time);
     }
 
     if (dataType instanceof TimestampNTZType) {

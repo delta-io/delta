@@ -30,7 +30,8 @@ import io.delta.sharing.client.model.{
   DeltaTableFiles,
   DeltaTableMetadata,
   SingleAction,
-  Table
+  Table,
+  TemporaryCredentials
 }
 
 import org.apache.spark.SparkEnv
@@ -211,6 +212,8 @@ private[spark] class TestClientForDeltaFormatSharing(
       endingVersion.isDefined,
       "endingVersion is not defined. This shouldn't happen in unit test."
     )
+    val tableFullName = s"${table.share}.${table.schema}.${table.name}"
+    TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
     val iterator = SparkEnv.get.blockManager
       .get[String](getBlockId(table.name, s"getFiles_${startingVersion}_${endingVersion.get}"))
       .map(_.data.asInstanceOf[Iterator[String]])
@@ -269,6 +272,12 @@ private[spark] class TestClientForDeltaFormatSharing(
       lines = linesBuilder.result(),
       respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA
     )
+  }
+
+  override def generateTemporaryTableCredential(
+      table: Table,
+      location: Option[String]): TemporaryCredentials = {
+    throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
   }
 
   override def getForStreaming(): Boolean = forStreaming

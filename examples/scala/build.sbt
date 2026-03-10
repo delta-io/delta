@@ -18,8 +18,11 @@ name := "example"
 organization := "com.example"
 organizationName := "example"
 
-val scala213 = "2.13.16"
+val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
+val unityCatalogVersion = "0.4.0"
+val jacksonVersion = "2.15.4"
+
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
   val versionRegex = """.*version\s*:=\s*"([^"]+)".*""".r
@@ -41,9 +44,11 @@ def getMajorMinor(version: String): (Int, Int) = {
         s"Please check https://docs.delta.io/latest/releases.html")
   }
 }
+// Maps Delta version (major, minor) to the compatible Spark version.
+// Used as a fallback for local dev when SPARK_VERSION env var is not set.
 val lookupSparkVersion: PartialFunction[(Int, Int), String] = {
   // TODO: how to run integration tests for multiple Spark versions
-  case (major, minor) if major >= 4 && minor >= 1 => "4.0.1"
+  case (major, minor) if major >= 4 && minor >= 1 => "4.1.0"
   // version 4.0.0
   case (major, minor) if major >= 4 => "4.0.0"
   // versions 3.3.x+
@@ -121,6 +126,15 @@ getSparkPackageSuffix := {
   sys.env.getOrElse("SPARK_PACKAGE_SUFFIX", "")
 }
 
+val getSupportIceberg = settingKey[String](
+  s"get supportIceberg for cross-build artifact name from environment variable SUPPORT_ICEBERG. " +
+  s"This is derived from CrossSparkVersions.scala (single source of truth)."
+)
+
+getSupportIceberg := {
+  sys.env.getOrElse("SUPPORT_ICEBERG", "false")
+}
+
 getIcebergSparkRuntimeArtifactName := {
   val (expMaj, expMin) = getMajorMinor(lookupSparkVersion.apply(
     getMajorMinor(getDeltaVersion.value)))
@@ -138,37 +152,52 @@ lazy val java17Settings = Seq(
   )
 )
 
+// Use SPARK_VERSION env var if set, otherwise fall back to lookupSparkVersion (for local dev)
+def resolveSparkVersion(deltaVersion: String): String = {
+  val envVersion = sys.env.getOrElse("SPARK_VERSION", "")
+  if (envVersion.nonEmpty) envVersion
+  else lookupSparkVersion.apply(getMajorMinor(deltaVersion))
+}
+
 def getLibraryDependencies(
     deltaVersion: String,
     deltaArtifactName: String,
     icebergSparkRuntimeArtifactName: String,
     sparkPackageSuffix: String,
-    scalaBinVersion: String): Seq[ModuleID] = {
-  
+    scalaBinVersion: String,
+    supportIceberg: String): Seq[ModuleID] = {
+
   // Package suffix comes from CrossSparkVersions.scala (single source of truth)
   // e.g., "" for default Spark, "_4.1" for Spark 4.1
   val deltaCoreDep = "io.delta" % s"${deltaArtifactName}${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
-  val deltaIcebergDep = "io.delta" % s"delta-iceberg${sparkPackageSuffix}_${scalaBinVersion}" % deltaVersion
-  
-  Seq(
+  val deltaIcebergDep = "io.delta" % s"delta-iceberg_${scalaBinVersion}" % deltaVersion
+
+  val resolvedSparkVersion = resolveSparkVersion(deltaVersion)
+
+  val baseDeps = Seq(
     deltaCoreDep,
-    "org.apache.spark" %% "spark-sql" % lookupSparkVersion.apply(
-      getMajorMinor(deltaVersion)
-    ),
-    "org.apache.spark" %% "spark-hive" % lookupSparkVersion.apply(
-      getMajorMinor(deltaVersion)
-    ),
+    "org.apache.spark" %% "spark-sql" % resolvedSparkVersion,
+    "org.apache.spark" %% "spark-hive" % resolvedSparkVersion,
     "org.apache.iceberg" % "iceberg-hive-metastore" % icebergVersion
-  ) ++ (getMajorMinor(deltaVersion) match {
-    case (major, _) if major >= 4 =>
-      // Don't include the iceberg dependencies for 4.0.0rc1
-      Seq()
-    case _ =>
-      Seq(
-        deltaIcebergDep,
-        "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
-      )
-  })
+  )
+
+  // Include Iceberg dependencies only if supportIceberg is enabled
+  val icebergDeps = if (supportIceberg == "true") {
+    getMajorMinor(deltaVersion) match {
+      case (major, _) if major >= 4 =>
+        // Don't include the iceberg dependencies for 4.0.0rc1 and later
+        Seq.empty
+      case _ =>
+        Seq(
+          deltaIcebergDep,
+          "org.apache.iceberg" %% icebergSparkRuntimeArtifactName % icebergVersion,
+        )
+    }
+  } else {
+    Seq.empty
+  }
+
+  baseDeps ++ icebergDeps
 }
 
 lazy val root = (project in file("."))
@@ -181,12 +210,44 @@ lazy val root = (project in file("."))
       getDeltaArtifactName.value,
       getIcebergSparkRuntimeArtifactName.value,
       getSparkPackageSuffix.value,
-      scalaBinaryVersion.value),
+      scalaBinaryVersion.value,
+      getSupportIceberg.value),
+    libraryDependencies ++= Seq(
+      "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      ),
+      "io.unitycatalog" % "unitycatalog-server" % unityCatalogVersion excludeAll(
+        ExclusionRule(organization = "com.fasterxml.jackson.core"),
+        ExclusionRule(organization = "com.fasterxml.jackson.module"),
+        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
+        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
+      )
+    ),
+    dependencyOverrides ++= Seq(
+      "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
+      "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion
+    ),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,
     scalacOptions ++= Seq(
       "-deprecation",
       "-feature"
     ),
+    // Conditionally exclude IcebergCompatV2.scala when supportIceberg is "false"
+    Compile / unmanagedSources / excludeFilter := {
+      if (getSupportIceberg.value == "false") {
+        HiddenFileFilter || "IcebergCompatV2.scala"
+      } else {
+        HiddenFileFilter
+      }
+    },
     java17Settings
   )

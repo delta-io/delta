@@ -266,6 +266,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
       "domainMetadata",
       "vacuumProtocolCheck",
       "v2Checkpoint",
+      "checkpointProtection",
       "inCommitTimestamp",
       "clustering",
       "typeWidening",
