@@ -303,7 +303,7 @@ class CatalogOwnedPropertySuite extends QueryTest
     }
   }
 
-  test("[RTAS] replacing an existing catalog-owned table is atomic") {
+  test("[RTAS] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1", "t2") {
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableIdBefore = getUCTableIdFromTable("t1")

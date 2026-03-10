@@ -222,13 +222,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
-      // Fall back to the new descriptor only for catalog-managed create paths where no existing
-      // catalog table is available yet. Replace paths should resolve `existingTableOpt` above so
-      // DeltaLog uses the existing table metadata and location.
-      val deltaLogTableOpt = existingTableOpt.orElse(
+      // For create paths there may be no existing catalog table yet, so fall back to the new
+      // descriptor. For replace paths we expect `existingTableOpt` to be populated, so DeltaLog
+      // is resolved from the existing catalog table rather than the new DDL descriptor.
+      val catalogTableOpt = existingTableOpt.orElse(
         Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, deltaLogTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, catalogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -602,12 +602,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
   /**
-   * Returns an existing Delta table by querying the delegated catalog when SessionCatalog lookup
-   * is not sufficient, for example when SessionCatalog does not surface an existing
-   * catalog-managed table that CREATE OR REPLACE needs to reuse.
+   * Returns an existing Delta table by querying the delegated catalog for Unity Catalog replace
+   * paths. This is needed when [[getExistingTableIfExists]] only checks SessionCatalog, but the
+   * existing table entry is available through the delegated catalog lookup on `ident`.
    *
-   * This is only needed for catalog-managed tables, where the delegated catalog may resolve a
-   * Delta table that is not surfaced through [[getExistingTableIfExists]].
+   * This helper is only used for Unity Catalog.
    */
   private def getExistingTableFromDelegatedCatalog(
       ident: Identifier): Option[CatalogTable] = {

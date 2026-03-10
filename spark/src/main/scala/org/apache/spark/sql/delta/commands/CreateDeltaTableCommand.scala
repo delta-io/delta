@@ -141,13 +141,12 @@ case class CreateDeltaTableCommand(
     val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
       DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
-    // For UC-managed tables, existingTableOpt is usually None because the
-    // session catalog does not own the table. Fall back to tableWithLocation
-    // so DeltaLog resolves through the catalog identifier instead of by path.
-    val catalogTableForDeltaLog = existingTableOpt.orElse(
+    // For catalog-managed tables, the SessionCatalog entry may be absent, so fall back to
+    // `tableWithLocation` and let DeltaLog resolve through the catalog identifier instead of path.
+    val catalogTableOpt = existingTableOpt.orElse(
       Option.when(allowCatalogManaged)(tableWithLocation))
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
-      sparkSession, catalogTableForDeltaLog, tableLocation, fileSystemOptions)
+      sparkSession, catalogTableOpt, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
@@ -759,9 +758,9 @@ case class CreateDeltaTableCommand(
   }
 
   /**
-   * For catalog-managed REPLACE/RTAS, Delta can safely replace data only if the
-   * existing catalog-owned metadata stays unchanged. If the command would change
-   * metadata, fail before writing files instead of drifting from the catalog.
+   * For catalog-managed REPLACE/RTAS, only allow data replacement when the existing table
+   * metadata stays unchanged. If the command would change schema, partitioning, clustering,
+   * comment, or user-visible properties, fail before writing files.
    * TODO: Remove this guard once catalog-managed replace supports atomic metadata sync.
    *
    * @return true if the caller should skip `updateMetadataForNewTableInReplace`.
@@ -827,6 +826,8 @@ case class CreateDeltaTableCommand(
       }
     }
 
+    // Ignore internal/catalog-generated keys when checking whether user-visible table properties
+    // changed across the replace.
     val ignoredKeys =
       Set(
         TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature),
@@ -891,9 +892,8 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
-      // If this catalog-managed replace preserves existing metadata, skip all metadata updates
-      // below and keep using the snapshot metadata; otherwise this helper throws when the command
-      // tries to change metadata.
+      // If this catalog-managed replace preserves metadata, skip the metadata rewrite below;
+      // otherwise this helper throws.
       if (catalogManagedReplacePreservesMetadata(
           sparkSession, txn, tableDesc, schema)) {
         return
@@ -923,8 +923,8 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    // For catalog-managed REPLACE, pass the catalog table into the transaction so it can reuse
-    // the existing catalog-backed table state.
+    // For catalog-managed replace on an existing table, pass the catalog table descriptor into
+    // transaction startup so the transaction is initialized against that existing table entry.
     val catalogTableOpt = if (allowCatalogManaged && isReplace && deltaLog.tableExists) {
       Some(tableWithLocation)
     } else {

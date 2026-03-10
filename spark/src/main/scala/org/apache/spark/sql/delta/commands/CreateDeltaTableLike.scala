@@ -94,15 +94,17 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     val tableExistsInCatalog = existingTableOpt.isDefined
-    def updateExistingTableCatalog(): Unit = {
+    // Update the external catalog schema for an already-existing table after the Delta commit.
+    // This is a post-commit catalog sync step; it is not the mechanism that makes replace atomic.
+    def updateExistingTableCatalogSchema(): Unit = {
       if (!allowCatalogManaged) {
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       }
     }
     // For catalog-managed CREATE OR REPLACE, skip the catalog update when the table already
-    // exists and the Delta commit did not change metadata. In that case there is nothing new to
-    // write back to the catalog. This intentionally also skips the HMS schema-alter path below,
-    // because catalog-managed tables do not rely on that flow here.
+    // exists and the committed Delta metadata already matches `snapshot.metadata`. In that case
+    // there is nothing new to write back to the catalog. This intentionally also skips the HMS
+    // schema-alter path below, because catalog-managed tables do not rely on that flow here.
     if (allowCatalogManaged && operation == TableCreationModes.CreateOrReplace &&
         tableExistsInCatalog && didNotChangeMetadata) {
       return
@@ -123,10 +125,10 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
           throw DeltaErrors.cannotReplaceMissingTableException(ident)
         }
-        updateExistingTableCatalog()
+        updateExistingTableCatalogSchema()
       case TableCreationModes.CreateOrReplace =>
         if (tableExistsInCatalog) {
-          updateExistingTableCatalog()
+          updateExistingTableCatalogSchema()
         } else {
           createTableFunc match {
             case Some(createFunc) =>
