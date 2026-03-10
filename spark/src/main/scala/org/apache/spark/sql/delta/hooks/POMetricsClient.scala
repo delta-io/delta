@@ -16,8 +16,12 @@
 
 package org.apache.spark.sql.delta.hooks
 
+import scala.collection.JavaConverters._
+
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.util.JsonUtils
 
+import io.unitycatalog.client.auth.TokenProvider
 import org.apache.http.HttpHeaders
 import org.apache.http.client.config.RequestConfig
 import org.apache.http.client.methods.HttpPost
@@ -39,8 +43,7 @@ import org.apache.spark.sql.SparkSession
  */
 object POMetricsClient {
   private val CATALOG_URI_CONF_SUFFIX = ".uri"
-  private val CATALOG_TOKEN_CONF_PREFIX = "spark.sql.catalog."
-  private val CATALOG_TOKEN_CONF_SUFFIX = ".token"
+  private val CATALOG_CONF_PREFIX = "spark.sql.catalog."
   private val PO_METRICS_ENDPOINT_SUFFIX = "/api/2.1/unity-catalog/delta/preview/metrics"
   // Short timeout for best-effort delivery; hook must not block commits
   private val HTTP_TIMEOUT_MS = 5000L
@@ -103,7 +106,7 @@ object POMetricsClient {
   }
 
   private def getEndpointUrl(spark: SparkSession, catalogName: String): String = {
-    val uriKey = s"$CATALOG_TOKEN_CONF_PREFIX$catalogName$CATALOG_URI_CONF_SUFFIX"
+    val uriKey = s"$CATALOG_CONF_PREFIX$catalogName$CATALOG_URI_CONF_SUFFIX"
     spark.conf.getOption(uriKey) match {
       case Some(uri) if uri.nonEmpty =>
         s"${uri.stripSuffix("/")}$PO_METRICS_ENDPOINT_SUFFIX"
@@ -114,21 +117,17 @@ object POMetricsClient {
   }
 
   private def getAuthToken(spark: SparkSession, catalogName: Option[String]): String = {
-    val token = catalogName
-      .map(name => s"$CATALOG_TOKEN_CONF_PREFIX$name$CATALOG_TOKEN_CONF_SUFFIX")
-      .flatMap(spark.conf.getOption)
-      .filter(_.nonEmpty)
-
-    token match {
-      case Some(token) if token.nonEmpty => token
-      case _ =>
-        val keyHint = catalogName
-          .map(name => s"$CATALOG_TOKEN_CONF_PREFIX$name$CATALOG_TOKEN_CONF_SUFFIX")
-          .getOrElse(
-          s"$CATALOG_TOKEN_CONF_PREFIX<catalog>$CATALOG_TOKEN_CONF_SUFFIX")
-        throw new IllegalArgumentException(
-          s"PO metrics auth token not configured. Set $keyHint")
-    }
+    val catalog = catalogName.getOrElse(
+      throw new IllegalArgumentException(
+        "Catalog name required for PO metrics auth resolution"))
+    val configMap = UCCommitCoordinatorBuilder.getCatalogConfigMap(spark)
+    val config = configMap.get(catalog).getOrElse(
+      throw new IllegalArgumentException(
+        s"Unity Catalog configuration not found for catalog '$catalog'. " +
+        "Configure spark.sql.catalog.<catalog>.uri and auth (auth.type/auth.token or " +
+        "legacy spark.sql.catalog.<catalog>.token)."))
+    val tokenProvider = TokenProvider.create(config.authConfig.asJava)
+    tokenProvider.accessToken()
   }
 
 }

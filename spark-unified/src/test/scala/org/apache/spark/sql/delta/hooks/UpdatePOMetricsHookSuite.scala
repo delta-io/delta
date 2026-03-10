@@ -47,6 +47,9 @@ class UpdatePOMetricsHookSuite extends QueryTest
       mockServer.start()
 
       spark.conf.set(
+        s"spark.sql.catalog.$TEST_CATALOG_NAME",
+        "io.unitycatalog.spark.UCSingleCatalog")
+      spark.conf.set(
         s"spark.sql.catalog.$TEST_CATALOG_NAME.uri",
         s"http://localhost:${mockServer.getPort()}")
       spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.token", "test-token-123")
@@ -71,6 +74,43 @@ class UpdatePOMetricsHookSuite extends QueryTest
     }
   }
 
+  test("POMetricsClient: auth.type=static with auth.token (new auth.* format)") {
+    val authStaticCatalog = "auth_static_catalog" // distinct from TEST_CATALOG_NAME to avoid
+    // config leakage between tests (SharedSparkSession reuses spark.conf)
+    val mockServer = new SimpleMockServer(0)
+    try {
+      mockServer.setResponseCode(200)
+      mockServer.start()
+
+      spark.conf.set(
+        s"spark.sql.catalog.$authStaticCatalog",
+        "io.unitycatalog.spark.UCSingleCatalog")
+      spark.conf.set(
+        s"spark.sql.catalog.$authStaticCatalog.uri",
+        s"http://localhost:${mockServer.getPort()}")
+      spark.conf.set(
+        s"spark.sql.catalog.$authStaticCatalog.auth.type",
+        "static")
+      spark.conf.set(
+        s"spark.sql.catalog.$authStaticCatalog.auth.token",
+        "auth-static-token-456")
+
+      val request = ReportDeltaMetricsRequest(
+        tableId = "auth-test-id",
+        report = CommitReportEnvelope(CommitReport())
+      )
+      POMetricsClient.sendMetrics(spark, request, catalogName = Some(authStaticCatalog))
+
+      assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
+      val authHeader = mockServer.getLastHeaders().get("Authorization")
+      assert(authHeader.isDefined, "Authorization header should be present")
+      assert(authHeader.get == "Bearer auth-static-token-456",
+        "Auth token from auth.token must match")
+    } finally {
+      mockServer.stop()
+    }
+  }
+
   test("run(): fires HTTP POST for UC-managed table with skeleton payload") {
     val mockServer = new SimpleMockServer(0)
     try {
@@ -82,6 +122,9 @@ class UpdatePOMetricsHookSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
         val snapshot = deltaLog.snapshot
 
+        spark.conf.set(
+          "spark.sql.catalog.spark_catalog",
+          "io.unitycatalog.spark.UCSingleCatalog")
         spark.conf.set(
           "spark.sql.catalog.spark_catalog.uri",
           s"http://localhost:${mockServer.getPort()}")
