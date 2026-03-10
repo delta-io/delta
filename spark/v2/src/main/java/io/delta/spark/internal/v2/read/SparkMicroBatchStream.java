@@ -895,10 +895,8 @@ public class SparkMicroBatchStream
     }
 
     // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreFileDeletion (deprecated)
-    // A check on the source table that disallows changes on the source data.
-    boolean shouldAllowChanges = false;
     // A check on the source table that disallows commits that only include deletes to the data.
-    boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
+    boolean shouldAllowDeletes = options.ignoreDeletes();
 
     boolean seenFileAdd = false;
     Metadata metadataAction = null;
@@ -909,19 +907,19 @@ public class SparkMicroBatchStream
         ColumnarBatch batch = actionsIter.next();
         int numRows = batch.getSize();
         for (int rowId = 0; rowId < numRows; rowId++) {
-          // Track AddFile(dataChange=true); record if there is a file add.
+          // Track AddFile(dataChange=true)
           Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
           if (addOpt.isPresent()) {
             seenFileAdd = true;
           }
 
-          // Track RemoveFile(dataChange=true); record the first path for error reporting.
+          // Track RemoveFile(dataChange=true)
           Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
           if (removeOpt.isPresent() && removeFileActionPath == null) {
             removeFileActionPath = removeOpt.get().getPath();
           }
 
-          // Check Metadata for read-incompatible schema changes.
+          // Track Metadata for read-incompatible schema changes.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
             Metadata metadata = metadataOpt.get();
@@ -948,8 +946,9 @@ public class SparkMicroBatchStream
     }
 
     if (removeFileActionPath != null) {
-      if (seenFileAdd && !shouldAllowChanges) {
+      if (seenFileAdd) {
         // Commit contains data changes (adds + removes) and changes are disallowed.
+        // TODO(#5319): log CommitInfo action's operation instead of path
         throw (RuntimeException)
             DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
       } else if (!seenFileAdd && !shouldAllowDeletes) {

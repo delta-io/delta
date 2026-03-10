@@ -1820,7 +1820,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
+  testQuietly("deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = loadStreamWithOptions(inputDir.toString, Map.empty)
@@ -1862,7 +1862,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath") {
+  testQuietly("deltaSourceIgnoreDeleteError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = loadStreamWithOptions(inputDir.toString, Map.empty)
@@ -1896,6 +1896,83 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
       assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
+    }
+  }
+
+  test("streaming with ignoreDeletes = true skips delete-only commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Write initial data
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        "startingVersion" -> "0"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3).map(Row(_)))
+
+        // Delete all rows: produces only RemoveFile actions
+        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+        // Append new data after the delete
+        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        q.processAllAvailable()
+
+        // The delete commit should be silently skipped; only inserts are processed
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5).map(Row(_)))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  testQuietly("streaming with ignoreDeletes = true still fails on change commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true"))
+      df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+        .processAllAvailable()
+
+      // Overwrite produces both AddFile and RemoveFile actions (a change commit)
+      Seq(4, 5, 6).toDF("x")
+        .write
+        .mode("overwrite")
+        .format("delta")
+        .save(inputDir.toString)
+
+      val e = intercept[StreamingQueryException] {
+        val q = df.writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.toString)
+          .start(outputDir.toString)
+
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      assert(e.getCause.isInstanceOf[UnsupportedOperationException])
+      assert(e.getCause.getMessage.contains(
+        "This is currently not supported. If this is going to happen regularly and you are okay" +
+          " to skip changes, set the option 'skipChangeCommits' to 'true'."
+      ))
     }
   }
 

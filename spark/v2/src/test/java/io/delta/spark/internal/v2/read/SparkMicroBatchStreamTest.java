@@ -944,7 +944,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                   String sourceTableName = "merge_source_" + System.nanoTime();
                   sql(
                       "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
-                      sourceTableName, tempDir.getAbsolutePath() + "_source");
+                      sourceTableName, new File(tempDir, "source").getAbsolutePath());
                   sql("INSERT INTO %s VALUES (2, 'UpdatedUser2'), (4, 'User4')", sourceTableName);
 
                   // Perform MERGE operation
@@ -1186,7 +1186,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                   String sourceTableName = "merge_src_ign_del_" + System.nanoTime();
                   sql(
                       "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
-                      sourceTableName, tempDir.getAbsolutePath() + "_source");
+                      sourceTableName, new File(tempDir, "source").getAbsolutePath());
                   sql("INSERT INTO %s VALUES (2, 'UpdatedUser2'), (4, 'User4')", sourceTableName);
                   sql(
                       "MERGE INTO %s AS target USING %s AS source ON target.id = source.id "
