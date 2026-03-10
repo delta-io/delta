@@ -46,7 +46,9 @@ class UpdatePOMetricsHookSuite extends QueryTest
       mockServer.setResponseCode(200)
       mockServer.start()
 
-      spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.uri", s"http://localhost:${mockServer.getPort()}")
+      spark.conf.set(
+        s"spark.sql.catalog.$TEST_CATALOG_NAME.uri",
+        s"http://localhost:${mockServer.getPort()}")
       spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.token", "test-token-123")
 
       val request = ReportDeltaMetricsRequest(
@@ -80,7 +82,9 @@ class UpdatePOMetricsHookSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
         val snapshot = deltaLog.snapshot
 
-        spark.conf.set("spark.sql.catalog.spark_catalog.uri", s"http://localhost:${mockServer.getPort()}")
+        spark.conf.set(
+          "spark.sql.catalog.spark_catalog.uri",
+          s"http://localhost:${mockServer.getPort()}")
         spark.conf.set("spark.sql.catalog.spark_catalog.token", "smoke-token")
 
         val catalogTable = CatalogTable(
