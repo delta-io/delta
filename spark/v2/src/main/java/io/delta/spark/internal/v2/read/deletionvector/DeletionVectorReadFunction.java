@@ -66,7 +66,6 @@ public class DeletionVectorReadFunction
   }
 
   @Override
-  @SuppressWarnings("unchecked")
   public Iterator<InternalRow> apply(PartitionedFile file) {
     if (isVectorizedReader) {
       return applyBatch(file);
@@ -96,10 +95,11 @@ public class DeletionVectorReadFunction
   private Iterator<InternalRow> applyBatch(PartitionedFile file) {
     int dvColumnIndex = dvSchemaContext.getDvColumnIndex();
 
-    // Cast needed: in vectorized mode Spark passes ColumnarBatch via type erasure as InternalRow.
+    // In vectorized mode Spark passes ColumnarBatch via type erasure as InternalRow.
+    Iterator<Object> baseIterator = (Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file);
     return (Iterator<InternalRow>)
         (Iterator<?>)
-            CloseableIterator.wrap((Iterator<Object>) (Iterator<?>) baseReadFunc.apply(file))
+            CloseableIterator.wrap(baseIterator)
                 .mapCloseable(
                     item -> {
                       if (item instanceof ColumnarBatch) {
@@ -118,7 +118,10 @@ public class DeletionVectorReadFunction
     return new ColumnarBatch(filteredColumns, activeRows.length);
   }
 
-  /** Build projected output columns by dropping the DV column and applying active row mapping. */
+  /**
+   * Build projected output columns by dropping the DV column and applying active row mapping. The
+   * excluded DV column's lifecycle is managed by the base Spark vectorized reader, not by us.
+   */
   private static ColumnVector[] buildFilteredColumns(
       ColumnarBatch batch, int dvColumnIndex, int[] activeRows) {
     ColumnVector[] filteredColumns = new ColumnVector[batch.numCols() - 1];

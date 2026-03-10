@@ -212,7 +212,7 @@ public class PartitionUtils {
             .orElse(readDataSchema);
 
     boolean enableVectorizedReader =
-        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
+        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, finalReadDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
