@@ -81,9 +81,22 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  // TODO: Add saveAsTable coverage (append, overwrite, replaceWhere) once UCSingleCatalog supports
-  // REPLACE TABLE AS SELECT (RTAS). Currently, saveAsTable with mode("overwrite") routes through
-  // Spark's V2 catalog path as RTAS, which throws UnsupportedOperationException in UCSingleCatalog.
+  @TestAllTableTypes
+  public void testSaveAsTableAppend(TableType tableType) throws Exception {
+    withNewTable(
+        "save_as_table_append_test",
+        "id INT",
+        tableType,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+          intDf(4, 5).write().format("delta").mode("append").saveAsTable(tableName);
+          check(tableName, List.of(row("1"), row("2"), row("3"), row("4"), row("5")));
+        });
+  }
+
+  // TODO: Add saveAsTable overwrite/replaceWhere coverage once UCSingleCatalog supports REPLACE
+  // TABLE AS SELECT (RTAS). Currently, saveAsTable with mode("overwrite") routes through Spark's
+  // V2 catalog path as RTAS, which throws UnsupportedOperationException in UCSingleCatalog.
 
   @Test
   public void testSaveByPathBlockedForManagedTable() throws Exception {
@@ -105,9 +118,6 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
                       assertThat(e.getMessage())
                           .containsAnyOf(
                               "Unable to load credentials",
-                              "AccessDeniedException",
-                              "Access Denied",
-                              "access denied",
                               "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
                               "Path-based access is not allowed"));
           check(tableName, List.of(row("1"), row("2"), row("3")));
@@ -166,19 +176,27 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
   public void testWriteToOverwritePartitions(TableType tableType) throws Exception {
     withNewTable(
         "write_to_overwrite_partitions_test",
-        "id INT",
+        "id INT, category STRING",
+        "category",
         tableType,
         tableName -> {
-          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
-          intDf(9).writeTo(tableName).overwritePartitions();
-          check(tableName, List.of(row("9")));
+          sql("INSERT INTO %s VALUES (1, 'A'), (2, 'A'), (3, 'B')", tableName);
+          spark()
+              .createDataFrame(
+                  List.of(RowFactory.create(9, "A")),
+                  new StructType()
+                      .add("id", DataTypes.IntegerType)
+                      .add("category", DataTypes.StringType))
+              .writeTo(tableName)
+              .overwritePartitions();
+          // Only partition 'A' is replaced; partition 'B' remains untouched.
+          check(tableName, List.of(row("3", "B"), row("9", "A")));
         });
   }
 
   @Test
   public void testWriteToCreateNewManagedTable() throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = uc.catalogName() + "." + uc.schemaName() + ".write_to_create_test";
+    String tableName = fullTableName("write_to_create_test");
     try {
       intDf(1, 2)
           .writeTo(tableName)

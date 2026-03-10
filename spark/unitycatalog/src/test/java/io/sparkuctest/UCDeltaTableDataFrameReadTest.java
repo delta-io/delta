@@ -24,11 +24,12 @@ import java.util.stream.Collectors;
 import org.apache.spark.sql.DataFrameReader;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.junit.jupiter.api.Assertions;
 
 /**
  * DataFrame read test suite for Delta Table operations through Unity Catalog.
  *
- * <p>Covers spark.table(), DataFrameReader, time travel, column pruning, and filter pushdown. Tests
+ * <p>Covers spark.table(), DataFrameReader, time travel, column pruning, and filter. Tests
  * run against both EXTERNAL and MANAGED table types.
  */
 public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTest {
@@ -107,9 +108,75 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
   }
 
   @TestAllTableTypes
-  public void testFilterPushdown(TableType tableType) throws Exception {
+  public void testReadViaPath(TableType tableType) throws Exception {
     withNewTable(
-        "df_filter_pushdown",
+        "df_read_via_path",
+        "id INT",
+        tableType,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+          String tablePath =
+              sql("DESCRIBE EXTENDED %s", tableName).stream()
+                  .filter(row -> row.size() >= 2 && "Location".equals(row.get(0)))
+                  .map(row -> row.get(1))
+                  .findFirst()
+                  .orElseThrow(() -> new AssertionError("Could not retrieve table location"));
+
+          if (tableType == TableType.MANAGED) {
+            Assertions.assertThrows(
+                Exception.class,
+                () -> spark().read().format("delta").load(tablePath).collect(),
+                "Path-based access should fail for managed tables");
+          } else {
+            S3CredentialFileSystem.credentialCheckEnabled = false;
+            try {
+              assertThat(
+                      ids(spark().read().format("delta").load(tablePath).orderBy("id")))
+                  .containsExactly(1, 2, 3);
+            } finally {
+              S3CredentialFileSystem.credentialCheckEnabled = true;
+            }
+          }
+        });
+  }
+
+  @TestAllTableTypes
+  public void testChangeDataFeedViaDataFrameAPI(TableType tableType) throws Exception {
+    withNewTable(
+        "df_cdf_reader",
+        "id INT",
+        null,
+        tableType,
+        "'delta.enableChangeDataFeed'='true'",
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+          sql("INSERT INTO %s VALUES (4), (5)", tableName);
+          long currentVersion = currentVersion(tableName);
+          List<Row> rows =
+              deltaDFReader()
+                  .option("readChangeFeed", "true")
+                  .option("startingVersion", currentVersion)
+                  .table(tableName)
+                  .orderBy("id")
+                  .collectAsList();
+          assertThat(rows.stream().map(r -> r.getInt(0)).collect(Collectors.toList()))
+              .containsExactly(4, 5);
+        });
+  }
+
+  @TestAllTableTypes
+  public void testEmptyTableRead(TableType tableType) throws Exception {
+    withNewTable(
+        "df_empty_read",
+        "id INT",
+        tableType,
+        tableName -> assertThat(spark().table(tableName).collectAsList()).isEmpty());
+  }
+
+  @TestAllTableTypes
+  public void testFilter(TableType tableType) throws Exception {
+    withNewTable(
+        "df_filter",
         "id INT, category STRING",
         tableType,
         tableName -> {
@@ -128,11 +195,4 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
     return df.collectAsList().stream().map(r -> r.getInt(0)).collect(Collectors.toList());
   }
 
-  private long currentVersion(String tableName) {
-    return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
-  }
-
-  private String currentTimestamp(String tableName) {
-    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
-  }
 }
