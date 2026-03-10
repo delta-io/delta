@@ -59,6 +59,11 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "add column: restarting with stale DataFrame should fail",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
+    "drop column: should fail with non-additive schema change error",
+    "drop column: should succeed with unsafe column mapping schema change flag enabled",
+    "rename column: should fail with non-additive schema change error",
+    "rename column: should throw schema change error with unsafe flag enabled",
+    "type widening: should fail with non-additive schema change error when enable schema tracking",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
