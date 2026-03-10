@@ -425,6 +425,26 @@ trait GeneratedColumnSuiteBase
     }
   }
 
+  test("UPDATE with type-incompatible SET on table with generated columns gives correct error") {
+    withTableName("update_type_mismatch_generated") { table =>
+      createTable(table, None, "c1 INT, arr ARRAY<INT>, g INT", Map("g" -> "c1 + 10"), Nil)
+      // With fix enabled: the correct type mismatch error is surfaced.
+      withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_REPLACE_UNRESOLVED_EXPR.key -> "true") {
+        val ex = intercept[AnalysisException] {
+          sql(s"UPDATE $table SET arr = map('key', 'val')")
+        }
+        assert(ex.getErrorClass === "DATATYPE_MISMATCH.CAST_WITHOUT_SUGGESTION")
+      }
+      // With fix disabled: the old misleading error is produced.
+      withSQLConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_REPLACE_UNRESOLVED_EXPR.key -> "false") {
+        val ex = intercept[AnalysisException] {
+          sql(s"UPDATE $table SET arr = map('key', 'val')")
+        }
+        assert(ex.getErrorClass === "_LEGACY_ERROR_TEMP_DELTA_0012")
+      }
+    }
+  }
+
   test("update a struct source column") {
     withTableName("update_struct_column") { table =>
       createTable(table,

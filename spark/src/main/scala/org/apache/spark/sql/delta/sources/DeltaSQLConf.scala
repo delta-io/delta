@@ -719,6 +719,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(false)
 
+  val DELTA_GENERATED_COLUMN_REPLACE_UNRESOLVED_EXPR =
+    buildConf("generatedColumn.replaceUnresolvedExpr")
+      .internal()
+      .doc("Internal flag covering a fix where UPDATE or MERGE on a table with generated " +
+        "columns and a type-incompatible expression produced a misleading 'Could not resolve " +
+        "expression' error instead of the correct type mismatch error. When enabled, unresolved " +
+        "expressions are temporarily substituted with the original column attribute when " +
+        "resolving generated column expressions, allowing CheckAnalysis to surface the correct " +
+        "error.")
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_MERGE_SCHEMA_EVOLUTION_FIX_NESTED_STRUCT_ALIGNMENT =
     buildConf("schemaEvolution.merge.fixNestedStructAlignment")
       .internal()
