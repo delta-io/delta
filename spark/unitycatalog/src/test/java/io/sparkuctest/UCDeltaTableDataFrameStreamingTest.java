@@ -25,14 +25,15 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.spark.api.java.function.VoidFunction2;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.streaming.DataStreamReader;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.Trigger;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
-import org.junit.jupiter.api.Test;
 
 /**
  * DataFrame streaming test suite for Delta Table operations through Unity Catalog.
@@ -47,41 +48,21 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   private static final VoidFunction2<Dataset<Row>, Long> NOOP_BATCH = (df, id) -> {};
 
   @TestAllTableTypes
-  public void testStreamingRead(TableType tableType) throws Exception {
+  public void testStreamingReadWrite(TableType tableType) throws Exception {
     withNewTable(
-        "streaming_read_test",
-        "id INT",
-        tableType,
-        tableName -> {
-          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
-          List<Integer> result = new ArrayList<>();
-          spark()
-              .readStream()
-              .format("delta")
-              .table(tableName)
-              .writeStream()
-              .trigger(Trigger.AvailableNow())
-              .option("checkpointLocation", checkpoint())
-              .foreachBatch((VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(ids(df)))
-              .start()
-              .awaitTermination();
-          assertThat(result).containsExactlyInAnyOrder(1, 2, 3);
-        });
-  }
-
-  @TestAllTableTypes
-  public void testStreamingWrite(TableType tableType) throws Exception {
-    withNewTable(
-        "streaming_write_src",
+        "streaming_rw_src",
         "id INT",
         tableType,
         srcName ->
             withNewTable(
-                "streaming_write_sink",
+                "streaming_rw_sink",
                 "id INT",
                 tableType,
                 sinkName -> {
                   sql("INSERT INTO %s VALUES (1), (2), (3)", srcName);
+                  String ck = checkpoint();
+
+                  // AvailableNow: process all existing data and terminate.
                   spark()
                       .readStream()
                       .format("delta")
@@ -90,10 +71,30 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
                       .format("delta")
                       .outputMode("append")
                       .trigger(Trigger.AvailableNow())
-                      .option("checkpointLocation", checkpoint())
+                      .option("checkpointLocation", ck)
                       .toTable(sinkName)
                       .awaitTermination();
                   check(sinkName, List.of(row("1"), row("2"), row("3")));
+
+                  // Continuous: reuse same checkpoint so the query resumes from where
+                  // AvailableNow left off and only picks up newly inserted rows.
+                  StreamingQuery query =
+                      spark()
+                          .readStream()
+                          .format("delta")
+                          .table(srcName)
+                          .writeStream()
+                          .format("delta")
+                          .outputMode("append")
+                          .option("checkpointLocation", ck)
+                          .toTable(sinkName);
+                  try {
+                    sql("INSERT INTO %s VALUES (4), (5)", srcName);
+                    query.processAllAvailable();
+                    check(sinkName, List.of(row("1"), row("2"), row("3"), row("4"), row("5")));
+                  } finally {
+                    query.stop();
+                  }
                 }));
   }
 
@@ -268,145 +269,69 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
-   * Verifies that an invalid {@code startingVersion} — either negative or beyond the table's
-   * history — is rejected with a clear error.
+   * Verifies that invalid or unsupported streaming read options are rejected with clear errors.
+   *
+   * <ul>
+   *   <li>Negative {@code startingVersion} is rejected (both table types).
+   *   <li>{@code startingVersion} beyond the table history is rejected (both table types).
+   *   <li>{@code readChangeFeed}, {@code ignoreChanges}, and {@code ignoreDeletes} are blocked by
+   *       the V2 connector (MANAGED tables only — EXTERNAL tables route through V1 which silently
+   *       accepts these options).
+   * </ul>
    */
   @TestAllTableTypes
-  public void testStreamingReadInvalidStartingVersion(TableType tableType) throws Exception {
+  public void testStreamingInvalidOptions(TableType tableType) throws Exception {
     withNewTable(
-        "streaming_invalid_version_test",
+        "streaming_invalid_options_test",
         "id INT",
         tableType,
         tableName -> {
           sql("INSERT INTO %s VALUES (1)", tableName);
-          assertStreamingThrowsContaining(
-              () ->
-                  spark()
-                      .readStream()
-                      .format("delta")
-                      .option("startingVersion", -1)
-                      .table(tableName)
-                      .writeStream()
-                      .trigger(Trigger.AvailableNow())
-                      .option("checkpointLocation", checkpoint())
-                      .foreachBatch(NOOP_BATCH)
-                      .start()
-                      .awaitTermination(),
-              "startingVersion");
-          assertStreamingThrowsContaining(
-              () ->
-                  spark()
-                      .readStream()
-                      .format("delta")
-                      .option("startingVersion", 999999)
-                      .table(tableName)
-                      .writeStream()
-                      .trigger(Trigger.AvailableNow())
-                      .option("checkpointLocation", checkpoint())
-                      .foreachBatch(NOOP_BATCH)
-                      .start()
-                      .awaitTermination(),
-              "999999");
+
+          assertInvalidStreamOption(
+              tableName, r -> r.option("startingVersion", -1), "startingVersion");
+          assertInvalidStreamOption(tableName, r -> r.option("startingVersion", 999999), "999999");
+
+          if (tableType == TableType.MANAGED) {
+            assertInvalidStreamOption(
+                tableName,
+                r -> r.option("readChangeFeed", "true").option("startingVersion", 0),
+                "not supported",
+                "CDC");
+            assertInvalidStreamOption(
+                tableName,
+                r -> r.option("ignoreChanges", "true"),
+                "not supported",
+                "ignoreChanges");
+            assertInvalidStreamOption(
+                tableName,
+                r -> r.option("ignoreDeletes", "true"),
+                "not supported",
+                "ignoreDeletes");
+          }
         });
   }
 
   /**
-   * V2 connector blocks {@code readChangeFeed} in UNSUPPORTED_STREAMING_OPTIONS. Verifies the
-   * stream fails immediately with a clear "not supported" error.
-   *
-   * <p>Only runs against MANAGED tables because EXTERNAL tables route through the V1 connector,
-   * which silently accepts this option without error.
+   * Starts a streaming read with options applied by {@code configure}, then asserts the stream
+   * fails with a message containing all {@code fragments} (case-insensitive).
    */
-  @Test
-  public void testStreamingReadChangeFeedNotSupported() throws Exception {
-    withNewTable(
-        "streaming_cdf_not_supported_test",
-        "id INT",
-        TableType.MANAGED,
-        tableName -> {
-          sql("INSERT INTO %s VALUES (1)", tableName);
-          assertStreamingThrowsContaining(
-              () ->
-                  spark()
-                      .readStream()
-                      .format("delta")
-                      .option("readChangeFeed", "true")
-                      .option("startingVersion", 0)
-                      .table(tableName)
-                      .writeStream()
-                      .trigger(Trigger.AvailableNow())
-                      .option("checkpointLocation", checkpoint())
-                      .foreachBatch(NOOP_BATCH)
-                      .start(),
-              "not supported",
-              "CDC");
-        });
-  }
-
-  /**
-   * V2 connector blocks {@code ignoreChanges} in UNSUPPORTED_STREAMING_OPTIONS. Verifies the stream
-   * fails immediately with a clear "not supported" error.
-   *
-   * <p>Only runs against MANAGED tables because EXTERNAL tables route through the V1 connector,
-   * which silently accepts this option without error.
-   */
-  @Test
-  public void testStreamingIgnoreChangesNotSupported() throws Exception {
-    withNewTable(
-        "streaming_ignore_changes_test",
-        "id INT",
-        TableType.MANAGED,
-        tableName -> {
-          sql("INSERT INTO %s VALUES (1)", tableName);
-          assertStreamingThrowsContaining(
-              () ->
-                  spark()
-                      .readStream()
-                      .format("delta")
-                      .option("ignoreChanges", "true")
-                      .table(tableName)
-                      .writeStream()
-                      .trigger(Trigger.AvailableNow())
-                      .option("checkpointLocation", checkpoint())
-                      .foreachBatch(NOOP_BATCH)
-                      .start()
-                      .awaitTermination(),
-              "not supported",
-              "ignoreChanges");
-        });
-  }
-
-  /**
-   * V2 connector blocks {@code ignoreDeletes} in UNSUPPORTED_STREAMING_OPTIONS. Verifies the stream
-   * fails immediately with a clear "not supported" error.
-   *
-   * <p>Only runs against MANAGED tables because EXTERNAL tables route through the V1 connector,
-   * which silently accepts this option without error.
-   */
-  @Test
-  public void testStreamingIgnoreDeletesNotSupported() throws Exception {
-    withNewTable(
-        "streaming_ignore_deletes_test",
-        "id INT",
-        TableType.MANAGED,
-        tableName -> {
-          sql("INSERT INTO %s VALUES (1)", tableName);
-          assertStreamingThrowsContaining(
-              () ->
-                  spark()
-                      .readStream()
-                      .format("delta")
-                      .option("ignoreDeletes", "true")
-                      .table(tableName)
-                      .writeStream()
-                      .trigger(Trigger.AvailableNow())
-                      .option("checkpointLocation", checkpoint())
-                      .foreachBatch(NOOP_BATCH)
-                      .start()
-                      .awaitTermination(),
-              "not supported",
-              "ignoreDeletes");
-        });
+  private void assertInvalidStreamOption(
+      String tableName,
+      Function<DataStreamReader, DataStreamReader> configure,
+      String... fragments) {
+    assertStreamingThrowsContaining(
+        () ->
+            configure
+                .apply(spark().readStream().format("delta"))
+                .table(tableName)
+                .writeStream()
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .foreachBatch(NOOP_BATCH)
+                .start()
+                .awaitTermination(),
+        fragments);
   }
 
   /**
