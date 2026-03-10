@@ -251,12 +251,74 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
-    lastOffsetForTriggerAvailableNow =
-        latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    if (useDataFrameBasedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
+      lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
+    } else {
+      lastOffsetForTriggerAvailableNow =
+          latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
+    }
 
     lastOffsetForTriggerAvailableNow.ifPresent(
         lastOffset ->
             logger.info("lastOffset for Trigger.AvailableNow has set to " + lastOffset.json()));
+  }
+
+  /**
+   * Optimized end-offset computation for Trigger.AvailableNow when using the DataFrame-based
+   * initial snapshot path. Instead of iterating through all snapshot files via toLocalIterator()
+   * (which streams every file through the driver), this method constructs the end offset directly:
+   *
+   * <ol>
+   *   <li>Check for delta changes after the snapshot version (lightweight file-listing operation).
+   *   <li>If delta changes exist, iterate only through them (typically small) to find the last one.
+   *   <li>If no delta changes exist, build the end offset from the snapshot's END sentinel
+   *       directly.
+   * </ol>
+   *
+   * <p>This avoids O(n) driver memory pressure from iterating all snapshot files, which is the
+   * primary bottleneck that causes OOM for large tables with the default 1g driver heap.
+   */
+  private Optional<DeltaSourceOffset> getLastOffsetForAvailableNowViaDataFrame(
+      DeltaSourceOffset startOffset) {
+    long snapshotVersion = startOffset.reservoirVersion();
+
+    checkReadIncompatibleSchemaChangeOnStreamStartOnce(
+        snapshotVersion, /* batchEndVersion= */ null);
+
+    // Check for delta changes (commits) after the snapshot version.
+    // filterDeltaLogs returns an empty iterator if no new commits exist.
+    try (CloseableIterator<IndexedFile> deltaChanges =
+        filterDeltaLogs(snapshotVersion + 1, /* endOffset= */ Optional.empty())) {
+      Optional<IndexedFile> lastDelta = Utils.iteratorLast(deltaChanges);
+
+      if (lastDelta.isPresent()) {
+        IndexedFile lastFile = lastDelta.get();
+        return Optional.of(
+            DeltaSource.buildOffsetFromIndexedFile(
+                tableId,
+                lastFile.getVersion(),
+                lastFile.getIndex(),
+                startOffset.reservoirVersion(),
+                startOffset.isInitialSnapshot()));
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(
+          String.format(
+              "Failed to iterate delta changes for table %s after version %d",
+              tablePath, snapshotVersion),
+          e);
+    }
+
+    // No delta changes after the snapshot. The logical end of the initial snapshot is the
+    // END sentinel. buildOffsetFromIndexedFile with END_INDEX automatically bumps to
+    // (snapshotVersion + 1, BASE_INDEX, isInitialSnapshot = false).
+    return Optional.of(
+        DeltaSource.buildOffsetFromIndexedFile(
+            tableId,
+            snapshotVersion,
+            DeltaSourceOffset.END_INDEX(),
+            startOffset.reservoirVersion(),
+            startOffset.isInitialSnapshot()));
   }
 
   ////////////
