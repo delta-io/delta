@@ -147,7 +147,17 @@ case class PreprocessTableMerge(override val conf: SQLConf)
         m.resolvedActions.map(_.targetColNameParts))
 
       val targetColNames = m.resolvedActions.map(_.targetColNameParts.head)
-      if (targetColNames.distinct.size < targetColNames.size) {
+      // scalastyle:off caselocale
+      val normalizedColNames =
+        if (conf.getConf(
+            DeltaSQLConf.DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS) &&
+            !conf.caseSensitiveAnalysis) {
+          targetColNames.map(_.toLowerCase)
+        } else {
+          targetColNames
+        }
+      // scalastyle:on caselocale
+      if (normalizedColNames.distinct.size < targetColNames.size) {
         throw DeltaErrors.duplicateColumnOnInsert()
       }
 
