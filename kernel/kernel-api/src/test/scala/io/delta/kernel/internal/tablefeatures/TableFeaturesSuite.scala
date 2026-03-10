@@ -345,7 +345,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "v2Checkpoint",
     "vacuumProtocolCheck",
     "allowColumnDefaults",
-    "columnMapping").foreach { feature =>
+    "columnMapping",
+    "geospatial").foreach { feature =>
     test(s"validateKernelCanReadTheTable: protocol 3 with $feature") {
       val protocol = new Protocol(3, 1, singleton(feature), Set().asJava)
       validateKernelCanReadTheTable(protocol, "/test/table")
@@ -657,6 +658,18 @@ class TableFeaturesSuite extends AnyFunSuite {
     "validateKernelCanWriteToTable: protocol 7 with materializePartitionColumns",
     new Protocol(3, 7, emptySet(), singleton("materializePartitionColumns")),
     testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with geospatial, " +
+      "metadata doesn't contain geospatial",
+    new Protocol(3, 7, singleton("geospatial"), singleton("geospatial")),
+    testMetadata())
+
+  checkWriteSupported(
+    "validateKernelCanWriteToTable: protocol 7 with geospatial, " +
+      "metadata contains geospatial",
+    new Protocol(3, 7, singleton("geospatial"), singleton("geospatial")),
+    testMetadata(includeGeometryTypeCol = true))
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with multiple features supported",
@@ -1051,7 +1064,25 @@ class TableFeaturesSuite extends AnyFunSuite {
           "deletionVectors",
           "variantShredding-preview",
           "variantType")),
-      set("variantType", "variantShredding-preview"))).foreach {
+      set("variantType", "variantShredding-preview")),
+    (
+      testMetadata(includeGeometryTypeCol = true),
+      new Protocol(1, 1),
+      new Protocol(
+        3,
+        7,
+        set("geospatial"),
+        set("geospatial")),
+      set("geospatial")),
+    (
+      testMetadata(includeGeographyTypeCol = true),
+      new Protocol(1, 2),
+      new Protocol(
+        3,
+        7,
+        set("geospatial"),
+        set("geospatial", "appendOnly", "invariants")),
+      set("geospatial"))).foreach {
     case (newMetadata, currentProtocol, expectedProtocol, expectedNewFeatures) =>
       test(s"autoUpgradeProtocolBasedOnMetadata:" +
         s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {
