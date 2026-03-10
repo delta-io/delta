@@ -20,6 +20,7 @@ package org.apache.spark.sql.delta.hooks
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.{
   UC_TABLE_ID_KEY, UC_TABLE_ID_KEY_OLD}
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
