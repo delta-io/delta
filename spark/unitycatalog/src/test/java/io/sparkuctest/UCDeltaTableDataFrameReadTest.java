@@ -30,7 +30,7 @@ import org.junit.jupiter.api.Test;
 /**
  * DataFrame read test suite for Delta Table operations through Unity Catalog.
  *
- * <p>Covers spark.table(), DataFrameReader, time travel, column pruning, and filter. Tests run
+ * <p>Covers spark.table(), DataFrameReader, time travel, column pruning, and filter. Most tests run
  * against both EXTERNAL and MANAGED table types.
  */
 public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTest {

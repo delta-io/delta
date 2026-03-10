@@ -32,10 +32,10 @@ import org.apache.spark.sql.types.StructType;
 /**
  * Programmatic DeltaTable API test suite for Delta Table operations through Unity Catalog.
  *
- * <p>Covers DeltaTable.forName(), update(), delete(), merge(), history(), detail(), optimize(),
- * vacuum(), and restore() via the io.delta.tables.DeltaTable API. These go through different code
- * paths than SQL equivalents tested in UCDeltaTableDMLTest and UCDeltaUtilityTest. Tests run
- * against both EXTERNAL and MANAGED table types.
+ * <p>Covers DeltaTable.forName(), update(), delete(), merge(), history(), optimize(), and restore()
+ * via the io.delta.tables.DeltaTable API. These go through different code paths than SQL
+ * equivalents tested in UCDeltaTableDMLTest and UCDeltaUtilityTest. Tests run against both EXTERNAL
+ * and MANAGED table types.
  */
 public class UCDeltaTableDeltaAPITest extends UCDeltaTableIntegrationBaseTest {
 
@@ -121,15 +121,6 @@ public class UCDeltaTableDeltaAPITest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @TestAllTableTypes
-  public void testDetail(TableType tableType) throws Exception {
-    withNewTable(
-        "dt_api_detail",
-        "id INT",
-        tableType,
-        tableName -> assertThat(forName(tableName).detail().collectAsList()).hasSize(1));
-  }
-
-  @TestAllTableTypes
   public void testOptimize(TableType tableType) throws Exception {
     withNewTable(
         "dt_api_optimize",
@@ -145,24 +136,6 @@ public class UCDeltaTableDeltaAPITest extends UCDeltaTableIntegrationBaseTest {
                 .isNotEmpty();
             assertThat(forName(tableName).optimize().executeZOrderBy("category").collectAsList())
                 .isNotEmpty();
-          }
-        });
-  }
-
-  @TestAllTableTypes
-  public void testVacuum(TableType tableType) throws Exception {
-    withNewTable(
-        "dt_api_vacuum",
-        "id INT",
-        tableType,
-        tableName -> {
-          sql("INSERT INTO %s VALUES (1)", tableName);
-          if (tableType == TableType.MANAGED) {
-            assertThatThrownBy(() -> forName(tableName).vacuum(168))
-                .hasMessageContaining("DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION");
-          } else {
-            // vacuum(168) uses default 7-day retention; just verify it completes without error.
-            forName(tableName).vacuum(168).collect();
           }
         });
   }

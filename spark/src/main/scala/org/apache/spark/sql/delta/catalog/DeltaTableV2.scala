@@ -144,15 +144,8 @@ class DeltaTableV2 private(
   def getSnapshotAt(version: Long): Snapshot =
     deltaLog.getSnapshotAt(version, catalogTableOpt = catalogTable)
 
-  def getTableIdentifierIfExists: Option[TableIdentifier] = {
-    // Prefer the catalog table's identifier when available: it includes the catalog name for
-    // non-session catalogs (e.g. Unity Catalog), whereas the `tableIdentifier` string is set
-    // from the V2 Identifier which drops the catalog prefix.
-    catalogTable.map(_.identifier).orElse {
-      tableIdentifier.map { tableName =>
-        spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
-      }
-    }
+  def getTableIdentifierIfExists: Option[TableIdentifier] = tableIdentifier.map { tableName =>
+    spark.sessionState.sqlParser.parseMultipartIdentifier(tableName).asTableIdentifier
   }
 
   override def name(): String = catalogTable.map(_.identifier.unquotedString)
