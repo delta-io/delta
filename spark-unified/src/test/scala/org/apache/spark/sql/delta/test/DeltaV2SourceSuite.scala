@@ -145,7 +145,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "disallow user specified schema", // Uses .schema() directly
     "make sure that the delta sources works fine", // Uses .delta() directly
     "self union a Delta table should pass the catalog table assert", // Uses .table() directly
-    "handling nullability schema changes", // Uses .table() directly
     "allow user specified schema if consistent: v1 source", // Uses DataSource directly
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"
