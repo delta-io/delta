@@ -1027,6 +1027,9 @@ object AddFile {
 
     /** [[ICEBERG_COMPAT_VERSION]]: IcebergCompat version */
     object ICEBERG_COMPAT_VERSION extends AddFile.Tags.KeyType("ICEBERG_COMPAT_VERSION")
+
+    /** [[LIQUID_METADATA_ID]]: present when file is clustered by Liquid clustering */
+    object LIQUID_METADATA_ID extends AddFile.Tags.KeyType("LIQUID_METADATA_ID")
   }
 
   /** Convert a [[Tags.KeyType]] to a string to be used in the AddMap.tags Map[String, String]. */

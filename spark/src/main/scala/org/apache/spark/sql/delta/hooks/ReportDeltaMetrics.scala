@@ -110,7 +110,7 @@ object ReportDeltaMetrics {
       numBytesAdded = Some(addFiles.map(_.size).sum),
       numBytesRemoved = Some(removeFiles.flatMap(_.size).sum),
       numClusteredBytesAdded = Some(
-        addFiles.filter(_.clusteringProvider.isDefined).map(_.size).sum),
+        addFiles.filter(isClusteredFile).map(_.size).sum),
       numRowsInserted = extractRowsInserted(opMetrics, addFiles),
       numRowsRemoved = extractRowsRemoved(opMetrics, removeFiles),
       numRowsUpdated = extractRowsUpdated(opMetrics),
@@ -122,6 +122,10 @@ object ReportDeltaMetrics {
       report = CommitReportEnvelope(commitReport)
     )
   }
+
+  private def isClusteredFile(f: AddFile): Boolean =
+    Option(f.tags).getOrElse(Map.empty).contains(AddFile.Tags.LIQUID_METADATA_ID.name) ||
+    f.clusteringProvider.contains("liquid")
 
   private def extractRowsInserted(
       opMetrics: Map[String, String],
