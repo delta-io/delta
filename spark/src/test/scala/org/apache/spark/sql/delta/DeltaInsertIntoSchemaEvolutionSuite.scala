@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -281,5 +282,29 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
       withSchemaEvolution = schemaEvolution
     )
+  }
+
+  // When DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED is disabled, SQL INSERT BY NAME with extra
+  // top-level columns should fail even when schema evolution is enabled.
+  test("insert by name with extra top-level column and implicit cast fails " +
+      "when byNameSchemaEvolution is disabled") {
+    withTable("target") {
+      sql("CREATE TABLE target (a INT, b INT) USING DELTA")
+      withSQLConf(
+          DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
+          DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED.key -> "false") {
+        val ex = intercept[SparkThrowable] {
+          sql("INSERT INTO target BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
+        }
+        checkError(
+          ex,
+          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+          parameters = Map(
+            "tableName" -> s"`$catalogName`.`default`.`target`",
+            "tableColumns" -> "`a`, `b`",
+            "dataColumns" -> "`a`, `b`, `c`"
+          ))
+      }
+    }
   }
 }
