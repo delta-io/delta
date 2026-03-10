@@ -356,8 +356,9 @@ public class V2StreamingReadTest extends V2TestBase {
         "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
   }
 
-  // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the dataframe
-  //  due to the lack of support in spark stream engine. Port this validation to instruct user
+  // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the
+  //  dataframe due to the lack of support in spark stream engine. Throw an error at stream
+  //  start time to instruct user.
   @Test
   public void testNestedTypeWideningDetectedOnRestart(@TempDir File deltaTablePath)
       throws Exception {
@@ -412,8 +413,9 @@ public class V2StreamingReadTest extends V2TestBase {
         "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
   }
 
-  // TODO(#6232): v2 source cannot adopt relax nullability schema change without refreshing the dataframe
-  //  due to the lack of support in spark stream engine. Port this validation to instruct user
+  // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the
+  //  dataframe due to the lack of support in spark stream engine. Throw an error at stream
+  //  start time to instruct user.
   @Test
   public void testNestedNullabilityRelaxDetectedOnRestart(@TempDir File deltaTablePath)
       throws Exception {
