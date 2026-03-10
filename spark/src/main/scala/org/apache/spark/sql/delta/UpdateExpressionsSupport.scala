@@ -642,7 +642,8 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
     val schemaWithExprs = targetSchema.zip(updateExprs)
     val exprsForProject = schemaWithExprs.flatMap {
       case (field, Some(expr)) =>
-        val exprForProject = Alias(effectiveExpr, field.name)()
+        // Create a named expression so that we can use it in Project
+        val exprForProject = Alias(expr, field.name)()
         Some(exprForProject.exprId -> exprForProject)
       case (_, None) => None
     }.toMap
