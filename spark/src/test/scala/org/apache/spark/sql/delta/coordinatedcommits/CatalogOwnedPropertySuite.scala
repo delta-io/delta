@@ -305,6 +305,8 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[RTAS] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1", "t2") {
+      System.out.println(
+        "[TRACE][CatalogOwnedPropertySuite] START test='[RTAS] replacing an existing catalog-managed table preserves UC identity'")
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableIdBefore = getUCTableIdFromTable("t1")
       sql("INSERT INTO t1 VALUES (10)")
@@ -327,6 +329,8 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[RTAS] failed replace preserves existing catalog-managed table data and version") {
     withTable("t1") {
+      System.out.println(
+        "[TRACE][CatalogOwnedPropertySuite] START test='[RTAS] failed replace preserves existing catalog-managed table data and version'")
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       sql("INSERT INTO t1 VALUES (1), (2)")
       val versionBefore = getDeltaVersion("t1")
@@ -352,6 +356,8 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[REPLACE] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1") {
+      System.out.println(
+        "[TRACE][CatalogOwnedPropertySuite] START test='[REPLACE] replacing an existing catalog-managed table preserves UC identity'")
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableIdBefore = getUCTableIdFromTable("t1")
       sql("INSERT INTO t1 VALUES (1)")
@@ -371,6 +377,8 @@ class CatalogOwnedPropertySuite extends QueryTest
 
   test("[CREATE OR REPLACE] with CatalogManaged on non-existing table should succeed") {
     withTable("t1") {
+      System.out.println(
+        "[TRACE][CatalogOwnedPropertySuite] START test='[CREATE OR REPLACE] with CatalogManaged on non-existing table should succeed'")
       // CREATE OR REPLACE on non-existing table with CatalogManaged should create a CC table.
       sql("CREATE OR REPLACE TABLE t1 (id LONG) USING delta TBLPROPERTIES " +
         s"('delta.feature.${CatalogOwnedTableFeature.name}' = 'supported')")
@@ -386,6 +394,8 @@ class CatalogOwnedPropertySuite extends QueryTest
   test("[CREATE OR REPLACE] with CatalogManaged on existing CatalogManaged table " +
       "should succeed as a no-op") {
     withTable("t1") {
+      System.out.println(
+        "[TRACE][CatalogOwnedPropertySuite] START test='[CREATE OR REPLACE] with CatalogManaged on existing CatalogManaged table should succeed as a no-op'")
       // Create a CatalogManaged table first.
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableIdBefore = getUCTableIdFromTable(tableName = "t1")
@@ -402,8 +412,10 @@ class CatalogOwnedPropertySuite extends QueryTest
     }
   }
 
-  test("[CREATE OR REPLACE] replacing an existing catalog-owned table is atomic") {
+  test("[CREATE OR REPLACE] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1") {
+      System.out.println(
+        "[TRACE][CatalogOwnedPropertySuite] START test='[CREATE OR REPLACE] replacing an existing catalog-managed table preserves UC identity'")
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableIdBefore = getUCTableIdFromTable("t1")
       sql("INSERT INTO t1 VALUES (1)")

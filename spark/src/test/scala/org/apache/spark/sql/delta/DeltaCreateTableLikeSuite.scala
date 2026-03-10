@@ -20,6 +20,7 @@ import java.io.File
 import java.net.URI
 import java.util.UUID
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import org.apache.spark.sql.delta.catalog.DeltaCatalog
 import org.apache.spark.sql.delta.commands.{
   CreateDeltaTableCommand,
@@ -327,6 +328,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
   test("catalog-managed CREATE OR REPLACE creates missing tables") {
     withTempDir { dir =>
       withTable("t") {
+        System.out.println(
+          s"[TRACE][DeltaCreateTableLikeSuite] START test='catalog-managed CREATE OR REPLACE creates missing tables' dir=$dir")
         def getCatalogTable: CatalogTable = {
           val storage = CatalogStorageFormat.empty.copy(
             locationUri = Some(new URI(s"$dir/${UUID.randomUUID().toString}")))
@@ -361,6 +364,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
   test("catalog-managed CREATE OR REPLACE skips catalog create callback " +
       "when metadata is unchanged") {
     withTable("t") {
+      System.out.println(
+        "[TRACE][DeltaCreateTableLikeSuite] START test='catalog-managed CREATE OR REPLACE skips catalog create callback when metadata is unchanged'")
       spark.sql("CREATE TABLE t (id LONG) USING DELTA")
 
       val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -395,6 +400,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
 
   test("catalog-managed CREATE OR REPLACE rejects explicit protocol property changes") {
     withTable("t") {
+      System.out.println(
+        "[TRACE][DeltaCreateTableLikeSuite] START test='catalog-managed CREATE OR REPLACE rejects explicit protocol property changes'")
       spark.sql("CREATE TABLE t (id LONG) USING DELTA")
       spark.sql("INSERT INTO t VALUES (1)")
       val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -430,6 +437,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
 
   test("catalog-managed CREATE OR REPLACE rejects explicit nullability changes") {
     withTable("t") {
+      System.out.println(
+        "[TRACE][DeltaCreateTableLikeSuite] START test='catalog-managed CREATE OR REPLACE rejects explicit nullability changes'")
       spark.sql("CREATE TABLE t (id LONG NOT NULL) USING DELTA")
       spark.sql("INSERT INTO t VALUES (1)")
       val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -462,6 +471,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
 
   test("catalog-managed CREATE OR REPLACE allows query-derived nullable schema") {
     withTable("t", "source") {
+      System.out.println(
+        "[TRACE][DeltaCreateTableLikeSuite] START test='catalog-managed CREATE OR REPLACE allows query-derived nullable schema'")
       spark.sql("CREATE TABLE t (id LONG NOT NULL) USING DELTA")
       spark.sql("INSERT INTO t VALUES (1)")
       spark.sql("CREATE TABLE source (id LONG) USING DELTA")
@@ -471,7 +482,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
       val versionBefore = DeltaLog.forTable(spark, TableIdentifier("t")).update().version
       val query = spark.sql("SELECT id FROM source").logicalPlan
       val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
-        tableDesc = existingTable.copy(schema = query.schema.asNullable),
+        tableDesc = existingTable.copy(schema = new StructType()),
         query = Some(query),
         maybeClusterBySpec = None)
 
@@ -493,6 +504,8 @@ class DeltaCreateTableLikeSuite extends QueryTest
 
   test("catalog-managed CREATE OR REPLACE rejects explicit column comment changes") {
     withTable("t") {
+      System.out.println(
+        "[TRACE][DeltaCreateTableLikeSuite] START test='catalog-managed CREATE OR REPLACE rejects explicit column comment changes'")
       spark.sql("CREATE TABLE t (id LONG COMMENT 'old') USING DELTA")
       spark.sql("INSERT INTO t VALUES (1)")
       val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
@@ -523,6 +536,46 @@ class DeltaCreateTableLikeSuite extends QueryTest
       }
       assert(err.getMessage.contains(
         "Replacing a catalog-managed table with a different schema"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE fails when staged table id mismatches snapshot") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG) USING DELTA")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val txn = deltaLog.startTransaction()
+      txn.updateMetadata(
+        txn.snapshot.metadata.copy(
+          configuration = txn.snapshot.metadata.configuration + (UC_TABLE_ID_KEY ->
+            "expected-table-id")))
+      txn.commit(Nil, DeltaOperations.ManualUpdate)
+
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = deltaLog.update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        tableDesc = existingTable.copy(schema = snapshot.metadata.schema),
+        query = None,
+        maybeClusterBySpec = None)
+
+      val command = CreateDeltaTableCommand(
+        updatedTable,
+        existingTableOpt = Some(existingTable),
+        mode = SaveMode.Overwrite,
+        query = None,
+        operation = TableCreationModes.CreateOrReplace,
+        allowCatalogManaged = true,
+        createTableFunc = None,
+        stagedExistingTableId = Some("different-table-id"))
+
+      val err = intercept[DeltaIllegalStateException] {
+        command.run(spark)
+      }
+      assert(err.getErrorClass == "DELTA_UNITY_CATALOG_STAGED_REPLACE_TARGET_CHANGED")
+      assert(err.getMessage.contains("different-table-id"))
       assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
     }

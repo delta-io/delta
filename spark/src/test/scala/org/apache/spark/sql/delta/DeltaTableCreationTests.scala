@@ -117,6 +117,30 @@ trait DeltaTableCreationTests
     DeltaLog.forTable(spark, path)
   }
 
+  protected def getDeltaVersion(tableName: String): Long = {
+    getDeltaLog(tableName).update().version
+  }
+
+  private def withManagedOrExternalTable(
+      tableName: String,
+      external: Boolean)(f: Option[File] => Unit): Unit = {
+    if (external) {
+      withTempDir { dir =>
+        withTable(tableName) {
+          f(Some(dir))
+        }
+      }
+    } else {
+      withTable(tableName) {
+        f(None)
+      }
+    }
+  }
+
+  private def locationClause(locationOpt: Option[File]): String = {
+    locationOpt.map(dir => s" LOCATION '${dir.getCanonicalPath}'").getOrElse("")
+  }
+
   protected def verifyTableInCatalog(catalog: SessionCatalog, table: String): Unit = {
     val externalTable =
         catalog.externalCatalog.getTable("default", table)
@@ -1798,6 +1822,102 @@ trait DeltaTableCreationTests
       val oldVersion = deltaLog.snapshot.version
       sql(s"CREATE TABLE table USING delta LOCATION '$path'")
       assert(oldVersion == deltaLog.snapshot.version)
+    }
+  }
+
+  Seq("managed" -> false, "external" -> true).foreach { case (kind, external) =>
+    test(s"REPLACE TABLE preserves table path and remains writable ($kind)") {
+      val table = s"replace_table_preserves_path_$kind"
+      withManagedOrExternalTable(table, external) { locationOpt =>
+        val locClause = locationClause(locationOpt)
+        sql(s"CREATE TABLE $table (id LONG) USING delta$locClause")
+        sql(s"INSERT INTO $table VALUES (1)")
+
+        val versionBefore = getDeltaVersion(table)
+        val pathBefore = getTablePath(table)
+
+        sql(s"REPLACE TABLE $table (id LONG) USING delta$locClause")
+
+        assert(getDeltaVersion(table) === versionBefore + 1)
+        assert(getTablePath(table) === pathBefore)
+        checkAnswer(sql(s"SELECT * FROM $table"), Seq.empty)
+
+        sql(s"INSERT INTO $table VALUES (2)")
+        checkAnswer(sql(s"SELECT * FROM $table"), Seq(Row(2L)))
+      }
+    }
+
+    test(s"REPLACE TABLE AS SELECT runtime failure preserves original data ($kind)") {
+      val table = s"replace_table_as_select_failure_$kind"
+      withManagedOrExternalTable(table, external) { locationOpt =>
+        val locClause = locationClause(locationOpt)
+        sql(s"CREATE TABLE $table (id LONG) USING delta$locClause")
+        sql(s"INSERT INTO $table VALUES (1), (2)")
+
+        val versionBefore = getDeltaVersion(table)
+        val pathBefore = getTablePath(table)
+
+        intercept[Exception] {
+          sql(
+            s"""REPLACE TABLE $table USING delta$locClause AS
+               |SELECT IF(id = 2L, CAST(raise_error('boom') AS BIGINT), id) AS id
+               |FROM VALUES (1L), (2L) AS src(id)
+               |""".stripMargin)
+        }
+
+        assert(getDeltaVersion(table) === versionBefore)
+        assert(getTablePath(table) === pathBefore)
+        checkAnswer(sql(s"SELECT * FROM $table ORDER BY id"), Seq(Row(1L), Row(2L)))
+
+        sql(s"INSERT INTO $table VALUES (3)")
+        checkAnswer(sql(s"SELECT * FROM $table ORDER BY id"), Seq(Row(1L), Row(2L), Row(3L)))
+      }
+    }
+
+    test(s"CREATE OR REPLACE TABLE AS SELECT preserves table path and remains writable ($kind)") {
+      val table = s"create_or_replace_table_as_select_$kind"
+      withManagedOrExternalTable(table, external) { locationOpt =>
+        val locClause = locationClause(locationOpt)
+        sql(s"CREATE TABLE $table USING delta$locClause AS SELECT 1L AS id")
+
+        val versionBefore = getDeltaVersion(table)
+        val pathBefore = getTablePath(table)
+
+        sql(s"CREATE OR REPLACE TABLE $table USING delta$locClause AS SELECT 2L AS id")
+
+        assert(getDeltaVersion(table) === versionBefore + 1)
+        assert(getTablePath(table) === pathBefore)
+        checkAnswer(sql(s"SELECT * FROM $table"), Seq(Row(2L)))
+
+        sql(s"INSERT INTO $table VALUES (3)")
+        checkAnswer(sql(s"SELECT * FROM $table ORDER BY id"), Seq(Row(2L), Row(3L)))
+      }
+    }
+
+    test(s"CREATE OR REPLACE TABLE AS SELECT runtime failure preserves original data ($kind)") {
+      val table = s"create_or_replace_table_as_select_failure_$kind"
+      withManagedOrExternalTable(table, external) { locationOpt =>
+        val locClause = locationClause(locationOpt)
+        sql(s"CREATE TABLE $table USING delta$locClause AS SELECT 1L AS id")
+
+        val versionBefore = getDeltaVersion(table)
+        val pathBefore = getTablePath(table)
+
+        intercept[Exception] {
+          sql(
+            s"""CREATE OR REPLACE TABLE $table USING delta$locClause AS
+               |SELECT IF(id = 2L, CAST(raise_error('boom') AS BIGINT), id) AS id
+               |FROM VALUES (1L), (2L) AS src(id)
+               |""".stripMargin)
+        }
+
+        assert(getDeltaVersion(table) === versionBefore)
+        assert(getTablePath(table) === pathBefore)
+        checkAnswer(sql(s"SELECT * FROM $table"), Seq(Row(1L)))
+
+        sql(s"INSERT INTO $table VALUES (3)")
+        checkAnswer(sql(s"SELECT * FROM $table ORDER BY id"), Seq(Row(1L), Row(3L)))
+      }
     }
   }
 }

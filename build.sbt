@@ -318,6 +318,14 @@ lazy val sparkV1 = (project in file("spark"))
     commonSettings,
     scalaStyleSettings,
     skipReleaseSettings, // Internal module - not published to Maven
+    publishArtifact := true,
+    publishLocal / skip := false,
+    publishM2 / skip := false,
+    Test / publishArtifact := false,
+    Compile / packageDoc / publishArtifact := false,
+    Compile / packageSrc / publishArtifact := false,
+    Test / packageDoc / publishArtifact := false,
+    Test / packageSrc / publishArtifact := false,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
     // Export as JAR instead of classes directory. This prevents dependent projects
@@ -427,6 +435,14 @@ lazy val sparkV1Filtered = (project in file("spark-v1-filtered"))
     name := "delta-spark-v1-filtered",
     commonSettings,
     skipReleaseSettings, // Internal module - not published to Maven
+    publishArtifact := true,
+    publishLocal / skip := false,
+    publishM2 / skip := false,
+    Test / publishArtifact := false,
+    Compile / packageDoc / publishArtifact := false,
+    Compile / packageSrc / publishArtifact := false,
+    Test / packageDoc / publishArtifact := false,
+    Test / packageSrc / publishArtifact := false,
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
     // No source code - just repackage sparkV1 without DeltaLog classes
@@ -460,6 +476,14 @@ lazy val sparkV2 = (project in file("spark/v2"))
     commonSettings,
     javafmtCheckSettings,
     skipReleaseSettings, // Internal module - not published to Maven
+    publishArtifact := true,
+    publishLocal / skip := false,
+    publishM2 / skip := false,
+    Test / publishArtifact := false,
+    Compile / packageDoc / publishArtifact := false,
+    Compile / packageSrc / publishArtifact := false,
+    Test / packageDoc / publishArtifact := false,
+    Test / packageSrc / publishArtifact := false,
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
     exportJars := true,  // Export as JAR to avoid classpath conflicts
 
