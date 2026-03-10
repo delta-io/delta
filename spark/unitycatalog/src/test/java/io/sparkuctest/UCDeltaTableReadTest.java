@@ -141,5 +141,4 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
           String.format("Query results do not match.\nExpected: %s\nActual: %s", expected, actual));
     }
   }
-
 }

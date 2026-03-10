@@ -29,8 +29,8 @@ import org.junit.jupiter.api.Assertions;
 /**
  * DataFrame read test suite for Delta Table operations through Unity Catalog.
  *
- * <p>Covers spark.table(), DataFrameReader, time travel, column pruning, and filter. Tests
- * run against both EXTERNAL and MANAGED table types.
+ * <p>Covers spark.table(), DataFrameReader, time travel, column pruning, and filter. Tests run
+ * against both EXTERNAL and MANAGED table types.
  */
 public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTest {
 
@@ -130,8 +130,7 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
           } else {
             S3CredentialFileSystem.credentialCheckEnabled = false;
             try {
-              assertThat(
-                      ids(spark().read().format("delta").load(tablePath).orderBy("id")))
+              assertThat(ids(spark().read().format("delta").load(tablePath).orderBy("id")))
                   .containsExactly(1, 2, 3);
             } finally {
               S3CredentialFileSystem.credentialCheckEnabled = true;
@@ -194,5 +193,4 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
   private List<Integer> ids(Dataset<Row> df) {
     return df.collectAsList().stream().map(r -> r.getInt(0)).collect(Collectors.toList());
   }
-
 }
