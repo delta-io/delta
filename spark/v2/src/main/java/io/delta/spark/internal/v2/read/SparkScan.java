@@ -266,7 +266,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    *
    * @return the table path with trailing slash
    */
-  private String getTablePath() {
+  public String getTablePath() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final Row scanState = kernelScan.getScanState(tableEngine);
     final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
