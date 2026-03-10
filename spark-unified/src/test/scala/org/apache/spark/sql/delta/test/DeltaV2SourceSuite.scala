@@ -57,6 +57,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
     "add column: restarting with stale DataFrame should fail",
+    "relax nullability: restarting with new DataFrame should recover",
+    "type widening: restarting with new DataFrame should recover",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
     "drop column: should fail with non-additive schema change error",
@@ -118,6 +120,12 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "skip change commits",
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+
+    // === Schema Evolution ===
+    // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
+    // for datasource v2 such that we can adopt the two schema changes without refresh the dataframe
+    "relax nullability: restarting with stale DataFrame should recover",
+    "type widening: restarting with stale DataFrame should recover",
 
     // === Data Loss Detection ===
     "fail on data loss - starting from missing files",

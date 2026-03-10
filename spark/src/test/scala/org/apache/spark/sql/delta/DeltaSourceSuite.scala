@@ -47,7 +47,7 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{IntegerType, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, LongType, NullType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
@@ -2188,6 +2188,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
           .format("delta")
           .start(outputDir.getCanonicalPath)
       }
@@ -2271,6 +2272,230 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             e.getMessage.contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
           s"Expected schema mismatch error but got: ${e.getMessage}"
         )
+      }
+    }
+  }
+
+  test("relax nullability: restarting with new DataFrame should recover") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` " +
+        "(id STRING NOT NULL) USING DELTA")
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 2).foreach { i =>
+        Seq(i.toString).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      def startQuery(): StreamingQuery = {
+        loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+      }
+
+      var q = startQuery()
+      try {
+        q.processAllAvailable()
+
+        // Clear delta log cache
+        DeltaLog.clearCache()
+        // Relax nullability from "id STRING NOT NULL" to "id STRING" using the non-cached
+        // `DeltaLog` to mimic the case that the schema change happens on a different cluster
+        withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+        // Insert a null row
+        Seq(Option.empty[String]).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+        // The streaming query should fail when detecting a schema change
+        val e = intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }
+        assert(e.getMessage.contains("Detected schema change"))
+
+        // Restarting the query with a new DataFrame should recover from the schema change
+        q = startQuery()
+        q.processAllAvailable()
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema("id").nullable,
+          "Expected 'id' column to be nullable after relaxing nullability")
+        checkAnswer(outputDf.orderBy("id"),
+          Seq(Row(null), Row("0"), Row("1")))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("relax nullability: restarting with stale DataFrame should recover") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` " +
+        "(id STRING NOT NULL) USING DELTA")
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 2).foreach { i =>
+        Seq(i.toString).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+      var q = df.writeStream
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .option("mergeSchema", "true")
+        // use delta sink because we need to check the result
+        .format("delta")
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+
+        // Clear delta log cache
+        DeltaLog.clearCache()
+        // Relax nullability from "id STRING NOT NULL" to "id STRING" using the non-cached
+        // `DeltaLog` to mimic the case that the schema change happens on a different cluster
+        withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+        // Insert a null row
+        Seq(Option.empty[String]).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+        // The streaming query should fail when detecting a schema change
+        val e = intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }
+        assert(e.getMessage.contains("Detected schema change"))
+
+        // Restarting the query with the stale DataFrame should still recover
+        q = df.writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        q.processAllAvailable()
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema("id").nullable,
+          "Expected 'id' column to be nullable after relaxing nullability")
+        checkAnswer(outputDf.orderBy("id"),
+          Seq(Row(null), Row("0"), Row("1")))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("type widening: restarting with new DataFrame should recover") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
+          "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 2).foreach { i =>
+          Seq(i).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        def startQuery(): StreamingQuery = {
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .option("mergeSchema", "true")
+            // use delta sink because we need to check the result
+            .format("delta")
+            .start(outputDir.getCanonicalPath)
+        }
+
+        var q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          // Clear delta log cache
+          DeltaLog.clearCache()
+          // Widen the column type from INT to BIGINT using the non-cached `DeltaLog` to mimic
+          // the case that the schema change happens on a different cluster
+          withMetadata(deltaLog, StructType.fromDDL("id BIGINT"))
+          // 2^31 cannot be represented as an int, so it will be inserted as a bigint
+          Seq(2147483648L).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+          // The streaming query should fail when detecting a schema change
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains("Detected schema change"))
+
+          // Restarting the query with a new DataFrame should recover from the schema change
+          q = startQuery()
+          q.processAllAvailable()
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema("id").dataType === LongType,
+            s"Expected 'id' column to be LongType after type widening but got " +
+              s"${outputDf.schema("id").dataType}")
+          checkAnswer(outputDf.orderBy("id"),
+            Seq(Row(0L), Row(1L), Row(2147483648L)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("type widening: restarting with stale DataFrame should recover") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
+          "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 2).foreach { i =>
+          Seq(i).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        var q = df.writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          q.processAllAvailable()
+
+          // Clear delta log cache
+          DeltaLog.clearCache()
+          // Widen the column type from INT to BIGINT using the non-cached `DeltaLog` to mimic
+          // the case that the schema change happens on a different cluster
+          withMetadata(deltaLog, StructType.fromDDL("id BIGINT"))
+          // 2^31 cannot be represented as an int, so it will be inserted as a bigint
+          Seq(2147483648L).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+          // The streaming query should fail when detecting a schema change
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains("Detected schema change"))
+
+          // Restarting the query with the stale DataFrame should still recover
+          q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .option("mergeSchema", "true")
+            .format("delta")
+            .start(outputDir.getCanonicalPath)
+          q.processAllAvailable()
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema("id").dataType === LongType,
+            s"Expected 'id' column to be LongType after type widening but got " +
+              s"${outputDf.schema("id").dataType}")
+          checkAnswer(outputDf.orderBy("id"),
+            Seq(Row(0L), Row(1L), Row(2147483648L)))
+        } finally {
+          q.stop()
+        }
       }
     }
   }
