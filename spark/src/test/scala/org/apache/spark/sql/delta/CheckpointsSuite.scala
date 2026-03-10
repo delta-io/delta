@@ -963,6 +963,7 @@ class CheckpointsSuite
   for (checkpointFormat <- V2Checkpoint.Format.ALL)
   test(s"All actions in V2 manifest [v2CheckpointFormat: ${checkpointFormat.name}]") {
     withSQLConf(
+      DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON.defaultTablePropertyKey -> "true",
       DeltaConfigs.CHECKPOINT_POLICY.defaultTablePropertyKey -> CheckpointPolicy.V2.name) {
       withTempDir { dir =>
         spark.range(10).write.format("delta").save(dir.getAbsolutePath)

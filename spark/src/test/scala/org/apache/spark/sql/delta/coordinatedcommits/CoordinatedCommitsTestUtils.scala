@@ -257,7 +257,9 @@ trait CatalogOwnedTestBaseSuite
           case (feature, config, value)
           => config.key -> value
         }
-        .toMap
+        .toMap ++
+        CatalogOwnedTableUtils.QOL_TABLE_PROPERTIES
+          .map { case (config, value) => config.key -> value }.toMap
       // RowTracking specific properties.
       qolConfs ++ Map(
         MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP ->
@@ -290,6 +292,7 @@ trait CatalogOwnedTestBaseSuite
           .filterNot(Set(
             DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key
           )) ++
+          CatalogOwnedTableUtils.QOL_TABLE_PROPERTIES.map { case (config, _) => config.key } ++
           Seq(
             MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
             MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP

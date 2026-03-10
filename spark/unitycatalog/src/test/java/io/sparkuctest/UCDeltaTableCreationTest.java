@@ -645,6 +645,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               : ImmutableMap.of();
       final Map<String, String> expectedOtherProperties =
           ImmutableMap.<String, String>builder()
+              .put("delta.checkpoint.writeStatsAsJson", "false")
+              .put("delta.checkpoint.writeStatsAsStruct", "true")
               .put("delta.checkpointPolicy", "v2")
               .put("delta.enableDeletionVectors", "true")
               .put("delta.enableInCommitTimestamps", "true")

@@ -201,6 +201,8 @@ trait DescribeDeltaHistorySuiteBase
         case (feature, config, value)
         => config.key -> value
       }.toMap ++
+      CatalogOwnedTableUtils.QOL_TABLE_PROPERTIES
+        .map { case (config, value) => config.key -> value }.toMap ++
       // DV is explicitly disabled here b/c the current suite is incompatible
       // w/ DV, and we automatically enable it as part of CatalogOwned QoL features.
       Map(s"${DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key}" -> "false")
