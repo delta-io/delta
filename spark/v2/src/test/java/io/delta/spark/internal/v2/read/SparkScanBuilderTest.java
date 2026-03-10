@@ -152,10 +152,28 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
 
     checkSupportsPushDownFilters(
         builder,
+        new Filter[] {new StringEndsWith("name", "test")}, // input filters
+        new Filter[] {
+          new StringEndsWith("name", "test")
+        }, // expected post-scan filters (unsupported, stays for row-level eval)
+        new Filter[] {}, // expected pushed filters (nothing pushed)
+        new Predicate[] {}, // expected pushed kernel predicates
+        new Filter[] {new StringEndsWith("name", "test")}, // expected data filters
+        Optional.empty() // expected kernelScanBuilder.predicate
+        );
+  }
+
+  @Test
+  public void testPushFilters_singleSupportedDataFilter_StringStartsWith(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+
+    checkSupportsPushDownFilters(
+        builder,
         new Filter[] {new StringStartsWith("name", "test")}, // input filters
         new Filter[] {
           new StringStartsWith("name", "test")
-        }, // expected post-scan filters (data filter)
+        }, // expected post-scan filters (data filter still needs row-level eval)
         new Filter[] {new StringStartsWith("name", "test")}, // expected pushed filters
         new Predicate[] {
           new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("test"))
@@ -207,25 +225,18 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         // input filters
         new Filter[] {
           new EqualTo("id", 100), // supported
-          new StringStartsWith("name", "test") // unsupported
+          new StringEndsWith("name", "test") // unsupported
         },
         // expected post-scan filters
-        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
-        // expected pushed filters
-        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
+        new Filter[] {new EqualTo("id", 100), new StringEndsWith("name", "test")},
+        // expected pushed filters (only the supported EqualTo is pushed)
+        new Filter[] {new EqualTo("id", 100)},
         // expected pushed kernel predicates
-        new Predicate[] {
-          new Predicate("=", new Column("id"), Literal.ofInt(100)),
-          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("test"))
-        },
+        new Predicate[] {new Predicate("=", new Column("id"), Literal.ofInt(100))},
         // expected data filters
-        new Filter[] {new EqualTo("id", 100), new StringStartsWith("name", "test")},
-        // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "AND",
-                new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("test")))));
+        new Filter[] {new EqualTo("id", 100), new StringEndsWith("name", "test")},
+        // expected kernelScanBuilder.predicate (only EqualTo was pushed to kernel)
+        Optional.of(new Predicate("=", new Column("id"), Literal.ofInt(100))));
   }
 
   @Test
@@ -414,31 +425,22 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
       throws Exception {
     SparkScanBuilder builder = createTestScanBuilder(tempDir);
 
+    // OR(supported, unsupported) cannot be partially pushed: if one branch is unsupported,
+    // the whole OR must remain for post-scan evaluation and nothing is pushed to the kernel.
     checkSupportsPushDownFilters(
         builder,
         // input filters
-        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
-        // expected post-scan filters
-        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
-        // expected pushed filters
-        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
+        new Filter[] {new Or(new EqualTo("id", 100), new StringEndsWith("name", "foo"))},
+        // expected post-scan filters (whole OR stays, since one branch is unsupported)
+        new Filter[] {new Or(new EqualTo("id", 100), new StringEndsWith("name", "foo"))},
+        // expected pushed filters (nothing pushed)
+        new Filter[] {},
         // expected pushed kernel predicates
-        new Predicate[] {
-          new Predicate(
-              "OR",
-              Arrays.asList(
-                  new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                  new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))))
-        },
+        new Predicate[] {},
         // expected data filters
-        new Filter[] {new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))},
+        new Filter[] {new Or(new EqualTo("id", 100), new StringEndsWith("name", "foo"))},
         // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "OR",
-                Arrays.asList(
-                    new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                    new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))))));
+        Optional.empty());
   }
 
   @Test
@@ -476,20 +478,19 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   /*
-   * (supportedPartitionFilterA AND unsupportedPartitionFilterB) OR supportedPartitionFilterC
-   * will be converted to A OR C, because of the partial pushdown of AND
+   * (partitionFilterA AND partitionFilterB) OR partitionFilterC
+   * where A = EqualTo("dep_id", 1), B = StringStartsWith("dep_id", "1"), C = GreaterThan("dep_id", 2)
+   * All three are fully supported partition filters, so the whole expression is pushed down.
    *
-   * Expected post-scan filters: (A AND B) OR C
-   * Expected pushed filters: none (TODO: should be sparkFilterA OR sparkFilterC)
-   * Expected pushed kernel predicates: predicateA OR predicateC
+   * Expected post-scan filters: none (all partition filters, fully pushed)
+   * Expected pushed filters: (A AND B) OR C
+   * Expected pushed kernel predicates: (predicateA AND predicateB) OR predicateC
    * Expected data filters: none
-   * Expected kernelScanBuilder.predicate: predicateA OR predicateC
+   * Expected kernelScanBuilder.predicate: (predicateA AND predicateB) OR predicateC
    */
   @Test
   public void testPushFilters_mixedORandAND(@TempDir File tempDir) throws Exception {
     SparkScanBuilder builder = createTestScanBuilder(tempDir);
-
-    // (supportedPartitionFilterA AND unsupportedPartitionFilterB) OR supportedPartitionFilterC
 
     checkSupportsPushDownFilters(
         builder,
@@ -667,38 +668,25 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
       throws Exception {
     SparkScanBuilder builder = createTestScanBuilder(tempDir);
 
+    // NOT(OR(supported, unsupported)): the OR branch contains an unsupported filter
+    // (StringEndsWith),
+    // so the whole NOT(OR(...)) cannot be pushed to the kernel.
     checkSupportsPushDownFilters(
         builder,
         // input filters
         new Filter[] {
-          new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo"))),
+          new Not(new Or(new EqualTo("id", 100), new StringEndsWith("name", "foo"))),
         },
-        // expected post-scan filters
-        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
-        // expected pushed filters
-        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
+        // expected post-scan filters (whole NOT(OR) stays, unsupported branch blocks pushdown)
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringEndsWith("name", "foo")))},
+        // expected pushed filters (nothing pushed)
+        new Filter[] {},
         // expected pushed kernel predicates
-        new Predicate[] {
-          new Predicate(
-              "NOT",
-              new Predicate(
-                  "OR",
-                  Arrays.asList(
-                      new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                      new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo")))))
-        },
+        new Predicate[] {},
         // expected data filters
-        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringStartsWith("name", "foo")))},
+        new Filter[] {new Not(new Or(new EqualTo("id", 100), new StringEndsWith("name", "foo")))},
         // expected kernelScanBuilder.predicate
-        Optional.of(
-            new Predicate(
-                "NOT",
-                new Predicate(
-                    "OR",
-                    Arrays.asList(
-                        new Predicate("=", new Column("id"), Literal.ofInt(100)),
-                        new Predicate(
-                            "STARTS_WITH", new Column("name"), Literal.ofString("foo")))))));
+        Optional.empty());
   }
 
   private void checkSupportsPushDownFilters(

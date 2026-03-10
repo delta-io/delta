@@ -133,10 +133,9 @@ public final class ExpressionUtils {
     }
     if (filter instanceof StringStartsWith) {
       StringStartsWith f = (StringStartsWith) filter;
-      Optional<Literal> literal = convertValueToKernelLiteral(f.value());
-      if (!literal.isPresent()) return new ConvertedPredicate(Optional.empty());
       return new ConvertedPredicate(
-          Optional.of(new Predicate("STARTS_WITH", kernelColumn(f.attribute()), literal.get())));
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("STARTS_WITH", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
