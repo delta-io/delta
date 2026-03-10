@@ -235,6 +235,58 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
+   * CDF streaming reads work for EXTERNAL tables (V1 connector) but are blocked for MANAGED tables
+   * (V2 connector rejects {@code readChangeFeed}).
+   *
+   * <p>For EXTERNAL: verifies that inserts and a delete produce the expected typed change events.
+   * For MANAGED: verifies the stream fails with a clear "not supported" / "CDC" error.
+   */
+  @TestAllTableTypes
+  public void testStreamingCDFRead(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_cdf_read_test",
+        "id INT",
+        null,
+        tableType,
+        "'delta.enableChangeDataFeed'='true'",
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+          long insertVersion = currentVersion(tableName);
+          sql("DELETE FROM %s WHERE id = 1", tableName);
+
+          if (tableType == TableType.EXTERNAL) {
+            List<String> changeTypes = Collections.synchronizedList(new ArrayList<>());
+            spark()
+                .readStream()
+                .format("delta")
+                .option("readChangeFeed", "true")
+                .option("startingVersion", insertVersion)
+                .table(tableName)
+                .writeStream()
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .foreachBatch(
+                    (VoidFunction2<Dataset<Row>, Long>)
+                        (df, id) ->
+                            changeTypes.addAll(
+                                df.select("_change_type").collectAsList().stream()
+                                    .map(r -> r.getString(0))
+                                    .collect(Collectors.toList())))
+                .start()
+                .awaitTermination();
+            assertThat(changeTypes)
+                .containsExactlyInAnyOrder("insert", "insert", "insert", "delete");
+          } else {
+            assertInvalidStreamOption(
+                tableName,
+                r -> r.option("readChangeFeed", "true").option("startingVersion", insertVersion),
+                "not supported",
+                "CDC");
+          }
+        });
+  }
+
+  /**
    * Delta streaming sink does not support {@code complete} output mode. Verifies the stream fails
    * with a clear error mentioning "complete".
    */
@@ -274,9 +326,8 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
    * <ul>
    *   <li>Negative {@code startingVersion} is rejected (both table types).
    *   <li>{@code startingVersion} beyond the table history is rejected (both table types).
-   *   <li>{@code readChangeFeed}, {@code ignoreChanges}, and {@code ignoreDeletes} are blocked by
-   *       the V2 connector (MANAGED tables only — EXTERNAL tables route through V1 which silently
-   *       accepts these options).
+   *   <li>{@code ignoreChanges}, and {@code ignoreDeletes} are blocked by the V2 connector (MANAGED
+   *       tables only — EXTERNAL tables route through V1 which silently accepts these options).
    * </ul>
    */
   @TestAllTableTypes
@@ -293,11 +344,6 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
           assertInvalidStreamOption(tableName, r -> r.option("startingVersion", 999999), "999999");
 
           if (tableType == TableType.MANAGED) {
-            assertInvalidStreamOption(
-                tableName,
-                r -> r.option("readChangeFeed", "true").option("startingVersion", 0),
-                "not supported",
-                "CDC");
             assertInvalidStreamOption(
                 tableName,
                 r -> r.option("ignoreChanges", "true"),
