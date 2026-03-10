@@ -325,7 +325,7 @@ class CatalogOwnedPropertySuite extends QueryTest
     }
   }
 
-  test("[RTAS] failed replace preserves existing catalog-owned table data and version") {
+  test("[RTAS] failed replace preserves existing catalog-managed table data and version") {
     withTable("t1") {
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       sql("INSERT INTO t1 VALUES (1), (2)")
@@ -333,7 +333,11 @@ class CatalogOwnedPropertySuite extends QueryTest
       val ucTableIdBefore = getUCTableIdFromTable("t1")
 
       intercept[Exception] {
-        sql("REPLACE TABLE t1 USING delta AS SELECT assert_true(false) AS id")
+        sql(
+          """REPLACE TABLE t1 USING delta AS
+            |SELECT IF(id = 2L, CAST(raise_error('boom') AS BIGINT), id) AS id
+            |FROM VALUES (1L), (2L) AS src(id)
+            |""".stripMargin)
       }
 
       validateCatalogOwnedAndUCTableId(tableName = "t1", expected = true)
@@ -346,7 +350,7 @@ class CatalogOwnedPropertySuite extends QueryTest
     }
   }
 
-  test("[REPLACE] replacing an existing catalog-owned table preserves UC identity and is atomic") {
+  test("[REPLACE] replacing an existing catalog-managed table preserves UC identity") {
     withTable("t1") {
       createTableAndValidateCatalogOwned(tableName = "t1", withCatalogOwned = true)
       val ucTableIdBefore = getUCTableIdFromTable("t1")

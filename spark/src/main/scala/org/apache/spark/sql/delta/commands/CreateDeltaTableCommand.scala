@@ -770,8 +770,9 @@ case class CreateDeltaTableCommand(
       txn: OptimisticTransaction,
       tableDesc: CatalogTable,
       schema: StructType): Boolean = {
-    if (!(allowCatalogManaged && isReplace &&
-        txn.readVersion > -1L)) {
+    // Only use this metadata-preserving path for catalog-managed replace on an
+    // existing table; otherwise fall back to the normal replace flow.
+    if (!(allowCatalogManaged && isReplace && txn.readVersion > -1L)) {
       return false
     }
 
@@ -782,15 +783,17 @@ case class CreateDeltaTableCommand(
     // Query-derived schemas (for example from CTAS/RTAS SELECT output) may mark every column
     // nullable even when the table metadata keeps NOT NULL constraints, so compare those
     // nullability-insensitively. Explicit DDL schemas should preserve nullability exactly.
-    val (existingSchemaToCompare, requestedSchemaToCompare) = if (query.isDefined) {
-      (existingSchema.asNullable, schema.asNullable)
-    } else {
-      (existingSchema, schema)
-    }
+    val (existingSchemaToCompare, requestedSchemaToCompare, exactSchemaMetadataMismatch) =
+      if (query.isDefined) {
+        (existingSchema.asNullable, schema.asNullable, false)
+      } else {
+        // Explicit DDL should also preserve field metadata such as column comments.
+        (existingSchema, schema, existingSchema != schema)
+      }
     val schemaDifferences = SchemaUtils.reportDifferences(
       existingSchemaToCompare,
       requestedSchemaToCompare)
-    if (schemaDifferences.nonEmpty) {
+    if (schemaDifferences.nonEmpty || exactSchemaMetadataMismatch) {
       throw DeltaErrors.operationNotSupportedException(
         "Replacing a catalog-managed table with a " +
           "different schema")
@@ -857,8 +860,9 @@ case class CreateDeltaTableCommand(
     val existProps = normalizeProperties(
       existingMetadata.configuration)
 
-    // Only check properties the user explicitly specified. Properties that exist only in the
-    // current metadata are preserved because catalog-managed replace skips metadata updates.
+    // Explicitly specified properties must match the existing metadata. Properties omitted from
+    // the command are treated as "preserve existing", since catalog-managed replace skips
+    // metadata updates.
     val changedKeys = specProps.collect {
       case (key, value)
         if existProps.get(key) != Some(value) => key
@@ -894,8 +898,7 @@ case class CreateDeltaTableCommand(
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // If this catalog-managed replace preserves metadata, skip the metadata rewrite below;
       // otherwise this helper throws.
-      if (catalogManagedReplacePreservesMetadata(
-          sparkSession, txn, tableDesc, schema)) {
+      if (catalogManagedReplacePreservesMetadata(sparkSession, txn, tableDesc, schema)) {
         return
       }
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace

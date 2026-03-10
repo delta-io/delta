@@ -35,7 +35,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{LongType, StructField, StructType}
+import org.apache.spark.sql.types.{LongType, MetadataBuilder, StructField, StructType}
 
 class DeltaCreateTableLikeSuite extends QueryTest
   with SharedSparkSession
@@ -438,6 +438,74 @@ class DeltaCreateTableLikeSuite extends QueryTest
       val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
         tableDesc = existingTable.copy(
           schema = StructType(Seq(StructField("id", LongType, nullable = true)))),
+        query = None,
+        maybeClusterBySpec = None)
+
+      val command = CreateDeltaTableCommand(
+        updatedTable,
+        existingTableOpt = Some(existingTable),
+        mode = SaveMode.Overwrite,
+        query = None,
+        operation = TableCreationModes.CreateOrReplace,
+        allowCatalogManaged = true,
+        createTableFunc = None)
+
+      val err = intercept[DeltaAnalysisException] {
+        command.run(spark)
+      }
+      assert(err.getMessage.contains(
+        "Replacing a catalog-managed table with a different schema"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE allows query-derived nullable schema") {
+    withTable("t", "source") {
+      spark.sql("CREATE TABLE t (id LONG NOT NULL) USING DELTA")
+      spark.sql("INSERT INTO t VALUES (1)")
+      spark.sql("CREATE TABLE source (id LONG) USING DELTA")
+      spark.sql("INSERT INTO source VALUES (2)")
+
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val versionBefore = DeltaLog.forTable(spark, TableIdentifier("t")).update().version
+      val query = spark.sql("SELECT id FROM source").logicalPlan
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        tableDesc = existingTable.copy(schema = query.schema.asNullable),
+        query = Some(query),
+        maybeClusterBySpec = None)
+
+      val command = CreateDeltaTableCommand(
+        updatedTable,
+        existingTableOpt = Some(existingTable),
+        mode = SaveMode.Overwrite,
+        query = Some(query),
+        operation = TableCreationModes.CreateOrReplace,
+        allowCatalogManaged = true,
+        createTableFunc = None)
+
+      command.run(spark)
+
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore + 1)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(2L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE rejects explicit column comment changes") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG COMMENT 'old') USING DELTA")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        tableDesc = existingTable.copy(
+          schema = StructType(Seq(
+            StructField(
+              "id",
+              LongType,
+              nullable = true,
+              new MetadataBuilder().putString("comment", "new").build())))),
         query = None,
         maybeClusterBySpec = None)
 

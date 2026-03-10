@@ -161,7 +161,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       // looks like an unqualified V1 table and may be handled through the current/session
       // catalog path instead of its original catalog.
       val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
-      if (isUnityCatalog) base.copy(catalog = Some(name())) else base
+      if (isUnityCatalog) {
+        base.copy(catalog = Some(name())) // `name()` here is the catalog name.
+      } else {
+        base
+      }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
     // `getExistingTableIfExists` only checks the V1 SessionCatalog entry for `id`, while
@@ -603,8 +607,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   /**
    * Returns an existing Delta table by querying the delegated catalog for Unity Catalog replace
-   * paths. This is needed when [[getExistingTableIfExists]] only checks SessionCatalog, but the
-   * existing table entry is available through the delegated catalog lookup on `ident`.
+   * paths. This is needed when [[getExistingTableIfExists]] only checks the V1 SessionCatalog
+   * using a [[TableIdentifier]], but the existing table entry is only surfaced through the
+   * delegated V2 catalog lookup on `ident`.
    *
    * This helper is only used for Unity Catalog.
    */
