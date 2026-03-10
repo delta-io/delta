@@ -65,6 +65,7 @@ public class SparkScanBuilder
    * @param snapshotManager the snapshot manager for this table
    * @param dataSchema the data schema (non-partition columns)
    * @param partitionSchema the partition schema
+   * @param catalogStats optional V2 Statistics converted from catalog stats
    * @param options scan options
    */
   public SparkScanBuilder(

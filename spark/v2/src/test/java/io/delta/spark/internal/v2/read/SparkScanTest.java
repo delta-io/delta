@@ -929,6 +929,55 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testEstimateStatisticsWithCatalogStats_planStatsEnabled(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_plan_stats_enabled";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
+
+    // Inject catalog stats with numRows
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(512L),
+            scala.Option.apply(scala.math.BigInt.apply(2L)),
+            scala.collection.immutable.Map$.MODULE$.empty());
+
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    // CBO disabled but planStatsEnabled=true should still surface catalog stats
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "false",
+        () -> {
+          withSQLConf(
+              "spark.sql.cbo.planStats.enabled",
+              "true",
+              () -> {
+                Identifier id = Identifier.of(new String[] {"default"}, tblName);
+                SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+                SparkScanBuilder builder =
+                    (SparkScanBuilder)
+                        sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+                SparkScan scan = (SparkScan) builder.build();
+                Statistics stats = scan.estimateStatistics();
+
+                // With planStatsEnabled, numRows should come from catalog stats
+                assertTrue(
+                    stats.numRows().isPresent(), "numRows should be present with planStatsEnabled");
+                assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
+
+                // sizeInBytes should still come from planned files
+                assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+                assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+              });
+        });
+  }
+
+  @Test
   public void testEstimateStatisticsWithoutCatalogStats(@TempDir File tempDir) throws Exception {
     // Path-based table has no catalog stats
     String path = tempDir.getAbsolutePath();
@@ -1065,51 +1114,56 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
-    // avgLen is used for sizeInBytes estimation regardless of CBO setting
+    // avgLen is used for sizeInBytes estimation regardless of CBO/planStats settings
     withSQLConf(
         "spark.sql.cbo.enabled",
         "false",
         () -> {
-          Identifier id = Identifier.of(new String[] {"default"}, tblName);
-          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          withSQLConf(
+              "spark.sql.cbo.planStats.enabled",
+              "false",
+              () -> {
+                Identifier id = Identifier.of(new String[] {"default"}, tblName);
+                SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
 
-          SparkScanBuilder builder =
-              (SparkScanBuilder)
-                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+                SparkScanBuilder builder =
+                    (SparkScanBuilder)
+                        sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
 
-          // Prune to only 'name' column to trigger column projection estimation
-          StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
-          builder.pruneColumns(prunedSchema);
+                // Prune to only 'name' column to trigger column projection estimation
+                StructType prunedSchema = new StructType().add("name", DataTypes.StringType);
+                builder.pruneColumns(prunedSchema);
 
-          SparkScan scan = (SparkScan) builder.build();
+                SparkScan scan = (SparkScan) builder.build();
 
-          long totalBytes = getTotalBytes(scan);
-          long estimatedSize = getEstimatedSizeInBytes(scan);
-          assertTrue(totalBytes > 0, "totalBytes should be positive");
+                long totalBytes = getTotalBytes(scan);
+                long estimatedSize = getEstimatedSizeInBytes(scan);
+                assertTrue(totalBytes > 0, "totalBytes should be positive");
 
-          // Schema: dataSchema = (id INT, name STRING), partitionSchema = empty
-          // readSchema = (name STRING) after pruning
-          //
-          // With avgLen=5 for name (STRING: avgLen + 12 = 17, vs defaultSize 20):
-          //   fullSchemaRowSize = 8 + (4 [INT default] + 17 [STRING avgLen]) = 29
-          //   outputRowSize     = 8 + 17 = 25
-          //   estimated = (totalBytes * 25) / 29
-          //
-          // Without avgLen (defaultSize only):
-          //   fullSchemaRowSize = 8 + (4 + 20) = 32
-          //   outputRowSize     = 8 + 20 = 28
-          //   estimated = (totalBytes * 28) / 32
-          long expectedWithAvgLen = (totalBytes * 25) / 29;
-          long expectedWithoutAvgLen = (totalBytes * 28) / 32;
+                // Schema: dataSchema = (id INT, name STRING), partitionSchema = empty
+                // readSchema = (name STRING) after pruning
+                //
+                // With avgLen=5 for name (STRING: avgLen + 12 = 17, vs defaultSize 20):
+                //   fullSchemaRowSize = 8 + (4 [INT default] + 17 [STRING avgLen]) = 29
+                //   outputRowSize     = 8 + 17 = 25
+                //   estimated = (totalBytes * 25) / 29
+                //
+                // Without avgLen (defaultSize only):
+                //   fullSchemaRowSize = 8 + (4 + 20) = 32
+                //   outputRowSize     = 8 + 20 = 28
+                //   estimated = (totalBytes * 28) / 32
+                long expectedWithAvgLen = (totalBytes * 25) / 29;
+                long expectedWithoutAvgLen = (totalBytes * 28) / 32;
 
-          assertEquals(
-              expectedWithAvgLen,
-              estimatedSize,
-              "estimatedSize should use avgLen from catalog stats");
-          assertNotEquals(
-              expectedWithoutAvgLen,
-              estimatedSize,
-              "estimatedSize should differ from defaultSize-only calculation");
+                assertEquals(
+                    expectedWithAvgLen,
+                    estimatedSize,
+                    "estimatedSize should use avgLen from catalog stats");
+                assertNotEquals(
+                    expectedWithoutAvgLen,
+                    estimatedSize,
+                    "estimatedSize should differ from defaultSize-only calculation");
+              });
         });
   }
 
