@@ -3166,7 +3166,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
-      .createWithDefault(50000)
+      .createWithDefault(100000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
