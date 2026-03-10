@@ -98,8 +98,8 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
           fileStatus,
           Collections.emptyMap(),
           dataChange,
-          Optional.empty[java.lang.Long](),
-          Optional.empty[java.lang.Long](),
+          Optional.of[java.lang.Long](1L),
+          Optional.of[java.lang.Long](1L),
           deletionVector,
           Optional.of(TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
       case _ => throw new IllegalArgumentException(
@@ -271,8 +271,13 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
         assert(!removeFile.getTags.isPresent)
         assert(!removeFile.getDeletionVector.isPresent)
 
-        assert(!removeFile.getBaseRowId.isPresent)
-        assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+        if (icebergCompatWriterVersion == "V1") {
+          assert(!removeFile.getBaseRowId.isPresent)
+          assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+        } else { // V3
+          assert(removeFile.getBaseRowId.isPresent)
+          assert(removeFile.getDefaultRowCommitVersion.isPresent)
+        }
 
         Some(ExpectedRemove(
           removeFile.getPath,
