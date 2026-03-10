@@ -47,7 +47,7 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{IntegerType, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, LongType, NullType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
@@ -2188,6 +2188,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
           .format("delta")
           .start(outputDir.getCanonicalPath)
       }
@@ -2290,6 +2291,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
           .format("delta")
           .start(outputDir.getCanonicalPath)
       }
@@ -2316,8 +2318,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         // Restarting the query with a new DataFrame should recover from the schema change
         q = startQuery()
         q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.getCanonicalPath).orderBy("id"),
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema("id").nullable,
+          "Expected 'id' column to be nullable after relaxing nullability")
+        checkAnswer(outputDf.orderBy("id"),
           Seq(Row(null), Row("0"), Row("1")))
       } finally {
         q.stop()
@@ -2339,6 +2343,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       var q = df.writeStream
         .option("checkpointLocation", checkpointDir.getCanonicalPath)
         .option("mergeSchema", "true")
+        // use delta sink because we need to check the result
         .format("delta")
         .start(outputDir.getCanonicalPath)
       try {
@@ -2366,8 +2371,10 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .format("delta")
           .start(outputDir.getCanonicalPath)
         q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.getCanonicalPath).orderBy("id"),
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema("id").nullable,
+          "Expected 'id' column to be nullable after relaxing nullability")
+        checkAnswer(outputDf.orderBy("id"),
           Seq(Row(null), Row("0"), Row("1")))
       } finally {
         q.stop()
@@ -2394,6 +2401,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .writeStream
             .option("checkpointLocation", checkpointDir.getCanonicalPath)
             .option("mergeSchema", "true")
+            // use delta sink because we need to check the result
             .format("delta")
             .start(outputDir.getCanonicalPath)
         }
@@ -2420,8 +2428,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           // Restarting the query with a new DataFrame should recover from the schema change
           q = startQuery()
           q.processAllAvailable()
-          checkAnswer(
-            spark.read.format("delta").load(outputDir.getCanonicalPath).orderBy("id"),
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema("id").dataType === LongType,
+            s"Expected 'id' column to be LongType after type widening but got " +
+              s"${outputDf.schema("id").dataType}")
+          checkAnswer(outputDf.orderBy("id"),
             Seq(Row(0L), Row(1L), Row(2147483648L)))
         } finally {
           q.stop()
@@ -2448,6 +2459,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         var q = df.writeStream
           .option("checkpointLocation", checkpointDir.getCanonicalPath)
           .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
           .format("delta")
           .start(outputDir.getCanonicalPath)
         try {
@@ -2475,8 +2487,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
             .format("delta")
             .start(outputDir.getCanonicalPath)
           q.processAllAvailable()
-          checkAnswer(
-            spark.read.format("delta").load(outputDir.getCanonicalPath).orderBy("id"),
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema("id").dataType === LongType,
+            s"Expected 'id' column to be LongType after type widening but got " +
+              s"${outputDf.schema("id").dataType}")
+          checkAnswer(outputDf.orderBy("id"),
             Seq(Row(0L), Row(1L), Row(2147483648L)))
         } finally {
           q.stop()
