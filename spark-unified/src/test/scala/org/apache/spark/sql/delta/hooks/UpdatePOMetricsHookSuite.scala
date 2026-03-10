@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,7 +33,6 @@ import org.apache.spark.sql.types.StructType
 class UpdatePOMetricsHookSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
-  private val UC_CATALOG_URI_CONF_KEY = "spark.sql.catalog.migration_bugbash.uri"
   private val TEST_CATALOG_NAME = "test_catalog"
 
   override protected def sparkConf: SparkConf = {
@@ -47,7 +46,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
       mockServer.setResponseCode(200)
       mockServer.start()
 
-      spark.conf.set(UC_CATALOG_URI_CONF_KEY, s"http://localhost:${mockServer.getPort()}")
+      spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.uri", s"http://localhost:${mockServer.getPort()}")
       spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.token", "test-token-123")
 
       val request = ReportDeltaMetricsRequest(
@@ -81,7 +80,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
         val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
         val snapshot = deltaLog.snapshot
 
-        spark.conf.set(UC_CATALOG_URI_CONF_KEY, s"http://localhost:${mockServer.getPort()}")
+        spark.conf.set("spark.sql.catalog.spark_catalog.uri", s"http://localhost:${mockServer.getPort()}")
         spark.conf.set("spark.sql.catalog.spark_catalog.token", "smoke-token")
 
         val catalogTable = CatalogTable(
@@ -201,7 +200,7 @@ class SimpleMockServer(port: Int) {
 
       clientSocket.close()
     } catch {
-      case _: Exception =>
+      case _: java.io.IOException => // client disconnect, etc. - expected during test teardown
     }
   }
 

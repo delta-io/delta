@@ -1,5 +1,5 @@
 /*
- * Copyright (2025) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -38,10 +38,11 @@ import org.apache.spark.sql.SparkSession
  *  4. Forward the metrics to PO via PredictiveOptimizationClient.pushExternalDeltaCommitMetrics
  */
 object POMetricsClient {
-  private val UC_CATALOG_URI_CONF_KEY = "spark.sql.catalog.migration_bugbash.uri"
+  private val CATALOG_URI_CONF_SUFFIX = ".uri"
   private val CATALOG_TOKEN_CONF_PREFIX = "spark.sql.catalog."
   private val CATALOG_TOKEN_CONF_SUFFIX = ".token"
   private val PO_METRICS_ENDPOINT_SUFFIX = "/api/2.1/unity-catalog/delta/preview/metrics"
+  // Short timeout for best-effort delivery; hook must not block commits
   private val HTTP_TIMEOUT_MS = 5000L
 
   /**
@@ -49,13 +50,18 @@ object POMetricsClient {
    *
    * @param spark   The SparkSession (used to read configuration)
    * @param request The fully-constructed request payload
+   * @param catalogName The catalog name (required to resolve endpoint URI and auth token)
    * @throws Exception if the HTTP request fails (caller should catch and log)
    */
   def sendMetrics(
       spark: SparkSession,
       request: ReportDeltaMetricsRequest,
       catalogName: Option[String] = None): Unit = {
-    val endpointUrl = getEndpointUrl(spark)
+    val catalog = catalogName.getOrElse(
+      throw new IllegalArgumentException(
+        "Catalog name required for PO metrics; " +
+        "endpoint URI is read from spark.sql.catalog.<name>.uri"))
+    val endpointUrl = getEndpointUrl(spark, catalog)
     val authToken = getAuthToken(spark, catalogName)
 
     val requestConfig = RequestConfig.custom()
@@ -96,14 +102,14 @@ object POMetricsClient {
     }
   }
 
-  private def getEndpointUrl(spark: SparkSession): String = {
-    spark.conf.getOption(UC_CATALOG_URI_CONF_KEY) match {
+  private def getEndpointUrl(spark: SparkSession, catalogName: String): String = {
+    val uriKey = s"$CATALOG_TOKEN_CONF_PREFIX$catalogName$CATALOG_URI_CONF_SUFFIX"
+    spark.conf.getOption(uriKey) match {
       case Some(uri) if uri.nonEmpty =>
         s"${uri.stripSuffix("/")}$PO_METRICS_ENDPOINT_SUFFIX"
       case _ =>
-        val key = UC_CATALOG_URI_CONF_KEY
         throw new IllegalArgumentException(
-          s"UC catalog base URI not configured. Set $key")
+          s"UC catalog base URI not configured. Set $uriKey")
     }
   }
 
