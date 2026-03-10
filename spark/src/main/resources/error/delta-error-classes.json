@@ -3143,9 +3143,7 @@
   },
   "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE" : {
     "message" : [
-      "Cannot change partition columns during <operation> operation.",
-      "- Old partition columns: <oldPartitionColumns>.",
-      "- New partition columns: <newPartitionColumns>."
+      "Cannot change partition columns during <operation> operation (old: <oldPartitionColumns>, new: <newPartitionColumns>)."
     ],
     "sqlState" : "42P10"
   },

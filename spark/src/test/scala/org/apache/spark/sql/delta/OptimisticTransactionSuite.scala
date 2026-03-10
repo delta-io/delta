@@ -1198,16 +1198,22 @@ class OptimisticTransactionSuite
 
           val logRecords = Log4jUsageLogger.track {
             exceptionClassOpt match {
-              case Some(exceptionClass) =>
-                val ex = intercept[Throwable] {
-                  txn.commit(
-                    Seq(newMetadata),
-                    DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+              case Some(_) =>
+                checkError(
+                  intercept[DeltaAnalysisException] {
+                    txn.commit(
+                      Seq(newMetadata),
+                      DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+                    )
+                  },
+                  condition = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+                  sqlState = "42P10",
+                  parameters = Map(
+                    "operation" -> "UPDATE",
+                    "oldPartitionColumns" -> "col1",
+                    "newPartitionColumns" -> "col2"
                   )
-                }
-                assert(ex.getClass == exceptionClass)
-                assert(ex.asInstanceOf[DeltaAnalysisException].getErrorClass ==
-                  "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE")
+                )
               case None =>
                 // Should succeed without throwing
                 txn.commit(
@@ -1245,41 +1251,49 @@ class OptimisticTransactionSuite
       val txn = deltaLog.startTransaction()
       val newMetadata = txn.metadata.copy(partitionColumns = Seq("col2"))
 
-      val ex = intercept[DeltaAnalysisException] {
-        txn.commit(
-          Seq(newMetadata),
-          DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+      checkError(
+        intercept[DeltaAnalysisException] {
+          txn.commit(
+            Seq(newMetadata),
+            DeltaOperations.Update(predicate = Some(EqualTo(Literal(1), Literal(1))))
+          )
+        },
+        condition = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+        sqlState = "42P10",
+        parameters = Map(
+          "operation" -> "UPDATE",
+          "oldPartitionColumns" -> "col1",
+          "newPartitionColumns" -> "col2"
         )
-      }
-      assert(ex.getErrorClass == "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE")
+      )
       assertPartitionColumns(tablePath, Seq("col1"))
     }
   }
 
   Seq(
     // Recreation of running DFv1 .save() overwrite changing partition cols.
-    ("blocked for Write(Overwrite, partitionBy)",
+    ("blocked for Write(Overwrite, partitionBy)", "WRITE",
       (_: Metadata) => DeltaOperations.Write(SaveMode.Overwrite, partitionBy = Some(Seq("col2")))),
 
     // Recreation of running DFv1 .save() replaceWhere changing partition cols.
-    ("blocked for Write(Overwrite, partitionBy, predicate)",
+    ("blocked for Write(Overwrite, partitionBy, predicate)", "WRITE",
       (_: Metadata) => DeltaOperations.Write(SaveMode.Overwrite, partitionBy = Some(Seq("col2")),
         predicate = Some("col1=0"))),
 
     // Recreation of running DFv1 .save() DPO changing partition cols.
-    ("blocked for Write(Overwrite, partitionBy, DPO)",
+    ("blocked for Write(Overwrite, partitionBy, DPO)", "WRITE",
       (_: Metadata) => DeltaOperations.Write(SaveMode.Overwrite, partitionBy = Some(Seq("col2")),
         isDynamicPartitionOverwrite = Some(true))),
 
     // Recreation of running DFv1 .saveAsTable() overwrite changing partition cols.
-    ("blocked for ReplaceTable(isV1SaveAsTableOverwrite=true)",
+    ("blocked for ReplaceTable(isV1SaveAsTableOverwrite=true)", "CREATE OR REPLACE TABLE AS SELECT",
       (newMeta: Metadata) => DeltaOperations.ReplaceTable(
         metadata = newMeta,
         isManaged = true,
         orCreate = true,
         asSelect = true,
         isV1SaveAsTableOverwrite = Some(true)))
-  ).foreach { case (testSuffix, mkOp) =>
+  ).foreach { case (testSuffix, expectedOpName, mkOp) =>
     test(s"partition column changes $testSuffix") {
       withTempDir { tempDir =>
         val tablePath = tempDir.getAbsolutePath
@@ -1289,10 +1303,18 @@ class OptimisticTransactionSuite
         val txn = deltaLog.startTransaction()
         val newMetadata = txn.metadata.copy(partitionColumns = Seq("col2"))
 
-        val ex = intercept[DeltaAnalysisException] {
-          txn.commit(Seq(newMetadata), mkOp(newMetadata))
-        }
-        assert(ex.getErrorClass == "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE")
+        checkError(
+          intercept[DeltaAnalysisException] {
+            txn.commit(Seq(newMetadata), mkOp(newMetadata))
+          },
+          condition = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+          sqlState = "42P10",
+          parameters = Map(
+            "operation" -> expectedOpName,
+            "oldPartitionColumns" -> "col1",
+            "newPartitionColumns" -> "col2"
+          )
+        )
         assertPartitionColumns(tablePath, Seq("col1"))
       }
     }
