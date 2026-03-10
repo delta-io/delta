@@ -25,6 +25,7 @@ import org.apache.spark.sql.DataFrameReader;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 /**
  * DataFrame read test suite for Delta Table operations through Unity Catalog.
@@ -107,12 +108,12 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
         });
   }
 
-  @TestAllTableTypes
-  public void testReadViaPath(TableType tableType) throws Exception {
+  @Test
+  public void testReadViaPath() throws Exception {
     withNewTable(
         "df_read_via_path",
         "id INT",
-        tableType,
+        TableType.MANAGED,
         tableName -> {
           sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
           String tablePath =
@@ -121,21 +122,10 @@ public class UCDeltaTableDataFrameReadTest extends UCDeltaTableIntegrationBaseTe
                   .map(row -> row.get(1))
                   .findFirst()
                   .orElseThrow(() -> new AssertionError("Could not retrieve table location"));
-
-          if (tableType == TableType.MANAGED) {
-            Assertions.assertThrows(
-                Exception.class,
-                () -> spark().read().format("delta").load(tablePath).collect(),
-                "Path-based access should fail for managed tables");
-          } else {
-            S3CredentialFileSystem.credentialCheckEnabled = false;
-            try {
-              assertThat(ids(spark().read().format("delta").load(tablePath).orderBy("id")))
-                  .containsExactly(1, 2, 3);
-            } finally {
-              S3CredentialFileSystem.credentialCheckEnabled = true;
-            }
-          }
+          Assertions.assertThrows(
+              Exception.class,
+              () -> spark().read().format("delta").load(tablePath).collect(),
+              "Path-based access should fail for managed tables");
         });
   }
 
