@@ -1976,6 +1976,49 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("streaming with skipChangeCommits = true skips both delete and change commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3).map(Row(_)))
+
+        // Delete all rows: produces only RemoveFile actions (delete-only commit)
+        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        // Overwrite produces both AddFile and RemoveFile actions (change commit)
+        Seq(6, 7, 8).toDF("x")
+          .write
+          .mode("overwrite")
+          .format("delta")
+          .save(inputDir.toString)
+
+        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        q.processAllAvailable()
+
+        // Both the delete and overwrite commits are silently skipped; only inserts are processed
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5, 9, 10).map(Row(_)))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("fail on data loss - starting from missing files") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {

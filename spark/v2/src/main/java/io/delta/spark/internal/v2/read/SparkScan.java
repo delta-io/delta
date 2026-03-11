@@ -61,12 +61,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
               DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
-              DeltaOptions.IGNORE_DELETES_OPTION()));
+              DeltaOptions.IGNORE_DELETES_OPTION(),
+              DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, and ignoreDeletes
-   * are supported. User-defined custom options (not in DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreDeletes, and
+   * skipChangeCommits are supported. User-defined custom options (not in DeltaOptions) are allowed
+   * to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
@@ -75,7 +77,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                   DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
-                  DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),

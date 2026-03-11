@@ -101,6 +101,7 @@ public class SparkMicroBatchStream
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
   private final StructType readSchemaAtSourceInit;
@@ -185,6 +186,7 @@ public class SparkMicroBatchStream
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
+    this.skipChangeCommits = this.options.skipChangeCommits();
     // Normalize tablePath to ensure it ends with "/" for consistent path construction
     String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.tablePath =
@@ -801,7 +803,7 @@ public class SparkMicroBatchStream
     try {
       long version = commit.getVersion();
 
-      // First pass: Validate the commit.
+      // First pass: Validate the commit and decide whether to skip it.
       //
       // We must validate the ENTIRE commit before emitting ANY files. This is a correctness
       // requirement: commits could contain both AddFiles and RemoveFiles.
@@ -810,13 +812,15 @@ public class SparkMicroBatchStream
       //
       // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
       // TODO(#5319): don't verify metadata action when schema tracking is enabled
-      validateCommit(
-          commit,
-          version,
-          startVersion,
-          snapshotAtSourceInit.getPath(),
-          endOffsetOpt,
-          /* verifyMetadataAction= */ true);
+      boolean shouldSkipCommit =
+          validateCommitAndDecideSkipping(
+              commit,
+              version,
+              startVersion,
+              snapshotAtSourceInit.getPath(),
+              endOffsetOpt,
+              /* verifyMetadataAction= */ true);
+
       // Second pass: Build a lazy iterator of IndexedFiles.
       //
       //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
@@ -829,9 +833,13 @@ public class SparkMicroBatchStream
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
+      CloseableIterator<IndexedFile> fileActions =
+          shouldSkipCommit
+              ? Utils.toCloseableIterator(Collections.emptyIterator())
+              : getFilesFromCommit(commit, version);
       return Utils.singletonCloseableIterator(
               new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
-          .combine(getFilesFromCommit(commit, version))
+          .combine(fileActions)
           .combine(
               Utils.singletonCloseableIterator(
                   new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
@@ -859,7 +867,7 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Validates a commit and fail the stream if it's invalid. Mimics
+   * Validates a commit, fail the stream if it's invalid and decides whether to skip it. Mimics
    * DeltaSource.validateCommitAndDecideSkipping in Scala.
    *
    * @param commit the CommitActions representing a single commit
@@ -868,9 +876,10 @@ public class SparkMicroBatchStream
    * @param tablePath the path to the Delta table
    * @param endOffsetOpt optional end offset for boundary checking
    * @param verifyMetadataAction Whether to verify metadata action compatibility
+   * @return true if the commit should be skipped (no AddFiles emitted), false otherwise
    * @throws RuntimeException if the commit is invalid.
    */
-  private void validateCommit(
+  private boolean validateCommitAndDecideSkipping(
       CommitActions commit,
       long version,
       long batchStartVersion,
@@ -882,17 +891,18 @@ public class SparkMicroBatchStream
       DeltaSourceOffset endOffset = endOffsetOpt.get();
       if (endOffset.reservoirVersion() == version
           && endOffset.index() == DeltaSourceOffset.BASE_INDEX()) {
-        return;
+        return false;
       }
     }
 
-    // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreFileDeletion (deprecated)
+    // TODO(#5319): Implement ignoreChanges & ignoreFileDeletion (deprecated)
     // A check on the source table that disallows changes on the source data.
-    boolean shouldAllowChanges = false;
+    boolean shouldAllowChanges = skipChangeCommits;
     // A check on the source table that disallows commits that only include deletes to the data.
     boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
 
     boolean seenFileAdd = false;
+    boolean skippedCommit = false;
     Metadata metadataAction = null;
     String removeFileActionPath = null;
 
@@ -909,8 +919,11 @@ public class SparkMicroBatchStream
 
           // Track RemoveFile(dataChange=true); record the first path for error reporting.
           Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
-          if (removeOpt.isPresent() && removeFileActionPath == null) {
-            removeFileActionPath = removeOpt.get().getPath();
+          if (removeOpt.isPresent()) {
+            skippedCommit = skipChangeCommits;
+            if (removeFileActionPath == null) {
+              removeFileActionPath = removeOpt.get().getPath();
+            }
           }
 
           // Check Metadata for read-incompatible schema changes.
@@ -951,6 +964,8 @@ public class SparkMicroBatchStream
             DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath, tablePath);
       }
     }
+
+    return skippedCommit;
   }
 
   /**
