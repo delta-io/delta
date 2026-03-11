@@ -66,6 +66,7 @@ import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -98,6 +99,8 @@ public class SparkMicroBatchStream
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
+
+  public static final String CDC_TYPE_INSERT = CDCReader.CDC_TYPE_INSERT();
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -413,6 +416,7 @@ public class SparkMicroBatchStream
 
   @Override
   public InputPartition[] planInputPartitions(Offset start, Offset end) {
+    // TODO(#5319): handle CDC reads.
     DeltaSourceOffset startOffset = (DeltaSourceOffset) start;
     DeltaSourceOffset endOffset = (DeltaSourceOffset) end;
 
@@ -664,7 +668,7 @@ public class SparkMicroBatchStream
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSource.AdmissionLimits> limits) {
-    // TODO(#5319): getFileChangesForCDC if CDC is enabled.
+    // TODO(#5319): Route to getFileChangesForCDC when options.readChangeFeed() is true.
 
     CloseableIterator<IndexedFile> changes =
         getFileChanges(
@@ -705,13 +709,67 @@ public class SparkMicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotFiles(fromVersion);
+      CloseableIterator<IndexedFile> snapshotFiles =
+          getSnapshotFiles(fromVersion, /* cdcChangeType= */ Optional.empty());
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
+    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+  }
+
+  /**
+   * Get file changes for CDC mode. Mirrors DSv1: DeltaSourceCDCSupport.getFileChangesForCDC.
+   *
+   * @param fromVersion The starting version (exclusive with fromIndex)
+   * @param fromIndex The starting index within fromVersion (exclusive)
+   * @param isInitialSnapshot Whether this is the initial snapshot
+   * @param limits Rate limits to apply (Optional.empty() for no limits)
+   * @param endOffset The end offset (inclusive), or empty to read all available commits
+   * @return An iterator of IndexedFile representing the CDC file changes
+   */
+  CloseableIterator<IndexedFile> getFileChangesForCDC(
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffset) {
+    validateCDFEnabledOnTable();
+
+    CloseableIterator<IndexedFile> result;
+
+    if (isInitialSnapshot) {
+      CloseableIterator<IndexedFile> snapshotFiles =
+          getSnapshotFiles(fromVersion, Optional.of(CDC_TYPE_INSERT));
+      if (limits.isPresent()) {
+        snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
+      }
+      // TODO(#5319): combine with filterDeltaLogsForCDC for commits after snapshot
+      result = snapshotFiles;
+    } else {
+      // TODO(#5319): incremental CDC via filterDeltaLogsForCDC
+      result = Utils.toCloseableIterator(Collections.emptyIterator());
+    }
+
+    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+  }
+
+  /**
+   * Applies start/end boundary filtering to an iterator of IndexedFiles.
+   *
+   * @param result The unfiltered iterator
+   * @param fromVersion The starting version (exclusive with fromIndex)
+   * @param fromIndex The starting index within fromVersion (exclusive)
+   * @param endOffset The end offset (inclusive), or empty to read all available commits
+   * @return The filtered iterator
+   */
+  private CloseableIterator<IndexedFile> applyBoundaryFiltering(
+      CloseableIterator<IndexedFile> result,
+      long fromVersion,
+      long fromIndex,
+      Optional<DeltaSourceOffset> endOffset) {
     // Check start boundary (exclusive)
     result =
         result.filter(
@@ -738,6 +796,22 @@ public class SparkMicroBatchStream
     }
 
     return result;
+  }
+
+  private void validateCDFEnabledOnTable() {
+    String cdcEnabled =
+        snapshotAtSourceInit
+            .getMetadata()
+            .getConfiguration()
+            .getOrDefault("delta.enableChangeDataFeed", "false");
+
+    if (!cdcEnabled.equalsIgnoreCase("true")) {
+      long version = snapshotAtSourceInit.getVersion();
+      // DeltaErrors.changeDataNotRecordedException returns a DeltaAnalysisException (checked),
+      // so we wrap it to propagate through the streaming pipeline.
+      Throwable error = DeltaErrors.changeDataNotRecordedException(version, version, version);
+      throw new RuntimeException(error.getMessage(), error);
+    }
   }
 
   private CloseableIterator<IndexedFile> filterDeltaLogs(
@@ -838,11 +912,11 @@ public class SparkMicroBatchStream
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
       return Utils.singletonCloseableIterator(
-              new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
+              IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
           .combine(getFilesFromCommit(commit, version))
           .combine(
               Utils.singletonCloseableIterator(
-                  new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
+                  IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
     } catch (Exception e) {
       // commit is not a CloseableIterator, we need to close it manually.
       Utils.closeCloseables(commit);
@@ -1227,7 +1301,7 @@ public class SparkMicroBatchStream
       Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
       if (addOpt.isPresent()) {
         AddFile addFile = addOpt.get();
-        output.add(new IndexedFile(version, index++, addFile));
+        output.add(IndexedFile.addFile(version, index++, addFile));
       }
     }
 
@@ -1238,19 +1312,22 @@ public class SparkMicroBatchStream
    * Get all files from a snapshot at the specified version, sorted by modificationTime and path,
    * with indices assigned sequentially, and wrapped with BEGIN/END sentinels.
    *
-   * <p>Mimics DeltaSourceSnapshot in DSv1.
+   * <p>Mimics DeltaSourceSnapshot in DSv1. Uses a single unified cache for the initial snapshot
+   * regardless of CDC mode.
    *
    * @param version The snapshot version to read
+   * @param cdcChangeType If present, wraps each file as a CDC action with this change type
    * @return An iterator of IndexedFile representing the snapshot files
    */
-  private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
+  private CloseableIterator<IndexedFile> getSnapshotFiles(
+      long version, Optional<String> cdcChangeType) {
     InitialSnapshotCache cache = cachedInitialSnapshot.get();
 
     if (cache != null && cache.version != null && cache.version == version) {
       return Utils.toCloseableIterator(cache.files.iterator());
     }
 
-    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version);
+    List<IndexedFile> indexedFiles = loadAndValidateSnapshotInternal(version, cdcChangeType);
 
     cachedInitialSnapshot.set(
         new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
@@ -1258,9 +1335,18 @@ public class SparkMicroBatchStream
     return Utils.toCloseableIterator(indexedFiles.iterator());
   }
 
-  /** Loads snapshot files at the specified version. */
-  private List<IndexedFile> loadAndValidateSnapshot(long version) {
+  /**
+   * Shared implementation for loading and validating snapshot files.
+   *
+   * @param version The snapshot version
+   * @param cdcChangeType If present, each file gets this as its CDC change type (e.g. "insert").
+   *     The commit timestamp is derived from the loaded snapshot.
+   * @return Sorted list of IndexedFiles with BEGIN/END sentinels
+   */
+  private List<IndexedFile> loadAndValidateSnapshotInternal(
+      long version, Optional<String> cdcChangeType) {
     Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+    long commitTimestamp = cdcChangeType.isPresent() ? snapshot.getTimestamp(engine) : -1;
 
     Scan scan = snapshot.getScanBuilder().build();
 
@@ -1304,15 +1390,23 @@ public class SparkMicroBatchStream
     List<IndexedFile> indexedFiles = new ArrayList<>();
 
     // Add BEGIN sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null));
+    indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
 
     // Add data files with sequential indices starting from 0
     for (int i = 0; i < addFiles.size(); i++) {
-      indexedFiles.add(new IndexedFile(version, i, addFiles.get(i)));
+      if (cdcChangeType.isPresent()) {
+        indexedFiles.add(
+            IndexedFile.cdc(
+                version,
+                /* index= */ i,
+                CDCDataFile.fromAddFile(addFiles.get(i), cdcChangeType.get(), commitTimestamp)));
+      } else {
+        indexedFiles.add(IndexedFile.addFile(version, /* index= */ i, addFiles.get(i)));
+      }
     }
 
     // Add END sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
+    indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
 
     return indexedFiles;
   }

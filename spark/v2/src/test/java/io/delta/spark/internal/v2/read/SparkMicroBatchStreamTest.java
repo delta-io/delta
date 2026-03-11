@@ -518,8 +518,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
     DeltaOptions options = emptyDeltaOptions();
 
-    Optional<DeltaSource.AdmissionLimits> dsv1Limits =
-        createAdmissionLimits(deltaSource, maxFiles, maxBytes);
+    Optional<DeltaSource.AdmissionLimits> dsv1Limits = createAdmissionLimits(maxFiles, maxBytes);
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChangesWithRateLimit(
@@ -540,8 +539,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     SparkMicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
     // We need a separate AdmissionLimits object for DSv2 because the method is stateful.
-    Optional<DeltaSource.AdmissionLimits> dsv2Limits =
-        createAdmissionLimits(deltaSource, maxFiles, maxBytes);
+    Optional<DeltaSource.AdmissionLimits> dsv2Limits = createAdmissionLimits(maxFiles, maxBytes);
 
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChangesWithRateLimit(
@@ -630,9 +628,14 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               i, deltaFile.index(), kernelFile.getIndex()));
 
       // Sentinel files have null AddFile and null RemoveFile.
+      // For CDC files, the AddFile is inside the CDCDataFile wrapper.
       String deltaPath = deltaFile.add() != null ? deltaFile.add().path() : null;
-      String kernelPath =
-          kernelFile.getAddFile() != null ? kernelFile.getAddFile().getPath() : null;
+      String kernelPath = null;
+      if (kernelFile.getAddFile() != null) {
+        kernelPath = kernelFile.getAddFile().getPath();
+      } else if (kernelFile.getCDCFile() != null && kernelFile.getCDCFile().getAddFile() != null) {
+        kernelPath = kernelFile.getCDCFile().getAddFile().getPath();
+      }
 
       if (deltaPath != null || kernelPath != null) {
         assertEquals(
@@ -3028,7 +3031,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   }
 
   private Optional<DeltaSource.AdmissionLimits> createAdmissionLimits(
-      DeltaSource deltaSource, Optional<Integer> maxFiles, Optional<Long> maxBytes) {
+      Optional<Integer> maxFiles, Optional<Long> maxBytes) {
     Option<Object> scalaMaxFiles = ScalaUtils.toScalaOption(maxFiles.map(i -> (Object) i));
     Option<Object> scalaMaxBytes = ScalaUtils.toScalaOption(maxBytes.map(l -> (Object) l));
 
@@ -3279,5 +3282,143 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                 new io.delta.kernel.exceptions.KernelEngineException(
                     "readJsonFile", new java.io.FileNotFoundException("missing"))))
         .isEmpty();
+  }
+
+  // ================================================================================================
+  // Tests for CDC (Change Data Capture) support
+  // ================================================================================================
+
+  /**
+   * Compare CDC file changes between DSv1 and DSv2. Reuses {@link #compareFileChanges} for
+   * version/index/path comparison, then verifies CDC metadata on DSv2 data files.
+   */
+  private void assertCDCFileChangesMatch(
+      List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files, List<IndexedFile> dsv2Files) {
+    compareFileChanges(dsv1Files, dsv2Files);
+
+    // CDC metadata (only on DSv2 data files, not sentinels)
+    for (int i = 0; i < dsv2Files.size(); i++) {
+      IndexedFile d2 = dsv2Files.get(i);
+      if (d2.hasFileAction()) {
+        assertEquals("insert", d2.getChangeType(), "changeType mismatch at index " + i);
+        assertTrue(d2.getCommitTimestamp() > 0, "commitTimestamp should be > 0 at index " + i);
+      }
+    }
+  }
+
+  @Test
+  public void testValidateCDFEnabled_throwsWhenNotEnabled(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_not_enabled_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("INSERT INTO %s VALUES (1, 'User1')", tableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    RuntimeException exception =
+        assertThrows(
+            RuntimeException.class,
+            () -> {
+              try (CloseableIterator<IndexedFile> iter =
+                  stream.getFileChangesForCDC(
+                      /* fromVersion= */ 0L,
+                      /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+                      /* isInitialSnapshot= */ false,
+                      /* limits= */ Optional.empty(),
+                      /* endOffset= */ Optional.empty())) {
+                while (iter.hasNext()) iter.next();
+              }
+            });
+    Throwable cause = exception.getCause() != null ? exception.getCause() : exception;
+    String msg = cause.getMessage().toLowerCase();
+    assertTrue(
+        msg.contains("change data") || msg.contains("cdc"),
+        "Exception should mention change data feed: " + cause.getMessage());
+  }
+
+  private static final ScenarioSetup CDC_TWO_INSERT_SETUP =
+      (tableName, tempDir) -> {
+        sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+        sql("INSERT INTO %s VALUES (3, 'User3')", tableName);
+      };
+
+  static Stream<Arguments> cdcFileChangesParameters() {
+    Optional<Integer> noMaxFiles = Optional.empty();
+    Optional<Long> noMaxBytes = Optional.empty();
+
+    return Stream.of(
+        Arguments.of(
+            "Initial snapshot (all inserts)", CDC_TWO_INSERT_SETUP, noMaxFiles, noMaxBytes),
+        Arguments.of(
+            "Empty table (no data files)", (ScenarioSetup) (t, d) -> {}, noMaxFiles, noMaxBytes),
+        Arguments.of(
+            "Multiple inserts (5 versions)",
+            (ScenarioSetup)
+                (t, d) -> {
+                  for (int i = 1; i <= 5; i++) {
+                    sql("INSERT INTO %s VALUES (%d, 'V%d')", t, i, i);
+                  }
+                },
+            noMaxFiles,
+            noMaxBytes),
+        Arguments.of("Rate limited (maxFiles=1)", CDC_TWO_INSERT_SETUP, Optional.of(1), noMaxBytes),
+        Arguments.of(
+            "Rate limited (maxBytes=1)", CDC_TWO_INSERT_SETUP, noMaxFiles, Optional.of(1L)));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("cdcFileChangesParameters")
+  public void testGetFileChangesForCDC(
+      String testDescription,
+      ScenarioSetup setup,
+      Optional<Integer> maxFiles,
+      Optional<Long> maxBytes,
+      @TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName =
+        "test_cdc_compare_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(tablePath, tableName);
+    sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
+    setup.setup(tableName, tempDir);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+
+    // DSv1
+    scala.collection.immutable.Map<String, String> cdcOptionsMap =
+        Map$.MODULE$.<String, String>empty().updated("readChangeFeed", "true");
+    DeltaOptions cdcOptions = new DeltaOptions(cdcOptionsMap, spark.sessionState().conf());
+    DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Files = new ArrayList<>();
+    try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+        deltaSource.getFileChangesWithRateLimit(
+            latestVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ true,
+            ScalaUtils.toScalaOption(createAdmissionLimits(maxFiles, maxBytes)))) {
+      while (iter.hasNext()) dsv1Files.add(iter.next());
+    }
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    List<IndexedFile> dsv2Files = new ArrayList<>();
+    try (CloseableIterator<IndexedFile> iter =
+        stream.getFileChangesForCDC(
+            /* fromVersion= */ latestVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ true,
+            /* limits= */ createAdmissionLimits(maxFiles, maxBytes),
+            /* endOffset= */ Optional.empty())) {
+      while (iter.hasNext()) dsv2Files.add(iter.next());
+    }
+
+    assertCDCFileChangesMatch(dsv1Files, dsv2Files);
   }
 }
