@@ -209,8 +209,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       String tableProperties,
       TestCode testCode)
       throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String fullTableName = fullTableName(tableName);
 
     // Create th partition cause.
     StringBuilder partitionCause = new StringBuilder();
@@ -302,6 +301,27 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       String tableName, String tableSchema, TableType tableType, TestCode testCode)
       throws Exception {
     withNewTable(tableName, tableSchema, null, tableType, testCode);
+  }
+
+  /** Returns the fully qualified table name for a given simple table name. */
+  protected String fullTableName(String simpleName) {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
+  }
+
+  /** Returns the current (latest) version of the table. */
+  protected long currentVersion(String tableName) {
+    return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
+  }
+
+  /** Returns the timestamp of the current (latest) version. */
+  protected String currentTimestamp(String tableName) {
+    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  }
+
+  /** Helper to build an expected row as a list of string values. */
+  protected static List<String> row(String... values) {
+    return List.of(values);
   }
 
   /** Functional interface for test code that takes a temporary directory. */

@@ -39,7 +39,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
 import org.scalatest.time.{Seconds, Span}
 
-import org.apache.spark.SparkThrowable
+import org.apache.spark.{SparkConf, SparkThrowable}
 import org.apache.spark.sql.{AnalysisException, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.IntervalUtils
@@ -47,7 +47,7 @@ import org.apache.spark.sql.execution.streaming._
 import org.apache.spark.sql.functions.when
 import org.apache.spark.sql.streaming.{OutputMode, StreamingQuery, StreamingQueryException, Trigger}
 import org.apache.spark.sql.streaming.util.StreamManualClock
-import org.apache.spark.sql.types.{IntegerType, NullType, StringType, StructField, StructType}
+import org.apache.spark.sql.types.{IntegerType, LongType, NullType, StringType, StructField, StructType}
 import org.apache.spark.unsafe.types.UTF8String
 import org.apache.spark.util.{ManualClock, Utils}
 
@@ -858,8 +858,12 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         StopStream,
         AssertOnQuery { _ =>
           Utils.deleteRecursively(inputDir)
-          if (coordinatedCommitsEnabledInTests) {
-            deleteTableFromCommitCoordinator(tablePath)
+          // This test deletes and recreates a table at the same path. The InMemoryCommitCoordinator
+          // keys on logPath, so stale coordinator state from the old table must be cleared before
+          // the new table is created. In production, UC handles table lifecycle management, so
+          // explicit coordinator cleanup is not needed.
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            deleteCatalogOwnedTableFromCommitCoordinator(tablePath)
           }
           val deltaLog = DeltaLog.forTable(spark, tablePath)
           // All Delta tables in tests use the same tableId by default. Here we pass a new tableId
@@ -897,7 +901,11 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
       def writeFile(name: String, content: String): AddFile = {
         FileUtils.write(new File(inputDir, name), content)
-        AddFile(name, Map.empty, content.length, System.currentTimeMillis(), dataChange = true)
+        // CatalogManaged (CCv2) tables auto-enable row tracking, which requires numRecords in
+        // AddFile stats to assign base row IDs. Without numRecords, the commit fails with
+        // DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS.
+        AddFile(name, Map.empty, content.length, System.currentTimeMillis(), dataChange = true,
+          stats = s"""{"numRecords": 1}""")
       }
 
       def commitFiles(files: AddFile*): Unit = {
@@ -2167,13 +2175,434 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("restarting a query should pick up latest table schema and recover") {
+  test("add column: restarting with new DataFrame should recover") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 10).foreach { i =>
+        val v = Seq(i.toString).toDF("id")
+        v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      def startQuery(): StreamingQuery = {
+        loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+      }
+
+      var q = startQuery()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          (0 until 10).map(i => Row(i.toString)))
+
+        // Clear delta log cache
+        DeltaLog.clearCache()
+        // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
+        // table schema change happens on a different cluster
+        withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+        Seq(("10", "a")).toDF("id", "newcol")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+        // The streaming query should fail when detecting a schema change
+        val e = intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }
+        assert(e.getMessage.contains("Detected schema change"))
+
+        // Restarting the query with a new DataFrame should recover from the schema change
+        q = startQuery()
+        q.processAllAvailable()
+        // Verify the output schema includes the new column
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema.fieldNames.toSet == Set("id", "newcol"),
+          s"Expected schema with {id, newcol} but got ${outputDf.schema.fieldNames.mkString(", ")}")
+        checkAnswer(outputDf,
+          (0 until 10).map(i => Row(i.toString, null)) :+ Row("10", "a"))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("add column: restarting with stale DataFrame should fail") {
     withTempDir { inputDir =>
       withTempDir { checkpointDir =>
         val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-        (0 until 10).foreach { i =>
+        (0 until 2).foreach { i =>
           val v = Seq(i.toString).toDF("id")
           v.write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        // First run: stream detects schema change and fails
+        testStream(df)(
+          StartStream(checkpointLocation = checkpointDir.getCanonicalPath),
+          ProcessAllAvailable(),
+          CheckAnswer("0", "1"),
+          Execute { _ =>
+            withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+            Seq(("2", "a")).toDF("id", "newcol")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          },
+          ExpectFailure[DeltaIllegalStateException](t =>
+            assert(t.getMessage.contains("Detected schema change"))),
+          Execute { q =>
+            assert(!q.isActive)
+          }
+        )
+
+        // Restarting with the same DataFrame cannot recover from column addition because the
+        // plan's read schema is fixed at analysis time. User must create a new DataFrame.
+        val e = intercept[StreamingQueryException] {
+          val q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+          try q.processAllAvailable() finally q.stop()
+        }
+        // V1 fails with an internal batch schema assertion ("Invalid batch"),
+        // V2 fails with DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART.
+        assert(
+          e.getMessage.contains("Invalid batch") ||
+            e.getMessage.contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
+          s"Expected schema mismatch error but got: ${e.getMessage}"
+        )
+      }
+    }
+  }
+
+  test("relax nullability: restarting with new DataFrame should recover") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` " +
+        "(id STRING NOT NULL) USING DELTA")
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 2).foreach { i =>
+        Seq(i.toString).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+
+      def startQuery(): StreamingQuery = {
+        loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+      }
+
+      var q = startQuery()
+      try {
+        q.processAllAvailable()
+
+        // Clear delta log cache
+        DeltaLog.clearCache()
+        // Relax nullability from "id STRING NOT NULL" to "id STRING" using the non-cached
+        // `DeltaLog` to mimic the case that the schema change happens on a different cluster
+        withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+        // Insert a null row
+        Seq(Option.empty[String]).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+        // The streaming query should fail when detecting a schema change
+        val e = intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }
+        assert(e.getMessage.contains("Detected schema change"))
+
+        // Restarting the query with a new DataFrame should recover from the schema change
+        q = startQuery()
+        q.processAllAvailable()
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema("id").nullable,
+          "Expected 'id' column to be nullable after relaxing nullability")
+        checkAnswer(outputDf.orderBy("id"),
+          Seq(Row(null), Row("0"), Row("1")))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("relax nullability: restarting with stale DataFrame should recover") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` " +
+        "(id STRING NOT NULL) USING DELTA")
+      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+      (0 until 2).foreach { i =>
+        Seq(i.toString).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+      }
+      val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+      var q = df.writeStream
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .option("mergeSchema", "true")
+        // use delta sink because we need to check the result
+        .format("delta")
+        .start(outputDir.getCanonicalPath)
+      try {
+        q.processAllAvailable()
+
+        // Clear delta log cache
+        DeltaLog.clearCache()
+        // Relax nullability from "id STRING NOT NULL" to "id STRING" using the non-cached
+        // `DeltaLog` to mimic the case that the schema change happens on a different cluster
+        withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+        // Insert a null row
+        Seq(Option.empty[String]).toDF("id")
+          .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+        // The streaming query should fail when detecting a schema change
+        val e = intercept[StreamingQueryException] {
+          q.processAllAvailable()
+        }
+        assert(e.getMessage.contains("Detected schema change"))
+
+        // Restarting the query with the stale DataFrame should still recover
+        q = df.writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        q.processAllAvailable()
+        val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+        assert(outputDf.schema("id").nullable,
+          "Expected 'id' column to be nullable after relaxing nullability")
+        checkAnswer(outputDf.orderBy("id"),
+          Seq(Row(null), Row("0"), Row("1")))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  test("type widening: restarting with new DataFrame should recover") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
+          "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 2).foreach { i =>
+          Seq(i).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        def startQuery(): StreamingQuery = {
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .option("mergeSchema", "true")
+            // use delta sink because we need to check the result
+            .format("delta")
+            .start(outputDir.getCanonicalPath)
+        }
+
+        var q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          // Clear delta log cache
+          DeltaLog.clearCache()
+          // Widen the column type from INT to BIGINT using the non-cached `DeltaLog` to mimic
+          // the case that the schema change happens on a different cluster
+          withMetadata(deltaLog, StructType.fromDDL("id BIGINT"))
+          // 2^31 cannot be represented as an int, so it will be inserted as a bigint
+          Seq(2147483648L).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+          // The streaming query should fail when detecting a schema change
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains("Detected schema change"))
+
+          // Restarting the query with a new DataFrame should recover from the schema change
+          q = startQuery()
+          q.processAllAvailable()
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema("id").dataType === LongType,
+            s"Expected 'id' column to be LongType after type widening but got " +
+              s"${outputDf.schema("id").dataType}")
+          checkAnswer(outputDf.orderBy("id"),
+            Seq(Row(0L), Row(1L), Row(2147483648L)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("type widening: restarting with stale DataFrame should recover") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
+      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      withTempDirs { (inputDir, outputDir, checkpointDir) =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
+          "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 2).foreach { i =>
+          Seq(i).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+        val df = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+
+        var q = df.writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .option("mergeSchema", "true")
+          // use delta sink because we need to check the result
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          q.processAllAvailable()
+
+          // Clear delta log cache
+          DeltaLog.clearCache()
+          // Widen the column type from INT to BIGINT using the non-cached `DeltaLog` to mimic
+          // the case that the schema change happens on a different cluster
+          withMetadata(deltaLog, StructType.fromDDL("id BIGINT"))
+          // 2^31 cannot be represented as an int, so it will be inserted as a bigint
+          Seq(2147483648L).toDF("id")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+
+          // The streaming query should fail when detecting a schema change
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains("Detected schema change"))
+
+          // Restarting the query with the stale DataFrame should still recover
+          q = df.writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .option("mergeSchema", "true")
+            .format("delta")
+            .start(outputDir.getCanonicalPath)
+          q.processAllAvailable()
+          val outputDf = spark.read.format("delta").load(outputDir.getCanonicalPath)
+          assert(outputDf.schema("id").dataType === LongType,
+            s"Expected 'id' column to be LongType after type widening but got " +
+              s"${outputDf.schema("id").dataType}")
+          checkAnswer(outputDf.orderBy("id"),
+            Seq(Row(0L), Row(1L), Row(2147483648L)))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("drop column: should fail with non-additive schema change error") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        // Create a table with column mapping enabled (required for drop/rename column)
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        def startQuery(): StreamingQuery = {
+          loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("noop")
+            .start()
+        }
+
+        val q = startQuery()
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          // Simulate dropping "value" column by committing new metadata with only "id".
+          // This is a non-additive schema change (column removal).
+          withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+
+          val e = intercept[StreamingQueryException] {
+            q.processAllAvailable()
+          }
+          assert(e.getMessage.contains(
+            "Streaming read is not supported on tables with read-incompatible schema changes"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("drop column: should succeed with unsafe column mapping schema change flag enabled") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Enable the unsafe flag that allows streaming to continue past column mapping
+      // schema changes (drop/rename) instead of failing.
+      withSQLConf(
+        DeltaSQLConf
+          .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+          .key -> "true"
+      ) {
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+        }
+
+        val q = loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+          .writeStream
+          .option("checkpointLocation", checkpointDir.getCanonicalPath)
+          .format("delta")
+          .start(outputDir.getCanonicalPath)
+        try {
+          q.processAllAvailable()
+
+          DeltaLog.clearCache()
+          // Simulate dropping "value" column by committing new metadata with only "id".
+          withMetadata(deltaLog, StructType.fromDDL("id STRING"))
+
+          // Write more data after the drop column schema change
+          (5 until 10).foreach { i =>
+            Seq(i.toString).toDF("id")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          // With the unsafe flag, the stream should process all data without failing.
+          // Post-drop rows have null for the removed "value" column.
+          q.processAllAvailable()
+
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getAbsolutePath),
+            (0 until 5).map(i => (i.toString, s"val$i")).toDF("id", "value") union
+              (5 until 10).map(i => (i.toString, null: String)).toDF("id", "value"))
+        } finally {
+          q.stop()
+        }
+      }
+    }
+  }
+
+  test("rename column: should fail with non-additive schema change error") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+          "USING DELTA " +
+          "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+        val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+        (0 until 5).foreach { i =>
+          Seq((i.toString, s"val$i")).toDF("id", "value")
+            .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
         }
 
         def startQuery(): StreamingQuery = {
@@ -2188,21 +2617,16 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
         try {
           q.processAllAvailable()
 
-          // Clear delta log cache
           DeltaLog.clearCache()
-          // Change the table schema using the non-cached `DeltaLog` to mimic the case that the
-          // table schema change happens on a different cluster
-          withMetadata(deltaLog, StructType.fromDDL("id STRING, newcol STRING"))
+          // Simulate renaming "value" -> "renamed_value" by committing new metadata.
+          // Column rename is a non-additive schema change under column mapping.
+          withMetadata(deltaLog, StructType.fromDDL("id STRING, renamed_value STRING"))
 
-          // The streaming query should fail when detecting a schema change
           val e = intercept[StreamingQueryException] {
             q.processAllAvailable()
           }
-          assert(e.getMessage.contains("Detected schema change"))
-
-          // Restarting the query should recover from the schema change error
-          q = startQuery()
-          q.processAllAvailable()
+          assert(e.getMessage.contains(
+            "Streaming read is not supported on tables with read-incompatible schema changes"))
         } finally {
           q.stop()
         }
@@ -2210,7 +2634,102 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  // TODO(#5318): migrate this test in v2 after adopting initialSnapshot change in SparkScan
+  test("rename column: should throw schema change error with unsafe flag enabled") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        // The unsafe flag only helps with drop-column; rename is still blocked because
+        // it changes logical column identity, which can silently corrupt data.
+        withSQLConf(
+          DeltaSQLConf
+            .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES
+            .key -> "true"
+        ) {
+          sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id STRING, value STRING) " +
+            "USING DELTA " +
+            "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+          val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+          (0 until 5).foreach { i =>
+            Seq((i.toString, s"val$i")).toDF("id", "value")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          def startQuery(): StreamingQuery = {
+            loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+              .writeStream
+              .option("checkpointLocation", checkpointDir.getCanonicalPath)
+              .format("noop")
+              .start()
+          }
+
+          var q = startQuery()
+          try {
+            q.processAllAvailable()
+
+            DeltaLog.clearCache()
+            // Simulate renaming "value" -> "renamed_value" by committing new metadata.
+            withMetadata(deltaLog, StructType.fromDDL("id STRING, renamed_value STRING"))
+
+            // Even with the unsafe flag, rename still fails - but with a different error
+            // ("Detected schema change") rather than the non-additive schema change error.
+            val e = intercept[StreamingQueryException] {
+              q.processAllAvailable()
+            }
+            assert(e.getMessage.contains("Detected schema change in version 6"))
+          } finally {
+            q.stop()
+          }
+        }
+      }
+    }
+  }
+
+  test("type widening: should fail with non-additive schema change error "
+    + "when enable schema tracking") {
+    withTempDir { inputDir =>
+      withTempDir { checkpointDir =>
+        withSQLConf(
+          DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "true"
+        ) {
+          // Table with type widening enabled so that type changes are allowed but tracked.
+          sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT, value STRING) " +
+            "USING DELTA " +
+            "TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
+          val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
+          (0 until 5).foreach { i =>
+            Seq((i, s"val$i")).toDF("id", "value")
+              .write.mode("append").format("delta").save(deltaLog.dataPath.toString)
+          }
+
+          def startQuery(): StreamingQuery = {
+            loadStreamWithOptions(inputDir.getCanonicalPath, Map.empty)
+              .writeStream
+              .option("checkpointLocation", checkpointDir.getCanonicalPath)
+              .format("noop")
+              .start()
+          }
+
+          var q = startQuery()
+          try {
+            q.processAllAvailable()
+
+            DeltaLog.clearCache()
+            // Simulate widening "id" from INT -> BIGINT by committing new metadata.
+            // Type widening is a non-additive schema change for streaming reads.
+            withMetadata(deltaLog, StructType.fromDDL("id BIGINT, value STRING"))
+
+            val e = intercept[StreamingQueryException] {
+              q.processAllAvailable()
+            }
+            assert(e.getMessage.contains(
+              "Streaming read is not supported on tables with read-incompatible schema changes"))
+          } finally {
+            q.stop()
+          }
+        }
+      }
+    }
+  }
+
   test("handling nullability schema changes") {
     withTable("srcTable") {
       withTempDirs { (srcTblDir, checkpointDir, checkpointDir2) =>
@@ -2380,14 +2899,22 @@ object MonotonicallyIncreasingTimestampFS {
   val scheme = s"MonotonicallyIncreasingTimestampFS"
 }
 
-class DeltaSourceWithCoordinatedCommitsBatch1Suite extends DeltaSourceSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+// Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.
+// Batch size 1 triggers a backfill on every commit (commitVersion % 1 == 0), testing the most
+// granular backfill path. Batch size 2 triggers backfill every other commit, testing the boundary
+// between backfilled and unbackfilled commits. Batch size 100 leaves most commits unbackfilled,
+// testing the production-like path where streaming must read from both the commit coordinator
+// and the filesystem. This follows the same pattern as other CatalogManaged (CCv2) test suites
+// (DeltaLogSuite, DeltaCDCStreamSuite, etc.).
+
+class DeltaSourceWithCatalogManagedBatch1Suite extends DeltaSourceSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaSourceWithCoordinatedCommitsBatch10Suite extends DeltaSourceSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+class DeltaSourceWithCatalogManagedBatch2Suite extends DeltaSourceSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaSourceWithCoordinatedCommitsBatch100Suite extends DeltaSourceSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class DeltaSourceWithCatalogManagedBatch100Suite extends DeltaSourceSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

@@ -55,9 +55,17 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "Delta sources don't write offsets with null json",
 
     // === Schema Evolution ===
-    "restarting a query should pick up latest table schema and recover",
+    "add column: restarting with new DataFrame should recover",
+    "add column: restarting with stale DataFrame should fail",
+    "relax nullability: restarting with new DataFrame should recover",
+    "type widening: restarting with new DataFrame should recover",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
+    "drop column: should fail with non-additive schema change error",
+    "drop column: should succeed with unsafe column mapping schema change flag enabled",
+    "rename column: should fail with non-additive schema change error",
+    "rename column: should throw schema change error with unsafe flag enabled",
+    "type widening: should fail with non-additive schema change error when enable schema tracking",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -70,6 +78,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
+    "startingTimestamp",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
@@ -110,8 +119,14 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === read options ===
     "skip change commits",
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "startingTimestamp",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+
+    // === Schema Evolution ===
+    // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
+    //  for datasource v2 such that we can adopt the two schema changes without refreshing the
+    //  dataframe
+    "relax nullability: restarting with stale DataFrame should recover",
+    "type widening: restarting with stale DataFrame should recover",
 
     // === Data Loss Detection ===
     "fail on data loss - starting from missing files",

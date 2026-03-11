@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -57,7 +58,10 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  * @param numDeletionVectorsOpt The number of Deletion Vectors present in the snapshot.
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
- * @param histogramOpt Optional file size histogram
+ * @param histogramOpt Optional file size histogram. Note: the Delta spec field name is
+ *                     `fileSizeHistogram` (used by Kernel/Java/Rust). Delta-Spark historically
+ *                     wrote `histogramOpt`. The `@JsonAlias` allows reading both field names so
+ *                     that CRC files written by either Kernel or Delta-Spark are compatible.
  * @param deletedRecordCountsHistogramOpt A histogram of the deleted records count distribution
  *                                        for all the files in the snapshot.
  */
@@ -77,6 +81,9 @@ case class VersionChecksum(
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
     protocol: Protocol,
+    // Accept both "histogramOpt" (legacy Delta-Spark) and
+    // "fileSizeHistogram" (Delta spec / Kernel).
+    @JsonAlias(Array("fileSizeHistogram"))
     histogramOpt: Option[FileSizeHistogram],
     deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
     allFiles: Option[Seq[AddFile]])

@@ -58,13 +58,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Collections.unmodifiableList(
           Arrays.asList(
               DeltaOptions.STARTING_VERSION_OPTION(),
+              DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
               DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
-   * options (not in DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, and maxBytesPerTrigger are supported.
+   * User-defined custom options (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
@@ -76,7 +77,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                   DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
                   DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
-                  DeltaOptions.STARTING_TIMESTAMP_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
@@ -266,7 +266,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    *
    * @return the table path with trailing slash
    */
-  private String getTablePath() {
+  public String getTablePath() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final Row scanState = kernelScan.getScanState(tableEngine);
     final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
@@ -355,23 +355,23 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     ensurePlanned(null);
   }
 
-  StructType getDataSchema() {
+  public StructType getDataSchema() {
     return dataSchema;
   }
 
-  StructType getPartitionSchema() {
+  public StructType getPartitionSchema() {
     return partitionSchema;
   }
 
-  StructType getReadDataSchema() {
+  public StructType getReadDataSchema() {
     return readDataSchema;
   }
 
-  CaseInsensitiveStringMap getOptions() {
+  public CaseInsensitiveStringMap getOptions() {
     return options;
   }
 
-  Configuration getConfiguration() {
+  public Configuration getConfiguration() {
     return hadoopConf;
   }
 

@@ -390,6 +390,14 @@ trait DeltaCDCStreamSuiteBase extends StreamTest with DeltaSQLCommandTest
 
   test("cdc streams with noop merge") {
     withSQLConf(
+      // When DeletionVectors are enabled (e.g., via CatalogManaged QoL features), a truly no-op
+      // merge (all WHEN conditions false) produces empty actions (no FileActions) because
+      // writeUnmodifiedRows=false in the DV path. The default table isolation level (Serializable)
+      // allows canDowngradeToSnapshotIsolation to succeed (noDataChanged=true is sufficient), so
+      // the transaction runs at SnapshotIsolation and skipRecordingEmptyCommitAllowed returns
+      // true, causing commitIfNeeded to skip the commit entirely. This test requires version 1
+      // to exist for streaming, so we force the classic copy-on-write merge path.
+      DeltaSQLConf.MERGE_USE_PERSISTENT_DELETION_VECTORS.key -> "false",
       cdcConfig.defaultTablePropertyKey -> "true"
     ) {
       withTempDirs { (srcDir, targetDir, checkpointDir) =>
@@ -1063,19 +1071,27 @@ class DeltaCDCStreamDeletionVectorSuite extends DeltaCDCStreamSuite
 }
 
 class DeltaCDCStreamSuite extends DeltaCDCStreamSuiteBase
-class DeltaCDCStreamWithCoordinatedCommitsBatch1Suite
+// Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.
+// Batch size 1 triggers a backfill on every commit (commitVersion % 1 == 0), testing the most
+// granular backfill path. Batch size 2 triggers backfill every other commit, testing the boundary
+// between backfilled and unbackfilled commits. Batch size 100 leaves most commits unbackfilled,
+// testing the production-like path where streaming must read from both the commit coordinator
+// and the filesystem. This follows the same pattern as other CatalogManaged (CCv2) test suites
+// (DeltaLogSuite, DeltaSourceSuite, etc.).
+
+class DeltaCDCStreamWithCatalogManagedBatch1Suite
   extends DeltaCDCStreamSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaCDCStreamWithCoordinatedCommitsBatch10Suite
+class DeltaCDCStreamWithCatalogManagedBatch2Suite
   extends DeltaCDCStreamSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(10)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
 }
 
-class DeltaCDCStreamWithCoordinatedCommitsBatch100Suite
+class DeltaCDCStreamWithCatalogManagedBatch100Suite
     extends DeltaCDCStreamSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
 abstract class DeltaCDCStreamColumnMappingSuiteBase extends DeltaCDCStreamSuite

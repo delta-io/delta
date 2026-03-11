@@ -36,7 +36,7 @@ install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
 python_requires_arg = '>=3.10'
 
 setup(
-    name="delta-spark",
+    name="delta_spark",
     version=VERSION,
     description="Python APIs for using Delta Lake with Apache Spark",
     long_description=long_description,
