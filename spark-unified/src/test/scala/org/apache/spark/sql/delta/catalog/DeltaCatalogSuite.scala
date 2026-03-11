@@ -212,7 +212,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
       tableId,
       TableCreationModes.Replace,
       handoff,
-      strictExistingTableHandoff = true)
+      requireExistingTableHandoff = true)
 
     assert(resolved.isDefined)
     assert(resolved.get.tableType == CatalogTableType.EXTERNAL)

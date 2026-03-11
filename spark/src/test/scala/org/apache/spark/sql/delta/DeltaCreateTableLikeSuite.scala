@@ -520,6 +520,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
           TableCreationModes.CreateOrReplace
         override val mode: SaveMode = SaveMode.ErrorIfExists
         override val allowCatalogManaged: Boolean = true
+        override val stagedExistingTableId: Option[String] = None
 
         def runUpdateCatalog(): Unit = {
           updateCatalog(
@@ -786,7 +787,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
             mode = SaveMode.Overwrite,
             query = None,
             operation = TableCreationModes.CreateOrReplace,
-            isUnityCatalogStagedReplace = true).run(spark)
+            stagedExistingTableId = Some("table-id")).run(spark)
         }
         assert(err.getMessage.contains("Replacing a UC external table with different properties"))
         assert(err.getMessage.contains("delta.appendonly"))
