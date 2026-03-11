@@ -57,6 +57,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === read options ===
     "streaming with ignoreDeletes = true skips delete-only commits",
     "streaming with ignoreDeletes = true still fails on change commits",
+    "streaming with skipChangeCommits = true skips both delete and change commits",
 
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
