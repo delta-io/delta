@@ -61,6 +61,7 @@ import java.util.stream.Collectors;
 import javax.annotation.Nullable;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.Dataset;
+import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
@@ -83,6 +84,7 @@ import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
 import org.apache.spark.sql.delta.sources.PersistedMetadata;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.functions;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.DataType;
@@ -105,6 +107,8 @@ public class SparkMicroBatchStream
     implements MicroBatchStream, SupportsAdmissionControl, SupportsTriggerAvailableNow {
 
   private static final Logger logger = LoggerFactory.getLogger(SparkMicroBatchStream.class);
+
+  private static final String FILE_IDX_COL = "_file_idx";
 
   public static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
@@ -955,7 +959,7 @@ public class SparkMicroBatchStream
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
       CloseableIterator<IndexedFile> snapshotFiles;
       if (useDataFrameBasedInitialSnapshot) {
-        snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion);
+        snapshotFiles = getSnapshotFilesViaDataFrame(fromVersion, fromIndex);
       } else {
         InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
         snapshotFiles = Utils.toCloseableIterator(snapshot.files.iterator());
@@ -1805,45 +1809,63 @@ public class SparkMicroBatchStream
     return newCache;
   }
 
-  private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(long version) {
+  private CloseableIterator<IndexedFile> getSnapshotFilesViaDataFrame(
+      long version, long fromIndex) {
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
-    if (dfCache != null && dfCache.getVersion() == version) {
-      return dataFrameToIndexedFiles(dfCache.getSortedAddFiles(), version);
+    if (dfCache == null || dfCache.getVersion() != version) {
+      invalidateDataFrameCache();
+
+      Preconditions.checkArgument(
+          snapshotAtSourceInit.getVersion() == version,
+          "Expected snapshot version %d but snapshotAtSourceInit is at version %d",
+          version,
+          snapshotAtSourceInit.getVersion());
+      SerializableReadOnlySnapshot serSnapshot =
+          SerializableReadOnlySnapshot.fromSnapshot(snapshotAtSourceInit, hadoopConf);
+
+      ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
+      Dataset<Row> df =
+          spark
+              .createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA)
+              .orderBy("modificationTime", "path")
+              .withColumn(FILE_IDX_COL, functions.monotonically_increasing_id())
+              .persist(StorageLevel.MEMORY_AND_DISK());
+
+      dfCache = new DataFrameSnapshotCache(version, df);
+      cachedDataFrameSnapshot.set(dfCache);
     }
 
-    invalidateDataFrameCache();
+    Dataset<Row> df = dfCache.getSortedAddFiles();
 
-    SnapshotImpl snapshot = (SnapshotImpl) snapshotManager.loadSnapshotAt(version);
-    SerializableReadOnlySnapshot serSnapshot =
-        SerializableReadOnlySnapshot.fromSnapshot(snapshot, hadoopConf);
-
-    ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
-    Dataset<org.apache.spark.sql.Row> df =
-        spark
-            .createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA)
-            .orderBy("modificationTime", "path")
-            .persist(StorageLevel.MEMORY_AND_DISK());
-
-    dfCache = new DataFrameSnapshotCache(version, df);
-    cachedDataFrameSnapshot.set(dfCache);
+    // Push start-boundary filtering to executors so only unprocessed files are
+    // streamed to the driver. This converts the previous O(N²) full-scan per
+    // batch into O(remaining) per batch, which is O(N) total across all batches.
+    if (fromIndex > DeltaSourceOffset.BASE_INDEX()) {
+      df = df.where(functions.col(FILE_IDX_COL).gt(fromIndex));
+    }
 
     return dataFrameToIndexedFiles(df, version);
   }
 
   /**
-   * Converts a sorted DataFrame of AddFile rows into a lazy CloseableIterator of IndexedFiles,
+   * Converts an indexed DataFrame of AddFile rows into a lazy CloseableIterator of IndexedFiles,
    * wrapped with BEGIN/END sentinels. Uses toLocalIterator() to stream rows from executors to the
    * driver one at a time, avoiding pulling all data into driver memory.
+   *
+   * <p>The DataFrame must contain a {@link #FILE_IDX_COL} column (appended during cache creation)
+   * that holds a deterministic, monotonically increasing index for each file. This index is read
+   * directly from each row, so the caller can pre-filter the DataFrame (e.g. {@code WHERE _file_idx
+   * > lastProcessedIndex}) to skip already-processed files without re-scanning them on the driver.
    */
   private static CloseableIterator<IndexedFile> dataFrameToIndexedFiles(
-      Dataset<org.apache.spark.sql.Row> df, long version) {
+      Dataset<Row> df, long version) {
 
-    java.util.Iterator<org.apache.spark.sql.Row> localIter = df.toLocalIterator();
+    int fileIdxOrdinal = df.schema().fieldIndex(FILE_IDX_COL);
+    java.util.Iterator<Row> localIter = df.toLocalIterator();
 
     return new CloseableIterator<IndexedFile>() {
       private boolean sentBegin = false;
       private boolean sentEnd = false;
-      private long index = 0;
 
       @Override
       public boolean hasNext() {
@@ -1858,10 +1880,13 @@ public class SparkMicroBatchStream
         }
 
         if (localIter.hasNext()) {
-          org.apache.spark.sql.Row sparkRow = localIter.next();
+          Row sparkRow = localIter.next();
+          long fileIdx = sparkRow.getLong(fileIdxOrdinal);
+          // SparkRowToKernelRow accesses ordinals 0..N-1 matching AddFile.SCHEMA_WITHOUT_STATS;
+          // the extra _file_idx column at the end is safely ignored.
           io.delta.kernel.data.Row kernelRow =
               new SparkRowToKernelRow(sparkRow, AddFile.SCHEMA_WITHOUT_STATS);
-          return new IndexedFile(version, index++, new AddFile(kernelRow));
+          return new IndexedFile(version, fileIdx, new AddFile(kernelRow));
         }
 
         sentEnd = true;
