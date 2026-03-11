@@ -126,26 +126,28 @@ class UpdateMetricsHookSuite extends QueryTest
   test("buildRequest: file metrics from synthetic AddFile/RemoveFile actions") {
     val hook = UpdateMetricsHook(None)
 
-    val plain1 = AddFile("plain1.parquet", Map.empty, 1024L,
+    val add1 = AddFile("f1.parquet", Map.empty, 1024L,
       System.currentTimeMillis(), dataChange = true)
-    val plain2 = AddFile("plain2.parquet", Map.empty, 2048L,
+    val add2 = AddFile("f2.parquet", Map.empty, 2048L,
       System.currentTimeMillis(), dataChange = true)
-    val clustered = AddFile("clustered.parquet", Map.empty, 4096L,
-      System.currentTimeMillis(), dataChange = true,
-      clusteringProvider = Some("liquid"))
-    val removed = RemoveFile("old.parquet", Some(System.currentTimeMillis()),
+    val add3 = AddFile("f3.parquet", Map.empty, 4096L,
+      System.currentTimeMillis(), dataChange = true)
+    val removed = RemoveFile("old.parquet",
+      Some(System.currentTimeMillis()),
       dataChange = true, size = Some(512L))
 
-    val actions: Seq[Action] = Seq(plain1, plain2, clustered, removed)
-    val request = ReportDeltaMetrics.buildRequest("tbl-123", actions, committedVersion = 7L)
+    val actions: Seq[Action] = Seq(add1, add2, add3, removed)
+    val request = ReportDeltaMetrics.buildRequest(
+      "tbl-123", actions, committedVersion = 7L)
     val report = request.report.commitReport
 
     assert(request.tableId == "tbl-123")
     assert(report.numFilesAdded == Some(3L), "3 AddFiles")
     assert(report.numFilesRemoved == Some(1L), "1 RemoveFile")
-    assert(report.numBytesAdded == Some(1024L + 2048L + 4096L), "sum of add sizes")
-    assert(report.numBytesRemoved == Some(512L), "sum of remove sizes")
-    assert(report.numClusteredBytesAdded == Some(4096L), "only the clustered file")
+    assert(report.numBytesAdded == Some(1024L + 2048L + 4096L),
+      "sum of add sizes")
+    assert(report.numBytesRemoved == Some(512L),
+      "sum of remove sizes")
 
     val hist = report.fileSizeHistogram.getOrElse(fail("histogram must be present"))
     assert(hist.commitVersion == Some(7L), "commit_version must be set")
@@ -215,7 +217,6 @@ class UpdateMetricsHookSuite extends QueryTest
         numFilesRemoved = Some(2L),
         numBytesAdded = Some(10000L),
         numBytesRemoved = Some(2000L),
-        numClusteredBytesAdded = Some(5000L),
         numRowsInserted = Some(1000L),
         numRowsRemoved = Some(200L),
         numRowsUpdated = Some(50L),
@@ -239,8 +240,6 @@ class UpdateMetricsHookSuite extends QueryTest
       "num_files_added must be snake_case")
     assert(json.contains(""""num_rows_inserted":1000"""),
       "must use num_rows_inserted (not num_rows_added)")
-    assert(json.contains(""""num_clustered_bytes_added":5000"""),
-      "clustered bytes must be present")
     assert(json.contains(""""commit_version":42"""),
       "commit_version required for server staleness check")
 
@@ -264,8 +263,6 @@ class UpdateMetricsHookSuite extends QueryTest
       "None fields should be absent from JSON")
     assert(!json.contains(""""num_rows_updated""""),
       "None fields should be absent from JSON")
-    assert(!json.contains(""""num_clustered_bytes_removed""""),
-      "clustered_bytes_removed must never appear")
   }
 
   // ---------------------------------------------------------------------------

@@ -42,9 +42,6 @@ case class CommitReportEnvelope(
  * Commit-level file and row metrics.
  *
  * All fields are optional - the server validates they are non-negative if present.
- * num_clustered_bytes_removed is intentionally omitted: RemoveFile carries no
- * clusteringProvider, so we cannot compute it from the commit log alone.
- *
  * commit_version is conveyed via file_size_histogram.commit_version and is
  * required by the server to validate the payload is not stale.
  */
@@ -53,8 +50,6 @@ case class CommitReport(
     @JsonProperty("num_files_removed") numFilesRemoved: Option[Long] = None,
     @JsonProperty("num_bytes_added") numBytesAdded: Option[Long] = None,
     @JsonProperty("num_bytes_removed") numBytesRemoved: Option[Long] = None,
-    @JsonProperty("num_clustered_bytes_added") numClusteredBytesAdded: Option[Long] = None,
-    // num_clustered_bytes_removed omitted: not derivable from RemoveFile (no clusteringProvider)
     @JsonProperty("num_rows_inserted") numRowsInserted: Option[Long] = None,
     @JsonProperty("num_rows_removed") numRowsRemoved: Option[Long] = None,
     @JsonProperty("num_rows_updated") numRowsUpdated: Option[Long] = None,
@@ -77,21 +72,31 @@ case class FileSizeHistogramPayload(
  */
 object ReportDeltaMetrics {
 
+  private val KB = 1024L
+  private val MB = 1024L * KB
+  private val GB = 1024L * MB
+
   private val FILE_SIZE_BIN_BOUNDARIES: IndexedSeq[Long] = IndexedSeq(
     0L,
-    8L * 1024, // 8 KB
-    64L * 1024, // 64 KB
-    512L * 1024, // 512 KB
-    1L << 20, // 1 MB
-    4L << 20, // 4 MB
-    8L << 20, // 8 MB
-    16L << 20, // 16 MB
-    32L << 20, // 32 MB
-    64L << 20, // 64 MB
-    128L << 20, // 128 MB
-    256L << 20, // 256 MB
-    512L << 20, // 512 MB
-    1L << 30 // 1 GB
+    8*KB, 16*KB, 32*KB, 64*KB, 128*KB, 256*KB,
+    512*KB, 1*MB, 2*MB, 4*MB,
+    8*MB, 12*MB, 16*MB, 20*MB, 24*MB, 28*MB,
+    32*MB, 36*MB, 40*MB,
+    48*MB, 56*MB, 64*MB, 72*MB, 80*MB,
+    88*MB, 96*MB, 104*MB, 112*MB, 120*MB,
+    124*MB, 128*MB, 132*MB, 136*MB, 140*MB, 144*MB,
+    160*MB, 176*MB, 192*MB, 208*MB, 224*MB, 240*MB,
+    256*MB, 272*MB, 288*MB, 304*MB, 320*MB, 336*MB,
+    352*MB, 368*MB, 384*MB, 400*MB, 416*MB, 432*MB,
+    448*MB, 464*MB, 480*MB, 496*MB, 512*MB, 528*MB,
+    544*MB, 560*MB, 576*MB,
+    640*MB, 704*MB, 768*MB, 832*MB, 896*MB, 960*MB,
+    1024*MB, 1088*MB, 1152*MB, 1216*MB, 1280*MB,
+    1344*MB, 1408*MB,
+    1536*MB, 1664*MB, 1792*MB, 1920*MB, 2048*MB,
+    2304*MB, 2560*MB, 2816*MB, 3072*MB,
+    3328*MB, 3584*MB, 3840*MB, 4*GB,
+    8*GB, 16*GB, 32*GB, 64*GB, 128*GB, 256*GB
   )
 
   private[hooks] def buildRequest(
@@ -109,8 +114,6 @@ object ReportDeltaMetrics {
       numFilesRemoved = Some(removeFiles.size.toLong),
       numBytesAdded = Some(addFiles.map(_.size).sum),
       numBytesRemoved = Some(removeFiles.flatMap(_.size).sum),
-      numClusteredBytesAdded = Some(
-        addFiles.filter(isClusteredFile).map(_.size).sum),
       numRowsInserted = extractRowsInserted(opMetrics, addFiles),
       numRowsRemoved = extractRowsRemoved(opMetrics, removeFiles),
       numRowsUpdated = extractRowsUpdated(opMetrics),
@@ -122,10 +125,6 @@ object ReportDeltaMetrics {
       report = CommitReportEnvelope(commitReport)
     )
   }
-
-  private def isClusteredFile(f: AddFile): Boolean =
-    Option(f.tags).getOrElse(Map.empty).contains(AddFile.Tags.LIQUID_METADATA_ID.name) ||
-    f.clusteringProvider.contains("liquid")
 
   private def extractRowsInserted(
       opMetrics: Map[String, String],
