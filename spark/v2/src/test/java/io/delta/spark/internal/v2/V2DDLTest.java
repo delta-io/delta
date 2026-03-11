@@ -18,11 +18,18 @@ package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.spark.internal.v2.catalog.CreateTableCommitCoordinator;
 import java.io.File;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.apache.spark.sql.*;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -88,5 +95,35 @@ public class V2DDLTest extends V2TestBase {
             RowFactory.create("value", "double", null));
 
     assertDatasetEquals(actual, expectedRows);
+  }
+
+  @Test
+  public void testCreateTableVersion0FromLegacyWriterActions(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    StructType schema =
+        DataTypes.createStructType(
+            Arrays.asList(DataTypes.createStructField("id", DataTypes.IntegerType, true)));
+    List<String> dataActionJson =
+        Collections.singletonList(
+            "{\"add\":{\"path\":\"part-00000-legacy-writer.parquet\","
+                + "\"partitionValues\":{},\"size\":1,\"modificationTime\":1,\"dataChange\":true}}");
+    Map<String, String> properties = new HashMap<>();
+
+    CreateTableCommitCoordinator.commitCreateTableVersion0FromLegacyWriterActions(
+        tablePath,
+        schema,
+        Collections.emptyList(),
+        properties,
+        spark,
+        "dsv2",
+        "kernel-spark-dsv2-test",
+        dataActionJson);
+
+    File commitFile = new File(tablePath, "_delta_log/00000000000000000000.json");
+    assertTrue(commitFile.exists(), "Delta version 0 commit should exist");
+    String commitJson = Files.readString(commitFile.toPath(), StandardCharsets.UTF_8);
+    assertTrue(commitJson.contains("\"engineInfo\":\"Kernel-"));
+    assertTrue(commitJson.contains("\"path\":\"part-00000-legacy-writer.parquet\""));
   }
 }
