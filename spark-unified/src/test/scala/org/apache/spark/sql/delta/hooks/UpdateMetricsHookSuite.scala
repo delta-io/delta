@@ -174,7 +174,8 @@ class UpdateMetricsHookSuite extends QueryTest
       operationMetrics = Some(Map("numOutputRows" -> "100")),
       userMetadata = None, tags = None, engineInfo = None, txnId = None)
 
-    val req1 = ReportDeltaMetrics.buildRequest("t1", Seq(commitInfoWithMetrics, addFileWithStats), 0L)
+    val req1 = ReportDeltaMetrics.buildRequest(
+      "t1", Seq(commitInfoWithMetrics, addFileWithStats), 0L)
     assert(req1.report.commitReport.numRowsInserted == Some(100L),
       "operationMetrics wins over file stats")
 
