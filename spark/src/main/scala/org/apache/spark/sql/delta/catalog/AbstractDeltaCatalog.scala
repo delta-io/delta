@@ -283,7 +283,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    // Catalog-owned replace on UC now requires the staged existing-table handoff. Delta should
+    // Catalog-managed replace on UC now requires the staged existing-table handoff. Delta should
     // execute against the exact target UC already resolved during staging rather than rediscover
     // the target again during commit.
     val requireExistingTableHandoff =
@@ -731,7 +731,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * 2. UC staged the existing target and handed it to Delta as an
    *    [[ExistingTableHandoffContext]]
    *
-   * For catalog-owned UC replace paths we require the handoff instead of falling back to another
+   * For catalog-managed UC replace paths we require the handoff instead of falling back to another
    * delegated catalog lookup. That keeps UC-specific staging state at the boundary and avoids
    * rediscovering the replace target during commit.
    */
