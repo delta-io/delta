@@ -566,6 +566,36 @@ class DeltaCreateTableLikeSuite extends QueryTest
     }
   }
 
+  test("catalog-managed CREATE OR REPLACE rejects omitted user properties") {
+    withTable("t") {
+      spark.sql(
+        "CREATE TABLE t (id LONG) USING DELTA TBLPROPERTIES('this.is.my.key' = '1')")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        existingTable.copy(
+          schema = snapshot.metadata.schema,
+          properties = existingTable.properties - "this.is.my.key"),
+        query = None)
+
+      val err = intercept[DeltaAnalysisException] {
+        CreateDeltaTableCommand(
+          updatedTable,
+          existingTableOpt = Some(existingTable),
+          mode = SaveMode.Overwrite,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace,
+          allowCatalogManaged = true).run(spark)
+      }
+      assert(err.getMessage.contains("Replacing a catalog-managed table with different properties"))
+      assert(err.getMessage.contains("this.is.my.key"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
   test("catalog-managed CREATE OR REPLACE allows existing protocol properties") {
     withTable("t") {
       spark.sql("CREATE TABLE t (id LONG) USING DELTA")
@@ -675,6 +705,62 @@ class DeltaCreateTableLikeSuite extends QueryTest
       assert(err.getMessage.contains("Replacing a catalog-managed table with a different schema"))
       assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE rejects omitted table comments") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG) USING DELTA COMMENT 'old'")
+      spark.sql("INSERT INTO t VALUES (1)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        existingTable.copy(
+          schema = snapshot.metadata.schema,
+          comment = None),
+        query = None)
+
+      val err = intercept[DeltaAnalysisException] {
+        CreateDeltaTableCommand(
+          updatedTable,
+          existingTableOpt = Some(existingTable),
+          mode = SaveMode.Overwrite,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace,
+          allowCatalogManaged = true).run(spark)
+      }
+      assert(err.getMessage.contains("Replacing a catalog-managed table with a different comment"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+    }
+  }
+
+  test("catalog-managed CREATE OR REPLACE rejects omitted partitioning") {
+    withTable("t") {
+      spark.sql("CREATE TABLE t (id LONG, part LONG) USING DELTA PARTITIONED BY (part)")
+      spark.sql("INSERT INTO t VALUES (1, 10)")
+      val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+      val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+      val versionBefore = snapshot.version
+      val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+        existingTable.copy(
+          schema = snapshot.metadata.schema,
+          partitionColumnNames = Nil),
+        query = None)
+
+      val err = intercept[DeltaAnalysisException] {
+        CreateDeltaTableCommand(
+          updatedTable,
+          existingTableOpt = Some(existingTable),
+          mode = SaveMode.Overwrite,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace,
+          allowCatalogManaged = true).run(spark)
+      }
+      assert(err.getMessage.contains("Replacing a catalog-managed table with different partitioning"))
+      assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L, 10L)))
     }
   }
 }

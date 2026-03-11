@@ -793,7 +793,7 @@ case class CreateDeltaTableCommand(
 
     val partCols = tableDesc.partitionColumnNames
     val existPartCols = existingMetadata.partitionColumns
-    if (partCols.nonEmpty && partCols != existPartCols) {
+    if (partCols != existPartCols) {
       throw DeltaErrors.operationNotSupportedException(
         "Replacing a catalog-managed table with different partitioning")
     }
@@ -805,11 +805,9 @@ case class CreateDeltaTableCommand(
         "Replacing a catalog-managed table with different clustering")
     }
 
-    tableDesc.comment.foreach { specifiedComment =>
-      if (specifiedComment != existingMetadata.description) {
-        throw DeltaErrors.operationNotSupportedException(
-          "Replacing a catalog-managed table with a different comment")
-      }
+    if (tableDesc.comment != Option(existingMetadata.description)) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with a different comment")
     }
 
     val ignoredKeys =
@@ -839,10 +837,11 @@ case class CreateDeltaTableCommand(
     val changedKeys = specProps.collect {
       case (key, value) if existProps.get(key) != Some(value) => key
     }.toSeq.sorted
-    if (changedKeys.nonEmpty) {
+    val removedKeys = existProps.keySet.diff(specProps.keySet).toSeq.sorted
+    if (changedKeys.nonEmpty || removedKeys.nonEmpty) {
       throw DeltaErrors.operationNotSupportedException(
         "Replacing a catalog-managed table with different properties " +
-          s"(changed: ${changedKeys.mkString(", ")})")
+          s"(changed: ${changedKeys.mkString(", ")}, removed: ${removedKeys.mkString(", ")})")
     }
 
     true
@@ -924,6 +923,10 @@ case class CreateDeltaTableCommand(
       return
     }
 
+    // The staged handoff identifies the UC-managed table object that UC resolved during
+    // stageReplace. If the table name is dropped/recreated before commit, the current snapshot
+    // may point at a different UC table id even though the SQL identifier is unchanged. In that
+    // case, fail and retry instead of committing against the wrong target.
     val actualTableId =
       txn.snapshot.metadata.configuration.get(UC_TABLE_ID_KEY)
         .orElse(txn.snapshot.metadata.configuration.get(UC_TABLE_ID_KEY_OLD))

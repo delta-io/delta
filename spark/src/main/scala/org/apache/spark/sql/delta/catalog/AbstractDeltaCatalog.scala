@@ -48,6 +48,7 @@ import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.internal.MDC
 import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
