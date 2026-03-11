@@ -953,7 +953,590 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
                   sql("DROP TABLE IF EXISTS %s", sourceTableName);
                 },
-            "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"));
+            "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"),
+
+        // Full table delete (only RemoveFiles, no AddFiles)
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                },
+            "DELETE: Full table delete (removes only, no adds)"));
+  }
+
+  // ================================================================================================
+  // Tests for ignoreDeletes parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreDeletes=true, both DSv1 and DSv2 produce the same file changes for
+   * delete-only commits (commits with only RemoveFile actions, no AddFile actions). The delete-only
+   * commit should be silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreDeletes_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_ignore_deletes_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyPartitionedTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("ignoreDeletes", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /**
+   * Verifies that with ignoreDeletes=true, both DSv1 and DSv2 still throw on commits containing
+   * both adds and removes (e.g., UPDATE, MERGE), since ignoreDeletes only suppresses delete-only
+   * commits.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreDeletes_changeCommitStillThrows(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_ignore_deletes_change_"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    DeltaOptions options = createDeltaOptions("ignoreDeletes", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+
+    AtomicInteger dsv1SuccessfulCalls = new AtomicInteger(0);
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+              deltaSource.getFileChanges(
+                  fromVersion,
+                  fromIndex,
+                  isInitialSnapshot,
+                  endOffset,
+                  /* verifyMetadataAction= */ true);
+          try {
+            while (deltaChanges.hasNext()) {
+              deltaChanges.next();
+              dsv1SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            deltaChanges.close();
+          }
+        },
+        String.format(
+            "DSv1 should throw on change commit with ignoreDeletes for: %s", testDescription));
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+
+    AtomicInteger dsv2SuccessfulCalls = new AtomicInteger(0);
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          CloseableIterator<IndexedFile> kernelChanges =
+              stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty());
+          try {
+            while (kernelChanges.hasNext()) {
+              kernelChanges.next();
+              dsv2SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            kernelChanges.close();
+          }
+        },
+        String.format(
+            "DSv2 should throw on change commit with ignoreDeletes for: %s", testDescription));
+
+    assertEquals(
+        dsv1SuccessfulCalls.get(),
+        dsv2SuccessfulCalls.get(),
+        String.format(
+            "DSv1 and DSv2 should throw after the same number of next() calls for: %s. "
+                + "DSv1=%d, DSv2=%d",
+            testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
+  }
+
+  // ================================================================================================
+  // Tests for skipChangeCommits parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with skipChangeCommits=true, both DSv1 and DSv2 produce the same file changes for
+   * delete-only commits. Since skipChangeCommits suppresses all commits containing RemoveFile
+   * actions, these commits should be silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withSkipChangeCommits_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_skip_change_del_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyPartitionedTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("skipChangeCommits", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /**
+   * Verifies that with skipChangeCommits=true, both DSv1 and DSv2 silently skip commits containing
+   * both adds and removes (e.g., UPDATE, MERGE), instead of throwing. This is the key behavioral
+   * difference from ignoreDeletes, which throws on such commits.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withSkipChangeCommits_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_skip_change_chg_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("skipChangeCommits", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  // ================================================================================================
+  // Tests for ignoreChanges parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreChanges=true, both DSv1 and DSv2 produce the same file changes for
+   * delete-only commits. Since ignoreChanges implies shouldAllowDeletes, these commits should be
+   * silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreChanges_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_ignore_changes_del_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyPartitionedTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("ignoreChanges", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /**
+   * Verifies that with ignoreChanges=true, both DSv1 and DSv2 produce the same file changes for
+   * change commits (commits containing both AddFile and RemoveFile actions). Unlike ignoreDeletes,
+   * ignoreChanges allows these commits through and emits their AddFiles.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreChanges_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_ignore_changes_chg_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("ignoreChanges", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  // ================================================================================================
+  // Tests for ignoreFileDeletion (deprecated) parity between DSv1 and DSv2
+  // Behaves identically to ignoreChanges — allows both delete-only and change commits.
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreFileDeletion=true, both DSv1 and DSv2 produce the same file changes
+   * for delete-only commits.
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreFileDeletion_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_ign_file_del_del_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyPartitionedTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("ignoreFileDeletion", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /**
+   * Verifies that with ignoreFileDeletion=true, both DSv1 and DSv2 produce the same file changes
+   * for change commits (commits containing both AddFile and RemoveFile actions). Like
+   * ignoreChanges, the AddFiles are emitted (potentially causing duplicates downstream).
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreFileDeletion_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_ign_file_del_chg_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions("ignoreFileDeletion", "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  // ================================================================================================
+  // Shared scenario providers for ignoreDeletes, skipChangeCommits, ignoreChanges, and
+  // ignoreFileDeletion tests
+  // ================================================================================================
+
+  /**
+   * Provides delete-only scenarios: commits with only RemoveFile actions and no AddFile actions.
+   * Used by ignoreDeletes, skipChangeCommits, ignoreChanges, and ignoreFileDeletion tests.
+   *
+   * <p>Arguments: (ScenarioSetup, isInitialSnapshot, testDescription)
+   */
+  private static Stream<Arguments> deleteOnlyScenarios() {
+    return Stream.of(
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                },
+            false,
+            "Full table delete"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                },
+            false,
+            "Insert-Delete-Insert: data resumes after delete"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'PartA'), (2, 'PartA'), (3, 'PartB')", tableName);
+                  sql("DELETE FROM %s WHERE name = 'PartA'", tableName);
+                },
+            false,
+            "Partitioned table: delete entire partition"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                },
+            true,
+            "Full table delete with initial snapshot"));
+  }
+
+  /**
+   * Provides change-commit scenarios: commits containing both AddFile and RemoveFile actions (e.g.,
+   * UPDATE, MERGE). Used by ignoreDeletes, skipChangeCommits, ignoreChanges, and ignoreFileDeletion
+   * tests — ignoreDeletes expects these to throw, skipChangeCommits expects them to be silently
+   * skipped, and ignoreChanges/ignoreFileDeletion expect them to pass through with AddFiles
+   * emitted.
+   *
+   * <p>Arguments: (ScenarioSetup, isInitialSnapshot, testDescription)
+   */
+  private static Stream<Arguments> changeCommitScenarios() {
+    return Stream.of(
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  sql("UPDATE %s SET name = 'Updated' WHERE id = 1", tableName);
+                },
+            false,
+            "UPDATE: AddFile + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  String sourceTableName = "merge_src_" + System.nanoTime();
+                  sql(
+                      "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
+                      sourceTableName, tempDir.getAbsolutePath() + "_source");
+                  sql("INSERT INTO %s VALUES (2, 'UpdatedUser2'), (4, 'User4')", sourceTableName);
+                  sql(
+                      "MERGE INTO %s AS target USING %s AS source ON target.id = source.id "
+                          + "WHEN MATCHED THEN UPDATE SET target.name = source.name "
+                          + "WHEN NOT MATCHED THEN INSERT (id, name) "
+                          + "VALUES (source.id, source.name)",
+                      tableName, sourceTableName);
+                  sql("DROP TABLE IF EXISTS %s", sourceTableName);
+                },
+            false,
+            "MERGE: AddFile + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  sql("UPDATE %s SET name = 'Updated' WHERE id = 1", tableName);
+                },
+            true,
+            "UPDATE with initial snapshot: AddFile + RemoveFile"));
   }
 
   @Test
