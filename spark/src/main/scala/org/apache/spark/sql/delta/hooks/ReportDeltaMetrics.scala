@@ -44,7 +44,7 @@ case class CommitReportEnvelope(
 case class CommitReport()
 
 /**
- * Builds the PO metrics request payload from committed transaction data.
+ * Builds the UC metrics request payload from committed transaction data.
  *
  * Package-private for direct testing without Delta infrastructure.
  */

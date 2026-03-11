@@ -30,7 +30,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-class UpdatePOMetricsHookSuite extends QueryTest
+class UpdateMetricsHookSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
   private val TEST_CATALOG_NAME = "test_catalog"
@@ -40,7 +40,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
       .set("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "false")
   }
 
-  test("POMetricsClient: sends minimal payload with Authorization header") {
+  test("UCMetricsClient: sends minimal payload with Authorization header") {
     val mockServer = new SimpleMockServer(0)
     try {
       mockServer.setResponseCode(200)
@@ -58,7 +58,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
         tableId = "abc-123",
         report = CommitReportEnvelope(CommitReport())
       )
-      POMetricsClient.sendMetrics(spark, request, catalogName = Some(TEST_CATALOG_NAME))
+      UCMetricsClient.sendMetrics(spark, request, catalogName = Some(TEST_CATALOG_NAME))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
 
@@ -74,7 +74,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
     }
   }
 
-  test("POMetricsClient: auth.type=static with auth.token (new auth.* format)") {
+  test("UCMetricsClient: auth.type=static with auth.token (new auth.* format)") {
     val authStaticCatalog = "auth_static_catalog" // distinct from TEST_CATALOG_NAME to avoid
     // config leakage between tests (SharedSparkSession reuses spark.conf)
     val mockServer = new SimpleMockServer(0)
@@ -99,7 +99,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
         tableId = "auth-test-id",
         report = CommitReportEnvelope(CommitReport())
       )
-      POMetricsClient.sendMetrics(spark, request, catalogName = Some(authStaticCatalog))
+      UCMetricsClient.sendMetrics(spark, request, catalogName = Some(authStaticCatalog))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
       val authHeader = mockServer.getLastHeaders().get("Authorization")
@@ -152,7 +152,7 @@ class UpdatePOMetricsHookSuite extends QueryTest
           isBlindAppend = true
         )
 
-        UpdatePOMetricsHook(Some(catalogTable)).run(spark, txn)
+        UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
 
         assert(mockServer.getRequestCount() == 1, "Expected exactly 1 HTTP POST")
         val body = mockServer.getLastRequestBody()

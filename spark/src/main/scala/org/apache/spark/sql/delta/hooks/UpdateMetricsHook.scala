@@ -23,28 +23,19 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 
 /**
- * Post-commit hook that sends commit metrics to the PO (Predictive Optimization) endpoint
- * for Unity Catalog managed Delta tables.
- *
- * Endpoint: POST /api/2.1/unity-catalog/delta/preview/metrics
- *
- * The server validates:
- *  - table_id must match a known UC Delta table
- *  - commit_version (in file_size_histogram) must be within validCommitVersionWindow of
- *    the latest table version tracked by UC
- *  - All numeric fields must be non-negative
+ * Post-commit hook that sends commit metrics to Unity Catalog for UC-managed Delta tables.
  *
  * This hook is best-effort: failures are logged as warnings but never fail the commit.
  *
  * @param catalogTable The catalog table metadata (required to identify UC-managed tables)
  */
-case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
+case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     extends PostCommitHook with DeltaLogging {
 
-  override val name: String = "Update PO Metrics"
+  override val name: String = "Update UC Metrics"
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     if (!isUCManagedTable(txn.deltaLog, catalogTable)) return
@@ -58,17 +49,17 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
       val request = ReportDeltaMetrics.buildRequest(
         tableId, txn.committedActions, txn.committedVersion)
       val catalogName = catalogTable.flatMap(_.identifier.catalog)
-      POMetricsClient.sendMetrics(spark, request, catalogName = catalogName)
+      UCMetricsClient.sendMetrics(spark, request, catalogName = catalogName)
 
       logInfo(
-        log"Successfully sent PO metrics for table " +
+        log"Successfully sent UC metrics for table " +
         log"${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
         log"version ${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}")
 
     } catch {
       case e: Exception =>
         logWarning(
-          log"Failed to send PO metrics for table " +
+          log"Failed to send UC metrics for table " +
           log"${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
           log"version ${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}: " +
           log"${MDC(DeltaLogKeys.ERROR, e.getMessage)}", e)
@@ -77,7 +68,7 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
 
   override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
     logWarning(
-      log"PO metrics hook failed for version ${MDC(DeltaLogKeys.VERSION, version)}: " +
+      log"UC metrics hook failed for version ${MDC(DeltaLogKeys.VERSION, version)}: " +
       log"${MDC(DeltaLogKeys.ERROR, error.getMessage)}", error)
   }
 
@@ -88,10 +79,10 @@ case class UpdatePOMetricsHook(catalogTable: Option[CatalogTable])
 
     catalogTable match {
       case Some(ct) =>
-        ct.identifier.catalog.isDefined ||
-        (ct.properties.get("provider").exists(
-          _.toLowerCase(java.util.Locale.ROOT) == "delta") &&
-          deltaLog.tableId.nonEmpty)
+        ct.tableType == CatalogTableType.MANAGED &&
+        (ct.identifier.catalog.isDefined ||
+        ct.properties.get("provider").exists(
+          _.toLowerCase(java.util.Locale.ROOT) == "delta"))
       case None => false
     }
   }

@@ -31,25 +31,17 @@ import org.apache.http.util.EntityUtils
 import org.apache.spark.sql.SparkSession
 
 /**
- * HTTP client for sending commit metrics to the UC PO endpoint.
- *
- * Endpoint: POST /api/2.1/unity-catalog/delta/preview/metrics
- *
- * The server (ReportDeltaMetricsHandler) will:
- *  1. Look up the table via getTableById to fetch PO-enable status and latest version
- *  2. Validate commit_version is within validCommitVersionWindow of the latest version
- *  3. Validate all numeric fields are non-negative
- *  4. Forward the metrics to PO via PredictiveOptimizationClient.pushExternalDeltaCommitMetrics
+ * HTTP client for sending commit metrics to the UC metrics endpoint.
  */
-object POMetricsClient {
+object UCMetricsClient {
   private val CATALOG_URI_CONF_SUFFIX = ".uri"
   private val CATALOG_CONF_PREFIX = "spark.sql.catalog."
-  private val PO_METRICS_ENDPOINT_SUFFIX = "/api/2.1/unity-catalog/delta/preview/metrics"
+  private val METRICS_ENDPOINT_SUFFIX = "/api/2.1/unity-catalog/delta/preview/metrics"
   // Short timeout for best-effort delivery; hook must not block commits
   private val HTTP_TIMEOUT_MS = 5000L
 
   /**
-   * Sends commit metrics to the PO endpoint synchronously.
+   * Sends commit metrics to the UC metrics endpoint synchronously.
    *
    * @param spark   The SparkSession (used to read configuration)
    * @param request The fully-constructed request payload
@@ -62,7 +54,7 @@ object POMetricsClient {
       catalogName: Option[String] = None): Unit = {
     val catalog = catalogName.getOrElse(
       throw new IllegalArgumentException(
-        "Catalog name required for PO metrics; " +
+        "Catalog name required for UC metrics; " +
         "endpoint URI is read from spark.sql.catalog.<name>.uri"))
     val endpointUrl = getEndpointUrl(spark, catalog)
     val authToken = getAuthToken(spark, catalogName)
@@ -95,7 +87,7 @@ object POMetricsClient {
             "<no response body>"
           }
           throw new RuntimeException(
-            s"PO metrics endpoint returned error status $statusCode: $responseBody")
+            s"UC metrics endpoint returned error status $statusCode: $responseBody")
         }
       } finally {
         response.close()
@@ -109,7 +101,7 @@ object POMetricsClient {
     val uriKey = s"$CATALOG_CONF_PREFIX$catalogName$CATALOG_URI_CONF_SUFFIX"
     spark.conf.getOption(uriKey) match {
       case Some(uri) if uri.nonEmpty =>
-        s"${uri.stripSuffix("/")}$PO_METRICS_ENDPOINT_SUFFIX"
+        s"${uri.stripSuffix("/")}$METRICS_ENDPOINT_SUFFIX"
       case _ =>
         throw new IllegalArgumentException(
           s"UC catalog base URI not configured. Set $uriKey")
@@ -119,7 +111,7 @@ object POMetricsClient {
   private def getAuthToken(spark: SparkSession, catalogName: Option[String]): String = {
     val catalog = catalogName.getOrElse(
       throw new IllegalArgumentException(
-        "Catalog name required for PO metrics auth resolution"))
+        "Catalog name required for UC metrics auth resolution"))
     val configMap = UCCommitCoordinatorBuilder.getCatalogConfigMap(spark)
     val config = configMap.get(catalog).getOrElse(
       throw new IllegalArgumentException(
