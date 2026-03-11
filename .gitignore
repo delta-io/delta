@@ -48,6 +48,7 @@ dev/create-release/*final
 dev/create-release/*txt
 dev/pr-deps/
 dist/
+docs/dsv2-context/
 docs/_site
 docs/api
 sql/docs
