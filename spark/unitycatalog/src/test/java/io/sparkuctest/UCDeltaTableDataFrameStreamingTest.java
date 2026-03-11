@@ -21,10 +21,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.spark.api.java.function.VoidFunction2;
@@ -34,6 +33,7 @@ import org.apache.spark.sql.streaming.DataStreamReader;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.Trigger;
 import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * DataFrame streaming test suite for Delta Table operations through Unity Catalog.
@@ -46,6 +46,10 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
 
   /** No-op foreachBatch sink used by negative tests that only need the stream to start. */
   private static final VoidFunction2<Dataset<Row>, Long> NOOP_BATCH = (df, id) -> {};
+
+  @TempDir private Path tempDir;
+
+  private int checkpointCount;
 
   @TestAllTableTypes
   public void testStreamingReadWrite(TableType tableType) throws Exception {
@@ -125,8 +129,9 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
-   * Verifies incremental (continuous) streaming where new data arriving after the query starts is
-   * processed in subsequent micro-batches via {@code processAllAvailable()}.
+   * Verifies incremental streaming via a foreachBatch sink (in-memory accumulator). Complements
+   * {@link #testStreamingReadWrite}, which covers the same data-arrival scenario but writes to a
+   * Delta table sink and validates via SQL.
    */
   @TestAllTableTypes
   public void testStreamingContinuous(TableType tableType) throws Exception {
@@ -136,7 +141,7 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
         tableType,
         tableName -> {
           sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
-          List<Integer> result = Collections.synchronizedList(new ArrayList<>());
+          List<Integer> result = new ArrayList<>();
           StreamingQuery query =
               spark()
                   .readStream()
@@ -195,7 +200,7 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
               .start()
               .awaitTermination();
           assertThat(result).containsExactlyInAnyOrder(1, 2, 3);
-          assertThat(batchIds.size()).isEqualTo(3);
+          assertThat(batchIds).hasSize(3);
         });
   }
 
@@ -211,7 +216,7 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
         tableType,
         tableName -> {
           sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
-          List<Integer> result = Collections.synchronizedList(new ArrayList<>());
+          List<Integer> result = new ArrayList<>();
           StreamingQuery query =
               spark()
                   .readStream()
@@ -235,11 +240,10 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
-   * CDF streaming reads work for EXTERNAL tables (V1 connector) but are blocked for MANAGED tables
-   * (V2 connector rejects {@code readChangeFeed}).
+   * CDF streaming reads work for EXTERNAL tables but fail for MANAGED tables.
    *
    * <p>For EXTERNAL: verifies that inserts and a delete produce the expected typed change events.
-   * For MANAGED: verifies the stream fails with a clear "not supported" / "CDC" error.
+   * For MANAGED: verifies the stream fails with an error containing "not supported" and "CDC".
    */
   @TestAllTableTypes
   public void testStreamingCDFRead(TableType tableType) throws Exception {
@@ -255,7 +259,7 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
           sql("DELETE FROM %s WHERE id = 1", tableName);
 
           if (tableType == TableType.EXTERNAL) {
-            List<String> changeTypes = Collections.synchronizedList(new ArrayList<>());
+            List<Row> changes = new ArrayList<>();
             spark()
                 .readStream()
                 .format("delta")
@@ -267,15 +271,16 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
                 .option("checkpointLocation", checkpoint())
                 .foreachBatch(
                     (VoidFunction2<Dataset<Row>, Long>)
-                        (df, id) ->
-                            changeTypes.addAll(
-                                df.select("_change_type").collectAsList().stream()
-                                    .map(r -> r.getString(0))
-                                    .collect(Collectors.toList())))
+                        (df, id) -> changes.addAll(df.select("id", "_change_type").collectAsList()))
                 .start()
                 .awaitTermination();
-            assertThat(changeTypes)
+            assertThat(changes)
+                .extracting(r -> r.getString(1))
                 .containsExactlyInAnyOrder("insert", "insert", "insert", "delete");
+            assertThat(changes)
+                .filteredOn(r -> "delete".equals(r.getString(1)))
+                .extracting(r -> r.getInt(0))
+                .containsExactly(1);
           } else {
             assertInvalidStreamOption(
                 tableName,
@@ -326,8 +331,8 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
    * <ul>
    *   <li>Negative {@code startingVersion} is rejected (both table types).
    *   <li>{@code startingVersion} beyond the table history is rejected (both table types).
-   *   <li>{@code ignoreChanges}, and {@code ignoreDeletes} are blocked by the V2 connector (MANAGED
-   *       tables only — EXTERNAL tables route through V1 which silently accepts these options).
+   *   <li>{@code ignoreChanges} and {@code ignoreDeletes} fail with a "not supported" error for
+   *       MANAGED tables; EXTERNAL tables accept these options silently.
    * </ul>
    */
   @TestAllTableTypes
@@ -381,26 +386,29 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
-   * Asserts that {@code action} throws an exception whose combined message (exception + cause)
-   * contains all the given {@code fragments} (case-insensitive).
+   * Asserts that {@code action} throws an exception whose cause chain contains all the given {@code
+   * fragments} (case-insensitive).
    */
   private static void assertStreamingThrowsContaining(
       ThrowingCallable action, String... fragments) {
     assertThatThrownBy(action)
         .satisfies(
             e -> {
-              String full =
-                  Optional.ofNullable(e.getMessage()).orElse("")
-                      + " "
-                      + Optional.ofNullable(e.getCause()).map(Throwable::getMessage).orElse("");
+              StringBuilder full = new StringBuilder();
+              for (Throwable t = e; t != null; t = t.getCause()) {
+                if (t.getMessage() != null) full.append(t.getMessage()).append(' ');
+              }
+              String msg = full.toString();
               for (String fragment : fragments) {
-                assertThat(full).containsIgnoringCase(fragment);
+                assertThat(msg).containsIgnoringCase(fragment);
               }
             });
   }
 
   private String checkpoint() throws IOException {
-    return Files.createTempDirectory("delta-streaming-ck-").toString();
+    Path ckDir = tempDir.resolve("ck-" + checkpointCount++);
+    Files.createDirectory(ckDir);
+    return ckDir.toString();
   }
 
   private List<Integer> ids(Dataset<Row> df) {

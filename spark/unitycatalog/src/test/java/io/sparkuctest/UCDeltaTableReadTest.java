@@ -141,9 +141,4 @@ public class UCDeltaTableReadTest extends UCDeltaTableIntegrationBaseTest {
           String.format("Query results do not match.\nExpected: %s\nActual: %s", expected, actual));
     }
   }
-
-  /** Returns the timestamp of the current (latest) version. */
-  private String currentTimestamp(String tableName) {
-    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
-  }
 }
