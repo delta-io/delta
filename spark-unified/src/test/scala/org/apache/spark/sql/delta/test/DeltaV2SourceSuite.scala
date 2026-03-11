@@ -71,6 +71,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
     "streaming with ignoreDeletes = true skips delete-only commits",
     "streaming with ignoreDeletes = true still fails on change commits",
+    "streaming with skipChangeCommits = true skips both delete and change commits",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -121,9 +122,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
-
-    // === read options ===
-    "skip change commits",
 
     // === Schema Evolution ===
     // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
