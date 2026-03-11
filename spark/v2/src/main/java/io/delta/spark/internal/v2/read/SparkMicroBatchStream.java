@@ -101,6 +101,7 @@ public class SparkMicroBatchStream
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final boolean ignoreFileDeletion;
   private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
@@ -186,6 +187,11 @@ public class SparkMicroBatchStream
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
+    this.ignoreFileDeletion = this.options.ignoreFileDeletion();
+    // Deprecated. Please use `skipChangeCommits` from now on.
+    if (this.ignoreFileDeletion) {
+      System.out.println(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(this.spark));
+    }
     this.skipChangeCommits = this.options.skipChangeCommits();
     // Normalize tablePath to ensure it ends with "/" for consistent path construction
     String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
@@ -895,9 +901,8 @@ public class SparkMicroBatchStream
       }
     }
 
-    // TODO(#5319): Implement ignoreFileDeletion (deprecated)
     // A check on the source table that disallows changes on the source data.
-    boolean shouldAllowChanges = options.ignoreChanges() || skipChangeCommits;
+    boolean shouldAllowChanges = options.ignoreChanges() || ignoreFileDeletion || skipChangeCommits;
     // A check on the source table that disallows commits that only include deletes to the data.
     boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
 
