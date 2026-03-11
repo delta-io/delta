@@ -149,7 +149,8 @@ case class DeltaSharingFileIndex(
       versionAsOf = params.options.versionAsOf,
       timestampAsOf = params.options.timestampAsOf,
       jsonPredicateHints = jsonPredicateHints,
-      refreshToken = None
+      refreshToken = None,
+      fileIdHash = None
     )
     logInfo(
       s"Fetched ${deltaTableFiles.lines.size} lines for table $table with version " +

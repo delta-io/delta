@@ -133,7 +133,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
     ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
@@ -144,8 +145,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       )
     }
 
-    override def getFiles(table: Table, startingVersion: Long, endingVersion: Option[Long])
-    : DeltaTableFiles = {
+    override def getFiles(
+      table: Table,
+      startingVersion: Long,
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
+    ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       DeltaTableFiles(
@@ -158,7 +163,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean): DeltaTableFiles = {
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       val cdc = getCdcStr()
@@ -283,11 +289,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
         versionAsOf: Option[Long],
         timestampAsOf: Option[String],
         jsonPredicateHints: Option[String],
-        refreshToken: Option[String]
+        refreshToken: Option[String],
+        fileIdHash: Option[String]
       ): DeltaTableFiles = {
         lastRefreshToken = refreshToken
         super.getFiles(table, predicates, limit, versionAsOf, timestampAsOf,
-          jsonPredicateHints, refreshToken)
+          jsonPredicateHints, refreshToken, fileIdHash)
       }
     }
 
