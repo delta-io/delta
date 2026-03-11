@@ -72,11 +72,32 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
  */
 class DeltaCatalogV1 extends AbstractDeltaCatalog
 
+/**
+ * Internal transport object for the staged existing-table context that Unity Catalog resolved
+ * during `stageReplace` / `stageCreateOrReplace`.
+ *
+ * Spark's staged table API only lets UC pass a string property map into Delta commit. We parse
+ * the UC-specific transport keys once at the staging boundary, strip them from the raw properties,
+ * and carry the result through Delta as this typed object instead of threading UC-specific keys
+ * through normal table-property handling.
+ *
+ * This is intentionally narrower than a full [[CatalogTable]]. It only contains the fields Delta
+ * needs to execute a metadata-preserving replace against the already-resolved existing target:
+ * the table location, whether it is managed/external, and the stable UC table id used for the
+ * pre-commit identity check.
+ */
 private[delta] case class ExistingTableHandoffContext(
     location: java.net.URI,
     tableType: CatalogTableType,
     tableId: String) {
 
+  /**
+   * Reconstruct a minimal [[CatalogTable]] for the existing staged target.
+   *
+   * Delta needs a [[CatalogTable]]-shaped object to pick the correct table location and table
+   * type for the replace path, but it does not need the full catalog metadata here because the
+   * metadata-preservation checks happen against the current Delta snapshot later in the command.
+   */
   def toCatalogTable(identifier: TableIdentifier): CatalogTable = {
     CatalogTable(
       identifier = identifier,
@@ -88,6 +109,8 @@ private[delta] case class ExistingTableHandoffContext(
 }
 
 private[delta] object ExistingTableHandoffContext {
+  // UC injects these internal transport keys into staged table properties. They are not
+  // user-visible Delta table properties and should never be persisted to table metadata.
   val locationKey = "unitycatalog.internal.delta.replace.existingTableLocation"
   val tableTypeKey = "unitycatalog.internal.delta.replace.existingTableType"
   val tableIdKey = "unitycatalog.internal.delta.replace.existingTableId"
@@ -111,6 +134,8 @@ private[delta] object ExistingTableHandoffContext {
   private def take(
       props: util.Map[String, String],
       key: String): Option[String] = {
+    // Spark can surface SQL options both with and without the "option." prefix depending on how
+    // the command was parsed, so strip either form before the properties reach normal handling.
     Option(props.remove(key))
       .orElse(Option(props.remove(optionKey(key))))
       .filter(_.nonEmpty)
@@ -138,6 +163,8 @@ private[delta] object ExistingTableHandoffContext {
   def parseAndStrip(
       props: util.Map[String, String],
       operation: TableCreationModes.CreationMode): Option[ExistingTableHandoffContext] = {
+    // Parse the UC handoff bundle exactly once at the staging boundary and remove those transport
+    // keys immediately so later code only deals with the typed handoff object.
     val values = allKeys.map(key => key -> take(props, key)).toMap
     val presentKeys = values.collect { case (key, Some(_)) => key }.toSeq.sorted
     if (presentKeys.isEmpty) {
@@ -246,6 +273,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
     val id = {
       val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      // Spark's TableIdentifier only carries namespace + table name by default. For UC staged
+      // replace paths we also need the catalog name so lookups and error messages continue to
+      // point at the UC table rather than the session catalog table with the same namespace/name.
       if (isUnityCatalog) {
         base.copy(catalog = Some(name()))
       } else {
@@ -253,6 +283,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
+    // Catalog-owned replace on UC now requires the staged existing-table handoff. Delta should
+    // execute against the exact target UC already resolved during staging rather than rediscover
+    // the target again during commit.
     val requireExistingTableHandoff =
       isUnityCatalog &&
         operation != TableCreationModes.Create &&
@@ -690,6 +723,18 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     getExistingTableIfExists(id)
   }
 
+  /**
+   * Resolve the existing table context for CREATE OR REPLACE / REPLACE.
+   *
+   * There are only two supported sources now:
+   * 1. the SessionCatalog already has the existing table (legacy / non-UC paths)
+   * 2. UC staged the existing target and handed it to Delta as an
+   *    [[ExistingTableHandoffContext]]
+   *
+   * For catalog-owned UC replace paths we require the handoff instead of falling back to another
+   * delegated catalog lookup. That keeps UC-specific staging state at the boundary and avoids
+   * rediscovering the replace target during commit.
+   */
   protected[delta] def resolveExistingTableContext(
       id: TableIdentifier,
       operation: TableCreationModes.CreationMode,

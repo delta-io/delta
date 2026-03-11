@@ -923,6 +923,9 @@ case class CreateDeltaTableCommand(
       return
     }
 
+    // `stagedExistingTableId` is the UC table object that was resolved earlier during staging.
+    // Before we write the replace commit, confirm the current Delta snapshot still belongs to that
+    // same UC table object. This is a pre-commit identity guard, not a metadata comparison.
     // The staged handoff identifies the UC-managed table object that UC resolved during
     // stageReplace. If the table name is dropped/recreated before commit, the current snapshot
     // may point at a different UC table id even though the SQL identifier is unchanged. In that
