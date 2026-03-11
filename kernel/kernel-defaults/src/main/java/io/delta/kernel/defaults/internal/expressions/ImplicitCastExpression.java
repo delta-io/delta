@@ -23,6 +23,7 @@ import io.delta.kernel.data.ColumnVector;
 import io.delta.kernel.defaults.engine.DefaultExpressionHandler;
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.DecimalType;
 import java.util.*;
 
 /**
@@ -80,6 +81,11 @@ final class ImplicitCastExpression implements Expression {
    *     {@link ColumnVector}.
    */
   ColumnVector eval(ColumnVector input) {
+    // DECIMAL widening: value stays the same, only type metadata changes
+    if (input.getDataType() instanceof DecimalType && outputType instanceof DecimalType) {
+      return new DecimalUpConverter(outputType, input);
+    }
+
     String fromTypeStr = input.getDataType().toString();
     switch (fromTypeStr) {
       case "byte":
@@ -116,6 +122,14 @@ final class ImplicitCastExpression implements Expression {
    * type.
    */
   static boolean canCastTo(DataType from, DataType to) {
+    // DECIMAL widening: Decimal(p1,s1) can widen to Decimal(p2,s2) when p2 >= p1 and s2 >= s1
+    if (from instanceof DecimalType && to instanceof DecimalType) {
+      DecimalType fromDec = (DecimalType) from;
+      DecimalType toDec = (DecimalType) to;
+      return toDec.getPrecision() >= fromDec.getPrecision()
+          && toDec.getScale() >= fromDec.getScale();
+    }
+
     // TODO: The type name should be a first class method on `DataType` instead of getting it
     // using the `toString`.
     String fromStr = from.toString();
@@ -257,6 +271,17 @@ final class ImplicitCastExpression implements Expression {
     @Override
     public double getDouble(int rowId) {
       return inputVector.getFloat(rowId);
+    }
+  }
+
+  private static class DecimalUpConverter extends UpConverter {
+    DecimalUpConverter(DataType targetType, ColumnVector inputVector) {
+      super(targetType, inputVector);
+    }
+
+    @Override
+    public java.math.BigDecimal getDecimal(int rowId) {
+      return inputVector.getDecimal(rowId);
     }
   }
 }
