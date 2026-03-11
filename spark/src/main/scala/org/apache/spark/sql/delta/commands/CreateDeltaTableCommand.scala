@@ -70,6 +70,8 @@ import org.apache.spark.util.Utils
  * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
  * @param allowCatalogManaged This is used to create UC managed table with catalogManaged feature
+ * @param allowCatalogReplace This is used for existing catalog replace paths, including
+ *                            narrow external-table replace support.
  * @param createTableFunc If specified, call this function to create the table, instead of
  *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
@@ -83,6 +85,7 @@ case class CreateDeltaTableCommand(
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     override val allowCatalogManaged: Boolean = false,
+    override val allowCatalogReplace: Boolean = false,
     createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
@@ -758,21 +761,29 @@ case class CreateDeltaTableCommand(
   }
 
   /**
-   * For catalog-managed REPLACE/RTAS, only allow data replacement when the existing table
+   * For catalog REPLACE/RTAS, only allow data replacement when the existing table
    * metadata stays unchanged. If the command would change schema, partitioning, clustering,
    * comment, or user-visible properties, fail before writing files.
-   * TODO: Remove this guard once catalog-managed replace supports atomic metadata sync.
+   * TODO: Remove this guard once catalog replace supports atomic metadata sync.
    *
    * @return true if the caller should skip `updateMetadataForNewTableInReplace`.
    */
-  private def catalogManagedReplacePreservesMetadata(
+  private def unityCatalogReplaceTargetLabel: String = {
+    if (table.tableType == CatalogTableType.MANAGED) {
+      "catalog-managed table"
+    } else {
+      "Unity Catalog external table"
+    }
+  }
+
+  private def unityCatalogReplacePreservesMetadata(
       sparkSession: SparkSession,
       txn: OptimisticTransaction,
       tableDesc: CatalogTable,
       schema: StructType): Boolean = {
-    // Only use this metadata-preserving path for catalog-managed replace on an
-    // existing table; otherwise fall back to the normal replace flow.
-    if (!(allowCatalogManaged && isReplace && txn.readVersion > -1L)) {
+    // Only use this metadata-preserving path for catalog replace on an existing table;
+    // otherwise fall back to the normal replace flow.
+    if (!(allowCatalogReplace && isReplace && txn.readVersion > -1L)) {
       return false
     }
 
@@ -795,7 +806,7 @@ case class CreateDeltaTableCommand(
       requestedSchemaToCompare)
     if (schemaDifferences.nonEmpty || exactSchemaMetadataMismatch) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with a " +
+        s"Replacing a ${unityCatalogReplaceTargetLabel} with a " +
           "different schema")
     }
 
@@ -805,7 +816,7 @@ case class CreateDeltaTableCommand(
     val existPartCols = existingMetadata.partitionColumns
     if (partCols.nonEmpty && partCols != existPartCols) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with " +
+        s"Replacing a ${unityCatalogReplaceTargetLabel} with " +
           "different partitioning")
     }
 
@@ -813,9 +824,9 @@ case class CreateDeltaTableCommand(
       ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
     val existCluster =
       ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
-    if (specCluster != existCluster) {
+    if (specCluster.nonEmpty && specCluster != existCluster) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with " +
+        s"Replacing a ${unityCatalogReplaceTargetLabel} with " +
           "different clustering")
     }
 
@@ -824,7 +835,7 @@ case class CreateDeltaTableCommand(
     tableDesc.comment.foreach { specifiedComment =>
       if (specifiedComment != existingMetadata.description) {
         throw DeltaErrors.operationNotSupportedException(
-          "Replacing a catalog-managed table with a " +
+          s"Replacing a ${unityCatalogReplaceTargetLabel} with a " +
             "different comment")
       }
     }
@@ -864,15 +875,15 @@ case class CreateDeltaTableCommand(
       existingMetadata.configuration)
 
     // Explicitly specified properties must match the existing metadata. Properties omitted from
-    // the command are treated as "preserve existing", since catalog-managed replace skips
-    // metadata updates.
+    // the command are treated as "preserve existing", since catalog replace skips metadata
+    // updates.
     val changedKeys = specProps.collect {
       case (key, value)
         if existProps.get(key) != Some(value) => key
     }.toSeq.sorted
     if (changedKeys.nonEmpty) {
       throw DeltaErrors.operationNotSupportedException(
-        "Replacing a catalog-managed table with " +
+        s"Replacing a ${unityCatalogReplaceTargetLabel} with " +
           "different properties " +
           s"(changed: ${changedKeys.mkString(", ")})")
     }
@@ -899,9 +910,9 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
-      // If this catalog-managed replace preserves metadata, skip the metadata rewrite below;
+      // If this catalog replace preserves metadata, skip the metadata rewrite below;
       // otherwise this helper throws.
-      if (catalogManagedReplacePreservesMetadata(sparkSession, txn, tableDesc, schema)) {
+      if (unityCatalogReplacePreservesMetadata(sparkSession, txn, tableDesc, schema)) {
         return
       }
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
@@ -929,9 +940,9 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    // For catalog-managed replace on an existing table, pass the catalog table descriptor into
+    // For catalog replace on an existing table, pass the catalog table descriptor into
     // transaction startup so the transaction is initialized against that existing table entry.
-    val catalogTableOpt = if (allowCatalogManaged && isReplace && deltaLog.tableExists) {
+    val catalogTableOpt = if (allowCatalogReplace && isReplace && deltaLog.tableExists) {
       Some(tableWithLocation)
     } else {
       None
