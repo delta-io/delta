@@ -95,7 +95,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
    * Returns true if the Unity Catalog Spark version >0.4.0 so that it supports complex data types
    * in columns and partition index.
    */
-  private static boolean ucSparkNewerThan040() {
+  private static boolean isUcSparkNewerThan040() {
     final int[] VER_0_4_0 = {0, 4, 0};
     int[] ucSparkVersion = getUnityCatalogSparkVersion();
     return Arrays.compare(ucSparkVersion, VER_0_4_0) > 0;
@@ -325,7 +325,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           fullTableName,
           MANAGED_TBLPROPERTIES_CLAUSE_OTHER,
           // Older version UC Spark client can't support Decimal type
-          ucSparkNewerThan040() ? "0.1" : "1");
+          isUcSparkNewerThan040() ? "0.1" : "1");
       tablesToCleanUp.add(fullTableName);
     }
 
@@ -454,7 +454,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @TestAllTableTypes
   public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
     Assumptions.assumeTrue(
-        ucSparkNewerThan040() || tableType != TableType.MANAGED,
+        isUcSparkNewerThan040() || tableType != TableType.MANAGED,
         "Older UC Spark package can't support uploading complex types to UC server for managed table");
     String schema =
         // Numeric types
@@ -540,7 +540,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @TestAllTableTypes
   public void testTableWithComplexTypes(TableType tableType) throws Exception {
     Assumptions.assumeTrue(
-        ucSparkNewerThan040() || tableType != TableType.MANAGED,
+        isUcSparkNewerThan040() || tableType != TableType.MANAGED,
         "Older UC Spark package can't support uploading complex types to UC server for managed table");
     String schema =
         "id INT, arr ARRAY<INT>, "
@@ -659,7 +659,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
       assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
       // Partition index is only set after UC-Spark 0.4.0
-      if (ucSparkNewerThan040() && partitionColumn.isPresent()) {
+      if (isUcSparkNewerThan040() && partitionColumn.isPresent()) {
         List<ColumnInfo> matchingColumns =
             columns.stream()
                 .filter(c -> c.getName().equals(partitionColumn.get()))
