@@ -3260,6 +3260,12 @@
     ],
     "sqlState" : "42846"
   },
+  "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
+    "message" : [
+      "Found NullType in column <columnName> which is of <userClass> user-defined type. Delta doesn't support writing NullType in user-defined types."
+    ],
+    "sqlState" : "22005"
+  },
   "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
     "message" : [
       "Retention period for Vacuum can't be less than 0 hours."
