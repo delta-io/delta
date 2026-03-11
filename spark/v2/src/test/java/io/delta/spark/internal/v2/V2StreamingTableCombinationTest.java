@@ -16,6 +16,7 @@
 
 package io.delta.spark.internal.v2;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.File;
@@ -339,8 +340,6 @@ public class V2StreamingTableCombinationTest extends V2TestBase {
 
   private void verifyStreamingInitialAndPostAppend(TableRef table, Path caseDir, String label)
       throws Exception {
-    List<Row> expectedInitial = readCurrentTableSnapshot(table);
-
     String queryName =
         "dsv2_stream_"
             + label.replaceAll("[^A-Za-z0-9_]", "_")
@@ -363,15 +362,16 @@ public class V2StreamingTableCombinationTest extends V2TestBase {
               .start();
 
       query.processAllAvailable();
-      List<Row> actualInitial = canonicalRows(spark.sql(str("SELECT * FROM %s", queryName)));
-      assertDataEquals(actualInitial, expectedInitial);
+      assertDatasetMultisetEquals(
+          spark.sql(str("SELECT * FROM %s", queryName)),
+          spark.read().format("delta").load(table.path));
 
       appendRows(table, 10000, 1);
       query.processAllAvailable();
 
-      List<Row> expectedAfterAppend = readCurrentTableSnapshot(table);
-      List<Row> actualAfterAppend = canonicalRows(spark.sql(str("SELECT * FROM %s", queryName)));
-      assertDataEquals(actualAfterAppend, expectedAfterAppend);
+      Dataset<Row> actualAfterAppend = spark.sql(str("SELECT * FROM %s", queryName));
+      Dataset<Row> expectedAfterAppend = spark.read().format("delta").load(table.path);
+      assertDatasetMultisetEquals(actualAfterAppend, expectedAfterAppend);
 
       assertFalse(actualAfterAppend.isEmpty(), "streaming result should not be empty after append");
     } finally {
@@ -382,18 +382,22 @@ public class V2StreamingTableCombinationTest extends V2TestBase {
     }
   }
 
-  private List<Row> readCurrentTableSnapshot(TableRef table) {
-    // The batch snapshot is the ground truth for the table state after the create/mutate step.
-    // Using it avoids comparing the streaming query against another streaming read of the same
-    // source, which would not validate correctness independently.
-    return canonicalRows(spark.read().format("delta").load(table.path));
-  }
-
-  private List<Row> canonicalRows(Dataset<Row> df) {
+  private Dataset<Row> canonicalize(Dataset<Row> df) {
     String[] sortedColumns = df.columns().clone();
     Arrays.sort(sortedColumns, Comparator.naturalOrder());
     Column[] projection = Arrays.stream(sortedColumns).map(functions::col).toArray(Column[]::new);
-    return df.select(projection).collectAsList();
+    return df.select(projection);
+  }
+
+  private void assertDatasetMultisetEquals(Dataset<Row> actual, Dataset<Row> expected) {
+    Dataset<Row> canonicalActual = canonicalize(actual);
+    Dataset<Row> canonicalExpected = canonicalize(expected);
+
+    long actualMinusExpected = canonicalActual.exceptAll(canonicalExpected).count();
+    long expectedMinusActual = canonicalExpected.exceptAll(canonicalActual).count();
+
+    assertEquals(0L, actualMinusExpected, "actual has unexpected extra rows");
+    assertEquals(0L, expectedMinusActual, "actual is missing expected rows");
   }
 
   private void appendRows(TableRef table, int startId, int count) {
