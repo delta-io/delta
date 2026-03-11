@@ -763,4 +763,64 @@ class DeltaCreateTableLikeSuite extends QueryTest
       checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L, 10L)))
     }
   }
+
+  test("external staged CREATE OR REPLACE rejects explicit user property changes") {
+    withTable("t") {
+      withTempDir { dir =>
+        val location = new File(dir, "t").toURI.toString
+        spark.sql(s"CREATE TABLE t (id LONG) USING DELTA LOCATION '$location'")
+        spark.sql("INSERT INTO t VALUES (1)")
+        val existingTable = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+        val snapshot = DeltaLog.forTable(spark, TableIdentifier("t")).update()
+        val versionBefore = snapshot.version
+        val updatedTable = new DeltaCatalog().verifyTableAndSolidify(
+          existingTable.copy(
+            schema = snapshot.metadata.schema,
+            properties = existingTable.properties + ("delta.appendOnly" -> "true")),
+          query = None)
+
+        val err = intercept[DeltaAnalysisException] {
+          CreateDeltaTableCommand(
+            updatedTable,
+            existingTableOpt = Some(existingTable),
+            mode = SaveMode.Overwrite,
+            query = None,
+            operation = TableCreationModes.CreateOrReplace,
+            isUnityCatalogStagedReplace = true).run(spark)
+        }
+        assert(err.getMessage.contains("Replacing a UC external table with different properties"))
+        assert(err.getMessage.contains("delta.appendonly"))
+        assert(DeltaLog.forTable(spark, TableIdentifier("t")).update().version === versionBefore)
+        checkAnswer(spark.sql("SELECT * FROM t"), Seq(org.apache.spark.sql.Row(1L)))
+      }
+    }
+  }
+
+  test("external CREATE OR REPLACE creates missing table when location is provided") {
+    withTable("t") {
+      withTempDir { dir =>
+        val location = new File(dir, "t").toURI
+        val target = new DeltaCatalog().verifyTableAndSolidify(
+          CatalogTable(
+            identifier = TableIdentifier("t", Some("default")),
+            tableType = CatalogTableType.EXTERNAL,
+            storage = CatalogStorageFormat.empty.copy(locationUri = Some(location)),
+            provider = Some("delta"),
+            schema = new StructType().add("id", "long")),
+          query = None)
+
+        CreateDeltaTableCommand(
+          target,
+          existingTableOpt = None,
+          mode = SaveMode.ErrorIfExists,
+          query = None,
+          operation = TableCreationModes.CreateOrReplace).run(spark)
+
+        assert(spark.sessionState.catalog.tableExists(TableIdentifier("t")))
+        val created = spark.sessionState.catalog.getTableMetadata(TableIdentifier("t"))
+        assert(created.tableType == CatalogTableType.EXTERNAL)
+        assert(created.location == location)
+      }
+    }
+  }
 }

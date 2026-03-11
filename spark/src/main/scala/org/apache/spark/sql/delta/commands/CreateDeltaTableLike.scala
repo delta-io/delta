@@ -51,6 +51,11 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // Whether the table is UC managed table with catalogManaged feature.
   val allowCatalogManaged: Boolean
 
+  // UC staged existing-table replace paths carry the UC table id from staging through commit.
+  val stagedExistingTableId: Option[String]
+
+  protected def isUnityCatalogStagedReplace: Boolean = stagedExistingTableId.nonEmpty
+
   /**
    * Generates a `CatalogTable` with its `locationUri` set appropriately, depending on whether the
    * table already exists or is newly created.
@@ -61,6 +66,10 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
         case Some(location) if location.getPath != existingTable.location.getPath =>
+          if (isUnityCatalogStagedReplace && existingTable.tableType == CatalogTableType.EXTERNAL) {
+            throw DeltaErrors.operationNotSupportedException(
+              "Replacing a UC external table with a different location")
+          }
           throw DeltaErrors.tableLocationMismatch(table, existingTable)
         case _ =>
       }
@@ -95,11 +104,11 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     val tableExistsInCatalog = existingTableOpt.isDefined
     def updateExistingTableCatalogSchema(): Unit = {
-      if (!allowCatalogManaged) {
+      if (!(allowCatalogManaged || isUnityCatalogStagedReplace)) {
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       }
     }
-    if (allowCatalogManaged &&
+    if ((allowCatalogManaged || isUnityCatalogStagedReplace) &&
         tableExistsInCatalog &&
         didNotChangeMetadata &&
         operation != TableCreationModes.Create) {

@@ -324,14 +324,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    // Catalog-managed replace on UC now requires the staged existing-table handoff. Delta should
-    // execute against the exact target UC already resolved during staging rather than rediscover
-    // the target again during commit.
+    // UC staged replace should execute against the exact target UC already resolved during
+    // staging rather than rediscovering the target again during commit.
     val catalogManagedReplacePath =
       isUnityCatalog &&
         operation != TableCreationModes.Create &&
         TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(tableProperties)
           .contains(CatalogOwnedTableFeature)
+    val strictExistingTableHandoff =
+      isUnityCatalog &&
+        operation != TableCreationModes.Create &&
+        resolvedExistingTableHandoff.nonEmpty
     if (createWhenMissing && resolvedExistingTableHandoff.nonEmpty) {
       throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(
         operation.toString,
@@ -346,7 +349,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       id,
       operation,
       resolvedExistingTableHandoff,
-      requireExistingTableHandoff,
+      requireExistingTableHandoff || strictExistingTableHandoff,
       skipExistingTableLookup)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
@@ -356,10 +359,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
     // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
     val respectManagedLoc = isUnityCatalog || DeltaUtils.isTesting
-    val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
-      CatalogTableType.MANAGED
-    } else {
-      CatalogTableType.EXTERNAL
+    val tableType = resolvedExistingTableHandoff.map(_.tableType).getOrElse {
+      if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
+        CatalogTableType.MANAGED
+      } else {
+        CatalogTableType.EXTERNAL
+      }
     }
     val loc = locUriOpt
       .orElse(existingTableOpt.flatMap(_.storage.locationUri))
@@ -783,7 +788,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * 2. UC staged the existing target and handed it to Delta as an
    *    [[ExistingTableHandoffContext]]
    *
-   * For catalog-managed UC replace paths we require the handoff instead of falling back to another
+   * For UC staged replace paths we require the handoff instead of falling back to another
    * delegated catalog lookup. That keeps UC-specific staging state at the boundary and avoids
    * rediscovering the replace target during commit.
    */
@@ -799,7 +804,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     if (requireExistingTableHandoff && existingTableHandoff.isEmpty) {
       throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(
         operation.toString,
-        "missing handoff bundle for catalogManaged replace path")
+        "missing handoff bundle for UC staged replace path")
     }
     if (requireExistingTableHandoff) {
       existingTableHandoff.map(_.toCatalogTable(id))

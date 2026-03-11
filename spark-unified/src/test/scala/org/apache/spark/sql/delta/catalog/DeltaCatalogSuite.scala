@@ -193,6 +193,33 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
     assert(catalog.sessionLookups == 0)
   }
 
+  test("strict external existing-table handoff bypasses session catalog lookup") {
+    val catalog = new TrackingDeltaCatalog
+    val tableId = TableIdentifier("t", Some("default"))
+    catalog.sessionResult = Some(CatalogTable(
+      identifier = tableId,
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat.empty.copy(locationUri = Some(URI.create("file:/tmp/other"))),
+      schema = new org.apache.spark.sql.types.StructType(),
+      provider = Some("delta")))
+    val handoff = Some(
+      ExistingTableHandoffContext(
+        URI.create("file:/tmp/external"),
+        CatalogTableType.EXTERNAL,
+        "table-id"))
+
+    val resolved = catalog.resolveExistingTableContext(
+      tableId,
+      TableCreationModes.Replace,
+      handoff,
+      strictExistingTableHandoff = true)
+
+    assert(resolved.isDefined)
+    assert(resolved.get.tableType == CatalogTableType.EXTERNAL)
+    assert(resolved.get.storage.locationUri.contains(URI.create("file:/tmp/external")))
+    assert(catalog.sessionLookups == 0)
+  }
+
   test("existing-table handoff does not rediscover existing table when absent") {
     val catalog = new TrackingDeltaCatalog
     val tableId = TableIdentifier("t", Some("default"))

@@ -284,7 +284,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // Test with unity catalog only (spark_catalog is not configured as UC catalog)
     final String catalogName = uc.catalogName();
     final String schemaName = uc.schemaName();
-    String tableName = "test_delta_table_" + count;
+    String tableName =
+        "test_delta_table_" + count + "_" + UUID.randomUUID().toString().substring(0, 8);
 
     TableSetupOptions options =
         new TableSetupOptions()
@@ -422,17 +423,17 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       } else {
         withTempDir(
             (Path dir) -> {
-              sql("CREATE TABLE %s (id INT) USING DELTA LOCATION '%s'", tableName, dir.toString());
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
+                  tableName, dir.toString());
               sql("INSERT INTO %s VALUES (1)", tableName);
               check(tableName, List.of(List.of("1")));
 
-              assertThatThrownBy(
-                      () ->
-                          sql(
-                              "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
-                              tableName, dir.toString()))
-                  .hasMessageContaining(
-                      "CREATE OR REPLACE TABLE is only supported for UC-managed Delta tables");
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
+                  tableName, dir.toString());
+              sql("INSERT INTO %s VALUES (2)", tableName);
+              check(tableName, List.of(List.of("2")));
             });
       }
     } finally {
@@ -734,10 +735,14 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     return splits[splits.length - 1];
   }
 
+  private static String uniqueTableName(String prefix) {
+    return prefix + "_" + UUID.randomUUID().toString().substring(0, 8);
+  }
+
   @Test
   public void testRTASAtomicity() {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = "test_rtas_atomicity";
+    String tableName = uniqueTableName("test_rtas_atomicity");
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
@@ -745,6 +750,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'old' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "old")));
+      long versionBefore = currentVersion(fullTableName);
 
       sql(
           "REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'new' AS val",
@@ -753,6 +759,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
       assertThat(results).hasSize(1);
       assertThat(results.get(0)).containsExactly("2", "new");
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
 
       sql("INSERT INTO %s VALUES (3, 'extra')", fullTableName);
       check(fullTableName, List.of(List.of("2", "new"), List.of("3", "extra")));
@@ -764,7 +771,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @Test
   public void testReplaceTableWithNewSchemaIsBlocked() {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = "test_rt_schema_blocked";
+    String tableName = uniqueTableName("test_rt_schema_blocked");
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
@@ -789,7 +796,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @Test
   public void testRTASFailurePreservesOriginalData() {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = "test_rtas_failure";
+    String tableName = uniqueTableName("test_rtas_failure");
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
@@ -797,6 +804,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'original' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "original")));
+      long versionBefore = currentVersion(fullTableName);
 
       assertThatThrownBy(
           () ->
@@ -804,6 +812,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                   "REPLACE TABLE %s USING DELTA %s AS SELECT 1/0 AS id, 'bad' AS val",
                   fullTableName, MANAGED_TBLPROPERTIES_CLAUSE));
 
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore);
       check(fullTableName, List.of(List.of("1", "original")));
 
       sql("INSERT INTO %s VALUES (2, 'still works')", fullTableName);
@@ -816,7 +825,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @Test
   public void testCreateOrReplaceAtomicity() {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = "test_cor_atomicity";
+    String tableName = uniqueTableName("test_cor_atomicity");
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
     tablesToCleanUp.add(fullTableName);
     try {
@@ -824,6 +833,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "first")));
+      long versionBefore = currentVersion(fullTableName);
 
       sql(
           "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'second' AS val",
@@ -832,9 +842,209 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
       assertThat(results).hasSize(1);
       assertThat(results.get(0)).containsExactly("2", "second");
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+
+      long versionAfterSuccess = currentVersion(fullTableName);
+      assertThatThrownBy(
+              () ->
+                  sql(
+                      "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1/0 AS id, 'bad' AS val",
+                      fullTableName, MANAGED_TBLPROPERTIES_CLAUSE))
+          .isInstanceOf(Exception.class);
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionAfterSuccess);
+      check(fullTableName, List.of(List.of("2", "second")));
 
       sql("INSERT INTO %s VALUES (3, 'third')", fullTableName);
       check(fullTableName, List.of(List.of("2", "second"), List.of("3", "third")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testExternalCreateOrReplaceAsSelectCreateOnMiss() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_cor_create_on_miss_as_select");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String location = tempDir + "/" + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE OR REPLACE TABLE %s USING DELTA LOCATION '%s' AS SELECT 1 AS id, 'first' AS val",
+          fullTableName, location);
+      check(fullTableName, List.of(List.of("1", "first")));
+      long versionBefore = currentVersion(fullTableName);
+
+      sql(
+          "CREATE OR REPLACE TABLE %s USING DELTA LOCATION '%s' AS SELECT 2 AS id, 'second' AS val",
+          fullTableName, location);
+      check(fullTableName, List.of(List.of("2", "second")));
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+
+      long versionAfterSuccess = currentVersion(fullTableName);
+      assertThatThrownBy(
+              () ->
+                  sql(
+                      "CREATE OR REPLACE TABLE %s USING DELTA LOCATION '%s' AS "
+                          + "SELECT 1/0 AS id, 'bad' AS val",
+                      fullTableName, location))
+          .isInstanceOf(Exception.class);
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionAfterSuccess);
+      check(fullTableName, List.of(List.of("2", "second")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testReplaceTableAtomicity() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_rt_atomicity");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA %s",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+      long versionBefore = currentVersion(fullTableName);
+
+      sql(
+          "REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+      check(fullTableName, List.of());
+
+      sql("INSERT INTO %s VALUES (2, 'new')", fullTableName);
+      check(fullTableName, List.of(List.of("2", "new")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testExternalRTASAtomicity() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_rtas_atomicity");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String location = tempDir + "/" + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s USING DELTA LOCATION '%s' AS SELECT 1 AS id, 'old' AS val",
+          fullTableName, location);
+      check(fullTableName, List.of(List.of("1", "old")));
+      long versionBefore = currentVersion(fullTableName);
+
+      sql("REPLACE TABLE %s USING DELTA AS SELECT 2 AS id, 'new' AS val", fullTableName);
+
+      List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
+      assertThat(results).hasSize(1);
+      assertThat(results.get(0)).containsExactly("2", "new");
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+
+      sql("INSERT INTO %s VALUES (3, 'extra')", fullTableName);
+      check(fullTableName, List.of(List.of("2", "new"), List.of("3", "extra")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testExternalReplaceTableWithNewSchemaIsBlocked() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_rt_schema_blocked");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String location = tempDir + "/" + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+          fullTableName, location);
+      sql("INSERT INTO %s VALUES (1, 'Alice')", fullTableName);
+
+      assertThatThrownBy(() -> sql("REPLACE TABLE %s (id INT, age INT) USING DELTA", fullTableName))
+          .hasMessageContaining("UC external table")
+          .hasMessageContaining("different schema");
+
+      check(fullTableName, List.of(List.of("1", "Alice")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testExternalRTASFailurePreservesOriginalData() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_rtas_failure");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String location = tempDir + "/" + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s USING DELTA LOCATION '%s' AS SELECT 1 AS id, 'original' AS val",
+          fullTableName, location);
+      check(fullTableName, List.of(List.of("1", "original")));
+      long versionBefore = currentVersion(fullTableName);
+
+      assertThatThrownBy(
+          () ->
+              sql("REPLACE TABLE %s USING DELTA AS SELECT 1/0 AS id, 'bad' AS val", fullTableName));
+
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore);
+      check(fullTableName, List.of(List.of("1", "original")));
+
+      sql("INSERT INTO %s VALUES (2, 'still works')", fullTableName);
+      check(fullTableName, List.of(List.of("1", "original"), List.of("2", "still works")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testExternalCreateOrReplaceLocationMismatchRejected() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_cor_location_mismatch");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String location = tempDir + "/" + tableName;
+    String otherLocation = tempDir + "/" + tableName + "_other";
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql("CREATE TABLE %s (id INT) USING DELTA LOCATION '%s'", fullTableName, location);
+
+      assertThatThrownBy(
+              () ->
+                  sql(
+                      "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
+                      fullTableName, otherLocation))
+          .hasMessageContaining("cannot change the registered location");
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testExternalReplaceTableAtomicity() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_rt_atomicity");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String location = tempDir + "/" + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+          fullTableName, location);
+      sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+      long versionBefore = currentVersion(fullTableName);
+
+      sql("REPLACE TABLE %s (id INT, name STRING) USING DELTA", fullTableName);
+
+      assertThat(currentVersion(fullTableName)).isEqualTo(versionBefore + 1);
+      check(fullTableName, List.of());
+
+      sql("INSERT INTO %s VALUES (2, 'new')", fullTableName);
+      check(fullTableName, List.of(List.of("2", "new")));
     } finally {
       sql("DROP TABLE IF EXISTS %s", fullTableName);
     }
