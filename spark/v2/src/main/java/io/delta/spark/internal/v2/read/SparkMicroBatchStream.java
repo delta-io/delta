@@ -895,9 +895,9 @@ public class SparkMicroBatchStream
       }
     }
 
-    // TODO(#5319): Implement ignoreChanges & ignoreFileDeletion (deprecated)
+    // TODO(#5319): Implement ignoreFileDeletion (deprecated)
     // A check on the source table that disallows changes on the source data.
-    boolean shouldAllowChanges = skipChangeCommits;
+    boolean shouldAllowChanges = options.ignoreChanges() || skipChangeCommits;
     // A check on the source table that disallows commits that only include deletes to the data.
     boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
 

@@ -2019,6 +2019,52 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("streaming with ignoreChanges = true allows both delete and change commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3).map(Row(_)))
+
+        // Delete all rows: delete-only commit, allowed by ignoreChanges
+        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        // Overwrite produces both AddFile and RemoveFile actions (change commit).
+        // Unlike skipChangeCommits which skips the commit, ignoreChanges lets the
+        // AddFiles through (potentially duplicating data).
+        Seq(6, 7, 8).toDF("x")
+          .write
+          .mode("overwrite")
+          .format("delta")
+          .save(inputDir.toString)
+
+        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        q.processAllAvailable()
+
+        // The delete commit is skipped (no AddFiles). The overwrite commit's AddFiles ARE
+        // emitted (unlike skipChangeCommits). The result includes the overwrite's new rows.
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(Row(_)))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("fail on data loss - starting from missing files") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
