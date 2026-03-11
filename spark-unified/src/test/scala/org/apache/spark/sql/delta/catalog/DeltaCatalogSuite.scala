@@ -27,7 +27,7 @@ import java.util
 import java.util.Locale
 
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 
 /**
  * Unit tests for DeltaCatalog's V2 connector routing logic.
@@ -53,7 +53,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
   test("existing-table handoff parser strips internal properties") {
     val props = new util.HashMap[String, String]()
     props.put(ExistingTableHandoffContext.locationKey, "file:/tmp/handoff")
-    props.put(ExistingTableHandoffContext.tableTypeKey, "MANAGED")
+    props.put(s"option.${ExistingTableHandoffContext.tableTypeKey}", "MANAGED")
     props.put(ExistingTableHandoffContext.tableIdKey, "table-id")
     props.put("delta.appendOnly", "true")
 
@@ -66,6 +66,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
         "table-id")))
     assert(!props.containsKey(ExistingTableHandoffContext.locationKey))
     assert(!props.containsKey(ExistingTableHandoffContext.tableTypeKey))
+    assert(!props.containsKey(s"option.${ExistingTableHandoffContext.tableTypeKey}"))
     assert(!props.containsKey(ExistingTableHandoffContext.tableIdKey))
     assert(props.get("delta.appendOnly") == "true")
   }
@@ -80,6 +81,68 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
     }
     assert(err.getErrorClass == "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF")
     assert(err.getMessage.contains("incomplete handoff bundle"))
+  }
+
+  test("existing-table handoff parser rejects bundles outside Unity Catalog") {
+    val props = new util.HashMap[String, String]()
+    props.put(ExistingTableHandoffContext.locationKey, "file:/tmp/handoff")
+    props.put(s"option.${ExistingTableHandoffContext.tableTypeKey}", "MANAGED")
+    props.put(ExistingTableHandoffContext.tableIdKey, "table-id")
+
+    val err = intercept[org.apache.spark.sql.delta.DeltaIllegalStateException] {
+      ExistingTableHandoffContext.parseAndStrip(
+        props,
+        TableCreationModes.Replace,
+        allowExistingTableHandoff = false)
+    }
+
+    assert(err.getErrorClass == "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF")
+    assert(err.getMessage.contains("outside Unity Catalog"))
+  }
+
+  test("existing-table handoff parser rejects partial bundles outside Unity Catalog") {
+    val props = new util.HashMap[String, String]()
+    props.put(s"option.${ExistingTableHandoffContext.locationKey}", "file:/tmp/handoff")
+
+    val err = intercept[org.apache.spark.sql.delta.DeltaIllegalStateException] {
+      ExistingTableHandoffContext.parseAndStrip(
+        props,
+        TableCreationModes.CreateOrReplace,
+        allowExistingTableHandoff = false)
+    }
+
+    assert(err.getErrorClass == "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF")
+    assert(err.getMessage.contains("outside Unity Catalog"))
+  }
+
+  test("create-when-missing marker strips internal property") {
+    val props = new util.HashMap[String, String]()
+    props.put(s"option.${ExistingTableHandoffContext.createWhenMissingKey}", "true")
+    props.put("delta.appendOnly", "true")
+
+    val createWhenMissing = ExistingTableHandoffContext.parseCreateWhenMissingAndStrip(
+      props,
+      TableCreationModes.CreateOrReplace)
+
+    assert(createWhenMissing)
+    assert(!props.containsKey(ExistingTableHandoffContext.createWhenMissingKey))
+    assert(!props.containsKey(s"option.${ExistingTableHandoffContext.createWhenMissingKey}"))
+    assert(props.get("delta.appendOnly") == "true")
+  }
+
+  test("create-when-missing marker rejects non-UC paths") {
+    val props = new util.HashMap[String, String]()
+    props.put(ExistingTableHandoffContext.createWhenMissingKey, "true")
+
+    val err = intercept[org.apache.spark.sql.delta.DeltaIllegalStateException] {
+      ExistingTableHandoffContext.parseCreateWhenMissingAndStrip(
+        props,
+        TableCreationModes.CreateOrReplace,
+        allowExistingTableHandoff = false)
+    }
+
+    assert(err.getErrorClass == "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF")
+    assert(err.getMessage.contains("outside Unity Catalog"))
   }
 
   test("existing-table handoff avoids delegated catalog reload") {
@@ -101,6 +164,33 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
     assert(resolved.get.tableType == CatalogTableType.EXTERNAL)
     assert(resolved.get.storage.locationUri.contains(URI.create("file:/tmp/handoff")))
     assert(catalog.sessionLookups == 1)
+  }
+
+  test("strict existing-table handoff bypasses session catalog lookup") {
+    val catalog = new TrackingDeltaCatalog
+    val tableId = TableIdentifier("t", Some("default"))
+    catalog.sessionResult = Some(CatalogTable(
+      identifier = tableId,
+      tableType = CatalogTableType.EXTERNAL,
+      storage = CatalogStorageFormat.empty,
+      schema = new org.apache.spark.sql.types.StructType(),
+      provider = Some("delta")))
+    val handoff = Some(
+      ExistingTableHandoffContext(
+        URI.create("file:/tmp/handoff"),
+        CatalogTableType.MANAGED,
+        "table-id"))
+
+    val resolved = catalog.resolveExistingTableContext(
+      tableId,
+      TableCreationModes.Replace,
+      handoff,
+      requireExistingTableHandoff = true)
+
+    assert(resolved.isDefined)
+    assert(resolved.get.tableType == CatalogTableType.MANAGED)
+    assert(resolved.get.storage.locationUri.contains(URI.create("file:/tmp/handoff")))
+    assert(catalog.sessionLookups == 0)
   }
 
   test("existing-table handoff does not rediscover existing table when absent") {
@@ -130,6 +220,26 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
 
     assert(err.getErrorClass == "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF")
     assert(err.getMessage.contains("missing handoff bundle"))
+    assert(catalog.sessionLookups == 0)
+  }
+
+  test("create-when-missing bypasses session catalog lookup") {
+    val catalog = new TrackingDeltaCatalog
+    val tableId = TableIdentifier("t", Some("default"))
+    catalog.sessionResult = Some(CatalogTable(
+      identifier = tableId,
+      tableType = CatalogTableType.EXTERNAL,
+      storage = CatalogStorageFormat.empty,
+      schema = new org.apache.spark.sql.types.StructType(),
+      provider = Some("delta")))
+
+    val resolved = catalog.resolveExistingTableContext(
+      tableId,
+      TableCreationModes.CreateOrReplace,
+      existingTableHandoff = None,
+      skipExistingTableLookup = true)
+
+    assert(resolved.isEmpty)
     assert(catalog.sessionLookups == 0)
   }
 

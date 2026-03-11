@@ -810,6 +810,18 @@ case class CreateDeltaTableCommand(
         "Replacing a catalog-managed table with a different comment")
     }
 
+    val systemGeneratedRemovedKeys = Set(
+      DeltaConfigs.CHECKPOINT_POLICY.key,
+      DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION.key,
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key,
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_VERSION.key,
+      DeltaConfigs.IN_COMMIT_TIMESTAMP_ENABLEMENT_TIMESTAMP.key,
+      DeltaConfigs.ROW_TRACKING_ENABLED.key,
+      DeltaConfigs.ROW_TRACKING_SUSPENDED.key,
+      MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+      MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
+      .map(_.toLowerCase(Locale.ROOT))
+
     val ignoredKeys =
       Set(
         TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature),
@@ -837,7 +849,11 @@ case class CreateDeltaTableCommand(
     val changedKeys = specProps.collect {
       case (key, value) if existProps.get(key) != Some(value) => key
     }.toSeq.sorted
-    val removedKeys = existProps.keySet.diff(specProps.keySet).toSeq.sorted
+    val removedKeys = existProps.keySet
+      .diff(specProps.keySet)
+      .diff(systemGeneratedRemovedKeys)
+      .toSeq
+      .sorted
     if (changedKeys.nonEmpty || removedKeys.nonEmpty) {
       throw DeltaErrors.operationNotSupportedException(
         "Replacing a catalog-managed table with different properties " +

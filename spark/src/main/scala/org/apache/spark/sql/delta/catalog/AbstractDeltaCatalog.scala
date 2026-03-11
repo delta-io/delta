@@ -114,6 +114,7 @@ private[delta] object ExistingTableHandoffContext {
   val locationKey = "unitycatalog.internal.delta.replace.existingTableLocation"
   val tableTypeKey = "unitycatalog.internal.delta.replace.existingTableType"
   val tableIdKey = "unitycatalog.internal.delta.replace.existingTableId"
+  val createWhenMissingKey = "unitycatalog.internal.delta.replace.createWhenMissing"
 
   private val allKeys = Seq(locationKey, tableTypeKey, tableIdKey)
   private val allKeysSet = allKeys.toSet
@@ -121,7 +122,9 @@ private[delta] object ExistingTableHandoffContext {
   private def optionKey(key: String): String = TableCatalog.OPTION_PREFIX + key
 
   def isInternalKey(key: String): Boolean = {
-    allKeysSet.contains(key) || (key.startsWith(TableCatalog.OPTION_PREFIX) &&
+    key == createWhenMissingKey ||
+      key == optionKey(createWhenMissingKey) ||
+      allKeysSet.contains(key) || (key.startsWith(TableCatalog.OPTION_PREFIX) &&
       allKeysSet.contains(key.stripPrefix(TableCatalog.OPTION_PREFIX)))
   }
 
@@ -139,6 +142,28 @@ private[delta] object ExistingTableHandoffContext {
     Option(props.remove(key))
       .orElse(Option(props.remove(optionKey(key))))
       .filter(_.nonEmpty)
+  }
+
+  def parseCreateWhenMissingAndStrip(
+      props: util.Map[String, String],
+      operation: TableCreationModes.CreationMode,
+      allowExistingTableHandoff: Boolean = true): Boolean = {
+    take(props, createWhenMissingKey) match {
+      case None => false
+      case Some(_) if !allowExistingTableHandoff =>
+        invalidHandoff(
+          operation,
+          s"unexpected internal key outside Unity Catalog: $createWhenMissingKey")
+      case Some(_) if operation != TableCreationModes.CreateOrReplace =>
+        invalidHandoff(
+          operation,
+          s"unexpected internal key for $operation: $createWhenMissingKey")
+      case Some(value) if !value.equalsIgnoreCase("true") =>
+        invalidHandoff(
+          operation,
+          s"unsupported $createWhenMissingKey value: $value")
+      case Some(_) => true
+    }
   }
 
   private def requiredValue(
@@ -162,13 +187,19 @@ private[delta] object ExistingTableHandoffContext {
 
   def parseAndStrip(
       props: util.Map[String, String],
-      operation: TableCreationModes.CreationMode): Option[ExistingTableHandoffContext] = {
+      operation: TableCreationModes.CreationMode,
+      allowExistingTableHandoff: Boolean = true): Option[ExistingTableHandoffContext] = {
     // Parse the UC handoff bundle exactly once at the staging boundary and remove those transport
     // keys immediately so later code only deals with the typed handoff object.
     val values = allKeys.map(key => key -> take(props, key)).toMap
     val presentKeys = values.collect { case (key, Some(_)) => key }.toSeq.sorted
     if (presentKeys.isEmpty) {
       return None
+    }
+    if (!allowExistingTableHandoff) {
+      invalidHandoff(
+        operation,
+        s"unexpected handoff bundle keys outside Unity Catalog: ${presentKeys.mkString(", ")}")
     }
     if (operation == TableCreationModes.Create) {
       invalidHandoff(operation, s"unexpected handoff bundle keys: ${presentKeys.mkString(", ")}")
@@ -228,6 +259,16 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    val resolvedExistingTableHandoff = existingTableHandoff.orElse {
+      ExistingTableHandoffContext.parseAndStrip(
+        allTableProperties,
+        operation,
+        allowExistingTableHandoff = isUnityCatalog)
+    }
+    val createWhenMissing = ExistingTableHandoffContext.parseCreateWhenMissingAndStrip(
+      allTableProperties,
+      operation,
+      allowExistingTableHandoff = isUnityCatalog)
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
@@ -286,16 +327,27 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     // Catalog-managed replace on UC now requires the staged existing-table handoff. Delta should
     // execute against the exact target UC already resolved during staging rather than rediscover
     // the target again during commit.
-    val requireExistingTableHandoff =
+    val catalogManagedReplacePath =
       isUnityCatalog &&
         operation != TableCreationModes.Create &&
         TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(tableProperties)
           .contains(CatalogOwnedTableFeature)
+    if (createWhenMissing && resolvedExistingTableHandoff.nonEmpty) {
+      throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(
+        operation.toString,
+        s"conflicting internal keys: ${ExistingTableHandoffContext.createWhenMissingKey} " +
+          s"cannot be combined with ${ExistingTableHandoffContext.locationKey}, " +
+          s"${ExistingTableHandoffContext.tableTypeKey}, or " +
+          s"${ExistingTableHandoffContext.tableIdKey}")
+    }
+    val requireExistingTableHandoff = catalogManagedReplacePath && !createWhenMissing
+    val skipExistingTableLookup = catalogManagedReplacePath && createWhenMissing
     val existingTableOpt = resolveExistingTableContext(
       id,
       operation,
-      existingTableHandoff,
-      requireExistingTableHandoff)
+      resolvedExistingTableHandoff,
+      requireExistingTableHandoff,
+      skipExistingTableLookup)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -360,7 +412,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation.mode,
       writer,
       operation,
-      stagedExistingTableId = existingTableHandoff.map(_.tableId),
+      stagedExistingTableId = resolvedExistingTableHandoff.map(_.tableId),
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
@@ -739,14 +791,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       id: TableIdentifier,
       operation: TableCreationModes.CreationMode,
       existingTableHandoff: Option[ExistingTableHandoffContext],
-      requireExistingTableHandoff: Boolean = false): Option[CatalogTable] = {
+      requireExistingTableHandoff: Boolean = false,
+      skipExistingTableLookup: Boolean = false): Option[CatalogTable] = {
+    if (skipExistingTableLookup) {
+      return None
+    }
     if (requireExistingTableHandoff && existingTableHandoff.isEmpty) {
       throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(
         operation.toString,
         "missing handoff bundle for catalogManaged replace path")
     }
-    lookupExistingSessionCatalogTable(id)
-      .orElse(existingTableHandoff.map(_.toCatalogTable(id)))
+    if (requireExistingTableHandoff) {
+      existingTableHandoff.map(_.toCatalogTable(id))
+    } else {
+      lookupExistingSessionCatalogTable(id)
+        .orElse(existingTableHandoff.map(_.toCatalogTable(id)))
+    }
   }
 
   private def getTablePropsAndWriteOptions(properties: util.Map[String, String])
@@ -825,7 +885,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
-      val existingTableHandoff = ExistingTableHandoffContext.parseAndStrip(props, operation)
+      val existingTableHandoff = ExistingTableHandoffContext.parseAndStrip(
+        props,
+        operation,
+        allowExistingTableHandoff = isUnityCatalog)
       if (isUnityCatalog) {
         translateUCTableIdProperty(props)
       }
