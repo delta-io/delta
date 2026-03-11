@@ -299,7 +299,25 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public Statistics estimateStatistics() {
-    ensurePlanned();
+    // Do NOT call ensurePlanned() here. For streaming, planScanFiles() loads every file
+    // in the snapshot into driver memory, causing OOM for large tables. Streaming uses
+    // SparkMicroBatchStream.planInputPartitions() for per-batch file planning instead.
+    // For batch, toBatch()/filter() call ensurePlanned() before execution.
+    if (!planned) {
+      final long defaultSize = sqlConf.defaultSizeInBytes();
+      return new Statistics() {
+        @Override
+        public OptionalLong sizeInBytes() {
+          return OptionalLong.of(defaultSize);
+        }
+
+        @Override
+        public OptionalLong numRows() {
+          return OptionalLong.empty();
+        }
+      };
+    }
+
     // Capture mutable scan state as final locals so the returned Statistics object reflects a
     // consistent snapshot. A subsequent filter() call mutates rowCountKnown and totalRows
     // (see ensurePlanned(runtimePredicates)), and we don't want those mutations to leak into a
@@ -317,7 +335,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       return new Statistics() {
         @Override
         public OptionalLong sizeInBytes() {
-          // Planned file size is authoritative (even if 0 for an empty table)
           return OptionalLong.of(plannedBytes);
         }
 
@@ -334,14 +351,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
         @Override
         public Map<NamedReference, ColumnStatistics> columnStats() {
-          // TODO: After partition pruning, column stats (e.g. min, max, nullCount,
-          //  distinctCount) could be tightened based on the pruned file-level stats.
           return stats.columnStats();
         }
       };
     }
 
-    // No catalog stats available or CBO disabled — return stats from planned files only
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
