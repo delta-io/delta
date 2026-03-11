@@ -206,16 +206,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public Statistics estimateStatistics() {
-    ensurePlanned();
+    // Do NOT call ensurePlanned() here. For streaming, planScanFiles() loads every file
+    // in the snapshot into driver memory, causing OOM for large tables. Streaming uses
+    // SparkMicroBatchStream.planInputPartitions() for per-batch file planning instead.
+    // For batch, toBatch()/filter() call ensurePlanned() before execution.
+    final long sizeEstimate = planned ? estimatedSizeInBytes : sqlConf.defaultSizeInBytes();
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
-        return OptionalLong.of(estimatedSizeInBytes);
+        return OptionalLong.of(sizeEstimate);
       }
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown at planning time.
         return OptionalLong.empty();
       }
     };
