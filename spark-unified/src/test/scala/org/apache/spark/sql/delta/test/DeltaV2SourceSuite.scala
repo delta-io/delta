@@ -67,6 +67,9 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "rename column: should throw schema change error with unsafe flag enabled",
     "type widening: should fail with non-additive schema change error when enable schema tracking",
 
+    // === Read options ===
+    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+
     // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",
@@ -118,7 +121,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === read options ===
     "skip change commits",
-    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
     "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
 
     // === Schema Evolution ===
