@@ -130,7 +130,14 @@ object SchemaUtils extends DeltaLogging {
    */
   def dropNullTypeColumns(df: DataFrame): DataFrame = {
     val schema = df.schema
-    if (!typeExistsRecursively(schema)(_.isInstanceOf[NullType])) return df
+    def hasNullType(t: DataType): Boolean =
+      typeExistsRecursively(t) {
+        case _: NullType => true
+        case udt: UserDefinedType[_] => hasNullType(udt.sqlType)
+        case _ => false
+      }
+
+    if (!hasNullType(schema)) return df
     def generateSelectExpr(sf: StructField, nameStack: Seq[String]): Column = sf.dataType match {
       case st: StructType =>
         val nested = st.fields.flatMap { f =>
@@ -144,16 +151,21 @@ object SchemaUtils extends DeltaLogging {
         when(col(colName).isNull, null)
           .otherwise(struct(nested: _*))
           .alias(sf.name)
-      case a: ArrayType if typeExistsRecursively(a)(_.isInstanceOf[NullType]) =>
+      case a: ArrayType if hasNullType(a) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
           messageParameters = Array(colName, "ArrayType"))
-      case m: MapType if typeExistsRecursively(m)(_.isInstanceOf[NullType]) =>
+      case m: MapType if hasNullType(m) =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         throw new DeltaAnalysisException(
           errorClass = "DELTA_COMPLEX_TYPE_COLUMN_CONTAINS_NULL_TYPE",
-          messageParameters = Array(colName, "NullType"))
+          messageParameters = Array(colName, "MapType"))
+        case udt: UserDefinedType[_] if hasNullType(udt.sqlType) =>
+          val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
+        throw new DeltaAnalysisException(
+          errorClass = "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE",
+          messageParameters = Array(colName, udt.userClass.getName))
       case _ =>
         val colName = UnresolvedAttribute.apply(nameStack :+ sf.name).sql
         col(colName).alias(sf.name)
