@@ -93,6 +93,18 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       createTableFunc: Option[CatalogTable => Unit] = None
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
+    val tableExistsInCatalog = existingTableOpt.isDefined
+    def updateExistingTableCatalogSchema(): Unit = {
+      if (!allowCatalogManaged) {
+        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+      }
+    }
+    if (allowCatalogManaged &&
+        tableExistsInCatalog &&
+        didNotChangeMetadata &&
+        operation != TableCreationModes.Create) {
+      return
+    }
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
@@ -101,20 +113,26 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         } else {
           spark.sessionState.catalog.createTable(
             cleaned,
-            ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
+            ignoreIfExists = tableExistsInCatalog || mode == SaveMode.Ignore,
             validateLocation = false)
         }
-      case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
-        if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       case TableCreationModes.Replace =>
-        val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-        throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        if (!tableExistsInCatalog) {
+          val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        }
+        updateExistingTableCatalogSchema()
       case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        cleaned,
-        ignoreIfExists = false,
-        validateLocation = false)
+        if (tableExistsInCatalog) {
+          updateExistingTableCatalogSchema()
+        } else if (createTableFunc.isDefined) {
+          createTableFunc.get.apply(cleaned)
+        } else {
+          spark.sessionState.catalog.createTable(
+            cleaned,
+            ignoreIfExists = false,
+            validateLocation = false)
+        }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)

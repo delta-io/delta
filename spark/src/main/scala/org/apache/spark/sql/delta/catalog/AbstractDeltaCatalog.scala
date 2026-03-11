@@ -30,8 +30,9 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
-import org.apache.spark.sql.delta.{ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, ColumnWithDefaultExprUtils, DeltaConfigs, DeltaErrors, DeltaTableUtils}
 import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
+import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
@@ -47,12 +48,12 @@ import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.SparkException
 import org.apache.spark.internal.MDC
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
+import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -70,6 +71,151 @@ import org.apache.spark.sql.types.{IntegerType, StructField, StructType}
  * See spark-unified/src/main/java/org/apache/spark/sql/delta/catalog/DeltaCatalog.java
  */
 class DeltaCatalogV1 extends AbstractDeltaCatalog
+
+/**
+ * Internal transport object for the staged existing-table context that Unity Catalog resolved
+ * during `stageReplace` / `stageCreateOrReplace`.
+ *
+ * Spark's staged table API only lets UC pass a string property map into Delta commit. We parse
+ * the UC-specific transport keys once at the staging boundary, strip them from the raw properties,
+ * and carry the result through Delta as this typed object instead of threading UC-specific keys
+ * through normal table-property handling.
+ *
+ * This is intentionally narrower than a full [[CatalogTable]]. It only contains the fields Delta
+ * needs to execute a metadata-preserving replace against the already-resolved existing target:
+ * the table location, whether it is managed/external, and the stable UC table id used for the
+ * pre-commit identity check.
+ */
+private[delta] case class ExistingTableHandoffContext(
+    location: java.net.URI,
+    tableType: CatalogTableType,
+    tableId: String) {
+
+  /**
+   * Reconstruct a minimal [[CatalogTable]] for the existing staged target.
+   *
+   * Delta needs a [[CatalogTable]]-shaped object to pick the correct table location and table
+   * type for the replace path, but it does not need the full catalog metadata here because the
+   * metadata-preservation checks happen against the current Delta snapshot later in the command.
+   */
+  def toCatalogTable(identifier: TableIdentifier): CatalogTable = {
+    CatalogTable(
+      identifier = identifier,
+      tableType = tableType,
+      storage = CatalogStorageFormat.empty.copy(locationUri = Some(location)),
+      schema = new StructType(),
+      provider = Some(DeltaSourceUtils.ALT_NAME))
+  }
+}
+
+private[delta] object ExistingTableHandoffContext {
+  // UC injects these internal transport keys into staged table properties. They are not
+  // user-visible Delta table properties and should never be persisted to table metadata.
+  val locationKey = "unitycatalog.internal.delta.replace.existingTableLocation"
+  val tableTypeKey = "unitycatalog.internal.delta.replace.existingTableType"
+  val tableIdKey = "unitycatalog.internal.delta.replace.existingTableId"
+  val createWhenMissingKey = "unitycatalog.internal.delta.replace.createWhenMissing"
+
+  private val allKeys = Seq(locationKey, tableTypeKey, tableIdKey)
+  private val allKeysSet = allKeys.toSet
+
+  private def optionKey(key: String): String = TableCatalog.OPTION_PREFIX + key
+
+  def isInternalKey(key: String): Boolean = {
+    key == createWhenMissingKey ||
+      key == optionKey(createWhenMissingKey) ||
+      allKeysSet.contains(key) || (key.startsWith(TableCatalog.OPTION_PREFIX) &&
+      allKeysSet.contains(key.stripPrefix(TableCatalog.OPTION_PREFIX)))
+  }
+
+  private def invalidHandoff(
+      operation: TableCreationModes.CreationMode,
+      message: String): Nothing = {
+    throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(operation.toString, message)
+  }
+
+  private def take(
+      props: util.Map[String, String],
+      key: String): Option[String] = {
+    // Spark can surface SQL options both with and without the "option." prefix depending on how
+    // the command was parsed, so strip either form before the properties reach normal handling.
+    Option(props.remove(key))
+      .orElse(Option(props.remove(optionKey(key))))
+      .filter(_.nonEmpty)
+  }
+
+  def parseCreateWhenMissingAndStrip(
+      props: util.Map[String, String],
+      operation: TableCreationModes.CreationMode,
+      allowExistingTableHandoff: Boolean = true): Boolean = {
+    take(props, createWhenMissingKey) match {
+      case None => false
+      case Some(_) if !allowExistingTableHandoff =>
+        invalidHandoff(
+          operation,
+          s"unexpected internal key outside Unity Catalog: $createWhenMissingKey")
+      case Some(_) if operation != TableCreationModes.CreateOrReplace =>
+        invalidHandoff(
+          operation,
+          s"unexpected internal key for $operation: $createWhenMissingKey")
+      case Some(value) if !value.equalsIgnoreCase("true") =>
+        invalidHandoff(
+          operation,
+          s"unsupported $createWhenMissingKey value: $value")
+      case Some(_) => true
+    }
+  }
+
+  private def requiredValue(
+      values: Map[String, Option[String]],
+      key: String,
+      operation: TableCreationModes.CreationMode): String = {
+    values(key).getOrElse {
+      invalidHandoff(operation, s"missing non-empty $key")
+    }
+  }
+
+  private def parseTableType(
+      tableType: String,
+      operation: TableCreationModes.CreationMode): CatalogTableType = {
+    tableType match {
+      case "MANAGED" => CatalogTableType.MANAGED
+      case "EXTERNAL" => CatalogTableType.EXTERNAL
+      case other => invalidHandoff(operation, s"unsupported $tableTypeKey value: $other")
+    }
+  }
+
+  def parseAndStrip(
+      props: util.Map[String, String],
+      operation: TableCreationModes.CreationMode,
+      allowExistingTableHandoff: Boolean = true): Option[ExistingTableHandoffContext] = {
+    // Parse the UC handoff bundle exactly once at the staging boundary and remove those transport
+    // keys immediately so later code only deals with the typed handoff object.
+    val values = allKeys.map(key => key -> take(props, key)).toMap
+    val presentKeys = values.collect { case (key, Some(_)) => key }.toSeq.sorted
+    if (presentKeys.isEmpty) {
+      return None
+    }
+    if (!allowExistingTableHandoff) {
+      invalidHandoff(
+        operation,
+        s"unexpected handoff bundle keys outside Unity Catalog: ${presentKeys.mkString(", ")}")
+    }
+    if (operation == TableCreationModes.Create) {
+      invalidHandoff(operation, s"unexpected handoff bundle keys: ${presentKeys.mkString(", ")}")
+    }
+    if (presentKeys.size != allKeys.size) {
+      invalidHandoff(operation, s"incomplete handoff bundle keys: ${presentKeys.mkString(", ")}")
+    }
+
+    Some(
+      ExistingTableHandoffContext(
+        location = CatalogUtils.stringToURI(requiredValue(values, locationKey, operation)),
+        tableType =
+          parseTableType(requiredValue(values, tableTypeKey, operation), operation),
+        tableId = requiredValue(values, tableIdKey, operation)))
+  }
+}
 
 /**
  * Base class for Dsv2 catalog implementation, it contains all dsv1 based connector logic.
@@ -109,9 +255,20 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       allTableProperties: util.Map[String, String],
       writeOptions: Map[String, String],
       sourceQuery: Option[DataFrame],
+      existingTableHandoff: Option[ExistingTableHandoffContext],
       operation: TableCreationModes.CreationMode
     ): Table = recordFrameProfile(
         "DeltaCatalog", "createDeltaTable") {
+    val resolvedExistingTableHandoff = existingTableHandoff.orElse {
+      ExistingTableHandoffContext.parseAndStrip(
+        allTableProperties,
+        operation,
+        allowExistingTableHandoff = isUnityCatalog)
+    }
+    val createWhenMissing = ExistingTableHandoffContext.parseCreateWhenMissingAndStrip(
+      allTableProperties,
+      operation,
+      allowExistingTableHandoff = isUnityCatalog)
     // These two keys are tableProperties in data source v2 but not in v1, so we have to filter
     // them out. Otherwise property consistency checks will fail.
     val tableProperties = allTableProperties.asScala.filterKeys {
@@ -122,6 +279,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case TableCatalog.PROP_EXTERNAL => false
       case "path" => false
       case "option.path" => false
+      case key if ExistingTableHandoffContext.isInternalKey(key) => false
       case _ => true
     }.toMap
     val (partitionColumns, maybeBucketSpec, maybeClusterBySpec) = convertTransforms(partitions)
@@ -155,10 +313,41 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Option(allTableProperties.get("location"))
     }
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      // Spark's TableIdentifier only carries namespace + table name by default. For UC staged
+      // replace paths we also need the catalog name so lookups and error messages continue to
+      // point at the UC table rather than the session catalog table with the same namespace/name.
+      if (isUnityCatalog) {
+        base.copy(catalog = Some(name()))
+      } else {
+        base
+      }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    // Catalog-managed replace on UC now requires the staged existing-table handoff. Delta should
+    // execute against the exact target UC already resolved during staging rather than rediscover
+    // the target again during commit.
+    val catalogManagedReplacePath =
+      isUnityCatalog &&
+        operation != TableCreationModes.Create &&
+        TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(tableProperties)
+          .contains(CatalogOwnedTableFeature)
+    if (createWhenMissing && resolvedExistingTableHandoff.nonEmpty) {
+      throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(
+        operation.toString,
+        s"conflicting internal keys: ${ExistingTableHandoffContext.createWhenMissingKey} " +
+          s"cannot be combined with ${ExistingTableHandoffContext.locationKey}, " +
+          s"${ExistingTableHandoffContext.tableTypeKey}, or " +
+          s"${ExistingTableHandoffContext.tableIdKey}")
+    }
+    val requireExistingTableHandoff = catalogManagedReplacePath && !createWhenMissing
+    val skipExistingTableLookup = catalogManagedReplacePath && createWhenMissing
+    val existingTableOpt = resolveExistingTableContext(
+      id,
+      operation,
+      resolvedExistingTableHandoff,
+      requireExistingTableHandoff,
+      skipExistingTableLookup)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -204,8 +393,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      val catalogTableOpt = existingTableOpt.orElse(Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, catalogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -222,6 +412,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation.mode,
       writer,
       operation,
+      stagedExistingTableId = resolvedExistingTableHandoff.map(_.tableId),
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
       // We should invoke the Spark catalog plugin API to create the table, to
@@ -409,6 +600,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           props,
           writeOptions,
           sourceQuery = None,
+          existingTableHandoff = None,
           TableCreationModes.Create
         )
       } else {
@@ -578,6 +770,45 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
+  protected[delta] def lookupExistingSessionCatalogTable(
+      id: TableIdentifier): Option[CatalogTable] = {
+    getExistingTableIfExists(id)
+  }
+
+  /**
+   * Resolve the existing table context for CREATE OR REPLACE / REPLACE.
+   *
+   * There are only two supported sources now:
+   * 1. the SessionCatalog already has the existing table (legacy / non-UC paths)
+   * 2. UC staged the existing target and handed it to Delta as an
+   *    [[ExistingTableHandoffContext]]
+   *
+   * For catalog-managed UC replace paths we require the handoff instead of falling back to another
+   * delegated catalog lookup. That keeps UC-specific staging state at the boundary and avoids
+   * rediscovering the replace target during commit.
+   */
+  protected[delta] def resolveExistingTableContext(
+      id: TableIdentifier,
+      operation: TableCreationModes.CreationMode,
+      existingTableHandoff: Option[ExistingTableHandoffContext],
+      requireExistingTableHandoff: Boolean = false,
+      skipExistingTableLookup: Boolean = false): Option[CatalogTable] = {
+    if (skipExistingTableLookup) {
+      return None
+    }
+    if (requireExistingTableHandoff && existingTableHandoff.isEmpty) {
+      throw DeltaErrors.invalidUnityCatalogExistingTableHandoff(
+        operation.toString,
+        "missing handoff bundle for catalogManaged replace path")
+    }
+    if (requireExistingTableHandoff) {
+      existingTableHandoff.map(_.toCatalogTable(id))
+    } else {
+      lookupExistingSessionCatalogTable(id)
+        .orElse(existingTableHandoff.map(_.toCatalogTable(id)))
+    }
+  }
+
   private def getTablePropsAndWriteOptions(properties: util.Map[String, String])
   : (util.Map[String, String], Map[String, String]) = {
     val props = new util.HashMap[String, String]()
@@ -654,6 +885,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      val existingTableHandoff = ExistingTableHandoffContext.parseAndStrip(
+        props,
+        operation,
+        allowExistingTableHandoff = isUnityCatalog)
+      if (isUnityCatalog) {
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,
@@ -661,6 +899,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         props,
         writeOptions,
         asSelectQuery,
+        existingTableHandoff,
         operation
       )
     }
