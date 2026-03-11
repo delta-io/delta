@@ -22,6 +22,7 @@ import org.apache.spark.sql.connector.expressions.filter.Predicate;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.stats.DistributedScanHelper;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -486,18 +487,18 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEqualsWithSameFilters() {
     // Both scans with equivalent filters created separately (not same instance)
-    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
-    builder1.pushFilters(
+    org.apache.spark.sql.sources.Filter[] cityFilter =
         new org.apache.spark.sql.sources.Filter[] {
           new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+        };
+    StructType schema = table.schema();
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(DistributedScanHelper.resolveFiltersToExprSeq(cityFilter, schema));
     SparkScan scan1 = (SparkScan) builder1.build();
 
     SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(
-        new org.apache.spark.sql.sources.Filter[] {
-          new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+    builder2.pushFilters(DistributedScanHelper.resolveFiltersToExprSeq(cityFilter, schema));
     SparkScan scan2 = (SparkScan) builder2.build();
 
     // Same options and equivalent filters should be equal
@@ -512,11 +513,13 @@ public class SparkScanTest extends DeltaV2TestBase {
     SparkScan scan1 = (SparkScan) builder1.build();
 
     // Scan with filters pushed
-    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
-    builder2.pushFilters(
+    org.apache.spark.sql.sources.Filter[] cityFilter =
         new org.apache.spark.sql.sources.Filter[] {
           new org.apache.spark.sql.sources.EqualTo("city", "hz")
-        });
+        };
+    StructType schema = table.schema();
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(DistributedScanHelper.resolveFiltersToExprSeq(cityFilter, schema));
     SparkScan scan2 = (SparkScan) builder2.build();
 
     // Same options but different filters should not be equal and hashCodes should differ
