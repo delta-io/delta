@@ -3384,6 +3384,18 @@
       "<message>"
     ]
   },
+  "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF" : {
+    "message" : [
+      "Invalid Unity Catalog existing-table handoff for operation <operation>: <reason>."
+    ],
+    "sqlState" : "XXKDS"
+  },
+  "DELTA_UNITY_CATALOG_STAGED_REPLACE_TARGET_CHANGED" : {
+    "message" : [
+      "The Unity Catalog staged replace target for table <table> changed before commit. Expected table id <expectedTableId> but found <actualTableId>. Retry the operation."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "_LEGACY_ERROR_TEMP_DELTA_0009" : {
     "message" : [
       "<optionalPrefixMessage>Updating nested fields is only supported for StructType."

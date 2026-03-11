@@ -399,40 +399,45 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   @TestAllTableTypes
   public void testCreateOrReplaceTable(TableType tableType) throws Exception {
     UnityCatalogInfo uc = unityCatalogInfo();
-    String tableName = String.format("%s.%s.create_or_replace", uc.catalogName(), uc.schemaName());
-    withTempDir(
-        (Path dir) -> {
-          try {
-            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
-            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
-            // CREATE OR REPLACE with new schema
-            if (tableType == TableType.MANAGED) {
+    String tableName =
+        String.format(
+            "%s.%s.create_or_replace_%s",
+            uc.catalogName(), uc.schemaName(), tableType.name().toLowerCase());
+    try {
+      if (tableType == TableType.MANAGED) {
+        sql(
+            "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
+            tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+        assertUCTableInfo(
+            tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
+
+        sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+        check(tableName, List.of(List.of("1", "Alice")));
+
+        sql(
+            "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s",
+            tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+        sql("INSERT INTO %s VALUES (2, 'Bob')", tableName);
+        check(tableName, List.of(List.of("2", "Bob")));
+      } else {
+        withTempDir(
+            (Path dir) -> {
+              sql("CREATE TABLE %s (id INT) USING DELTA LOCATION '%s'", tableName, dir.toString());
+              sql("INSERT INTO %s VALUES (1)", tableName);
+              check(tableName, List.of(List.of("1")));
+
               assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
-                          tableName, MANAGED_TBLPROPERTIES_CLAUSE));
-            } else {
-              assertThatThrownBy(
-                  () ->
-                      sql(
-                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-                          tableName, dir.toString()));
-            }
-
-            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
-
-            // Assert the unity catalog table information.
-            // assertUCTableInfo(
-            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
-
-            // Insert data to verify new schema
-            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            // check(tableName, List.of(List.of("1", "Alice")));
-          } finally {
-            sql("DROP TABLE IF EXISTS %s", tableName);
-          }
-        });
+                      () ->
+                          sql(
+                              "CREATE OR REPLACE TABLE %s (id INT) USING DELTA LOCATION '%s'",
+                              tableName, dir.toString()))
+                  .hasMessageContaining(
+                      "CREATE OR REPLACE TABLE is only supported for UC-managed Delta tables");
+            });
+      }
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
   }
 
   @TestAllTableTypes
@@ -727,5 +732,111 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     String[] splits = fullTableName.split("\\.");
     assertThat(splits.length).isEqualTo(3);
     return splits[splits.length - 1];
+  }
+
+  @Test
+  public void testRTASAtomicity() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = "test_rtas_atomicity";
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'old' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      check(fullTableName, List.of(List.of("1", "old")));
+
+      sql(
+          "REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'new' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+
+      List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
+      assertThat(results).hasSize(1);
+      assertThat(results.get(0)).containsExactly("2", "new");
+
+      sql("INSERT INTO %s VALUES (3, 'extra')", fullTableName);
+      check(fullTableName, List.of(List.of("2", "new"), List.of("3", "extra")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testReplaceTableWithNewSchemaIsBlocked() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = "test_rt_schema_blocked";
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s (id INT, name STRING) USING DELTA %s",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      sql("INSERT INTO %s VALUES (1, 'Alice')", fullTableName);
+
+      assertThatThrownBy(
+              () ->
+                  sql(
+                      "REPLACE TABLE %s (id INT, age INT) USING DELTA %s",
+                      fullTableName, MANAGED_TBLPROPERTIES_CLAUSE))
+          .hasMessageContaining("not supported");
+
+      check(fullTableName, List.of(List.of("1", "Alice")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testRTASFailurePreservesOriginalData() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = "test_rtas_failure";
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'original' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      check(fullTableName, List.of(List.of("1", "original")));
+
+      assertThatThrownBy(
+          () ->
+              sql(
+                  "REPLACE TABLE %s USING DELTA %s AS SELECT 1/0 AS id, 'bad' AS val",
+                  fullTableName, MANAGED_TBLPROPERTIES_CLAUSE));
+
+      check(fullTableName, List.of(List.of("1", "original")));
+
+      sql("INSERT INTO %s VALUES (2, 'still works')", fullTableName);
+      check(fullTableName, List.of(List.of("1", "original"), List.of("2", "still works")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
+  }
+
+  @Test
+  public void testCreateOrReplaceAtomicity() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = "test_cor_atomicity";
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+    try {
+      sql(
+          "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      check(fullTableName, List.of(List.of("1", "first")));
+
+      sql(
+          "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'second' AS val",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+
+      List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
+      assertThat(results).hasSize(1);
+      assertThat(results.get(0)).containsExactly("2", "second");
+
+      sql("INSERT INTO %s VALUES (3, 'third')", fullTableName);
+      check(fullTableName, List.of(List.of("2", "second"), List.of("3", "third")));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
+    }
   }
 }
