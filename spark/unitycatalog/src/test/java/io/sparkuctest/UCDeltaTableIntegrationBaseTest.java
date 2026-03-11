@@ -319,6 +319,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
   }
 
+  /** Helper to build an expected row as a list of string values. */
+  protected static List<String> row(String... values) {
+    return List.of(values);
+  }
+
   /** Functional interface for test code that takes a temporary directory. */
   @FunctionalInterface
   protected interface TempDirCode {

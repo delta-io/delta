@@ -173,8 +173,4 @@ public class UCDeltaTableDeltaAPITest extends UCDeltaTableIntegrationBaseTest {
   private DeltaTable forName(String tableName) {
     return DeltaTable.forName(spark(), tableName);
   }
-
-  private static List<String> row(String... values) {
-    return List.of(values);
-  }
 }

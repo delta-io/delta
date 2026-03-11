@@ -265,8 +265,4 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
             Arrays.stream(ids).map(RowFactory::create).collect(Collectors.toList()),
             new StructType().add("id", DataTypes.IntegerType));
   }
-
-  private static List<String> row(String... values) {
-    return List.of(values);
-  }
 }
