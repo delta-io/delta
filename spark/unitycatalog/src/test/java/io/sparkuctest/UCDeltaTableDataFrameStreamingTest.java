@@ -364,6 +364,90 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
   }
 
   /**
+   * Verifies that {@code startingTimestamp} streams only from the commit at-or-after the given
+   * timestamp, excluding rows from earlier commits.
+   *
+   * <p>The timestamp of the second commit is captured after both inserts complete. Delta resolves
+   * this to that commit (inclusive), so only rows from the second insert are delivered.
+   */
+  @TestAllTableTypes
+  public void testStreamingStartingTimestamp(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_ts_test",
+        "id INT",
+        tableType,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1), (2), (3)", tableName); // commit 1 — before the cutoff
+          sql("INSERT INTO %s VALUES (4), (5)", tableName); // commit 2 — the starting point
+          String commitTimestamp = currentTimestamp(tableName); // timestamp of commit 2
+
+          List<Integer> result = new ArrayList<>();
+          spark()
+              .readStream()
+              .format("delta")
+              .option("startingTimestamp", commitTimestamp)
+              .table(tableName)
+              .writeStream()
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .foreachBatch((VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(ids(df)))
+              .start()
+              .awaitTermination();
+          assertThat(result).containsExactlyInAnyOrder(4, 5);
+        });
+  }
+
+  /**
+   * Verifies that {@code skipChangeCommits=true} skips commits that contain deletions, allowing the
+   * stream to continue on subsequent insert commits.
+   *
+   * <p>EXTERNAL tables (V1 connector): the delete commit is skipped; follow-up inserts arrive.
+   * MANAGED tables (V2 connector): the option is not yet supported and the stream fails.
+   */
+  @TestAllTableTypes
+  public void testStreamingSkipChangeCommits(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_skip_changes_test",
+        "id INT",
+        tableType,
+        tableName -> {
+          if (tableType == TableType.EXTERNAL) {
+            verifySkipChangeCommitsExternal(tableName);
+          } else {
+            assertInvalidStreamOption(
+                tableName, r -> r.option("skipChangeCommits", "true"), "valid version");
+          }
+        });
+  }
+
+  private void verifySkipChangeCommitsExternal(String tableName) throws Exception {
+    sql("INSERT INTO %s VALUES (1), (2), (3)", tableName);
+    List<Integer> result = new ArrayList<>();
+    StreamingQuery query =
+        spark()
+            .readStream()
+            .format("delta")
+            .option("skipChangeCommits", "true")
+            .table(tableName)
+            .writeStream()
+            .option("checkpointLocation", checkpoint())
+            .foreachBatch((VoidFunction2<Dataset<Row>, Long>) (df, id) -> result.addAll(ids(df)))
+            .start();
+    try {
+      query.processAllAvailable();
+      assertThat(result).containsExactlyInAnyOrder(1, 2, 3);
+
+      sql("DELETE FROM %s WHERE id = 1", tableName); // change commit — skipped by the option
+      sql("INSERT INTO %s VALUES (4)", tableName);
+      query.processAllAvailable();
+
+      assertThat(result).containsExactlyInAnyOrder(1, 2, 3, 4);
+    } finally {
+      query.stop();
+    }
+  }
+
+  /**
    * Starts a streaming read with options applied by {@code configure}, then asserts the stream
    * fails with a message containing all {@code fragments} (case-insensitive).
    */
