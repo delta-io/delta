@@ -45,6 +45,7 @@ import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StringType;
@@ -157,6 +158,22 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     Collections.addAll(fields, readDataSchema.fields());
     Collections.addAll(fields, partitionSchema.fields());
     return new StructType(fields.toArray(new StructField[0]));
+  }
+
+  /**
+   * Override columnarSupportMode to explicitly declare whether this scan supports columnar
+   * (vectorized) reading. Without this override, the default {@code PARTITION_DEFINED} mode causes
+   * Spark to eagerly call {@code planInputPartitions()} during query planning to check
+   * per-partition columnar support, triggering unnecessary early file enumeration.
+   *
+   * <p>Since columnar support is uniform across all partitions (determined by schema compatibility,
+   * not by individual files), we can declare it at the scan level to avoid this overhead.
+   */
+  @Override
+  public Scan.ColumnarSupportMode columnarSupportMode() {
+    return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema)
+        ? Scan.ColumnarSupportMode.SUPPORTED
+        : Scan.ColumnarSupportMode.UNSUPPORTED;
   }
 
   @Override

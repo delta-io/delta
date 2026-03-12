@@ -104,6 +104,89 @@ public class SparkScanTest extends DeltaV2TestBase {
       Arrays.asList("city=hz", "city=sh", "city=bj", "city=sz");
 
   // ===============================================================================================
+  // Tests for columnarSupportMode
+  // ===============================================================================================
+
+  @Test
+  public void testColumnarSupportModeReturnsSupported() {
+    // Table schema uses simple types (INT, STRING) which are batch-read-compatible
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(
+        Scan.ColumnarSupportMode.SUPPORTED,
+        scan.columnarSupportMode(),
+        "columnarSupportMode should return SUPPORTED for batch-compatible schema");
+  }
+
+  @Test
+  public void testColumnarSupportModeDoesNotTriggerPlanning() throws Exception {
+    // Calling columnarSupportMode() must NOT trigger file planning (the whole point of the
+    // override is to avoid the early planInputPartitions() call that PARTITION_DEFINED causes).
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Call columnarSupportMode before any planning
+    scan.columnarSupportMode();
+
+    // Verify the scan has not been planned yet
+    Field plannedField = SparkScan.class.getDeclaredField("planned");
+    plannedField.setAccessible(true);
+    assertFalse(
+        (boolean) plannedField.get(scan), "columnarSupportMode() should not trigger file planning");
+  }
+
+  @Test
+  public void testColumnarSupportModeWithUnsupportedSchema(@TempDir File tempDir) throws Exception {
+    // Create a table with a MAP column and disable nested column vectorized reading
+    // to ensure the schema is not batch-read-compatible
+    String path = tempDir.getAbsolutePath();
+    String mapTableName = "columnar_map_table";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, tags MAP<STRING, STRING>) USING delta LOCATION '%s'",
+            mapTableName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, map('k', 'v'))", mapTableName));
+
+    withSQLConf(
+        "spark.sql.parquet.enableNestedColumnVectorizedReader",
+        "false",
+        () -> {
+          SparkTable mapTable =
+              new SparkTable(
+                  Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
+                  path,
+                  options);
+          SparkScanBuilder builder = (SparkScanBuilder) mapTable.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          assertEquals(
+              Scan.ColumnarSupportMode.UNSUPPORTED,
+              scan.columnarSupportMode(),
+              "columnarSupportMode should return UNSUPPORTED for schema with MAP type"
+                  + " when nested column vectorized reader is disabled");
+        });
+  }
+
+  @Test
+  public void testColumnarSupportModeWithVectorizedReaderDisabled() throws Exception {
+    // When spark.sql.parquet.enableVectorizedReader is false, columnarSupportMode should
+    // return UNSUPPORTED even for batch-compatible schemas.
+    withSQLConf(
+        "spark.sql.parquet.enableVectorizedReader",
+        "false",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          assertEquals(
+              Scan.ColumnarSupportMode.UNSUPPORTED,
+              scan.columnarSupportMode(),
+              "columnarSupportMode should return UNSUPPORTED when vectorized reader is disabled");
+        });
+  }
+
+  // ===============================================================================================
   // Tests for getDataSchema, getPartitionSchema, getReadDataSchema, getOptions, getConfiguration
   // ===============================================================================================
 
