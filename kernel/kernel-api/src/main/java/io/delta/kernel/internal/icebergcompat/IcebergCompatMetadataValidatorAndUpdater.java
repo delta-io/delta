@@ -78,7 +78,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     final boolean isCreatingNewTable;
     final Metadata newMetadata;
     final Protocol newProtocol;
-    /** The old metadata from the existing table, or null if creating a new table. */
+    /**
+     * The metadata from the previous table snapshot, or null when no prior snapshot exists (i.e.
+     * CREATE TABLE). Non-null for both UPDATE TABLE and REPLACE TABLE.
+     */
     final Metadata oldMetadata;
 
     public IcebergCompatInputContext(

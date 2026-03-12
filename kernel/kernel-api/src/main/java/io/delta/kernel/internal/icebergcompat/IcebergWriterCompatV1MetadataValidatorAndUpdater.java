@@ -101,7 +101,7 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
   /**
    * Overload that accepts old metadata for partition evolution checks on existing tables.
    *
-   * @param oldMetadata The old metadata from the existing table, or null if creating a new table
+   * @param oldMetadata The previous snapshot's metadata, or null when no prior snapshot exists
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
       boolean isCreatingNewTable,

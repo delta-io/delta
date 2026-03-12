@@ -52,7 +52,7 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
    *
    * @param newMetadata Metadata after the current updates
    * @param newProtocol Protocol after the current updates
-   * @param oldMetadata The old metadata from the existing table, or null if creating a new table
+   * @param oldMetadata The previous snapshot's metadata, or null when no prior snapshot exists
    * @return The updated metadata if the metadata is valid and updated, otherwise empty.
    * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg V2
    *     requirements
