@@ -27,16 +27,14 @@ class DataFrameWriterV2WithV2ConnectorSuite
   with V2ForceTest {
 
   /**
-   * Tests that we expect to fail because they require write operations after initial
-   * table creation.
+   * Tests that we expect to fail because they require write operations or behavior
+   * not yet supported by the Kernel write path (SparkTable SupportsWrite POC).
    *
-   * Kernel's SparkTable (V2 connector) only implements SupportsRead, not SupportsWrite.
-   * Tests that perform append/replace operations after table creation are expected to fail.
+   * "Append: basic append" is enabled for e2e testing of the slow Kernel write path.
    */
   override protected def shouldFail(testName: String): Boolean = {
     val shouldFailTests = Set(
-      // Append operations - require SupportsWrite
-      "Append: basic append",
+      // Append operations - not yet supported (except basic append for e2e)
       "Append: by name not position",
 
       // Overwrite operations - require SupportsWrite

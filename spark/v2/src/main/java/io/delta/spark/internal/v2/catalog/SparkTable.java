@@ -180,6 +180,36 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     return catalogTable;
   }
 
+  /** Returns the filesystem path to the Delta table. */
+  public String getTablePath() {
+    return tablePath;
+  }
+
+  /** Returns the Hadoop configuration used for table I/O. */
+  public Configuration getHadoopConf() {
+    return hadoopConf;
+  }
+
+  /** Returns the snapshot loaded when this table was created. */
+  public Snapshot getInitialSnapshot() {
+    return initialSnapshot;
+  }
+
+  /** Returns the table options. */
+  public Map<String, String> getOptions() {
+    return options;
+  }
+
+  /** Returns partition column names in table order. */
+  public List<String> getPartitionColumnNames() {
+    return schemaProvider.getPartitionColumnNames();
+  }
+
+  @Override
+  public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
+    return new io.delta.spark.internal.v2.write.DeltaKernelWriteBuilder(this, info);
+  }
+
   /**
    * Returns the Path to the Delta table root.
    *
@@ -402,6 +432,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     Transform[] getPartitionTransforms() {
       return withInit(() -> partitionTransforms);
+    }
+
+    List<String> getPartitionColumnNames() {
+      return withInit(() -> partColNames);
     }
   }
 }
