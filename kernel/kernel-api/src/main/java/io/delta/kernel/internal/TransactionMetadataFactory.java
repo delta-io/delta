@@ -519,9 +519,9 @@ public class TransactionMetadataFactory {
     // Skip standalone compat validation if the corresponding writer compat already ran it.
     // WriterCompatV1 internally validates CompatV2 (via enforcer), and
     // WriterCompatV3 internally validates CompatV3 (via enforcer).
-    boolean writerCompatV1Enabled =
+    boolean isWriterCompatV1Enabled =
         TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(getEffectiveMetadata());
-    if (!writerCompatV1Enabled) {
+    if (!isWriterCompatV1Enabled) {
       Optional<Metadata> icebergCompatV2Metadata =
           IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
               isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
@@ -530,9 +530,9 @@ public class TransactionMetadataFactory {
       }
     }
 
-    boolean writerCompatV3Enabled =
+    boolean isWriterCompatV3Enabled =
         TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(getEffectiveMetadata());
-    if (!writerCompatV3Enabled) {
+    if (!isWriterCompatV3Enabled) {
       Optional<Metadata> icebergCompatV3Metadata =
           IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
               isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
