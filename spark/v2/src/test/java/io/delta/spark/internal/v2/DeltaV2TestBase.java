@@ -107,6 +107,20 @@ public abstract class DeltaV2TestBase {
     }
   }
 
+  /**
+   * Runs the given action and drops the specified tables afterwards, similar to Scala's {@code
+   * withTable}.
+   */
+  protected void withTable(String[] tableNames, ThrowingRunnable action) throws Exception {
+    try {
+      action.run();
+    } finally {
+      for (String tableName : tableNames) {
+        spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+      }
+    }
+  }
+
   protected static void createPartitionedTable(String tableName, String path) {
     spark.sql(
         String.format(
