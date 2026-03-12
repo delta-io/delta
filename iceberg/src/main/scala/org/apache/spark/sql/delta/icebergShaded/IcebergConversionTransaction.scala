@@ -494,15 +494,15 @@ class IcebergConversionTransaction(
 
   protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
       IcebergTransaction = {
-    val (commitToUC, baseMetadataPath) =
+    val baseMetadataPath =
       (tableOpOpt.getOrElse(tableOp), lastConvertedIcebergMetadataPath) match {
-        case (CREATE_TABLE, None) => (false, None)
+        case (CREATE_TABLE, None) => None
         case (CREATE_TABLE, Some(_)) =>
           throw new IllegalStateException(
             "Unexpected base metadata path for CREATE_TABLE operation")
         case (op, None) =>
           throw new IllegalStateException(s"Missing base metadata path for $op operation")
-        case (_, Some(path)) => (false, Some(path))
+        case (_, Some(path)) => Some(path)
       }
 
     val ucTable = new UnityCatalog(
