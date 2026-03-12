@@ -779,7 +779,8 @@ public class SparkMicroBatchStream
       commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
     } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
       // If the requested version range doesn't exist (e.g., we're asking for version 6 when
-      // the table only has versions 0-5).
+      // the table only has versions 0-5). For UC-managed tables, the snapshot manager maps
+      // version-not-yet-ratified errors to this exception as well.
       return Utils.toCloseableIterator(Collections.emptyIterator());
     }
 

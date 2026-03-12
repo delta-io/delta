@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.exceptions.CommitRangeNotFoundException;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
@@ -168,13 +169,29 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
    */
   @Override
   public CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion) {
-    return ucCatalogManagedClient.loadCommitRange(
-        engine,
-        tableId,
-        tablePath,
-        Optional.of(startVersion) /* startVersionOpt */,
-        Optional.empty() /* startTimestampOpt */,
-        endVersion /* endVersionOpt */,
-        Optional.empty() /* endTimestampOpt */);
+    try {
+      return ucCatalogManagedClient.loadCommitRange(
+          engine,
+          tableId,
+          tablePath,
+          Optional.of(startVersion) /* startVersionOpt */,
+          Optional.empty() /* startTimestampOpt */,
+          endVersion /* endVersionOpt */,
+          Optional.empty() /* endTimestampOpt */);
+    } catch (IllegalArgumentException e) {
+      // UC-managed tables can temporarily have a Delta log version on the filesystem that has
+      // not yet been ratified by UC (version lag). UCCatalogManagedClient throws
+      // IllegalArgumentException with "ratified by UC" in the message for this case.
+      // Map it to CommitRangeNotFoundException so SparkMicroBatchStream treats it as
+      // "no new data yet" and retries on the next micro-batch.
+      String msg = e.getMessage();
+      if (msg != null && msg.contains("ratified by UC")) {
+        CommitRangeNotFoundException mapped =
+            new CommitRangeNotFoundException(tablePath, startVersion, endVersion);
+        mapped.initCause(e);
+        throw mapped;
+      }
+      throw e;
+    }
   }
 }
