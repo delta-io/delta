@@ -59,6 +59,41 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
     }
   }
 
+  test("isInline returns true for non-interned inline storage type string") {
+    // Regression test: isInline() must use .equals() not == for String comparison.
+    // Using `new String("i")` creates a non-interned String that would fail with ==.
+    val nonInternedStorageType = new String("i") // deliberately non-interned
+    val dv = new DeletionVectorDescriptor(
+      nonInternedStorageType,
+      "inline_data_here",
+      Optional.empty[Integer](),
+      16,
+      3L)
+
+    assert(dv.isInline(), "isInline() should return true for non-interned 'i' string")
+    assert(!dv.isOnDisk(), "isOnDisk() should return false for inline DV")
+  }
+
+  test("isInline returns false for non-inline storage types") {
+    val uuidDv = new DeletionVectorDescriptor(
+      new String("u"),
+      "ab^-aqEH.-t@S}K{vb[*k^",
+      Optional.of[Integer](4),
+      40,
+      2L)
+    assert(!uuidDv.isInline())
+    assert(uuidDv.isOnDisk())
+
+    val pathDv = new DeletionVectorDescriptor(
+      new String("p"),
+      "path/to/dv.bin",
+      Optional.of[Integer](100),
+      1024,
+      50L)
+    assert(!pathDv.isInline())
+    assert(pathDv.isOnDisk())
+  }
+
   test("serializeToBase64 throws for non-inline DV without offset") {
     val ex = intercept[IllegalArgumentException] {
       val dv = new DeletionVectorDescriptor(
