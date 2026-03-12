@@ -75,7 +75,22 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       List<DynamicTest> tests = new ArrayList<>();
       for (TableType tableType : ALL_TABLE_TYPES) {
         String testName = String.format("%s(%s)", method.getName(), tableType);
-        tests.add(DynamicTest.dynamicTest(testName, () -> method.invoke(this, tableType)));
+        tests.add(
+            DynamicTest.dynamicTest(
+                testName,
+                () -> {
+                  try {
+                    method.invoke(this, tableType);
+                  } catch (java.lang.reflect.InvocationTargetException e) {
+                    // Unwrap so JUnit sees the original exception. Without this,
+                    // TestAbortedException (thrown by Assumptions) gets wrapped and
+                    // JUnit treats the test as failed instead of skipped.
+                    Throwable cause = e.getCause();
+                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                    if (cause instanceof Error) throw (Error) cause;
+                    throw e;
+                  }
+                }));
       }
       containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
     }
