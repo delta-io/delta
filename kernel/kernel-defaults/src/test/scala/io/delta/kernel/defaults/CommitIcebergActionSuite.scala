@@ -271,8 +271,11 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
         assert(!removeFile.getTags.isPresent)
         assert(!removeFile.getDeletionVector.isPresent)
 
-        assert(!removeFile.getBaseRowId.isPresent)
-        assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+        if (icebergCompatWriterVersion == "V1") {
+          assert(!removeFile.getBaseRowId.isPresent)
+          assert(!removeFile.getDefaultRowCommitVersion.isPresent)
+        }
+        // For V3, baseRowId and defaultRowCommitVersion depend on caller-provided values
 
         Some(ExpectedRemove(
           removeFile.getPath,
@@ -627,6 +630,75 @@ trait AbstractCommitIcebergActionSuite extends AnyFunSuite { self: AbstractWrite
         assert(addFile.getTags.isPresent)
         assert(VectorUtils.toJavaMap(addFile.getTags.get()).asScala.equals(tags))
       }
+    }
+  }
+
+  test("V3: baseRowId and defaultRowCommitVersion are forwarded in remove actions") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with V3 compat enabled
+      createEmptyTable(
+        engine,
+        tablePath,
+        testSchema,
+        tableProperties = tblPropertiesIcebergWriterCompatV3Enabled)
+
+      // Append 1 add so we have something to remove
+      {
+        val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
+        val actionsToCommit = Seq(
+          createIcebergCompatAction(
+            "ADD",
+            "V3",
+            txn,
+            engine,
+            generateDataFileStatus(tablePath, "file1.parquet"),
+            dataChange = true))
+        commitTransaction(
+          txn,
+          engine,
+          inMemoryIterable(toCloseableIterator(actionsToCommit.asJava.iterator())))
+      }
+
+      // Remove with non-empty baseRowId and defaultRowCommitVersion
+      val expectedBaseRowId = 42L
+      val expectedDefaultRowCommitVersion = 7L
+      val txn = getUpdateTxn(engine, tablePath, maxRetries = 0)
+      val removeAction =
+        GenerateIcebergCompatActionUtils.generateIcebergCompatWriterV3RemoveAction(
+          txn.getTransactionState(engine),
+          generateDataFileStatus(tablePath, "file1.parquet"),
+          Collections.emptyMap(),
+          true, // dataChange
+          Optional.of[java.lang.Long](expectedBaseRowId),
+          Optional.of[java.lang.Long](expectedDefaultRowCommitVersion),
+          Optional.empty(),
+          Optional.of(
+            TransactionStateRow.getPhysicalSchema(txn.getTransactionState(engine))))
+      commitTransaction(
+        txn,
+        engine,
+        inMemoryIterable(toCloseableIterator(Seq(removeAction).asJava.iterator())))
+
+      // Read back the remove action and verify baseRowId and defaultRowCommitVersion
+      val rows = Table.forPath(engine, tablePath).asInstanceOf[TableImpl]
+        .getChanges(engine, 2, 2, Set(DeltaAction.REMOVE).asJava)
+        .toSeq
+        .flatMap(_.getRows.toSeq)
+        .filterNot(row => row.isNullAt(row.getSchema.indexOf("remove")))
+
+      assert(rows.size == 1)
+      val removeFile = new RemoveFile(rows.head.getStruct(rows.head.getSchema.indexOf("remove")))
+      assert(removeFile.getBaseRowId.isPresent, "baseRowId should be present in V3 remove action")
+      assert(
+        removeFile.getBaseRowId.get == expectedBaseRowId,
+        s"baseRowId should be $expectedBaseRowId but was ${removeFile.getBaseRowId.get}")
+      assert(
+        removeFile.getDefaultRowCommitVersion.isPresent,
+        "defaultRowCommitVersion should be present in V3 remove action")
+      assert(
+        removeFile.getDefaultRowCommitVersion.get == expectedDefaultRowCommitVersion,
+        s"defaultRowCommitVersion should be $expectedDefaultRowCommitVersion " +
+          s"but was ${removeFile.getDefaultRowCommitVersion.get}")
     }
   }
 }
