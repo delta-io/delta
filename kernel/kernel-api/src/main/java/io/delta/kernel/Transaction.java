@@ -19,7 +19,6 @@ import static io.delta.kernel.internal.DeltaErrors.dataSchemaMismatch;
 import static io.delta.kernel.internal.DeltaErrors.partitionColumnMissingInData;
 import static io.delta.kernel.internal.TransactionImpl.getStatisticsColumns;
 import static io.delta.kernel.internal.data.TransactionStateRow.*;
-import static io.delta.kernel.internal.util.ColumnMapping.blockIfColumnMappingEnabled;
 import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
@@ -43,6 +42,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV2MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.icebergcompat.IcebergCompatV3MetadataValidatorAndUpdater;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.SchemaIterable;
 import io.delta.kernel.statistics.DataFileStatistics;
 import io.delta.kernel.types.StructField;
@@ -191,13 +191,14 @@ public interface Transaction {
     Protocol protocol = getProtocol(transactionState);
     boolean materializePartitionColumnsEnabled =
         protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE);
-    blockIfColumnMappingEnabled(transactionState);
     blockIfVariantDataTypeIsDefined(tableSchema);
     // We recognize the AllowColumnDefaults feature for Iceberg v3
     // but do not support writing with it yet
     ColumnDefaults.blockWriteIfEnabled(transactionState);
 
-    // TODO: set the correct schema once writing into column mapping enabled table is supported.
+    ColumnMapping.ColumnMappingMode cmMode =
+        TransactionStateRow.getColumnMappingMode(transactionState);
+
     String tablePath = getTablePath(transactionState);
     return dataIter.map(
         filteredBatch -> {
@@ -233,8 +234,44 @@ public interface Transaction {
               data = data.withDeletedColumnAt(partitionColIndex);
             }
           }
+
+          // For column mapping enabled tables, rename data columns from logical to physical
+          // names so Parquet files are written with physical column names.
+          if (ColumnMapping.isColumnMappingModeEnabled(cmMode)) {
+            StructType physicalSchema =
+                ColumnMapping.convertToPhysicalSchema(data.getSchema(), tableSchema, cmMode);
+            data = renameColumnsToPhysical(data, physicalSchema);
+          }
+
           return new FilteredColumnarBatch(data, filteredBatch.getSelectionVector());
         });
+  }
+
+  /**
+   * Renames columns in a {@link ColumnarBatch} from logical names to physical names for column
+   * mapping enabled tables. The data (column vectors) is unchanged; only the schema field names and
+   * metadata are updated to match the physical schema.
+   *
+   * @param data The batch with logical column names.
+   * @param physicalSchema The physical schema with physical column names (same column count and
+   *     order as data).
+   * @return A new batch with physical column names.
+   */
+  private static ColumnarBatch renameColumnsToPhysical(
+      ColumnarBatch data, StructType physicalSchema) {
+    checkArgument(
+        data.getSchema().length() == physicalSchema.length(),
+        "Schema length mismatch: data has %s columns, physical schema has %s columns",
+        data.getSchema().length(),
+        physicalSchema.length());
+    // Replace each column's field with the corresponding physical field (same vector, new name).
+    // Process from last to first to keep stable indices during delete+insert.
+    for (int i = data.getSchema().length() - 1; i >= 0; i--) {
+      ColumnVector vec = data.getColumnVector(i);
+      data = data.withDeletedColumnAt(i);
+      data = data.withNewColumn(i, physicalSchema.at(i), vec);
+    }
+    return data;
   }
 
   /**
@@ -266,7 +303,6 @@ public interface Transaction {
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
-    blockIfColumnMappingEnabled(transactionState);
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
