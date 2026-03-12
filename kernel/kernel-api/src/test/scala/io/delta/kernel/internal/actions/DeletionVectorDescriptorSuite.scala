@@ -59,6 +59,25 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
     }
   }
 
+  testCases.foreach { case (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality) =>
+    test(s"getUniqueId - $storageType storage type") {
+      val dv = new DeletionVectorDescriptor(
+        storageType,
+        pathOrInlineDv,
+        offset.map(Integer.valueOf).map(Optional.of[Integer]).getOrElse(Optional.empty[Integer]()),
+        sizeInBytes,
+        cardinality)
+
+      val uniqueId = dv.getUniqueId
+      val expectedUniqueFileId = s"$storageType$pathOrInlineDv"
+      val expectedUniqueId = offset match {
+        case Some(o) => s"$expectedUniqueFileId@$o"
+        case None => expectedUniqueFileId
+      }
+      assert(uniqueId === expectedUniqueId)
+    }
+  }
+
   test("serializeToBase64 throws for non-inline DV without offset") {
     val ex = intercept[IllegalArgumentException] {
       val dv = new DeletionVectorDescriptor(
