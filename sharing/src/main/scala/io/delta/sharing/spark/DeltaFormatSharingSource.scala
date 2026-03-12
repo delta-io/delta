@@ -520,7 +520,8 @@ case class DeltaFormatSharingSource(
         versionAsOf = Some(startingOffset.reservoirVersion),
         timestampAsOf = None,
         jsonPredicateHints = None,
-        refreshToken = None
+        refreshToken = None,
+        fileIdHash = None
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFiles(
         client = client,
@@ -543,7 +544,8 @@ case class DeltaFormatSharingSource(
       val tableFiles = client.getFiles(
         table = table,
         startingVersion = startingOffset.reservoirVersion,
-        endingVersion = Some(endingVersionForQuery)
+        endingVersion = Some(endingVersionForQuery),
+        fileIdHash = None
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFilesWithStartingVersion(
         client = client,
