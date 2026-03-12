@@ -91,7 +91,7 @@ object DistributedManifestWriter extends DeltaLogging {
   /**
    * Write manifests for a single partition's AddFiles. Runs on executors.
    */
-  private def writeManifestsForPartition(
+  private[delta] def writeManifestsForPartition(
       addFileIter: Iterator[AddFile],
       ctx: ManifestWriteContext): Iterator[ManifestFile] = {
     if (!addFileIter.hasNext) {

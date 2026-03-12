@@ -2115,6 +2115,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "threshold must be positive")
       .createWithDefault(100000)
 
+  val DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES =
+    buildConf("uniform.iceberg.batched.driver.target.manifest.size.bytes")
+      .doc("Target manifest file size in bytes for the batched driver conversion path. " +
+        "When the accumulated file sizes exceed this threshold, the current manifest is " +
+        "closed and a new one is started.")
+      .internal()
+      .longConf
+      .checkValue(_ > 0, "target manifest size must be positive")
+      .createWithDefault(8L * 1024 * 1024)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()

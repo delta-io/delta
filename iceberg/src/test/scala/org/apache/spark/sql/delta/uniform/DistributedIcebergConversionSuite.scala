@@ -333,4 +333,158 @@ class DistributedIcebergConversionSuite
       }
     }
   }
+
+  // ===== Batched driver conversion tests (default driver path) =====
+
+  test("batched driver target manifest size config has correct default") {
+    assert(
+      spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES)
+        === 8L * 1024 * 1024)
+  }
+
+  test("batched driver target manifest size can be set via SQL conf") {
+    withSQLConf(
+      DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES.key ->
+        "4194304"
+    ) {
+      assert(
+        spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES)
+          === 4194304L)
+    }
+  }
+
+  test("batched driver target manifest size must be positive") {
+    val e = intercept[IllegalArgumentException] {
+      withSQLConf(
+        DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES.key -> "0"
+      ) {
+        spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES)
+      }
+    }
+    assert(e.getMessage.contains("target manifest size must be positive"))
+  }
+
+  test("writeManifestsForPartition produces valid manifests from driver-side iterator") {
+    // This test directly exercises the method that Option C uses on the driver.
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConfBroadcast = spark.sparkContext.broadcast(
+      new org.apache.spark.util.SerializableConfiguration(
+        spark.sessionState.newHadoopConf()))
+    // scalastyle:on deltahadoopconfiguration
+
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      spark.range(0, 50, 1, 4).toDF("id")
+        .write.format("delta").save(tablePath)
+
+      val deltaLog = org.apache.spark.sql.delta.DeltaLog.forTable(spark, tablePath)
+      val snapshot = deltaLog.update()
+      val addFiles = snapshot.allFiles.collect().toSeq
+
+      val metadataDir = s"$tablePath/metadata"
+      new java.io.File(metadataDir).mkdirs()
+
+      val ctx = ManifestWriteContext(
+        tablePath = tablePath,
+        partitionSpec = PartitionSpec.unpartitioned(),
+        logicalToPhysicalPartitionNames = Map.empty,
+        statsSchema = snapshot.statsSchema,
+        tableSchema = snapshot.schema,
+        sessionLocalTimeZone = spark.sessionState.conf.sessionLocalTimeZone,
+        tableVersion = snapshot.version,
+        metadataOutputLocation = metadataDir,
+        formatVersion = 2,
+        targetManifestSizeBytes = DistributedManifestWriter.DEFAULT_TARGET_MANIFEST_SIZE_BYTES,
+        hadoopConfBroadcast = hadoopConfBroadcast
+      )
+
+      // Call the same method the batched driver path uses
+      val manifests = DistributedManifestWriter
+        .writeManifestsForPartition(addFiles.iterator, ctx)
+        .toSeq
+
+      assert(manifests.nonEmpty, "Should produce at least one manifest")
+      manifests.foreach { m =>
+        val f = new java.io.File(m.path().replaceFirst("file:", ""))
+        assert(f.exists(), s"Manifest should exist on disk: ${m.path()}")
+      }
+    }
+  }
+
+  test("writeManifestsForPartition rolls manifests with small target size") {
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConfBroadcast = spark.sparkContext.broadcast(
+      new org.apache.spark.util.SerializableConfiguration(
+        spark.sessionState.newHadoopConf()))
+    // scalastyle:on deltahadoopconfiguration
+
+    withTempDir { dir =>
+      val tablePath = dir.getAbsolutePath
+      // Create multiple files
+      for (i <- 0 until 10) {
+        spark.range(i * 10, (i + 1) * 10).toDF("id")
+          .write.format("delta").mode("append").save(tablePath)
+      }
+
+      val deltaLog = org.apache.spark.sql.delta.DeltaLog.forTable(spark, tablePath)
+      val snapshot = deltaLog.update()
+      val addFiles = snapshot.allFiles.collect().toSeq
+
+      val metadataDir = s"$tablePath/metadata"
+      new java.io.File(metadataDir).mkdirs()
+
+      val ctx = ManifestWriteContext(
+        tablePath = tablePath,
+        partitionSpec = PartitionSpec.unpartitioned(),
+        logicalToPhysicalPartitionNames = Map.empty,
+        statsSchema = snapshot.statsSchema,
+        tableSchema = snapshot.schema,
+        sessionLocalTimeZone = spark.sessionState.conf.sessionLocalTimeZone,
+        tableVersion = snapshot.version,
+        metadataOutputLocation = metadataDir,
+        formatVersion = 2,
+        targetManifestSizeBytes = 1L, // Force rolling on every file
+        hadoopConfBroadcast = hadoopConfBroadcast
+      )
+
+      val manifests = DistributedManifestWriter
+        .writeManifestsForPartition(addFiles.iterator, ctx)
+        .toSeq
+
+      assert(manifests.size >= addFiles.size,
+        s"With targetManifestSizeBytes=1, should produce at least ${addFiles.size} manifests, " +
+          s"got ${manifests.size}")
+    }
+  }
+
+  test("writeManifestsForPartition handles empty iterator") {
+    // scalastyle:off deltahadoopconfiguration
+    val hadoopConfBroadcast = spark.sparkContext.broadcast(
+      new org.apache.spark.util.SerializableConfiguration(
+        spark.sessionState.newHadoopConf()))
+    // scalastyle:on deltahadoopconfiguration
+
+    val ctx = ManifestWriteContext(
+      tablePath = "/tmp/empty",
+      partitionSpec = PartitionSpec.unpartitioned(),
+      logicalToPhysicalPartitionNames = Map.empty,
+      statsSchema = new StructType(),
+      tableSchema = new StructType(),
+      sessionLocalTimeZone = "UTC",
+      tableVersion = 0L,
+      metadataOutputLocation = "/tmp/empty/metadata",
+      formatVersion = 2,
+      targetManifestSizeBytes = 8L * 1024 * 1024,
+      hadoopConfBroadcast = hadoopConfBroadcast
+    )
+
+    val manifests = DistributedManifestWriter
+      .writeManifestsForPartition(Iterator.empty, ctx)
+      .toSeq
+
+    assert(manifests.isEmpty, "Empty iterator should produce no manifests")
+  }
 }

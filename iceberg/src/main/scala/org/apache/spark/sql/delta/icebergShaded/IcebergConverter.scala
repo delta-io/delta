@@ -366,7 +366,11 @@ class IcebergConverter
                 throw e
             }
           } else {
-            // Existing driver-only path
+            // Driver path: stream AddFiles via toLocalIterator,
+            // write rolling manifests, bound memory to O(manifest_size).
+            // This replaces the legacy path that materialized all files
+            // into a Seq and accumulated DataFiles in Iceberg's in-memory
+            // DataFileSet via appendFile().
             recordDeltaEvent(
               snapshotToConvert.deltaLog,
               "delta.iceberg.conversion.batch",
@@ -378,11 +382,60 @@ class IcebergConverter
                 "distributed" -> false
               )
             )
-            runIcebergConversionForActions(
-              icebergTxn,
-              snapshotToConvert.allFiles.toLocalIterator().asScala.toSeq,
-              None,
-              snapshotToConvert.version)
+
+            val allFiles = snapshotToConvert.allFiles
+            val hasDvs = allFiles.filter("deletionVector IS NOT NULL").limit(1).count() > 0
+            if (hasDvs) {
+              throw new UnsupportedOperationException("Deletion Vector is not supported")
+            }
+
+            val batchedHelper = icebergTxn.getDistributedAppendHelper
+            val hadoopConf = log.newDeltaHadoopConf()
+            val hadoopConfBroadcast = spark.sparkContext.broadcast(
+              new SerializableConfiguration(hadoopConf))
+
+            val targetManifestSize = spark.sessionState.conf.getConf(
+              DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES)
+
+            val ctx = ManifestWriteContext(
+              tablePath = icebergTxn.getTablePath,
+              partitionSpec = icebergTxn.getPartitionSpec,
+              logicalToPhysicalPartitionNames =
+                icebergTxn.getLogicalToPhysicalPartitionNames,
+              statsSchema = snapshotToConvert.statsSchema,
+              tableSchema = snapshotToConvert.schema,
+              sessionLocalTimeZone = SQLConf.get.sessionLocalTimeZone,
+              tableVersion = snapshotToConvert.version,
+              metadataOutputLocation = icebergTxn.getMetadataOutputLocation,
+              formatVersion = icebergTxn.getFormatVersion,
+              targetManifestSizeBytes = targetManifestSize,
+              hadoopConfBroadcast = hadoopConfBroadcast
+            )
+
+            val addFileIterator = allFiles.toLocalIterator().asScala
+            var manifestFiles: Seq[shadedForDelta.org.apache.iceberg.ManifestFile] = Nil
+            try {
+              manifestFiles = DistributedManifestWriter
+                .writeManifestsForPartition(addFileIterator, ctx)
+                .toSeq
+
+              batchedHelper.writeSize = snapshotToConvert.sizeInBytes
+              manifestFiles.foreach(batchedHelper.appendManifest)
+              batchedHelper.commit(snapshotToConvert.version)
+            } catch {
+              case NonFatal(e) =>
+                if (manifestFiles.nonEmpty) {
+                  logWarning(s"Batched driver manifest writing failed. " +
+                    s"Cleaning up ${manifestFiles.size} orphan manifests.")
+                  try {
+                    DistributedManifestWriter.cleanupManifests(manifestFiles, hadoopConf)
+                  } catch {
+                    case NonFatal(cleanupErr) =>
+                      logWarning("Failed to clean up orphan manifests.", cleanupErr)
+                  }
+                }
+                throw e
+            }
           }
 
           // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
