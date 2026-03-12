@@ -23,7 +23,9 @@ import org.apache.spark.sql.delta.sources.AdmittableFile;
 /**
  * Java version of IndexedFile.scala that uses Kernel's action classes.
  *
- * <p>File: represents a data file in Delta.
+ * <p>File: represents a data file in Delta — either a non-CDC {@link AddFile} or a {@link
+ * CDCDataFile} (which wraps AddFile with CDC metadata). At most one can be set (all null for
+ * sentinel files).
  *
  * <p>Indexed: refers to the index in DeltaSourceOffset, assigned by the streaming engine.
  */
@@ -31,11 +33,29 @@ public class IndexedFile implements AdmittableFile {
   private final long version;
   private final long index;
   private final AddFile addFile;
+  private final CDCDataFile cdcFile;
 
-  public IndexedFile(long version, long index, AddFile addFile) {
+  /** Creates a sentinel IndexedFile (no file action) for offset tracking boundaries. */
+  public static IndexedFile sentinel(long version, long index) {
+    return new IndexedFile(version, index, /* addFile= */ null, /* cdcFile= */ null);
+  }
+
+  /** Creates a CDC IndexedFile wrapping a CDCDataFile. */
+  public static IndexedFile cdc(long version, long index, CDCDataFile cdcFile) {
+    return new IndexedFile(version, index, /* addFile= */ null, cdcFile);
+  }
+
+  /** Creates an IndexedFile for a non-CDC AddFile action. */
+  public static IndexedFile addFile(long version, long index, AddFile addFile) {
+    return new IndexedFile(version, index, addFile, /* cdcFile= */ null);
+  }
+
+  private IndexedFile(long version, long index, AddFile addFile, CDCDataFile cdcFile) {
+    checkState(addFile == null || cdcFile == null, "At most one of addFile, cdcFile can be set");
     this.version = version;
     this.index = index;
     this.addFile = addFile;
+    this.cdcFile = cdcFile;
   }
 
   public long getVersion() {
@@ -50,15 +70,31 @@ public class IndexedFile implements AdmittableFile {
     return addFile;
   }
 
+  public CDCDataFile getCDCFile() {
+    return cdcFile;
+  }
+
+  public String getChangeType() {
+    return cdcFile != null ? cdcFile.getChangeType() : null;
+  }
+
+  public long getCommitTimestamp() {
+    return cdcFile != null ? cdcFile.getCommitTimestamp() : -1;
+  }
+
   @Override
   public boolean hasFileAction() {
-    return addFile != null;
+    return addFile != null || cdcFile != null;
   }
 
   @Override
   public long getFileSize() {
-    checkState(addFile != null, "check hasFileAction() before calling getFileSize()");
-    return addFile.getSize();
+    if (addFile != null) {
+      return addFile.getSize();
+    } else if (cdcFile != null) {
+      return cdcFile.getFileSize();
+    }
+    throw new IllegalStateException("check hasFileAction() before calling getFileSize()");
   }
 
   @Override
@@ -67,7 +103,12 @@ public class IndexedFile implements AdmittableFile {
     sb.append("IndexedFile{");
     sb.append("version=").append(version);
     sb.append(", index=").append(index);
-    sb.append(", addFile=").append(addFile);
+    if (addFile != null) {
+      sb.append(", addFile=").append(addFile);
+    }
+    if (cdcFile != null) {
+      sb.append(", cdcFile=").append(cdcFile);
+    }
     sb.append('}');
     return sb.toString();
   }
