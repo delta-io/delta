@@ -523,20 +523,25 @@ class IcebergRESTCatalogPlanningClient(
   private class ServerErrorRetryStrategy(maxRetries: Int)
       extends ServiceUnavailableRetryStrategy {
 
-    @volatile private var lastExecutionCount: Int = 1
+    // ThreadLocal so concurrent planScan calls each track their own retry attempt.
+    // The HTTP client is shared and thread-safe (see class doc), so multiple threads
+    // can be retrying independently through the same strategy instance.
+    private val lastExecutionCount = new ThreadLocal[Int] {
+      override def initialValue(): Int = 1
+    }
 
     override def retryRequest(
         response: HttpResponse,
         executionCount: Int,
         context: HttpContext): Boolean = {
-      lastExecutionCount = executionCount
+      lastExecutionCount.set(executionCount)
       val statusCode = response.getStatusLine.getStatusCode
       statusCode >= 500 && executionCount <= maxRetries
     }
 
     // Exponential backoff: 1s, 2s, 4s, ...
     override def getRetryInterval: Long =
-      java.util.concurrent.TimeUnit.SECONDS.toMillis(1L << (lastExecutionCount - 1))
+      java.util.concurrent.TimeUnit.SECONDS.toMillis(1L << (lastExecutionCount.get() - 1))
   }
 
   private def parsePlanTableScanResponse(
