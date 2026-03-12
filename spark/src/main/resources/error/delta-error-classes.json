@@ -359,6 +359,13 @@
     ],
     "sqlState" : "22003"
   },
+  "DELTA_CDC_NON_CONSTANT_ARGUMENT" : {
+    "message" : [
+      "The <argumentName> argument (position <pos>) of the <functionName> function requires a constant value, but got a non-constant expression: <sqlExpr>.",
+      ""
+    ],
+    "sqlState" : "42K0H"
+  },
   "DELTA_CDC_NOT_ALLOWED_IN_THIS_VERSION" : {
     "message" : [
       "Configuration delta.enableChangeDataFeed cannot be set. Change data feed from Delta is not yet available."
@@ -370,6 +377,12 @@
       "CDC read start/end parameters cannot be null. Please provide a valid version or timestamp."
     ],
     "sqlState" : "22004"
+  },
+  "DELTA_CDC_START_VERSION_AFTER_LATEST" : {
+    "message" : [
+      "Start version <start> for change data feed exceeds the latest table version <latest>."
+    ],
+    "sqlState" : "22003"
   },
   "DELTA_CHANGE_DATA_FEED_INCOMPATIBLE_DATA_SCHEMA" : {
     "message" : [
@@ -2550,6 +2563,15 @@
     ],
     "sqlState" : "42KD4"
   },
+  "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2" : {
+    "message" : [
+      "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
+      "Non-additive schema change handling is not supported in Delta source v2 yet.",
+      "For further information and possible next steps to resolve this issue, please review the documentation at <docLink>",
+      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
+    ],
+    "sqlState" : "42KD4"
+  },
   "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE" : {
     "message" : [
       "Initial snapshot for Delta streaming at table '<tablePath>' (version <snapshotVersion>) contains <numFiles> files, which exceeds the maximum allowed <maxFiles> files.",
@@ -2618,6 +2640,18 @@
       "The schema log may have been corrupted. Please pick a new schema location."
     ],
     "sqlState" : "22000"
+  },
+  "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART" : {
+    "message" : [
+      "The streaming query's schema does not match the current table schema.",
+      "Query schema (from analysis): <querySchema>",
+      "",
+      "Current table schema: <tableSchema>",
+      "",
+      "The table schema has changed since this streaming query was created.",
+      "Please create a new streaming DataFrame to pick up the current schema."
+    ],
+    "sqlState" : "KD007"
   },
   "DELTA_TABLE_ALREADY_CONTAINS_CDC_COLUMNS" : {
     "message" : [
@@ -3116,6 +3150,12 @@
     ],
     "sqlState" : "0AKDC"
   },
+  "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE" : {
+    "message" : [
+      "Cannot change partition columns during <operation> operation (old: <oldPartitionColumns>, new: <newPartitionColumns>)."
+    ],
+    "sqlState" : "42P10"
+  },
   "DELTA_UNSUPPORTED_PARTITION_COLUMN_IN_BLOOM_FILTER" : {
     "message" : [
       "Creating a bloom filter index on a partitioning column is unsupported: <columnName>"
@@ -3219,6 +3259,12 @@
       "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match."
     ],
     "sqlState" : "42846"
+  },
+  "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
+    "message" : [
+      "Found NullType in column <columnName> which is of <userClass> user-defined type. Delta doesn't support writing NullType in user-defined types."
+    ],
+    "sqlState" : "22005"
   },
   "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
     "message" : [

@@ -301,7 +301,7 @@ class DeltaReorgSuite extends QueryTest
     }
   }
 
-  test("reorg on a catalog owned managed table should fail") {
+  test("reorg on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
       checkError(
         intercept[DeltaUnsupportedOperationException] {

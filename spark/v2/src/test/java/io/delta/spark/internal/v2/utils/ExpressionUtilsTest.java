@@ -109,6 +109,34 @@ public class ExpressionUtilsTest {
     assertEquals(2, nonNullResult.get().getChildren().size());
   }
 
+  static Stream<Arguments> stringStartsWithProvider() {
+    return Stream.of(Arguments.of("non-empty prefix", "Al"), Arguments.of("empty prefix", ""));
+  }
+
+  @ParameterizedTest(name = "StringStartsWith with {0} should be converted")
+  @MethodSource("stringStartsWithProvider")
+  public void testStringStartsWithFilter(String desc, String prefix) {
+    StringStartsWith filter = new StringStartsWith("name", prefix);
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "StringStartsWith filter should be converted");
+    assertFalse(result.isPartial(), "StringStartsWith filter should be fully converted");
+    assertEquals("STARTS_WITH", result.get().getName());
+    // Children: column + string literal
+    assertEquals(2, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testStringStartsWithFilter_NullValue() {
+    // A null prefix cannot be converted — treated as unsupported, falls back to post-scan
+    StringStartsWith filter = new StringStartsWith("name", null);
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "StringStartsWith with null value should not be converted");
+  }
+
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(

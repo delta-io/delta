@@ -56,7 +56,7 @@ import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.SparkException
 import org.apache.spark.internal.{MDC, MessageWithContext}
-import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SparkSession}
+import org.apache.spark.sql.{AnalysisException, Column, DataFrame, SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
@@ -451,7 +451,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
-  registerPostCommitHook(IcebergConverterHook)
   registerPostCommitHook(HudiConverterHook)
 
   /** The protocol of the snapshot that this transaction is reading at. */
@@ -1433,11 +1432,15 @@ trait OptimisticTransactionImpl extends TransactionHelper
         newMode = _newMetadata.columnMappingMode
       )
 
+      val isBothColumnMappingEnabled =
+        _newMetadata.columnMappingMode != NoMapping &&
+          _currentMetadata.columnMappingMode != NoMapping
+
       def dropColumnOp: Boolean = DeltaColumnMapping.isDropColumnOperation(
-        _newMetadata, _currentMetadata)
+        _newMetadata.schema, _currentMetadata.schema, isBothColumnMappingEnabled)
 
       def renameColumnOp: Boolean = DeltaColumnMapping.isRenameColumnOperation(
-        _newMetadata, _currentMetadata)
+        _newMetadata.schema, _currentMetadata.schema, isBothColumnMappingEnabled)
 
       def columnMappingChange: Boolean = isColumnMappingUpgrade || dropColumnOp || renameColumnOp
 
@@ -1445,6 +1448,55 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       if (cdcEnabled && columnMappingEnabled && columnMappingChange && existsFileActions) {
         throw DeltaErrors.blockColumnMappingAndCdcOperation(op)
+      }
+    }
+  }
+
+  /**
+   * Validates that partition column changes are only performed by operations that explicitly
+   * allow them. This check helps prevent accidental partition schema changes that could lead
+   * to data inconsistencies.
+   *
+   * The validation can be configured via [[DeltaSQLConf.DELTA_PARTITION_COLUMN_CHANGE_CHECK]].
+   *
+   * @param op The operation being performed
+   * @param newMetadata The new metadata (if any) being set in this transaction
+   */
+  private def validatePartitionColumnChanges(
+      op: DeltaOperations.Operation,
+      newMetadata: Option[Metadata]): Unit = {
+    val checkMode = spark.sessionState.conf.getConf(
+      DeltaSQLConf.DELTA_PARTITION_COLUMN_CHANGE_CHECK)
+
+    if (checkMode != DeltaSQLConf.BooleanStringOrLogOnly.FALSE) {
+      val isNewTable = snapshot.version == -1L
+
+      // Validate that partition column changes are only performed by allowed operations.
+      newMetadata.foreach { newMeta =>
+        val oldCols = snapshot.metadata.partitionColumns
+        val newCols = newMeta.partitionColumns
+        val partitionColsChanged = oldCols != newCols
+        val illegalColChange = !isNewTable && partitionColsChanged && !op.canChangePartitionColumns
+
+        if (illegalColChange) {
+          recordDeltaEvent(
+            deltaLog = deltaLog,
+            opType = "delta.metadataCheck.illegalPartitionColumnChange",
+            data = Map(
+              "operation" -> op.name,
+              "operationParameters" -> op.jsonEncodedValues,
+              "oldPartitionColumns" -> oldCols,
+              "newPartitionColumns" -> newCols
+            )
+          )
+          if (checkMode == DeltaSQLConf.BooleanStringOrLogOnly.TRUE) {
+            throw DeltaErrors.unsupportedPartitionColumnChange(
+              operation = op.name,
+              oldPartitionColumns = oldCols,
+              newPartitionColumns = newCols
+            )
+          }
+        }
       }
     }
   }
@@ -2251,6 +2303,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
           log"Detected no metadata in initial commit but commit validation was turned off.")
       }
     }
+
+    // Validate that partition column changes are only performed by allowed operations.
+    validatePartitionColumnChanges(op, newMetadata)
 
     val partitionColumns = metadata.physicalPartitionSchema.fieldNames.toSet
     finalActions = finalActions.map {

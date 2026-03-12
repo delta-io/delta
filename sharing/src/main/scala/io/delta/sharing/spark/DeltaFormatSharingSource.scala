@@ -34,6 +34,8 @@ import org.apache.spark.sql.delta.sources.{
   DeltaSource,
   DeltaSourceOffset
 }
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sharing.client.DeltaSharingClient
 import io.delta.sharing.client.util.ConfUtils
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
@@ -279,6 +281,77 @@ case class DeltaFormatSharingSource(
   }
 
   /**
+   * Converts an offset from the checkpoint to DeltaSourceOffset, and returns whether it was
+   * converted from legacy format (DeltaSharingSourceOffset or legacy JSON tableId/tableVersion).
+   * @return (DeltaSourceOffset, fromLegacy)
+   * Visible for testing (private[spark]).
+   */
+  private[spark] def forceToDeltaSourceOffset(
+      offset: streaming.Offset): (DeltaSourceOffset, Boolean) = {
+    if (offset == null) {
+      throw new IllegalArgumentException("offset cannot be null")
+    }
+    offset match {
+      case o: DeltaSourceOffset =>
+        (o, false)
+      case o: DeltaSharingSourceOffset =>
+        (convertDeltaSharingSourceOffsetToDeltaSourceOffset(o), true)
+      case _ =>
+        // For JSON (SerializedOffset): parse as DeltaSourceOffset first,
+        // if that throws or yields empty reservoirId, parse as legacy DeltaSharingSourceOffset.
+        try {
+          val deltaOffset = deltaSource.toDeltaSourceOffset(offset)
+          val reservoirIdEmpty =
+            deltaOffset.reservoirId == null || deltaOffset.reservoirId.isEmpty
+          if (reservoirIdEmpty) {
+            // Throw to let the catcher handle the exception.
+            throw new IllegalArgumentException(s"Invalid offset format: $offset")
+          } else {
+            logInfo("Offset JSON parsed as Delta format")
+            (deltaOffset, false)
+          }
+        } catch {
+          // Parsing legacy Offset JSON using DeltaSourceOffset
+          // yields a null reservoirId, causing an exception
+          // since toDeltaSourceOffset expects it to match tableId.
+          case e: Exception =>
+            val autoResolve = sqlConf.getConf(
+              DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
+            if (!autoResolve) {
+              throw e
+            }
+            logInfo(s"Offset JSON not valid Delta format, parsing as legacy: ${e.getMessage}")
+            (toDeltaSourceOffsetFromLegacyJson(offset), true)
+        }
+    }
+  }
+
+  /** Parse the given offset as DeltaSharingSourceOffset (tableId/tableVersion)
+   * and convert to DeltaSourceOffset.
+   */
+  private def toDeltaSourceOffsetFromLegacyJson(offset: streaming.Offset): DeltaSourceOffset = {
+    val legacy = DeltaSharingSourceOffset(tableId, offset)
+    convertDeltaSharingSourceOffsetToDeltaSourceOffset(legacy)
+  }
+
+  private def convertDeltaSharingSourceOffsetToDeltaSourceOffset(
+      o: DeltaSharingSourceOffset): DeltaSourceOffset = {
+    // Legacy DeltaSharingSourceOffset hardcodes -1 as the
+    // version boundary index, but DeltaSourceOffset uses
+    // BASE_INDEX (which varies across versions) and rejects
+    // -1. Convert the index to BASE_INDEX for compatibility.
+    val index = if (o.index == -1L) DeltaSourceOffset.BASE_INDEX else o.index
+    logInfo(s"Converted DeltaSharingSourceOffset to DeltaSourceOffset: reservoirId=${o.tableId}, " +
+      s"reservoirVersion=${o.tableVersion}, index=$index, isInitialSnapshot=${o.isStartingVersion}")
+    DeltaSourceOffset(
+      reservoirId = o.tableId,
+      reservoirVersion = o.tableVersion,
+      index = index,
+      isInitialSnapshot = o.isStartingVersion
+    )
+  }
+
+  /**
    * The ending version used in rpc is restricted by both the latest table version and
    * maxVersionsPerRpc, to avoid loading too many files from the server to cause a timeout.
    * @param startingOffset The start offset used in the rpc.
@@ -312,7 +385,25 @@ case class DeltaFormatSharingSource(
   }
 
   override def latestOffset(startOffset: streaming.Offset, limit: ReadLimit): streaming.Offset = {
-    val deltaSourceOffset = getStartingOffset(latestProcessedEndOffsetOption, None)
+    logInfo(s"latestOffset with startOffset($startOffset), limit($limit)")
+    // startOffset is null for initialSnapshot.
+    val (startDeltaSourceOffsetOpt, wasConvertedFromLegacy) =
+      Option(startOffset).map(forceToDeltaSourceOffset) match {
+        case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
+        case None => (None, false)
+      }
+    // When DVs are enabled on a shared table with an existing
+    // LegacySource streaming query, the query fails. On restart
+    // this Source is freshly instantiated so
+    // latestProcessedEndOffsetOption is None. We must use the
+    // legacy offset as the starting point to fetch files.
+    val deltaSourceOffset =
+      if (latestProcessedEndOffsetOption.isEmpty &&
+        startDeltaSourceOffsetOpt.nonEmpty && wasConvertedFromLegacy) {
+        startDeltaSourceOffsetOpt.get
+      } else {
+        getStartingOffset(latestProcessedEndOffsetOption, None)
+      }
 
     if (deltaSourceOffset.reservoirVersion < 0) {
       return null
@@ -320,7 +411,7 @@ case class DeltaFormatSharingSource(
 
     maybeGetLatestFileChangesFromServer(deltaSourceOffset)
 
-    maybeMoveToNextVersion(deltaSource.latestOffset(startOffset, limit))
+    maybeMoveToNextVersion(deltaSource.latestOffset(startDeltaSourceOffsetOpt.orNull, limit))
   }
 
   // Advance the DeltaSourceOffset to the next version when the offset is at the last index of the
@@ -429,7 +520,8 @@ case class DeltaFormatSharingSource(
         versionAsOf = Some(startingOffset.reservoirVersion),
         timestampAsOf = None,
         jsonPredicateHints = None,
-        refreshToken = None
+        refreshToken = None,
+        fileIdHash = None
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFiles(
         client = client,
@@ -452,7 +544,8 @@ case class DeltaFormatSharingSource(
       val tableFiles = client.getFiles(
         table = table,
         startingVersion = startingOffset.reservoirVersion,
-        endingVersion = Some(endingVersionForQuery)
+        endingVersion = Some(endingVersionForQuery),
+        fileIdHash = None
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFilesWithStartingVersion(
         client = client,
@@ -509,10 +602,25 @@ case class DeltaFormatSharingSource(
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
     logInfo(s"getBatch with startOffsetOption($startOffsetOption) and end($end)," +
       getTableInfoForLogging)
-    val endOffset = deltaSource.toDeltaSourceOffset(end)
-    val startDeltaOffsetOption = startOffsetOption.map(deltaSource.toDeltaSourceOffset)
+    // When DVs are enabled on a shared table with an existing
+    // LegacySource streaming query still reading an initial
+    // snapshot, startOffsetOption is None and endOffset
+    // specifies the starting version. On restart, this Source
+    // is instantiated, so we convert legacy offsets to
+    // DeltaSourceOffset.
+    val endOffset = forceToDeltaSourceOffset(end)._1
+
+    // When the query is past the initial snapshot,
+    // startOffsetOption is defined and contains the starting
+    // version. Convert from legacy offset if needed.
+    val startDeltaOffsetOption =
+      startOffsetOption.map(o => forceToDeltaSourceOffset(o)._1)
     val startingOffset = getStartingOffset(startDeltaOffsetOption, Some(endOffset))
 
+    // Files should already be fetched in latestOffset; this
+    // is a safeguard in case files for startOffset are not
+    // present. Whether startOffset was converted from legacy
+    // does not matter here.
     maybeGetLatestFileChangesFromServer(startingOffset = startingOffset)
     // Reset latestProcessedEndOffsetOption only when endOffset is larger.
     // Because with microbatch pipelining, we may get getBatch requests out of order.
@@ -524,7 +632,7 @@ case class DeltaFormatSharingSource(
       logInfo(s"Setting latestProcessedEndOffsetOption to $endOffset," + getTableInfoForLogging)
     }
 
-    deltaSource.getBatch(startOffsetOption, end)
+    deltaSource.getBatch(startDeltaOffsetOption, endOffset)
   }
 
   override def getOffset: Option[Offset] = {
@@ -564,10 +672,14 @@ case class DeltaFormatSharingSource(
   // Calls deltaSource.commit for checks related to column mapping.
   override def commit(end: Offset): Unit = {
     logInfo(s"Commit end offset: $end," + getTableInfoForLogging)
-    deltaSource.commit(end)
+    val endOffset = forceToDeltaSourceOffset(end)._1
+    // If DeltaSource detects a metadata change at endOffset
+    // version, deltaSource.commit throws an exception so the
+    // stream restarts from the checkpoint with the new schema.
+    deltaSource.commit(endOffset)
 
-    // Clean up previous blocks after commit.
-    val endOffset = deltaSource.toDeltaSourceOffset(end)
+    // Clean up processed versions in block manager regardless
+    // of whether endOffset is from legacy format.
     DeltaSharingLogFileSystem.tryToCleanUpPreviousBlocks(
       deltaLogPath,
       endOffset.reservoirVersion - 1
