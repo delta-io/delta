@@ -38,6 +38,7 @@ import java.util.*;
  *   <li>{@code int} to {@code long, float, double}
  *   <li>{@code long} to {@code float, double}
  *   <li>{@code float} to {@code double}
+ *   <li>{@code decimal(p1,s1)} to {@code decimal(p2,s2)} when p2-s2 >= p1-s1 and s2 >= s1
  * </ul>
  *
  * <p>The above list is not exhaustive. Based on the need, we can add more casts.
@@ -122,12 +123,14 @@ final class ImplicitCastExpression implements Expression {
    * type.
    */
   static boolean canCastTo(DataType from, DataType to) {
-    // DECIMAL widening: Decimal(p1,s1) can widen to Decimal(p2,s2) when p2 >= p1 and s2 >= s1
+    // DECIMAL widening: Decimal(p1,s1) can widen to Decimal(p2,s2) when s2 >= s1
+    // and the integer part is preserved (p2-s2 >= p1-s1)
     if (from instanceof DecimalType && to instanceof DecimalType) {
       DecimalType fromDec = (DecimalType) from;
       DecimalType toDec = (DecimalType) to;
-      return toDec.getPrecision() >= fromDec.getPrecision()
-          && toDec.getScale() >= fromDec.getScale();
+      return toDec.getScale() >= fromDec.getScale()
+          && (toDec.getPrecision() - toDec.getScale())
+              >= (fromDec.getPrecision() - fromDec.getScale());
     }
 
     // TODO: The type name should be a first class method on `DataType` instead of getting it
@@ -274,6 +277,10 @@ final class ImplicitCastExpression implements Expression {
     }
   }
 
+  /**
+   * Pass through the BigDecimal value unchanged. This works for comparisons since
+   * BigDecimal.compareTo() is scale-insensitive. Only the type metadata changes.
+   */
   private static class DecimalUpConverter extends UpConverter {
     DecimalUpConverter(DataType targetType, ColumnVector inputVector) {
       super(targetType, inputVector);
