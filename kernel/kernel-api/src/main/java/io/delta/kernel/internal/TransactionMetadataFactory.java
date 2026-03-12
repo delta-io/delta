@@ -516,18 +516,29 @@ public class TransactionMetadataFactory {
       newMetadata = icebergWriterCompatV3;
     }
 
-    // TODO: refactor this method to use a single validator and updater.
-    Optional<Metadata> icebergCompatV2Metadata =
-        IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
-    if (icebergCompatV2Metadata.isPresent()) {
-      newMetadata = icebergCompatV2Metadata;
+    // Skip standalone compat validation if the corresponding writer compat already ran it.
+    // WriterCompatV1 internally validates CompatV2 (via enforcer), and
+    // WriterCompatV3 internally validates CompatV3 (via enforcer).
+    boolean writerCompatV1Enabled =
+        TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.fromMetadata(getEffectiveMetadata());
+    if (!writerCompatV1Enabled) {
+      Optional<Metadata> icebergCompatV2Metadata =
+          IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
+              isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
+      if (icebergCompatV2Metadata.isPresent()) {
+        newMetadata = icebergCompatV2Metadata;
+      }
     }
-    Optional<Metadata> icebergCompatV3Metadata =
-        IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
-            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
-    if (icebergCompatV3Metadata.isPresent()) {
-      newMetadata = icebergCompatV3Metadata;
+
+    boolean writerCompatV3Enabled =
+        TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.fromMetadata(getEffectiveMetadata());
+    if (!writerCompatV3Enabled) {
+      Optional<Metadata> icebergCompatV3Metadata =
+          IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
+              isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
+      if (icebergCompatV3Metadata.isPresent()) {
+        newMetadata = icebergCompatV3Metadata;
+      }
     }
   }
 

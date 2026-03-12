@@ -307,4 +307,89 @@ class TransactionMetadataFactorySuite extends AnyFunSuite {
         Optional.empty())
     }
   }
+
+  // =====================================================================
+  // IcebergCompat redundant validation regression tests
+  // =====================================================================
+  // These tests verify that both validation paths work correctly:
+  // 1. WriterCompat enabled -> standalone compat skipped (validated internally)
+  // 2. Standalone compat only -> still validated
+
+  test("buildCreateTableMetadata - icebergCompatV3 standalone (no WriterCompatV3)") {
+    val tableProperties = Map(
+      TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey -> "true").asJava
+
+    val output = TransactionMetadataFactory.buildCreateTableMetadata(
+      testTablePath,
+      testSchema,
+      tableProperties,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+
+    assert(output.newMetadata.isPresent)
+    assert(output.newProtocol.isPresent)
+    val config = output.newMetadata.get().getConfiguration
+    assert(config.get(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey) === "true")
+  }
+
+  test(
+    "buildCreateTableMetadata - icebergWriterCompatV3 (V3 validated internally, not standalone)") {
+    val tableProperties = Map(
+      TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey -> "true").asJava
+
+    val output = TransactionMetadataFactory.buildCreateTableMetadata(
+      testTablePath,
+      testSchema,
+      tableProperties,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+
+    assert(output.newMetadata.isPresent)
+    assert(output.newProtocol.isPresent)
+    val config = output.newMetadata.get().getConfiguration
+    // WriterCompatV3 should auto-enable CompatV3
+    assert(config.get(TableConfig.ICEBERG_COMPAT_V3_ENABLED.getKey) === "true")
+    assert(config.get(TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey) === "true")
+  }
+
+  test("buildCreateTableMetadata - icebergCompatV2 standalone (no WriterCompatV1)") {
+    val tableProperties = Map(
+      TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true").asJava
+
+    val output = TransactionMetadataFactory.buildCreateTableMetadata(
+      testTablePath,
+      testSchema,
+      tableProperties,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+
+    assert(output.newMetadata.isPresent)
+    assert(output.newProtocol.isPresent)
+    val config = output.newMetadata.get().getConfiguration
+    assert(config.get(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey) === "true")
+  }
+
+  test(
+    "buildCreateTableMetadata - icebergWriterCompatV1 (V2 validated internally, not standalone)") {
+    val tableProperties = Map(
+      TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey -> "true").asJava
+
+    val output = TransactionMetadataFactory.buildCreateTableMetadata(
+      testTablePath,
+      testSchema,
+      tableProperties,
+      Optional.empty(),
+      Optional.empty(),
+      Optional.empty())
+
+    assert(output.newMetadata.isPresent)
+    assert(output.newProtocol.isPresent)
+    val config = output.newMetadata.get().getConfiguration
+    // WriterCompatV1 should auto-enable CompatV2
+    assert(config.get(TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey) === "true")
+    assert(config.get(TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED.getKey) === "true")
+  }
 }
