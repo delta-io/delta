@@ -506,10 +506,15 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     assert(clientClosed, "Client should be closed after table.close()")
   }
 
-  test("ServerSidePlanningClient extends AutoCloseable") {
-    // Verify the trait hierarchy: ServerSidePlanningClient must extend AutoCloseable
-    // so that any client implementation can be properly closed
-    assert(classOf[AutoCloseable].isAssignableFrom(classOf[ServerSidePlanningClient]),
-      "ServerSidePlanningClient should extend AutoCloseable")
+  test("planning client is closed after scan completes") {
+    withPushdownCapturingEnabled {
+      assert(!TestServerSidePlanningClient.isClientClosed,
+        "Client should not be closed before query execution")
+
+      sql("SELECT id FROM test_db.shared_test").collect()
+
+      assert(TestServerSidePlanningClient.isClientClosed,
+        "Planning client should be closed after scan plan is obtained")
+    }
   }
 }
