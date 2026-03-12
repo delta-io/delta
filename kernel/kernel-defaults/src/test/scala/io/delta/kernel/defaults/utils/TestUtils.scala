@@ -28,6 +28,7 @@ import io.delta.golden.GoldenTableUtils
 import io.delta.kernel.{Scan, Snapshot, Table, TransactionCommitResult}
 import io.delta.kernel.data._
 import io.delta.kernel.defaults.engine.DefaultEngine
+import io.delta.kernel.defaults.engine.fileio.{FileIO, InputFile, OutputFile, SeekableInputStream}
 import io.delta.kernel.defaults.internal.data.vector.{DefaultGenericVector, DefaultStructVector}
 import io.delta.kernel.defaults.test.{AbstractTableManagerAdapter, LegacyTableManagerAdapter, TableManagerAdapter}
 import io.delta.kernel.engine.Engine
@@ -986,6 +987,28 @@ trait AbstractTestUtils
     option match {
       case Some(value) => Optional.of(value)
       case None => Optional.empty()
+    }
+  }
+
+  /**
+   * Creates a FileIO whose newInputFile().newStream() always throws the given exception.
+   * Useful for testing error handling in handlers.
+   */
+  def throwingFileIO(exception: => Exception): FileIO = {
+    new FileIO {
+      override def newInputFile(path: String, fileSize: Long): InputFile = new InputFile {
+        override def length(): Long = fileSize
+        override def path(): String = path
+        override def newStream(): SeekableInputStream = throw exception
+      }
+      override def listFrom(filePath: String): CloseableIterator[FileStatus] = null
+      override def getFileStatus(path: String): FileStatus = null
+      override def resolvePath(path: String): String = null
+      override def mkdirs(path: String): Boolean = false
+      override def newOutputFile(path: String): OutputFile = null
+      override def delete(path: String): Boolean = false
+      override def getConf(confKey: String): Optional[String] = Optional.empty()
+      override def copyFileAtomically(src: String, dst: String, overwrite: Boolean): Unit = {}
     }
   }
 }

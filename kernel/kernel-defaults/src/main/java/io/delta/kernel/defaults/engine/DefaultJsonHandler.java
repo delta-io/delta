@@ -36,6 +36,7 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.LogStore;
 import java.io.*;
+import java.nio.channels.ClosedByInterruptException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
@@ -113,6 +114,12 @@ public class DefaultJsonHandler implements JsonHandler {
           }
           return nextLine != null;
         } catch (IOException ex) {
+          // Propagate interrupt-related exceptions as UncheckedIOException so that
+          // Spark's StreamExecution.isInterruptionException() can recognize them
+          // during stream shutdown. Wrapping in KernelEngineException would mask them.
+          if (ex instanceof ClosedByInterruptException || ex instanceof InterruptedIOException) {
+            throw new UncheckedIOException(ex);
+          }
           throw new KernelEngineException(
               format("Error reading JSON file: %s", currentFile.getPath()), ex);
         }

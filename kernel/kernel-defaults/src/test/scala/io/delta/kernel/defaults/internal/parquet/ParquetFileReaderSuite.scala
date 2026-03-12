@@ -15,14 +15,17 @@
  */
 package io.delta.kernel.defaults.internal.parquet
 
+import java.io.UncheckedIOException
 import java.math.BigDecimal
-import java.util.TimeZone
+import java.nio.channels.ClosedByInterruptException
+import java.util.{Optional, TimeZone}
 
 import io.delta.golden.GoldenTableUtils.{goldenTableFile, goldenTablePath}
 import io.delta.kernel.defaults.utils.{ExpressionTestUtils, TestRow}
+import io.delta.kernel.exceptions.KernelEngineException
 import io.delta.kernel.test.VectorTestUtils
 import io.delta.kernel.types._
-import io.delta.kernel.utils.MetadataColumnTestUtils
+import io.delta.kernel.utils.{FileStatus, MetadataColumnTestUtils}
 
 import org.apache.spark.sql.internal.SQLConf
 import org.scalatest.funsuite.AnyFunSuite
@@ -384,5 +387,22 @@ class ParquetFileReaderSuite extends AnyFunSuite
     checkAnswer(
       readParquetFilesUsingKernel(parquetFilePath, readSchema), /* actual */
       readParquetFilesUsingSpark(parquetFilePath, readSchema) /* expected */ )
+  }
+
+  test("ClosedByInterruptException propagates as UncheckedIOException, not KernelEngineException") {
+    val reader = new ParquetFileReader(throwingFileIO(new ClosedByInterruptException()))
+    val fileStatus = FileStatus.of("file:///fake/test.parquet", 100, 0)
+    val iter = reader.read(
+      fileStatus,
+      new StructType().add("value", StringType.STRING),
+      Optional.empty())
+
+    val ex = intercept[UncheckedIOException] {
+      iter.hasNext()
+    }
+    assert(
+      ex.getCause.isInstanceOf[ClosedByInterruptException],
+      s"Expected ClosedByInterruptException cause, got: ${ex.getCause.getClass}")
+    assert(!ex.isInstanceOf[KernelEngineException])
   }
 }

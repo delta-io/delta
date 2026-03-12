@@ -31,6 +31,9 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.io.UncheckedIOException;
+import java.nio.channels.ClosedByInterruptException;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.filter2.compat.FilterCompat;
@@ -91,6 +94,12 @@ public class ParquetFileReader {
           hasNotConsumedNextElement = next != null;
           return hasNotConsumedNextElement;
         } catch (IOException ex) {
+          // Propagate interrupt-related exceptions as UncheckedIOException so that
+          // Spark's StreamExecution.isInterruptionException() can recognize them
+          // during stream shutdown. Wrapping in KernelEngineException would mask them.
+          if (ex instanceof ClosedByInterruptException || ex instanceof InterruptedIOException) {
+            throw new UncheckedIOException(ex);
+          }
           throw new KernelEngineException(
               "Error reading Parquet file: " + fileStatus.getPath(), ex);
         }
@@ -158,6 +167,12 @@ public class ParquetFileReader {
 
           } catch (IOException e) {
             Utils.closeCloseablesSilently(fileReader, reader);
+            // Propagate interrupt-related exceptions as UncheckedIOException so that
+            // Spark's StreamExecution.isInterruptionException() can recognize them
+            // during stream shutdown. Wrapping in KernelEngineException would mask them.
+            if (e instanceof ClosedByInterruptException || e instanceof InterruptedIOException) {
+              throw new UncheckedIOException(e);
+            }
             throw new KernelEngineException(
                 "Error reading Parquet file: " + fileStatus.getPath(), e);
           }
