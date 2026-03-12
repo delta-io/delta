@@ -78,21 +78,28 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     final boolean isCreatingNewTable;
     final Metadata newMetadata;
     final Protocol newProtocol;
+    /**
+     * The protocol from the previous snapshot, used to guard against concurrent writers that may
+     * have enabled incompatible features (e.g. deletion vectors). Empty for new tables.
+     */
+    final Optional<Protocol> prevProtocol;
 
     public IcebergCompatInputContext(
         String compatFeatureName,
         boolean isCreatingNewTable,
         Metadata newMetadata,
-        Protocol newProtocol) {
+        Protocol newProtocol,
+        Optional<Protocol> prevProtocol) {
       this.compatFeatureName = compatFeatureName;
       this.isCreatingNewTable = isCreatingNewTable;
       this.newMetadata = newMetadata;
       this.newProtocol = newProtocol;
+      this.prevProtocol = prevProtocol;
     }
 
     public IcebergCompatInputContext withUpdatedMetadata(Metadata newMetadata) {
       return new IcebergCompatInputContext(
-          compatFeatureName, isCreatingNewTable, newMetadata, newProtocol);
+          compatFeatureName, isCreatingNewTable, newMetadata, newProtocol, prevProtocol);
     }
   }
 
@@ -319,7 +326,17 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_DELETION_VECTORS =
       (inputContext) -> {
-        if (inputContext.newProtocol.supportsFeature(DELETION_VECTORS_RW_FEATURE)) {
+        // Check both newProtocol and prevProtocol to guard against concurrent writers that may
+        // have enabled deletion vectors. This matches Spark's CheckDeletionVectorDisabled which
+        // checks both prevSnapshot and newestProtocol.
+        boolean dvInNewProtocol =
+            inputContext.newProtocol.supportsFeature(DELETION_VECTORS_RW_FEATURE);
+        boolean dvInPrevProtocol =
+            inputContext
+                .prevProtocol
+                .map(prev -> prev.supportsFeature(DELETION_VECTORS_RW_FEATURE))
+                .orElse(false);
+        if (dvInNewProtocol || dvInPrevProtocol) {
           throw DeltaErrors.icebergCompatIncompatibleTableFeatures(
               inputContext.compatFeatureName, Collections.singleton(DELETION_VECTORS_RW_FEATURE));
         }
