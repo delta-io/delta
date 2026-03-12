@@ -320,6 +320,8 @@ class IcebergRESTCatalogPlanningClient(
   private lazy val httpClient = HttpClientBuilder.create()
     .setDefaultHeaders(httpHeaders)
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
+    // requestSentRetryEnabled=true: safe to retry already-sent requests because
+    // planScan is a read-only operation (idempotent POST to /plan endpoint)
     .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
     .setServiceUnavailableRetryStrategy(
       new ServerErrorRetryStrategy(HTTP_MAX_RETRIES, HTTP_RETRY_INTERVAL_MS))

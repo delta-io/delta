@@ -542,6 +542,34 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         assert(server.getPlanRequestCount() == 2,
           s"Expected 2 plan requests (1 retry), got ${server.getPlanRequestCount()}")
       } finally {
+        server.clearCaptured()
+        client.close()
+      }
+    }
+  }
+
+  test("retries exhausted on persistent 503 server error") {
+    withTempTable("retryTestExhausted") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.retryTestExhausted")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      try {
+        server.clearCaptured()
+        // Configure server to fail more requests than the client will retry (max 3 retries = 4
+        // total attempts). Setting 10 failures ensures all retries see 503.
+        server.setFailNextPlanRequests(10, 503)
+
+        val exception = intercept[java.io.IOException] {
+          client.planScan(defaultNamespace.toString, "retryTestExhausted")
+        }
+        assert(exception.getMessage.contains("503"),
+          s"Error should mention 503 status code. Got: ${exception.getMessage}")
+
+        // Verify 4 requests were made: 1 original + 3 retries (max retries = 3)
+        assert(server.getPlanRequestCount() == 4,
+          s"Expected 4 plan requests (1 + 3 retries), got ${server.getPlanRequestCount()}")
+      } finally {
+        server.clearCaptured()
         client.close()
       }
     }
