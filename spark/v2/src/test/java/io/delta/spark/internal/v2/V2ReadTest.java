@@ -60,6 +60,42 @@ public class V2ReadTest extends V2TestBase {
   }
 
   @Test
+  public void testColumnMappingReadAfterRename(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id INT, user_name STRING) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", tablePath));
+    spark.sql(str("ALTER TABLE delta.`%s` RENAME COLUMN user_name TO full_name", tablePath));
+
+    check(
+        str("SELECT id, full_name FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        List.of(row(1, "Alice"), row(2, "Bob")));
+  }
+
+  @Test
+  public void testColumnMappingReadAfterDrop(@TempDir File deltaTablePath) {
+    String tablePath = deltaTablePath.getAbsolutePath();
+
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id INT, user_name STRING, extra INT) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (1, 'Alice', 10), (2, 'Bob', 20)", tablePath));
+    spark.sql(str("ALTER TABLE delta.`%s` DROP COLUMN extra", tablePath));
+
+    check(
+        str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        List.of(row(1, "Alice"), row(2, "Bob")));
+  }
+
+  @Test
   public void testDeletionVectorRead(@TempDir File tempDir) throws Exception {
     // Create a directory with space in the name to test URL encoding handling
     File dirWithSpace = new File(tempDir, "my table");
