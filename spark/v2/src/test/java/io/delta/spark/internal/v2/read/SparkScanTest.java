@@ -191,6 +191,43 @@ public class SparkScanTest extends DeltaV2TestBase {
         });
   }
 
+  @Test
+  public void testColumnarSupportModeWithDeletionVectors(@TempDir File tempDir) throws Exception {
+    // For a DV-enabled table with a batch-compatible schema, columnarSupportMode should still
+    // return SUPPORTED because the DV internal column (__delta_internal_is_row_deleted, ByteType)
+    // is also batch-compatible. This verifies consistency with PartitionUtils reader factory.
+    String dvPath = tempDir.getAbsolutePath();
+    String dvTableName = "columnar_dv_table";
+
+    withTable(
+        new String[] {dvTableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id INT, value STRING) USING delta "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true') "
+                      + "LOCATION '%s'",
+                  dvTableName, dvPath));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", dvTableName));
+
+          SparkTable dvTable =
+              new SparkTable(
+                  Identifier.of(new String[] {"spark_catalog", "default"}, dvTableName),
+                  dvPath,
+                  options);
+          SparkScanBuilder builder = (SparkScanBuilder) dvTable.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          // DV-enabled table with simple types should still return SUPPORTED because the
+          // DV column (ByteType) is batch-compatible
+          assertEquals(
+              Scan.ColumnarSupportMode.SUPPORTED,
+              scan.columnarSupportMode(),
+              "columnarSupportMode should return SUPPORTED for DV-enabled table with"
+                  + " batch-compatible schema");
+        });
+  }
+
   // ===============================================================================================
   // Tests for getDataSchema, getPartitionSchema, getReadDataSchema, getOptions, getConfiguration
   // ===============================================================================================

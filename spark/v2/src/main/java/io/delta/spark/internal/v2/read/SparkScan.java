@@ -44,6 +44,7 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
@@ -166,12 +167,27 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    * Spark to eagerly call {@code planInputPartitions()} during query planning to check
    * per-partition columnar support, triggering unnecessary early file enumeration.
    *
-   * <p>Since columnar support is uniform across all partitions (determined by schema compatibility,
-   * not by individual files), we can declare it at the scan level to avoid this overhead.
+   * <p>Since columnar support is uniform across all partitions (determined by schema compatibility
+   * and table features, not by individual files), we can declare it at the scan level to avoid this
+   * overhead.
+   *
+   * <p>This must stay consistent with the vectorized reader decision in {@link
+   * PartitionUtils#createDeltaParquetReaderFactory}. In particular, deletion-vector-enabled tables
+   * augment the read schema with internal columns (e.g., {@code __delta_internal_is_row_deleted}),
+   * which changes the schema passed to the vectorized reader check. We replicate that logic here to
+   * ensure the scan-level declaration matches the per-partition reader behavior.
    */
   @Override
   public Scan.ColumnarSupportMode columnarSupportMode() {
-    return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema)
+    // When the table supports deletion vectors, the reader factory adds a DV column
+    // (ByteType) to the read schema. Use the same augmented schema here so the batch-read
+    // check matches what the reader will actually use.
+    StructType schemaForBatchCheck =
+        PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)
+            ? readDataSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD())
+            : readDataSchema;
+
+    return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, schemaForBatchCheck)
         ? Scan.ColumnarSupportMode.SUPPORTED
         : Scan.ColumnarSupportMode.UNSUPPORTED;
   }
