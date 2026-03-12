@@ -227,12 +227,29 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase
       s"icebergCompat$icebergCompatVersion does not allow changing partition columns"))
   }
 
-  test("partition evolution is allowed on new table (no old metadata)") {
+  test("partition check is skipped on new table even if old metadata is provided") {
+    // Covers REPLACE TABLE scenario: isCreatingNewTable=true but oldMetadata is present
+    val schema = new StructType().add("col1", IntegerType.INTEGER).add("col2", StringType.STRING)
+    val oldMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
+    val newMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col2"))
+    val protocol = getCompatEnabledProtocol()
+
+    // Should not throw - partition evolution check is skipped for new/replace table
+    validateAndUpdateIcebergCompatMetadata(
+      isNewTable = true,
+      newMetadata,
+      protocol,
+      oldMetadata)
+  }
+
+  test("partition check is skipped when old metadata is not available") {
+    // Backward compatibility: existing callers that don't pass oldMetadata
     val schema = new StructType().add("col1", IntegerType.INTEGER)
     val metadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
     val protocol = getCompatEnabledProtocol()
-    // Should not throw - new table has no old metadata to compare against
-    validateAndUpdateIcebergCompatMetadata(isNewTable = true, metadata, protocol)
+
+    // Should not throw - no old metadata to compare against
+    validateAndUpdateIcebergCompatMetadata(isNewTable = false, metadata, protocol)
   }
 
   test("same partition columns on existing table is allowed") {
