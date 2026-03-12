@@ -189,8 +189,8 @@ class IcebergRESTCatalogPlanningClient(
    * Returns None on any error or if no prefix is defined in the config.
    */
   private def fetchCatalogPrefix(): Option[String] = {
+    val configUri = s"$baseUri/config?warehouse=$catalogName"
     try {
-      val configUri = s"$baseUri/config?warehouse=$catalogName"
       val httpGet = new HttpGet(configUri)
       val response = httpClient.execute(httpGet)
       try {
@@ -207,7 +207,7 @@ class IcebergRESTCatalogPlanningClient(
       }
     } catch {
       case e: Exception =>
-        logWarning(s"Failed to fetch catalog prefix from $baseUri/v1/config. " +
+        logWarning(s"Failed to fetch catalog prefix from $configUri. " +
           s"Falling back to base URI. Error: ${e.getMessage}")
         None
     }
