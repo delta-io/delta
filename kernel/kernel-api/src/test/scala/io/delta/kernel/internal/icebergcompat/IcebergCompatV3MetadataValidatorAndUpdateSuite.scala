@@ -83,6 +83,14 @@ class IcebergCompatV3MetadataValidatorAndUpdaterSuite
     validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol)
   }
 
+  override def validateAndUpdateIcebergCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol,
+      oldMetadata: Metadata): Optional[Metadata] = {
+    validateAndUpdateIcebergCompatV3Metadata(isNewTable, metadata, protocol, oldMetadata)
+  }
+
   Seq(true, false).foreach { isNewTable =>
     test(s"protocol is missing required column mapping feature, isNewTable $isNewTable") {
       val schema = new StructType().add("col", BooleanType.BOOLEAN)
