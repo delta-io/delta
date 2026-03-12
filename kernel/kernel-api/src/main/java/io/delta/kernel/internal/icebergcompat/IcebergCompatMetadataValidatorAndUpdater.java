@@ -325,7 +325,11 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_PARTITION_EVOLUTION =
       (inputContext) -> {
-        if (!inputContext.isCreatingNewTable && inputContext.oldMetadata != null) {
+        // Block partition evolution whenever old metadata is available (UPDATE TABLE and
+        // REPLACE TABLE). For CREATE TABLE, oldMetadata is null so the check is skipped.
+        // Note: isCreatingNewTable is true for both CREATE and REPLACE, so we cannot use
+        // it as the guard — oldMetadata nullity is the correct discriminator.
+        if (inputContext.oldMetadata != null) {
           Set<String> oldPartCols = inputContext.oldMetadata.getPartitionColNames();
           Set<String> newPartCols = inputContext.newMetadata.getPartitionColNames();
           if (!oldPartCols.equals(newPartCols)) {

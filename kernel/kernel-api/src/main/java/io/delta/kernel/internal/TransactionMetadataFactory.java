@@ -498,11 +498,11 @@ public class TransactionMetadataFactory {
                       oldMetadata.getConfiguration(), metadata.getConfiguration()));
         });
 
-    // Retrieve old metadata for partition evolution checks on existing tables
+    // Retrieve old metadata for partition evolution checks. Needed for both UPDATE TABLE
+    // and REPLACE TABLE (partition evolution is blocked in both cases for IcebergCompat).
+    // For CREATE TABLE (no prior snapshot), this is null and the check is skipped.
     Metadata icebergOldMetadata =
-        !isCreateOrReplace && latestSnapshotOpt.isPresent()
-            ? latestSnapshotOpt.get().getMetadata()
-            : null;
+        latestSnapshotOpt.isPresent() ? latestSnapshotOpt.get().getMetadata() : null;
 
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
