@@ -84,6 +84,10 @@ final class ImplicitCastExpression implements Expression {
   ColumnVector eval(ColumnVector input) {
     // DECIMAL widening: value stays the same, only type metadata changes
     if (input.getDataType() instanceof DecimalType && outputType instanceof DecimalType) {
+      if (!canCastTo(input.getDataType(), outputType)) {
+        throw new UnsupportedOperationException(
+            format("Cannot cast %s to %s", input.getDataType(), outputType));
+      }
       return new DecimalUpConverter(outputType, input);
     }
 
@@ -278,17 +282,25 @@ final class ImplicitCastExpression implements Expression {
   }
 
   /**
-   * Pass through the BigDecimal value unchanged. This works for comparisons since
-   * BigDecimal.compareTo() is scale-insensitive. Only the type metadata changes.
+   * Widen a decimal value to a target DecimalType with equal or greater precision/scale. Adjusts
+   * the BigDecimal scale to match the target type so that the ColumnVector contract
+   * (getDataType().getScale() == getDecimal(i).scale()) is preserved.
    */
   private static class DecimalUpConverter extends UpConverter {
+    private final int targetScale;
+
     DecimalUpConverter(DataType targetType, ColumnVector inputVector) {
       super(targetType, inputVector);
+      this.targetScale = ((DecimalType) targetType).getScale();
     }
 
     @Override
     public java.math.BigDecimal getDecimal(int rowId) {
-      return inputVector.getDecimal(rowId);
+      java.math.BigDecimal value = inputVector.getDecimal(rowId);
+      if (value == null || value.scale() == targetScale) {
+        return value;
+      }
+      return value.setScale(targetScale, java.math.RoundingMode.UNNECESSARY);
     }
   }
 }
