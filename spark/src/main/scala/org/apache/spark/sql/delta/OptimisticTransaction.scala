@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.implicits.addFileEncoder
@@ -62,6 +62,7 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.UnsetTableProperties
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.{CharVarcharUtils, ResolveDefaultColumns}
+import org.apache.spark.sql.delta.clustering.ClusteringMetadataDomain
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.{StructField, StructType}
 import org.apache.spark.util.{Clock, Utils}
@@ -573,7 +574,58 @@ trait OptimisticTransactionImpl extends TransactionHelper
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
+    // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
+    // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
+    // "spark_catalog" registration). New table creation is naturally excluded because
+    // isCatalogOwned is false until the first commit.
+    val existingMetadata = snapshot.metadata
+    val comparableExistingConfig =
+      CatalogOwnedTableUtils.comparableExistingUCManagedConfiguration(snapshot)
+    val comparableProposedConfig =
+      CatalogOwnedTableUtils.comparableProposedUCManagedConfiguration(snapshot, proposedNewMetadata)
+    if (snapshot.isCatalogOwned &&
+        isUCManagedTable &&
+        (proposedNewMetadata.schemaString != existingMetadata.schemaString ||
+         proposedNewMetadata.partitionColumns != existingMetadata.partitionColumns ||
+         proposedNewMetadata.description != existingMetadata.description ||
+         comparableProposedConfig != comparableExistingConfig)) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Metadata changes on Unity Catalog managed tables")
+    }
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
+  }
+
+  /**
+   * Returns true if this transaction targets a UC-managed CatalogOwned table.
+   * Uses catalog implementation class to handle UC registered as "spark_catalog".
+   *
+   * Visibility is protected[delta] (not private) to allow test subclasses to override
+   * without requiring UCSingleCatalog.
+   */
+  protected[delta] def isUCManagedTable: Boolean = {
+    catalogTable.exists { ct =>
+      CatalogOwnedTableUtils.getCatalogName(spark, ct.identifier)
+        .contains(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
+    }
+  }
+
+  /**
+   * Returns true if committing [[dm]] would change the clustering columns on a UC-managed
+   * CatalogOwned table and should therefore be blocked.
+   *
+   * Both a missing entry and a removed=true tombstone mean "no clustering", so the effective
+   * configuration is normalised to Option[String] before comparison.
+   */
+  private def isClusteringChangedOnUCManagedTable(dm: DomainMetadata): Boolean = {
+    if (dm.domain != ClusteringMetadataDomain.domainName) return false
+    if (!snapshot.isCatalogOwned || !isUCManagedTable) return false
+    val existingConfig =
+      snapshot.domainMetadata
+        .find(_.domain == ClusteringMetadataDomain.domainName)
+        .filterNot(_.removed)
+        .map(_.configuration)
+    val incomingConfig = if (dm.removed) None else Some(dm.configuration)
+    incomingConfig != existingConfig
   }
 
   /**
@@ -859,19 +911,23 @@ trait OptimisticTransactionImpl extends TransactionHelper
    *   configurations is finalized.
    */
   def updateMetadataForNewTableInReplace(metadata: Metadata): Unit = {
-    assert(CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration).isEmpty,
-      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
-    assert(!metadata.configuration.contains(UCCommitCoordinatorClient.UC_TABLE_ID_KEY),
-      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
-    // Extract any existing ucTableId from the snapshot metadata.
-    val existingUCTableIdConf: Map[String, String] =
-      snapshot.metadata.configuration.filter { case (k, v) =>
-        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
-      }
-    // Extract the existing Coordinated Commits configurations and ICT dependency configurations
-    // from the existing table metadata.
+    val incomingCCConfs =
+      CoordinatedCommitsUtils.getExplicitCCConfigurations(metadata.configuration)
     val existingCCConfs =
       CoordinatedCommitsUtils.getExplicitCCConfigurations(snapshot.metadata.configuration)
+    assert(incomingCCConfs.isEmpty || incomingCCConfs == existingCCConfs,
+      "Command-specified Coordinated Commits configurations should have been blocked earlier.")
+    val incomingUCTableIdConf: Map[String, String] =
+      metadata.configuration.filter { case (k, _) =>
+        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+      }
+    val existingUCTableIdConf: Map[String, String] =
+      snapshot.metadata.configuration.filter { case (k, _) =>
+        k == UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+      }
+    assert(incomingUCTableIdConf.isEmpty || incomingUCTableIdConf == existingUCTableIdConf,
+      "Command-specified Catalog-Owned table UUID (ucTableId) should have been blocked earlier.")
+    // Extract the existing ICT dependency configurations from the existing table metadata.
     val existingICTConfs =
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
     val oldMappingMode = snapshot.metadata.columnMappingMode
@@ -1924,6 +1980,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
           newProtocol.toIterator
       allActions = allActions.map { action =>
         action match {
+          case dm: DomainMetadata if isClusteringChangedOnUCManagedTable(dm) =>
+            // Temporary: block clustering changes on UC-managed tables (commitLarge() path).
+            // commitLarge() bypasses prepareCommit(), so this guard is needed separately.
+            throw DeltaErrors.operationNotSupportedException(
+              "Clustering column changes on Unity Catalog managed tables")
           case a: AddFile =>
             assertDeletionVectorWellFormed(a)
             validateAddFileInvariants(a, notNullPartitionCols)

@@ -43,6 +43,9 @@ import org.apache.spark.sql.SparkSession
 object UCCommitCoordinatorBuilder
     extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
 
+  /** The coordinator name used in table metadata to identify UC-managed tables. */
+  final val COORDINATOR_NAME: String = "unity-catalog"
+
   /** Prefix for Spark SQL catalog configurations. */
   final private val SPARK_SQL_CATALOG_PREFIX = "spark.sql.catalog."
 
@@ -64,7 +67,7 @@ object UCCommitCoordinatorBuilder
   // Use a var instead of val for ease of testing by injecting different UCClientFactory.
   private[delta] var ucClientFactory: UCClientFactory = UCTokenBasedRestClientFactory
 
-  override def getName: String = "unity-catalog"
+  override def getName: String = COORDINATOR_NAME
 
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     val metastoreId = conf.getOrElse(

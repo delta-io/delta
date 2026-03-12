@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
+import org.apache.spark.sql.delta.{AppendOnlyTableFeature, CatalogOwnedTableFeature, CheckpointPolicy, ColumnMappingTableFeature, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DomainMetadataTableFeature, InCommitTimestampTableFeature, InvariantsTableFeature, MaterializedRowCommitVersion, MaterializedRowId, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature, VacuumProtocolCheckTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -40,12 +40,24 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
-import org.apache.spark.sql.connector.catalog.CatalogPlugin
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, TableCatalog}
 import org.apache.spark.util.Utils
 
 object CatalogOwnedTableUtils extends DeltaLogging {
   /** The default catalog name only used for testing. */
   val DEFAULT_CATALOG_NAME_FOR_TESTING: String = "spark_catalog"
+
+  private[delta] val UC_MANAGED_AUTO_PRESERVED_FEATURE_NAMES = Set(
+    AppendOnlyTableFeature.name,
+    CatalogOwnedTableFeature.name,
+    ColumnMappingTableFeature.name,
+    DeletionVectorsTableFeature.name,
+    DomainMetadataTableFeature.name,
+    InCommitTimestampTableFeature.name,
+    InvariantsTableFeature.name,
+    RowTrackingFeature.name,
+    V2CheckpointTableFeature.name,
+    VacuumProtocolCheckTableFeature.name)
 
   /**
    * Sets or removes CatalogOwnedTableFeature from a transaction's protocol.
@@ -192,6 +204,68 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       (V2CheckpointTableFeature, DeltaConfigs.CHECKPOINT_POLICY, CheckpointPolicy.V2.name),
       (RowTrackingFeature, DeltaConfigs.ROW_TRACKING_ENABLED, "true")
     )
+
+  def getSystemManagedPropertiesToPreserveOnReplace(
+      snapshot: Snapshot): Map[String, String] = {
+    val qolKeys = QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key)
+    val explicitKeys = Seq(
+      UCCommitCoordinatorClient.UC_TABLE_ID_KEY,
+      TableCatalog.PROP_IS_MANAGED_LOCATION,
+      DeltaConfigs.IN_COMMIT_TIMESTAMPS_ENABLED.key,
+      MaterializedRowId.MATERIALIZED_COLUMN_NAME_PROP,
+      MaterializedRowCommitVersion.MATERIALIZED_COLUMN_NAME_PROP)
+    val keysToPreserve =
+      (qolKeys ++
+        explicitKeys ++
+        CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS ++
+        CoordinatedCommitsUtils.ICT_TABLE_PROPERTY_KEYS).toSet
+
+    snapshot.metadata.configuration.filter { case (k, _) => keysToPreserve.contains(k) }
+  }
+
+  private[delta] def comparableExistingUCManagedConfiguration(
+      snapshot: Snapshot): Map[String, String] = {
+    comparableUCManagedConfiguration(
+      snapshot.metadata.configuration,
+      snapshot.protocol.readerAndWriterFeatureNames)
+  }
+
+  private[delta] def comparableProposedUCManagedConfiguration(
+      snapshot: Snapshot,
+      metadata: Metadata): Map[String, String] = {
+    val requestedFeatureNames =
+      TableFeatureProtocolUtils
+        .getSupportedFeaturesFromTableConfigs(metadata.configuration)
+        .map(_.name)
+    val effectiveFeatureNames =
+      requestedFeatureNames ++
+        snapshot.protocol.readerAndWriterFeatureNames.intersect(
+          UC_MANAGED_AUTO_PRESERVED_FEATURE_NAMES)
+    comparableUCManagedConfiguration(metadata.configuration, effectiveFeatureNames)
+  }
+
+  private[delta] def hasEquivalentUCManagedMetadata(
+      snapshot: Snapshot,
+      metadata: Metadata): Boolean = {
+    metadata.schemaString == snapshot.metadata.schemaString &&
+      metadata.partitionColumns == snapshot.metadata.partitionColumns &&
+      metadata.description == snapshot.metadata.description &&
+      comparableProposedUCManagedConfiguration(snapshot, metadata) ==
+        comparableExistingUCManagedConfiguration(snapshot)
+  }
+
+  private def comparableUCManagedConfiguration(
+      configuration: Map[String, String],
+      featureNames: Set[String]): Map[String, String] = {
+    val nonFeatureProperties =
+      configuration.filterNot { case (k, _) =>
+        k.startsWith(TableFeatureProtocolUtils.FEATURE_PROP_PREFIX)
+      }
+    nonFeatureProperties ++ featureNames.toSeq.sorted.map { name =>
+      TableFeatureProtocolUtils.propertyKey(name) ->
+        TableFeatureProtocolUtils.FEATURE_PROP_SUPPORTED
+    }
+  }
 
   /**
    * Return true if we should enable CatalogOwned either via default spark

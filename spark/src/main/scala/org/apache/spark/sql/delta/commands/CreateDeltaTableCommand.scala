@@ -787,8 +787,21 @@ case class CreateDeltaTableCommand(
         tableDesc,
         newMetadata.configuration,
         txn.snapshot)
-      newMetadata = newMetadata.copy(configuration = updatedConfig)
-      txn.updateMetadataForNewTableInReplace(newMetadata)
+      val preservedSystemManagedConfig =
+        if (txn.snapshot.isCatalogOwned) {
+          CatalogOwnedTableUtils.getSystemManagedPropertiesToPreserveOnReplace(txn.snapshot)
+        } else {
+          Map.empty[String, String]
+        }
+      newMetadata = newMetadata.copy(
+        configuration = preservedSystemManagedConfig ++ updatedConfig)
+      val isNoOpCatalogOwnedReplace =
+        allowCatalogManaged &&
+          txn.snapshot.isCatalogOwned &&
+          CatalogOwnedTableUtils.hasEquivalentUCManagedMetadata(txn.snapshot, newMetadata)
+      if (!isNoOpCatalogOwnedReplace) {
+        txn.updateMetadataForNewTableInReplace(newMetadata)
+      }
     }
   }
 
