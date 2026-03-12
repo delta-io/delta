@@ -209,6 +209,34 @@ public class ExpressionUtilsTest {
         "Result should be an AND predicate");
   }
 
+  @Test
+  public void testInFilter_NotInWithNullValue() {
+    // NOT(IN(col, 1, null)): null in the IN list causes IN to bail → NOT also bails
+    In inFilter = new In("city", new Object[] {"hz", null});
+    Not notFilter = new Not(inFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
+
+    assertFalse(
+        result.isPresent(), "NOT(IN(..., null)) should not be pushed down due to null in IN list");
+  }
+
+  @Test
+  public void testInFilter_ORWithUnsupportedFilter() {
+    // OR(In(...), StringEndsWith(...)) — one branch unsupported, whole OR cannot be pushed
+    In inFilter = new In("city", new Object[] {"hz", "sh"});
+    StringEndsWith endsWithFilter = new StringEndsWith("name", "foo");
+    Or orFilter = new Or(inFilter, endsWithFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter);
+
+    assertFalse(
+        result.isPresent(),
+        "OR(In, unsupported) should not be pushed down when one branch is unsupported");
+  }
+
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(
