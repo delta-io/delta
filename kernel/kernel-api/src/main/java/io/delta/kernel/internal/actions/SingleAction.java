@@ -19,8 +19,6 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.types.StructType;
 import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 
 public class SingleAction {
   /**
@@ -80,33 +78,23 @@ public class SingleAction {
   private static final int DOMAIN_METADATA_ORDINAL = FULL_SCHEMA.indexOf("domainMetadata");
 
   public static Row createAddFileSingleAction(Row addFile) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(ADD_FILE_ORDINAL, addFile);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(FULL_SCHEMA, Collections.singletonMap(ADD_FILE_ORDINAL, addFile));
   }
 
   public static Row createProtocolSingleAction(Row protocol) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(PROTOCOL_ORDINAL, protocol);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(FULL_SCHEMA, Collections.singletonMap(PROTOCOL_ORDINAL, protocol));
   }
 
   public static Row createMetadataSingleAction(Row metadata) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(METADATA_ORDINAL, metadata);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(FULL_SCHEMA, Collections.singletonMap(METADATA_ORDINAL, metadata));
   }
 
   public static Row createRemoveFileSingleAction(Row remove) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(REMOVE_FILE_ORDINAL, remove);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(FULL_SCHEMA, Collections.singletonMap(REMOVE_FILE_ORDINAL, remove));
   }
 
   public static Row createCommitInfoSingleAction(Row commitInfo) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(COMMIT_INFO_ORDINAL, commitInfo);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(FULL_SCHEMA, Collections.singletonMap(COMMIT_INFO_ORDINAL, commitInfo));
   }
 
   public static Row createDomainMetadataSingleAction(Row domainMetadata) {
@@ -115,8 +103,6 @@ public class SingleAction {
   }
 
   public static Row createTxnSingleAction(Row txn) {
-    Map<Integer, Object> singleActionValueMap = new HashMap<>();
-    singleActionValueMap.put(TXN_ORDINAL, txn);
-    return new GenericRow(FULL_SCHEMA, singleActionValueMap);
+    return new GenericRow(FULL_SCHEMA, Collections.singletonMap(TXN_ORDINAL, txn));
   }
 }
