@@ -1829,7 +1829,7 @@ public class SparkMicroBatchStream
               .createDataFrame(rdd, ScanFileRDD.SPARK_SCHEMA)
               .orderBy("modificationTime", "path")
               .withColumn(FILE_IDX_COL, functions.monotonically_increasing_id())
-              .persist(StorageLevel.MEMORY_AND_DISK());
+              .persist(StorageLevel.DISK_ONLY());
 
       dfCache = new DataFrameSnapshotCache(version, df);
       cachedDataFrameSnapshot.set(dfCache);
