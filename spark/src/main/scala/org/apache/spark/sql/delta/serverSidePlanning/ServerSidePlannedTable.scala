@@ -179,7 +179,7 @@ class ServerSidePlannedTable(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient)
-    extends Table with SupportsRead with DeltaLogging {
+    extends Table with SupportsRead with AutoCloseable with DeltaLogging {
 
   // Returns fully qualified name (e.g., "catalog.database.table").
   // The databaseName parameter receives ident.namespace().mkString(".") from DeltaCatalog,
@@ -194,6 +194,10 @@ class ServerSidePlannedTable(
 
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
     new ServerSidePlannedScanBuilder(spark, databaseName, tableName, tableSchema, planningClient)
+  }
+
+  override def close(): Unit = {
+    planningClient.close()
   }
 }
 

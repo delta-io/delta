@@ -485,4 +485,31 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       assert(capturedProjection.isEmpty, "Should not fire a planTable request for EXPLAIN")
     }
   }
+
+  test("ServerSidePlannedTable closes planning client on close") {
+    var clientClosed = false
+    val trackingClient = new ServerSidePlanningClient {
+      override def planScan(
+          databaseName: String,
+          table: String,
+          filterOption: Option[Filter],
+          projectionOption: Option[Seq[String]],
+          limitOption: Option[Int]): ScanPlan = ScanPlan(Seq.empty)
+      override def canConvertFilters(filters: Array[Filter]): Boolean = true
+      override def close(): Unit = { clientClosed = true }
+    }
+
+    val table = new ServerSidePlannedTable(
+      spark, "test_db", "test_table", new org.apache.spark.sql.types.StructType(), trackingClient)
+    assert(!clientClosed, "Client should not be closed before table.close()")
+    table.close()
+    assert(clientClosed, "Client should be closed after table.close()")
+  }
+
+  test("ServerSidePlanningClient extends AutoCloseable") {
+    // Verify the trait hierarchy: ServerSidePlanningClient must extend AutoCloseable
+    // so that any client implementation can be properly closed
+    assert(classOf[AutoCloseable].isAssignableFrom(classOf[ServerSidePlanningClient]),
+      "ServerSidePlanningClient should extend AutoCloseable")
+  }
 }
