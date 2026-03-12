@@ -90,6 +90,14 @@ public class SparkMicroBatchStream
 
   private static final String FILE_IDX_COL = "_file_idx";
 
+  /**
+   * Bypass SLF4J (which may be NOP-bound) by writing directly to stderr. Only used for short-lived
+   * debugging of the streaming initialization path.
+   */
+  private static void debugLog(String msg) {
+    System.err.println("[STREAM_DEBUG " + java.time.Instant.now() + "] " + msg);
+  }
+
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
           new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
@@ -239,7 +247,7 @@ public class SparkMicroBatchStream
 
   @Override
   public void prepareForTriggerAvailableNow() {
-    logger.info("The streaming query reports to use Trigger.AvailableNow.");
+    debugLog("prepareForTriggerAvailableNow called");
     isTriggerAvailableNow = true;
   }
 
@@ -255,12 +263,13 @@ public class SparkMicroBatchStream
   }
 
   private void initLastOffsetForTriggerAvailableNow(DeltaSourceOffset startOffsetOpt) {
-    logger.warn(
-        "[STREAM_DEBUG] initLastOffsetForTriggerAvailableNow: "
-            + "useDataFrameBasedInitialSnapshot={}, isInitialSnapshot={}, startOffset={}",
-        useDataFrameBasedInitialSnapshot,
-        startOffsetOpt.isInitialSnapshot(),
-        startOffsetOpt.json());
+    debugLog(
+        "initLastOffsetForTriggerAvailableNow: useDF="
+            + useDataFrameBasedInitialSnapshot
+            + " isInitSnap="
+            + startOffsetOpt.isInitialSnapshot()
+            + " startOffset="
+            + startOffsetOpt.json());
     if (useDataFrameBasedInitialSnapshot && startOffsetOpt.isInitialSnapshot()) {
       lastOffsetForTriggerAvailableNow = getLastOffsetForAvailableNowViaDataFrame(startOffsetOpt);
     } else {
@@ -268,9 +277,9 @@ public class SparkMicroBatchStream
           latestOffsetInternal(startOffsetOpt, ReadLimit.allAvailable());
     }
 
-    logger.warn(
-        "[STREAM_DEBUG] initLastOffsetForTriggerAvailableNow: result={}",
-        lastOffsetForTriggerAvailableNow.map(DeltaSourceOffset::json).orElse("empty"));
+    debugLog(
+        "initLastOffsetForTriggerAvailableNow: result="
+            + lastOffsetForTriggerAvailableNow.map(DeltaSourceOffset::json).orElse("empty"));
   }
 
   /**
@@ -291,9 +300,7 @@ public class SparkMicroBatchStream
   private Optional<DeltaSourceOffset> getLastOffsetForAvailableNowViaDataFrame(
       DeltaSourceOffset startOffset) {
     long snapshotVersion = startOffset.reservoirVersion();
-    logger.warn(
-        "[STREAM_DEBUG] getLastOffsetForAvailableNowViaDataFrame: snapshotVersion={}",
-        snapshotVersion);
+    debugLog("getLastOffsetForAvailableNowViaDataFrame: snapshotVersion=" + snapshotVersion);
 
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(
         snapshotVersion, /* batchEndVersion= */ null);
@@ -306,11 +313,11 @@ public class SparkMicroBatchStream
 
       if (lastDelta.isPresent()) {
         IndexedFile lastFile = lastDelta.get();
-        logger.warn(
-            "[STREAM_DEBUG] getLastOffsetForAvailableNowViaDataFrame: "
-                + "found delta changes, lastFile version={} index={}",
-            lastFile.getVersion(),
-            lastFile.getIndex());
+        debugLog(
+            "getLastOffsetForAvailableNowViaDataFrame: found delta changes, lastFile v="
+                + lastFile.getVersion()
+                + " idx="
+                + lastFile.getIndex());
         return Optional.of(
             DeltaSource.buildOffsetFromIndexedFile(
                 tableId,
@@ -330,10 +337,9 @@ public class SparkMicroBatchStream
     // No delta changes after the snapshot. The logical end of the initial snapshot is the
     // END sentinel. buildOffsetFromIndexedFile with END_INDEX automatically bumps to
     // (snapshotVersion + 1, BASE_INDEX, isInitialSnapshot = false).
-    logger.warn(
-        "[STREAM_DEBUG] getLastOffsetForAvailableNowViaDataFrame: "
-            + "no delta changes, using END sentinel for version={}",
-        snapshotVersion);
+    debugLog(
+        "getLastOffsetForAvailableNowViaDataFrame: no delta changes, END sentinel for v="
+            + snapshotVersion);
     return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
             tableId,
@@ -368,6 +374,13 @@ public class SparkMicroBatchStream
       isInitialSnapshot = true;
     }
 
+    debugLog(
+        "initialOffset: v="
+            + version
+            + " isInitSnap="
+            + isInitialSnapshot
+            + " useDF="
+            + useDataFrameBasedInitialSnapshot);
     return DeltaSourceOffset.apply(
         tableId, version, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
   }
@@ -391,16 +404,17 @@ public class SparkMicroBatchStream
     Objects.requireNonNull(limit, "limit should not be null for MicroBatchStream");
 
     DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
-    logger.warn(
-        "[STREAM_DEBUG] latestOffset called: startOffset={}, limit={}, isFirstBatch={}",
-        deltaStartOffset.json(),
-        limit,
-        isFirstBatch);
+    debugLog(
+        "latestOffset called: start="
+            + deltaStartOffset.json()
+            + " limit="
+            + limit
+            + " isFirstBatch="
+            + isFirstBatch);
     initForTriggerAvailableNowIfNeeded(deltaStartOffset);
     // Return null when no data is available for this batch.
     DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
-    logger.warn(
-        "[STREAM_DEBUG] latestOffset returning: {}", endOffset != null ? endOffset.json() : "null");
+    debugLog("latestOffset returning: " + (endOffset != null ? endOffset.json() : "null"));
     isFirstBatch = false;
     return endOffset;
   }
@@ -449,12 +463,13 @@ public class SparkMicroBatchStream
       Optional<DeltaSource.AdmissionLimits> limits,
       boolean isFirstBatch) {
     // TODO(#5319): Special handling for schema tracking.
-    logger.warn(
-        "[STREAM_DEBUG] getNextOffsetFromPreviousOffset: previousOffset={}, "
-            + "limits={}, isFirstBatch={}",
-        previousOffset.json(),
-        limits.map(Object::toString).orElse("empty"),
-        isFirstBatch);
+    debugLog(
+        "getNextOffsetFromPreviousOffset: prev="
+            + previousOffset.json()
+            + " hasLimits="
+            + limits.isPresent()
+            + " isFirstBatch="
+            + isFirstBatch);
 
     CloseableIterator<IndexedFile> changes =
         getFileChangesWithRateLimit(
@@ -463,13 +478,14 @@ public class SparkMicroBatchStream
             previousOffset.isInitialSnapshot(),
             limits);
 
+    debugLog("getNextOffsetFromPreviousOffset: calling iteratorLast...");
     Optional<IndexedFile> lastFileChange = Utils.iteratorLast(changes);
+    debugLog(
+        "getNextOffsetFromPreviousOffset: iteratorLast done, present="
+            + lastFileChange.isPresent());
 
     if (!lastFileChange.isPresent()) {
-      logger.warn(
-          "[STREAM_DEBUG] getNextOffsetFromPreviousOffset: no file changes found, "
-              + "isFirstBatch={}",
-          isFirstBatch);
+      debugLog("getNextOffsetFromPreviousOffset: EMPTY, isFirstBatch=" + isFirstBatch);
       // For the first batch, return empty to match DSv1's
       // getStartingOffsetFromSpecificDeltaVersion
       if (isFirstBatch) {
@@ -483,10 +499,13 @@ public class SparkMicroBatchStream
     checkReadIncompatibleSchemaChangeOnStreamStartOnce(
         previousOffset.reservoirVersion(), /* batchEndVersion= */ null);
     IndexedFile lastFile = lastFileChange.get();
-    logger.warn(
-        "[STREAM_DEBUG] getNextOffsetFromPreviousOffset: lastFileChange version={} index={}",
-        lastFile.getVersion(),
-        lastFile.getIndex());
+    debugLog(
+        "getNextOffsetFromPreviousOffset: lastFile v="
+            + lastFile.getVersion()
+            + " idx="
+            + lastFile.getIndex()
+            + " hasFileAction="
+            + lastFile.hasFileAction());
     return Optional.of(
         DeltaSource.buildOffsetFromIndexedFile(
             tableId,
@@ -504,10 +523,7 @@ public class SparkMicroBatchStream
   public InputPartition[] planInputPartitions(Offset start, Offset end) {
     DeltaSourceOffset startOffset = (DeltaSourceOffset) start;
     DeltaSourceOffset endOffset = (DeltaSourceOffset) end;
-    logger.warn(
-        "[STREAM_DEBUG] planInputPartitions: start={}, end={}",
-        startOffset.json(),
-        endOffset.json());
+    debugLog("planInputPartitions: start=" + startOffset.json() + " end=" + endOffset.json());
 
     long fromVersion = startOffset.reservoirVersion();
     long fromIndex = startOffset.index();
@@ -531,17 +547,18 @@ public class SparkMicroBatchStream
         partitionedFiles.add(partitionedFile);
       }
     } catch (IOException e) {
-      logger.warn("[STREAM_DEBUG] planInputPartitions: EXCEPTION during getFileChanges", e);
+      debugLog("planInputPartitions: EXCEPTION during getFileChanges: " + e);
       throw new RuntimeException(
           String.format(
               "Failed to get file changes for table %s from version %d index %d to offset %s",
               tablePath, fromVersion, fromIndex, endOffset),
           e);
     }
-    logger.warn(
-        "[STREAM_DEBUG] planInputPartitions: collected {} files, totalBytes={}",
-        partitionedFiles.size(),
-        totalBytesToRead);
+    debugLog(
+        "planInputPartitions: collected "
+            + partitionedFiles.size()
+            + " files, totalBytes="
+            + totalBytesToRead);
 
     long maxSplitBytes =
         PartitionUtils.calculateMaxSplitBytes(
@@ -552,7 +569,7 @@ public class SparkMicroBatchStream
             spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
     InputPartition[] result =
         JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
-    logger.warn("[STREAM_DEBUG] planInputPartitions: returning {} partitions", result.length);
+    debugLog("planInputPartitions: returning " + result.length + " partitions");
     return result;
   }
 
@@ -693,13 +710,15 @@ public class SparkMicroBatchStream
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSource.AdmissionLimits> limits) {
-    logger.warn(
-        "[STREAM_DEBUG] getFileChangesWithRateLimit: fromVersion={}, fromIndex={}, "
-            + "isInitialSnapshot={}, hasLimits={}",
-        fromVersion,
-        fromIndex,
-        isInitialSnapshot,
-        limits.isPresent());
+    debugLog(
+        "getFileChangesWithRateLimit: fromV="
+            + fromVersion
+            + " fromIdx="
+            + fromIndex
+            + " isInitSnap="
+            + isInitialSnapshot
+            + " hasLimits="
+            + limits.isPresent());
     // TODO(#5319): getFileChangesForCDC if CDC is enabled.
 
     CloseableIterator<IndexedFile> changes =
@@ -735,13 +754,15 @@ public class SparkMicroBatchStream
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSourceOffset> endOffset) {
-    logger.warn(
-        "[STREAM_DEBUG] getFileChanges: fromVersion={}, fromIndex={}, "
-            + "isInitialSnapshot={}, endOffset={}",
-        fromVersion,
-        fromIndex,
-        isInitialSnapshot,
-        endOffset.map(DeltaSourceOffset::json).orElse("empty"));
+    debugLog(
+        "getFileChanges: fromV="
+            + fromVersion
+            + " fromIdx="
+            + fromIndex
+            + " isInitSnap="
+            + isInitialSnapshot
+            + " endOffset="
+            + endOffset.map(DeltaSourceOffset::json).orElse("empty"));
 
     CloseableIterator<IndexedFile> result;
 
@@ -785,6 +806,11 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
+    debugLog(
+        "filterDeltaLogs: startV="
+            + startVersion
+            + " endOffset="
+            + endOffset.map(DeltaSourceOffset::json).orElse("empty"));
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
@@ -798,21 +824,52 @@ public class SparkMicroBatchStream
         // 2. buildOffsetFromIndexedFile bumps the version up by one when we hit the END_INDEX.
         // TODO(#5318): consider caching the latest version to avoid loading a new snapshot.
         // TODO(#5318): kernel should ideally relax this constraint.
+        debugLog(
+            "filterDeltaLogs: endVersion "
+                + endVersionOpt.get()
+                + " > snapshotV "
+                + latestVersion
+                + ", loading latest...");
+        long t0 = System.currentTimeMillis();
         endVersionOpt = Optional.of(snapshotManager.loadLatestSnapshot().getVersion());
+        debugLog(
+            "filterDeltaLogs: loadLatestSnapshot took "
+                + (System.currentTimeMillis() - t0)
+                + "ms, latestV="
+                + endVersionOpt.get());
       }
 
       // After capping, check if startVersion is beyond the endVersion.
       // This can happen when all files in the batch come from the initial snapshot
       // (e.g., offset was bumped to next version due to END_INDEX, but no new commits exist).
       if (startVersion > endVersionOpt.get()) {
+        debugLog(
+            "filterDeltaLogs: startV "
+                + startVersion
+                + " > endV "
+                + endVersionOpt.get()
+                + ", returning empty");
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
     } else {
       // When endOffset is empty (offset discovery), check if startVersion exceeds the current
       // latest version. We must load the current latest (not snapshotAtSourceInit) because new
       // commits may have arrived since stream initialization.
+      debugLog("filterDeltaLogs: no endOffset, loading latest snapshot...");
+      long t0 = System.currentTimeMillis();
       long currentLatestVersion = snapshotManager.loadLatestSnapshot().getVersion();
+      debugLog(
+          "filterDeltaLogs: loadLatestSnapshot took "
+              + (System.currentTimeMillis() - t0)
+              + "ms, latestV="
+              + currentLatestVersion);
       if (startVersion > currentLatestVersion) {
+        debugLog(
+            "filterDeltaLogs: startV "
+                + startVersion
+                + " > latestV "
+                + currentLatestVersion
+                + ", returning empty");
         return Utils.toCloseableIterator(Collections.emptyIterator());
       }
     }
@@ -1217,11 +1274,13 @@ public class SparkMicroBatchStream
       long version, long fromIndex) {
     DataFrameSnapshotCache dfCache = cachedDataFrameSnapshot.get();
     boolean cacheHit = dfCache != null && dfCache.getVersion() == version;
-    logger.warn(
-        "[STREAM_DEBUG] getSnapshotFilesViaDataFrame: version={}, fromIndex={}, cacheHit={}",
-        version,
-        fromIndex,
-        cacheHit);
+    debugLog(
+        "getSnapshotFilesViaDataFrame: v="
+            + version
+            + " fromIdx="
+            + fromIndex
+            + " cacheHit="
+            + cacheHit);
     if (!cacheHit) {
       invalidateDataFrameCache();
 
@@ -1233,6 +1292,7 @@ public class SparkMicroBatchStream
       SerializableReadOnlySnapshot serSnapshot =
           SerializableReadOnlySnapshot.fromSnapshot(snapshotAtSourceInit, hadoopConf);
 
+      debugLog("getSnapshotFilesViaDataFrame: creating DataFrame pipeline...");
       ScanFileRDD rdd = new ScanFileRDD(spark.sparkContext(), serSnapshot);
       Dataset<Row> df =
           spark
@@ -1241,9 +1301,8 @@ public class SparkMicroBatchStream
               .withColumn(FILE_IDX_COL, functions.monotonically_increasing_id())
               .persist(StorageLevel.MEMORY_AND_DISK());
 
-      logger.warn(
-          "[STREAM_DEBUG] getSnapshotFilesViaDataFrame: created new cache, " + "numPartitions={}",
-          df.rdd().getNumPartitions());
+      int numPartitions = df.rdd().getNumPartitions();
+      debugLog("getSnapshotFilesViaDataFrame: created cache, numPartitions=" + numPartitions);
 
       dfCache = new DataFrameSnapshotCache(version, df);
       cachedDataFrameSnapshot.set(dfCache);
@@ -1252,12 +1311,13 @@ public class SparkMicroBatchStream
     Dataset<Row> df = dfCache.getSortedAddFiles();
 
     boolean applyFilter = fromIndex > DeltaSourceOffset.BASE_INDEX();
-    logger.warn(
-        "[STREAM_DEBUG] getSnapshotFilesViaDataFrame: applyFilter={}, fromIndex={}, "
-            + "BASE_INDEX={}",
-        applyFilter,
-        fromIndex,
-        DeltaSourceOffset.BASE_INDEX());
+    debugLog(
+        "getSnapshotFilesViaDataFrame: applyFilter="
+            + applyFilter
+            + " fromIdx="
+            + fromIndex
+            + " BASE_INDEX="
+            + DeltaSourceOffset.BASE_INDEX());
     if (applyFilter) {
       df = df.where(functions.col(FILE_IDX_COL).gt(fromIndex));
     }
@@ -1279,11 +1339,12 @@ public class SparkMicroBatchStream
       Dataset<Row> df, long version) {
 
     int fileIdxOrdinal = df.schema().fieldIndex(FILE_IDX_COL);
-    logger.warn(
-        "[STREAM_DEBUG] dataFrameToIndexedFiles: calling toLocalIterator for version={}", version);
+    debugLog("dataFrameToIndexedFiles: calling toLocalIterator for v=" + version);
+    long t0 = System.currentTimeMillis();
     java.util.Iterator<Row> localIter = df.toLocalIterator();
-    logger.warn(
-        "[STREAM_DEBUG] dataFrameToIndexedFiles: toLocalIterator returned for version={}", version);
+    long elapsed = System.currentTimeMillis() - t0;
+    debugLog(
+        "dataFrameToIndexedFiles: toLocalIterator returned in " + elapsed + "ms for v=" + version);
 
     return new CloseableIterator<IndexedFile>() {
       private boolean sentBegin = false;
@@ -1299,6 +1360,7 @@ public class SparkMicroBatchStream
       public IndexedFile next() {
         if (!sentBegin) {
           sentBegin = true;
+          debugLog("dataFrameToIndexedFiles: emitting BEGIN sentinel");
           return new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null);
         }
 
@@ -1307,17 +1369,18 @@ public class SparkMicroBatchStream
           long fileIdx = sparkRow.getLong(fileIdxOrdinal);
           rowCount++;
           if (rowCount == 1) {
-            logger.warn("[STREAM_DEBUG] dataFrameToIndexedFiles: first row fileIdx={}", fileIdx);
+            debugLog("dataFrameToIndexedFiles: first row fileIdx=" + fileIdx);
           }
           if (rowCount % 100000 == 0) {
             Runtime rt = Runtime.getRuntime();
             long usedMB = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
-            logger.warn(
-                "[STREAM_DEBUG] dataFrameToIndexedFiles: streamed {} rows, "
-                    + "lastFileIdx={}, usedMemMB={}",
-                rowCount,
-                fileIdx,
-                usedMB);
+            debugLog(
+                "dataFrameToIndexedFiles: streamed "
+                    + rowCount
+                    + " rows, lastFileIdx="
+                    + fileIdx
+                    + " usedMemMB="
+                    + usedMB);
           }
           // SparkRowToKernelRow accesses ordinals 0..N-1 matching AddFile.SCHEMA_WITHOUT_STATS;
           // the extra _file_idx column at the end is safely ignored.
@@ -1326,7 +1389,7 @@ public class SparkMicroBatchStream
           return new IndexedFile(version, fileIdx, new AddFile(kernelRow));
         }
 
-        logger.warn("[STREAM_DEBUG] dataFrameToIndexedFiles: END sentinel, totalRows={}", rowCount);
+        debugLog("dataFrameToIndexedFiles: END sentinel, totalRows=" + rowCount);
         sentEnd = true;
         return new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null);
       }
