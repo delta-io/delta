@@ -326,9 +326,10 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_DELETION_VECTORS =
       (inputContext) -> {
-        // Check both newProtocol and prevProtocol to guard against concurrent writers that may
-        // have enabled deletion vectors. This matches Spark's CheckDeletionVectorDisabled which
-        // checks both prevSnapshot and newestProtocol.
+        // Check both newProtocol and prevProtocol as defense-in-depth against cases where
+        // the previous snapshot already had deletion vectors enabled. This matches Spark's
+        // CheckDeletionVectorDisabled which checks both prevSnapshot and newestProtocol.
+        // Note: the conflict checker may also catch concurrent DV enablement at commit time.
         boolean dvInNewProtocol =
             inputContext.newProtocol.supportsFeature(DELETION_VECTORS_RW_FEATURE);
         boolean dvInPrevProtocol =

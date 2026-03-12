@@ -24,9 +24,9 @@ import io.delta.kernel.internal.TableConfig
 import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.icebergcompat.IcebergWriterCompatV1MetadataValidatorAndUpdater.validateAndUpdateIcebergWriterCompatV1Metadata
 import io.delta.kernel.internal.tablefeatures.TableFeature
-import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1, TYPE_WIDENING_RW_FEATURE}
+import io.delta.kernel.internal.tablefeatures.TableFeatures.{COLUMN_MAPPING_RW_FEATURE, DELETION_VECTORS_RW_FEATURE, ICEBERG_COMPAT_V2_W_FEATURE, ICEBERG_WRITER_COMPAT_V1, TYPE_WIDENING_RW_FEATURE}
 import io.delta.kernel.internal.util.ColumnMapping
-import io.delta.kernel.types.{ByteType, DataType, DecimalType, FieldMetadata, IntegerType, LongType, ShortType, StructField, StructType, TypeChange}
+import io.delta.kernel.types.{BooleanType, ByteType, DataType, DecimalType, FieldMetadata, IntegerType, LongType, ShortType, StructField, StructType, TypeChange}
 
 class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     extends IcebergCompatV2MetadataValidatorAndUpdaterSuiteBase {
@@ -512,5 +512,26 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
             s"icebergCompatV2: requires the feature '$missingFeatureStr' to be enabled"))
         }
       }
+  }
+
+  /* --- prevProtocol DV check flows through WriterCompatV1 -> CompatV2 delegation --- */
+
+  test("prevProtocol DV check flows through WriterCompatV1 delegation to CompatV2") {
+    val schema = new StructType().add("col", BooleanType.BOOLEAN)
+    val metadata = getCompatEnabledMetadata(schema)
+    val newProtocol = getCompatEnabledProtocol()
+    // prevProtocol has DVs enabled, simulating a table that had DVs before this transaction
+    val prevProtocol = Optional.of(getCompatEnabledProtocol(DELETION_VECTORS_RW_FEATURE))
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergWriterCompatV1Metadata(
+        false,
+        metadata,
+        newProtocol,
+        prevProtocol)
+    }
+    // The error comes from icebergCompatV2 since WriterCompatV1 delegates DV checking to V2
+    assert(e.getMessage.contains(
+      "Table features [deletionVectors] are incompatible with icebergCompatV2"))
   }
 }

@@ -498,8 +498,10 @@ public class TransactionMetadataFactory {
                       oldMetadata.getConfiguration(), metadata.getConfiguration()));
         });
 
-    // The previous protocol is used to guard against concurrent writers that may have enabled
-    // incompatible features (e.g. deletion vectors) since the last snapshot was read.
+    // Pass the previous protocol to IcebergCompat checks as defense-in-depth: if the read
+    // snapshot already had deletion vectors enabled, the check should reject it even when the
+    // new protocol in this transaction does not include DVs. The conflict checker may also
+    // catch this at commit time, but checking early gives a clearer error message.
     Optional<Protocol> prevProtocol = latestSnapshotOpt.map(s -> s.getProtocol());
 
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
