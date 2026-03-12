@@ -57,7 +57,7 @@ object UCMetricsClient {
         "Catalog name required for UC metrics; " +
         "endpoint URI is read from spark.sql.catalog.<name>.uri"))
     val endpointUrl = getEndpointUrl(spark, catalog)
-    val authToken = getAuthToken(spark, catalogName)
+    val authToken = getAuthToken(spark, catalog)
 
     val requestConfig = RequestConfig.custom()
       .setConnectTimeout(HTTP_TIMEOUT_MS.toInt)
@@ -108,16 +108,13 @@ object UCMetricsClient {
     }
   }
 
-  private def getAuthToken(spark: SparkSession, catalogName: Option[String]): String = {
-    val catalog = catalogName.getOrElse(
-      throw new IllegalArgumentException(
-        "Catalog name required for UC metrics auth resolution"))
+  private def getAuthToken(spark: SparkSession, catalogName: String): String = {
     val configMap = UCCommitCoordinatorBuilder.getCatalogConfigMap(spark)
-    val config = configMap.get(catalog).getOrElse(
+    val config = configMap.get(catalogName).getOrElse(
       throw new IllegalArgumentException(
-        s"Unity Catalog configuration not found for catalog '$catalog'. " +
-        "Configure spark.sql.catalog.<catalog>.uri and auth (auth.type/auth.token or " +
-        "legacy spark.sql.catalog.<catalog>.token)."))
+        s"Unity Catalog configuration not found for catalog '$catalogName'. " +
+        "Configure spark.sql.catalog.<catalog>.uri and auth " +
+        "(auth.type/auth.token or legacy .token)."))
     val tokenProvider = TokenProvider.create(config.authConfig.asJava)
     tokenProvider.accessToken()
   }
