@@ -27,7 +27,7 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
-import org.apache.http.{HttpHeaders, HttpStatus}
+import org.apache.http.{HttpHeaders, HttpResponse, HttpStatus}
 import org.apache.http.client.ServiceUnavailableRetryStrategy
 import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
 import org.apache.http.protocol.HttpContext
@@ -524,7 +524,7 @@ class IcebergRESTCatalogPlanningClient(
       extends ServiceUnavailableRetryStrategy {
 
     override def retryRequest(
-        response: org.apache.http.HttpResponse,
+        response: HttpResponse,
         executionCount: Int,
         context: HttpContext): Boolean = {
       val statusCode = response.getStatusLine.getStatusCode

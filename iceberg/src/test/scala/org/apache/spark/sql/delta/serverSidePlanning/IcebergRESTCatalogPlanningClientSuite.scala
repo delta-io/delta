@@ -549,9 +549,9 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   }
 
   test("retries exhausted on persistent 503 server error") {
+    // No populateTestData needed: failure injection intercepts at the servlet level before
+    // table data is accessed, so we only need the table to exist for a valid URI.
     withTempTable("retryTestExhausted") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.retryTestExhausted")
-
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         server.clearCaptured()
@@ -576,9 +576,9 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   }
 
   test("no retry on 404 client error") {
+    // No populateTestData needed: failure injection intercepts at the servlet level before
+    // table data is accessed, so we only need the table to exist for a valid URI.
     withTempTable("retryTest404") { table =>
-      populateTestData(s"rest_catalog.${defaultNamespace}.retryTest404")
-
       val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
       try {
         server.clearCaptured()
