@@ -266,7 +266,10 @@ public interface Transaction {
    */
   static DataWriteContext getWriteContext(
       Engine engine, Row transactionState, Map<String, Literal> partitionValues) {
-    blockIfColumnMappingEnabled(transactionState);
+    // Note: blockIfColumnMappingEnabled removed here because getWriteContext only computes
+    // the target directory and stats columns — it does not handle data schema transformations.
+    // The DSv2 Option B write path (Spark Parquet writer) handles column mapping via the
+    // physical write schema, and does not call transformLogicalData.
     StructType tableSchema = getLogicalSchema(transactionState);
     List<String> partitionColNames = getPartitionColumnsList(transactionState);
 
