@@ -29,6 +29,7 @@ import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.actions.*;
 import io.delta.kernel.internal.commit.DefaultFileSystemManagedTableOnlyCommitter;
+import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.types.StructType;
 import java.util.*;
@@ -313,7 +314,8 @@ public class TransactionBuilderImpl implements TransactionBuilder {
    * Validates that Kernel can write to the existing table with the latest snapshot as provided.
    * This means (1) Kernel supports the reader and writer protocol of the table (2) if a transaction
    * identifier has been provided in this txn builder, a concurrent write has not already committed
-   * this transaction (3) Updating a partitioned table with clustering columns is not allowed.
+   * this transaction (3) Updating a partitioned table with clustering columns is not allowed (4)
+   * Row tracking configs are present when row tracking is enabled.
    */
   protected void validateWriteToExistingTable(
       Engine engine, SnapshotImpl snapshot, boolean isCreateOrReplace) {
@@ -336,6 +338,12 @@ public class TransactionBuilderImpl implements TransactionBuilder {
           table.getPath(engine),
           snapshot.getMetadata().getPartitionColNames(),
           inputLogicalClusteringColumns.get());
+    }
+    // Validate row tracking configs are present when row tracking is enabled. This must run
+    // on every write, including the early-return path that skips TransactionMetadataFactory.
+    if (!isCreateOrReplace) {
+      MaterializedRowTrackingColumn.validateRowTrackingConfigsNotMissing(
+          snapshot.getMetadata(), table.getPath(engine));
     }
   }
 
