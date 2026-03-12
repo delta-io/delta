@@ -44,6 +44,8 @@ import shadedForDelta.org.apache.iceberg.util.LocationUtil
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.util.SerializableConfiguration
 
 object IcebergConverter {
 
@@ -282,22 +284,106 @@ class IcebergConverter
         case None =>
           // If we don't have a snapshot of the last converted version, get all the AddFiles
           // (via state reconstruction).
-          // Batch is always disabled but we still want to reuse the event for conversion
-          recordDeltaEvent(
-            snapshotToConvert.deltaLog,
-            "delta.iceberg.conversion.batch",
-            data = Map(
-              "version" -> snapshotToConvert.version,
-              "numOfFiles" -> snapshotToConvert.numOfFiles,
-              "actionBatchSize" -> -1, // This param is ignored as batch is deprecated
-              "numOfPartitions" -> 1
+          val distributedEnabled = spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_UNIFORM_ICEBERG_DISTRIBUTED_CONVERSION_ENABLED)
+          val threshold = spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_UNIFORM_ICEBERG_DISTRIBUTED_CONVERSION_THRESHOLD)
+
+          if (distributedEnabled && snapshotToConvert.numOfFiles > threshold) {
+            // Distributed manifest writing across Spark executors
+            recordDeltaEvent(
+              snapshotToConvert.deltaLog,
+              "delta.iceberg.conversion.batch",
+              data = Map(
+                "version" -> snapshotToConvert.version,
+                "numOfFiles" -> snapshotToConvert.numOfFiles,
+                "actionBatchSize" -> -1,
+                "numOfPartitions" -> computeNumPartitions(snapshotToConvert.numOfFiles),
+                "distributed" -> true
+              )
             )
-          )
-          runIcebergConversionForActions(
-            icebergTxn,
-            snapshotToConvert.allFiles.toLocalIterator().asScala.toSeq,
-            None,
-            snapshotToConvert.version)
+
+            // Check for DVs before distributing - matches driver path behavior
+            val allFiles = snapshotToConvert.allFiles
+            val hasDvs = allFiles.filter("deletionVector IS NOT NULL").limit(1).count() > 0
+            if (hasDvs) {
+              throw new UnsupportedOperationException("Deletion Vector is not supported")
+            }
+
+            val distributedHelper = icebergTxn.getDistributedAppendHelper
+            val hadoopConf = log.newDeltaHadoopConf()
+            val hadoopConfBroadcast = spark.sparkContext.broadcast(
+              new SerializableConfiguration(hadoopConf))
+
+            val ctx = ManifestWriteContext(
+              tablePath = icebergTxn.getTablePath,
+              partitionSpec = icebergTxn.getPartitionSpec,
+              logicalToPhysicalPartitionNames =
+                icebergTxn.getLogicalToPhysicalPartitionNames,
+              statsSchema = snapshotToConvert.statsSchema,
+              tableSchema = snapshotToConvert.schema,
+              sessionLocalTimeZone = SQLConf.get.sessionLocalTimeZone,
+              tableVersion = snapshotToConvert.version,
+              metadataOutputLocation = icebergTxn.getMetadataOutputLocation,
+              formatVersion = icebergTxn.getFormatVersion,
+              targetManifestSizeBytes =
+                DistributedManifestWriter.DEFAULT_TARGET_MANIFEST_SIZE_BYTES,
+              hadoopConfBroadcast = hadoopConfBroadcast
+            )
+
+            val numPartitions = computeNumPartitions(snapshotToConvert.numOfFiles)
+            var manifestFiles: Seq[shadedForDelta.org.apache.iceberg.ManifestFile] = Nil
+            try {
+              manifestFiles = DistributedManifestWriter.writeManifestsDistributed(
+                spark, allFiles, ctx, numPartitions)
+
+              // Track writeSize for observability parity with the driver path.
+              // Use total snapshot size since individual AddFile sizes are not
+              // available on the driver after distributed processing.
+              distributedHelper.writeSize = snapshotToConvert.sizeInBytes
+
+              if (manifestFiles.isEmpty) {
+                // No manifests written — should not happen since numOfFiles > threshold,
+                // but handle gracefully by falling through to commit without file updates.
+                logWarning("Distributed manifest writing produced no manifests " +
+                  s"for ${snapshotToConvert.numOfFiles} files.")
+              }
+              manifestFiles.foreach(distributedHelper.appendManifest)
+              distributedHelper.commit(snapshotToConvert.version)
+            } catch {
+              case NonFatal(e) =>
+                // Best-effort cleanup of orphan manifest files
+                if (manifestFiles.nonEmpty) {
+                  logWarning(s"Distributed manifest writing failed. " +
+                    s"Cleaning up ${manifestFiles.size} orphan manifests.")
+                  try {
+                    DistributedManifestWriter.cleanupManifests(manifestFiles, hadoopConf)
+                  } catch {
+                    case NonFatal(cleanupErr) =>
+                      logWarning("Failed to clean up orphan manifests.", cleanupErr)
+                  }
+                }
+                throw e
+            }
+          } else {
+            // Existing driver-only path
+            recordDeltaEvent(
+              snapshotToConvert.deltaLog,
+              "delta.iceberg.conversion.batch",
+              data = Map(
+                "version" -> snapshotToConvert.version,
+                "numOfFiles" -> snapshotToConvert.numOfFiles,
+                "actionBatchSize" -> -1,
+                "numOfPartitions" -> 1,
+                "distributed" -> false
+              )
+            )
+            runIcebergConversionForActions(
+              icebergTxn,
+              snapshotToConvert.allFiles.toLocalIterator().asScala.toSeq,
+              None,
+              snapshotToConvert.version)
+          }
 
           // Always attempt to update table metadata (schema/properties) for REPLACE_TABLE
           if (tableOp == REPLACE_TABLE) {
@@ -589,6 +675,15 @@ class IcebergConverter
     txnHelper.commit(deltaVersion)
 
     commitInfo
+  }
+
+  /**
+   * Compute the number of partitions for distributed manifest writing.
+   * Targets ~10K files per manifest, with a minimum of 2 and maximum of 200 partitions.
+   */
+  private def computeNumPartitions(numFiles: Long): Int = {
+    val filesPerPartition = 10000L
+    math.max(2, math.min(200, (numFiles / filesPerPartition).toInt + 1))
   }
 
   /**
