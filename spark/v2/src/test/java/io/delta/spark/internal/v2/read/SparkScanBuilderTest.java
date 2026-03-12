@@ -69,6 +69,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             snapshotManager,
             dataSchema,
             partitionSchema,
+            Optional.empty(),
             CaseInsensitiveStringMap.empty());
 
     StructType expectedSparkSchema =
@@ -112,6 +113,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             snapshotManager,
             dataSchema,
             partitionSchema,
+            Optional.empty(),
             CaseInsensitiveStringMap.empty());
     Scan scan = builder.build();
 
@@ -745,6 +747,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         snapshotManager,
         dataSchema,
         partitionSchema,
+        Optional.empty(),
         CaseInsensitiveStringMap.empty());
   }
 

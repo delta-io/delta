@@ -15,7 +15,9 @@
  */
 package io.delta.spark.internal.v2.catalog;
 
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaMap;
+import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
@@ -35,6 +37,7 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
@@ -236,12 +239,22 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
+    Optional<Statistics> catalogStats =
+        catalogTable
+            .flatMap(ct -> toJavaOptional(ct.stats()))
+            .map(
+                stats ->
+                    toV2Statistics(
+                        stats,
+                        schemaProvider.getDataSchema(),
+                        schemaProvider.getPartitionSchema()));
     return new SparkScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
+        catalogStats,
         merged);
   }
 
