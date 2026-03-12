@@ -43,9 +43,32 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
    */
   public static Optional<Metadata> validateAndUpdateIcebergCompatV2Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+    return validateAndUpdateIcebergCompatV2Metadata(
+        isCreatingNewTable, newMetadata, newProtocol, null);
+  }
+
+  /**
+   * Validate and update the given Iceberg V2 metadata.
+   *
+   * @param newMetadata Metadata after the current updates
+   * @param newProtocol Protocol after the current updates
+   * @param oldMetadata The previous snapshot's metadata, or null when no prior snapshot exists
+   * @return The updated metadata if the metadata is valid and updated, otherwise empty.
+   * @throws UnsupportedOperationException if the metadata is not compatible with Iceberg V2
+   *     requirements
+   */
+  public static Optional<Metadata> validateAndUpdateIcebergCompatV2Metadata(
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      Metadata oldMetadata) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+            INSTANCE.compatFeatureName(),
+            isCreatingNewTable,
+            newMetadata,
+            newProtocol,
+            oldMetadata));
   }
 
   /**

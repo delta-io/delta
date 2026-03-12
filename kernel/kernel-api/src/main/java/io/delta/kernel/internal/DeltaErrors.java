@@ -386,6 +386,12 @@ public final class DeltaErrors {
         String.format("Disabling %s on an existing table is not allowed.", key));
   }
 
+  public static KernelException icebergCompatPartitionEvolutionNotAllowed(String compatVersion) {
+    return new KernelException(
+        String.format(
+            "%s does not allow changing partition columns on an existing table.", compatVersion));
+  }
+
   // End: icebergCompat exceptions
 
   // Start: Column Defaults Exceptions

@@ -94,9 +94,27 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
       boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+    return validateAndUpdateIcebergWriterCompatV1Metadata(
+        isCreatingNewTable, newMetadata, newProtocol, null);
+  }
+
+  /**
+   * Overload that accepts old metadata for partition evolution checks on existing tables.
+   *
+   * @param oldMetadata The previous snapshot's metadata, or null when no prior snapshot exists
+   */
+  public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV1Metadata(
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      Metadata oldMetadata) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+            INSTANCE.compatFeatureName(),
+            isCreatingNewTable,
+            newMetadata,
+            newProtocol,
+            oldMetadata));
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
@@ -119,7 +137,8 @@ public class IcebergWriterCompatV1MetadataValidatorAndUpdater
                       .validateAndUpdateIcebergCompatV2Metadata(
                           inputContext.isCreatingNewTable,
                           inputContext.newMetadata,
-                          inputContext.newProtocol));
+                          inputContext.newProtocol,
+                          inputContext.oldMetadata));
 
   /**
    * Current set of allowed table features for Iceberg writer compat V1. This combines the common

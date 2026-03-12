@@ -37,6 +37,14 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
     validateAndUpdateIcebergWriterCompatV3Metadata(isNewTable, metadata, protocol)
   }
 
+  override def validateAndUpdateIcebergCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol,
+      oldMetadata: Metadata): Optional[Metadata] = {
+    validateAndUpdateIcebergWriterCompatV3Metadata(isNewTable, metadata, protocol, oldMetadata)
+  }
+
   val icebergWriterCompatV3EnabledProps = Map(
     TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED.getKey -> "true")
 

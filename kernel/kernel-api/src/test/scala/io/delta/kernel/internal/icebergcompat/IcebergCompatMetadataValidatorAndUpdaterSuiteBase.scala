@@ -61,6 +61,13 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase
       metadata: Metadata,
       protocol: Protocol): Optional[Metadata]
 
+  /** Run the desired validate and update metadata method with old metadata for evolution checks */
+  def validateAndUpdateIcebergCompatMetadata(
+      isNewTable: Boolean,
+      metadata: Metadata,
+      protocol: Protocol,
+      oldMetadata: Metadata): Optional[Metadata]
+
   /** Returns a [[Metadata]] instance with IcebergCompat feature and column mapping mode enabled */
   def withIcebergCompatAndCMEnabled(
       schema: StructType,
@@ -201,6 +208,66 @@ trait IcebergCompatMetadataValidatorAndUpdaterSuiteBase
 
     assert(e.getMessage.contains(
       s"icebergCompat$icebergCompatVersion does not support type widening present in table"))
+  }
+
+  test("partition evolution is blocked on existing table") {
+    val schema = new StructType().add("col1", IntegerType.INTEGER).add("col2", StringType.STRING)
+    val oldMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
+    val newMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col2"))
+    val protocol = getCompatEnabledProtocol()
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergCompatMetadata(
+        isNewTable = false,
+        newMetadata,
+        protocol,
+        oldMetadata)
+    }
+    assert(e.getMessage.contains(
+      s"icebergCompat$icebergCompatVersion does not allow changing partition columns"))
+  }
+
+  test("partition evolution is also blocked on REPLACE TABLE when old metadata is available") {
+    // REPLACE TABLE sets isCreatingNewTable=true but has oldMetadata from the prior snapshot.
+    // Partition evolution must still be blocked because IcebergCompat doesn't support it.
+    val schema = new StructType().add("col1", IntegerType.INTEGER).add("col2", StringType.STRING)
+    val oldMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
+    val newMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col2"))
+    val protocol = getCompatEnabledProtocol()
+
+    val e = intercept[KernelException] {
+      validateAndUpdateIcebergCompatMetadata(
+        isNewTable = true,
+        newMetadata,
+        protocol,
+        oldMetadata)
+    }
+    assert(e.getMessage.contains(
+      s"icebergCompat$icebergCompatVersion does not allow changing partition columns"))
+  }
+
+  test("partition check is skipped when old metadata is not available") {
+    // Backward compatibility: existing callers that don't pass oldMetadata
+    val schema = new StructType().add("col1", IntegerType.INTEGER)
+    val metadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
+    val protocol = getCompatEnabledProtocol()
+
+    // Should not throw - no old metadata to compare against
+    validateAndUpdateIcebergCompatMetadata(isNewTable = false, metadata, protocol)
+  }
+
+  test("same partition columns on existing table is allowed") {
+    val schema = new StructType().add("col1", IntegerType.INTEGER).add("col2", StringType.STRING)
+    val oldMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
+    val newMetadata = getCompatEnabledMetadata(schema, partCols = Seq("col1"))
+    val protocol = getCompatEnabledProtocol()
+
+    // Should not throw - partition columns have not changed
+    validateAndUpdateIcebergCompatMetadata(
+      isNewTable = false,
+      newMetadata,
+      protocol,
+      oldMetadata)
   }
 
   Seq(true, false).foreach { isNewTable =>

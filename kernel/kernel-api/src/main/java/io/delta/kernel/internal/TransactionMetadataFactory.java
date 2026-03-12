@@ -498,12 +498,21 @@ public class TransactionMetadataFactory {
                       oldMetadata.getConfiguration(), metadata.getConfiguration()));
         });
 
+    // Retrieve old metadata for partition evolution checks. Needed for both UPDATE TABLE
+    // and REPLACE TABLE (partition evolution is blocked in both cases for IcebergCompat).
+    // For CREATE TABLE (no prior snapshot), this is null and the check is skipped.
+    Metadata icebergOldMetadata =
+        latestSnapshotOpt.isPresent() ? latestSnapshotOpt.get().getMetadata() : null;
+
     // We must do our icebergWriterCompatV1 checks/updates FIRST since it has stricter column
     // mapping requirements (id mode) than icebergCompatV2. It also may enable icebergCompatV2.
     Optional<Metadata> icebergWriterCompatV1 =
         IcebergWriterCompatV1MetadataValidatorAndUpdater
             .validateAndUpdateIcebergWriterCompatV1Metadata(
-                isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
+                isCreateOrReplace,
+                getEffectiveMetadata(),
+                getEffectiveProtocol(),
+                icebergOldMetadata);
     if (icebergWriterCompatV1.isPresent()) {
       newMetadata = icebergWriterCompatV1;
     }
@@ -511,7 +520,10 @@ public class TransactionMetadataFactory {
     Optional<Metadata> icebergWriterCompatV3 =
         IcebergWriterCompatV3MetadataValidatorAndUpdater
             .validateAndUpdateIcebergWriterCompatV3Metadata(
-                isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
+                isCreateOrReplace,
+                getEffectiveMetadata(),
+                getEffectiveProtocol(),
+                icebergOldMetadata);
     if (icebergWriterCompatV3.isPresent()) {
       newMetadata = icebergWriterCompatV3;
     }
@@ -519,13 +531,13 @@ public class TransactionMetadataFactory {
     // TODO: refactor this method to use a single validator and updater.
     Optional<Metadata> icebergCompatV2Metadata =
         IcebergCompatV2MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV2Metadata(
-            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
+            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol(), icebergOldMetadata);
     if (icebergCompatV2Metadata.isPresent()) {
       newMetadata = icebergCompatV2Metadata;
     }
     Optional<Metadata> icebergCompatV3Metadata =
         IcebergCompatV3MetadataValidatorAndUpdater.validateAndUpdateIcebergCompatV3Metadata(
-            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol());
+            isCreateOrReplace, getEffectiveMetadata(), getEffectiveProtocol(), icebergOldMetadata);
     if (icebergCompatV3Metadata.isPresent()) {
       newMetadata = icebergCompatV3Metadata;
     }

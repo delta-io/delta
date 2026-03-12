@@ -78,21 +78,36 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
     final boolean isCreatingNewTable;
     final Metadata newMetadata;
     final Protocol newProtocol;
+    /**
+     * The metadata from the previous table snapshot, or null when no prior snapshot exists (i.e.
+     * CREATE TABLE). Non-null for both UPDATE TABLE and REPLACE TABLE.
+     */
+    final Metadata oldMetadata;
 
     public IcebergCompatInputContext(
         String compatFeatureName,
         boolean isCreatingNewTable,
         Metadata newMetadata,
         Protocol newProtocol) {
+      this(compatFeatureName, isCreatingNewTable, newMetadata, newProtocol, null);
+    }
+
+    public IcebergCompatInputContext(
+        String compatFeatureName,
+        boolean isCreatingNewTable,
+        Metadata newMetadata,
+        Protocol newProtocol,
+        Metadata oldMetadata) {
       this.compatFeatureName = compatFeatureName;
       this.isCreatingNewTable = isCreatingNewTable;
       this.newMetadata = newMetadata;
       this.newProtocol = newProtocol;
+      this.oldMetadata = oldMetadata;
     }
 
     public IcebergCompatInputContext withUpdatedMetadata(Metadata newMetadata) {
       return new IcebergCompatInputContext(
-          compatFeatureName, isCreatingNewTable, newMetadata, newProtocol);
+          compatFeatureName, isCreatingNewTable, newMetadata, newProtocol, oldMetadata);
     }
   }
 
@@ -313,8 +328,18 @@ public abstract class IcebergCompatMetadataValidatorAndUpdater {
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_PARTITION_EVOLUTION =
       (inputContext) -> {
-        // TODO: Kernel doesn't support replace table yet. When it is supported, extend
-        // this to allow checking the partition columns aren't changed
+        // Block partition evolution whenever old metadata is available (UPDATE TABLE and
+        // REPLACE TABLE). For CREATE TABLE, oldMetadata is null so the check is skipped.
+        // Note: isCreatingNewTable is true for both CREATE and REPLACE, so we cannot use
+        // it as the guard — oldMetadata nullity is the correct discriminator.
+        if (inputContext.oldMetadata != null) {
+          Set<String> oldPartCols = inputContext.oldMetadata.getPartitionColNames();
+          Set<String> newPartCols = inputContext.newMetadata.getPartitionColNames();
+          if (!oldPartCols.equals(newPartCols)) {
+            throw DeltaErrors.icebergCompatPartitionEvolutionNotAllowed(
+                inputContext.compatFeatureName);
+          }
+        }
       };
 
   protected static final IcebergCompatCheck CHECK_HAS_NO_DELETION_VECTORS =
