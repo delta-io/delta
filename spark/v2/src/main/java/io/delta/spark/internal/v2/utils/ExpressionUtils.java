@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.utils;
 import static org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.delta.kernel.expressions.AlwaysFalse;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.In;
@@ -141,10 +142,10 @@ public final class ExpressionUtils {
     }
     if (filter instanceof org.apache.spark.sql.sources.In) {
       org.apache.spark.sql.sources.In f = (org.apache.spark.sql.sources.In) filter;
-      // An empty IN list can never match; skip pushdown rather than pushing ALWAYS_FALSE so
-      // that Spark still evaluates the filter and returns the correct empty result.
+      // An empty IN list can never match any row. Push ALWAYS_FALSE so the kernel skips
+      // all files entirely, rather than scanning every file only to discard every row.
       if (f.values().length == 0) {
-        return new ConvertedPredicate(Optional.empty());
+        return new ConvertedPredicate(Optional.of(AlwaysFalse.ALWAYS_FALSE));
       }
       List<io.delta.kernel.expressions.Expression> literals = new ArrayList<>();
       for (Object value : f.values()) {

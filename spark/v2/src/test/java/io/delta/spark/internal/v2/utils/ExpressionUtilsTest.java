@@ -169,7 +169,9 @@ public class ExpressionUtilsTest {
     ExpressionUtils.ConvertedPredicate result =
         ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
 
-    assertFalse(result.isPresent(), "In filter with empty values should not be pushed down");
+    // Empty IN list always evaluates to FALSE; push ALWAYS_FALSE so the kernel skips all files.
+    assertTrue(result.isPresent(), "In filter with empty values should push ALWAYS_FALSE");
+    assertEquals("ALWAYS_FALSE", result.get().getName());
   }
 
   @Test
