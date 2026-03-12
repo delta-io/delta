@@ -148,24 +148,28 @@ public class SparkScanTest extends DeltaV2TestBase {
             mapTableName, path));
     spark.sql(String.format("INSERT INTO %s VALUES (1, map('k', 'v'))", mapTableName));
 
-    withSQLConf(
-        "spark.sql.parquet.enableNestedColumnVectorizedReader",
-        "false",
-        () -> {
-          SparkTable mapTable =
-              new SparkTable(
-                  Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
-                  path,
-                  options);
-          SparkScanBuilder builder = (SparkScanBuilder) mapTable.newScanBuilder(options);
-          SparkScan scan = (SparkScan) builder.build();
+    try {
+      withSQLConf(
+          "spark.sql.parquet.enableNestedColumnVectorizedReader",
+          "false",
+          () -> {
+            SparkTable mapTable =
+                new SparkTable(
+                    Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
+                    path,
+                    options);
+            SparkScanBuilder builder = (SparkScanBuilder) mapTable.newScanBuilder(options);
+            SparkScan scan = (SparkScan) builder.build();
 
-          assertEquals(
-              Scan.ColumnarSupportMode.UNSUPPORTED,
-              scan.columnarSupportMode(),
-              "columnarSupportMode should return UNSUPPORTED for schema with MAP type"
-                  + " when nested column vectorized reader is disabled");
-        });
+            assertEquals(
+                Scan.ColumnarSupportMode.UNSUPPORTED,
+                scan.columnarSupportMode(),
+                "columnarSupportMode should return UNSUPPORTED for schema with MAP type"
+                    + " when nested column vectorized reader is disabled");
+          });
+    } finally {
+      spark.sql(String.format("DROP TABLE IF EXISTS %s", mapTableName));
+    }
   }
 
   @Test
