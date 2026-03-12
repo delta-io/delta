@@ -314,17 +314,13 @@ class IcebergRESTCatalogPlanningClient(
   // Maximum number of retries for transient HTTP failures (IOException, 5xx server errors)
   private val HTTP_MAX_RETRIES = 3
 
-  // Interval between retries in milliseconds
-  private val HTTP_RETRY_INTERVAL_MS = 1000L
-
   private lazy val httpClient = HttpClientBuilder.create()
     .setDefaultHeaders(httpHeaders)
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
     // requestSentRetryEnabled=true: safe to retry already-sent requests because
     // planScan is a read-only operation (idempotent POST to /plan endpoint)
     .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
-    .setServiceUnavailableRetryStrategy(
-      new ServerErrorRetryStrategy(HTTP_MAX_RETRIES, HTTP_RETRY_INTERVAL_MS))
+    .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
     .build()
 
   override def canConvertFilters(filters: Array[Filter]): Boolean = {
@@ -516,22 +512,31 @@ class IcebergRESTCatalogPlanningClient(
   }
 
   /**
-   * Retry strategy for server errors (5xx status codes).
-   * Retries up to maxRetries times with a fixed interval.
+   * Retry strategy for server errors (5xx status codes) with exponential backoff.
+   * Retries up to maxRetries times with doubling intervals (1s, 2s, 4s, ...).
    * Does NOT retry on client errors (4xx) since those indicate request-level issues.
+   *
+   * The ServiceUnavailableRetryStrategy interface calls retryRequest() first, then
+   * getRetryInterval(), so we capture the execution count in retryRequest() and
+   * use it to compute the backoff in getRetryInterval().
    */
-  private class ServerErrorRetryStrategy(maxRetries: Int, retryIntervalMs: Long)
+  private class ServerErrorRetryStrategy(maxRetries: Int)
       extends ServiceUnavailableRetryStrategy {
+
+    @volatile private var lastExecutionCount: Int = 1
 
     override def retryRequest(
         response: HttpResponse,
         executionCount: Int,
         context: HttpContext): Boolean = {
+      lastExecutionCount = executionCount
       val statusCode = response.getStatusLine.getStatusCode
       statusCode >= 500 && executionCount <= maxRetries
     }
 
-    override def getRetryInterval: Long = retryIntervalMs
+    // Exponential backoff: 1s, 2s, 4s, ...
+    override def getRetryInterval: Long =
+      java.util.concurrent.TimeUnit.SECONDS.toMillis(1L << (lastExecutionCount - 1))
   }
 
   private def parsePlanTableScanResponse(
