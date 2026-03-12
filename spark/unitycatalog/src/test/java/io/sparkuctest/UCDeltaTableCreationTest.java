@@ -64,12 +64,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   private static final String SUPPORTED = "supported";
   private static final String MANAGED_TBLPROPERTIES_CLAUSE =
       String.format("TBLPROPERTIES ('%s'='%s', 'Foo'='Bar')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
-  // In the table REPLACE test, a slightly different table property clause will be used to create
-  // the first table. Then the REPLACE command would use TBLPROPERTIES_CLAUSE. This is to make sure
-  // that the table properties are properly updated in the REPLACE command.
-  private static final String MANAGED_TBLPROPERTIES_CLAUSE_OTHER =
-      String.format(
-          "TBLPROPERTIES ('%s'='%s', 'Foo2'='Bar2')", DELTA_CATALOG_MANAGED_KEY, SUPPORTED);
 
   // Expected table features to be enabled for managed tables
   private static final List<String> EXPECTED_MANAGED_TABLE_FEATURES =
@@ -311,34 +305,29 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
     String fullTableName = options.fullTableName();
     if (replaceTable) {
-      // First, create a different table to replace.
-      sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+      createSeedTableForReplace(fullTableName, options, comment);
       tablesToCleanUp.add(fullTableName);
-    }
-
-    if (replaceTable) {
-      return;
-    }
-
-    // Create table
-    sql(options.createTableSql());
-    tablesToCleanUp.add(fullTableName);
-    // Basic read/write test
-    sql("INSERT INTO %s SELECT 2, 'b'", fullTableName);
-    if (withAsSelect) {
-      check(fullTableName, List.of(List.of("1", "a"), List.of("2", "b")));
+      long previousVersion = currentVersion(fullTableName);
+      if (shouldReplaceSucceed(options)) {
+        sql(options.createTableSql());
+        assertThat(currentVersion(fullTableName)).isEqualTo(previousVersion + 1);
+        verifyTableDataAfterSuccessfulCreateOrReplace(fullTableName, withAsSelect);
+      } else {
+        assertThatThrownBy(() -> sql(options.createTableSql()))
+            .hasMessageContaining(expectedReplaceFailureMessage(options));
+        assertThat(currentVersion(fullTableName)).isEqualTo(previousVersion);
+        check(fullTableName, List.of(List.of("0", "seed")));
+      }
     } else {
-      check(fullTableName, List.of(List.of("2", "b")));
+      // Create table
+      sql(options.createTableSql());
+      tablesToCleanUp.add(fullTableName);
+      verifyTableDataAfterSuccessfulCreateOrReplace(fullTableName, withAsSelect);
     }
 
-    // Verify UC server-side table info. Skip for:
-    // - CTAS paths (withAsSelect): CTAS is still missing
-    //   AbstractDeltaCatalog.translateUCTableIdProperty.
-    // - REPLACE paths (replaceTable): RTAS metadata sync
-    //   is not yet implemented.
-    if (!withAsSelect && !replaceTable) {
+    // Verify UC server-side table info. Skip only for CTAS/RTAS paths, which still do not
+    // populate all UC-visible metadata consistently through this test harness.
+    if (!withAsSelect && (shouldReplaceSucceed(options) || !replaceTable)) {
       assertUCTableInfo(
           tableType,
           fullTableName,
@@ -348,6 +337,47 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           options.getExternalTableLocation(),
           withCluster,
           options.getClusterColumn());
+    }
+  }
+
+  private void createSeedTableForReplace(
+      String fullTableName, TableSetupOptions options, String comment) {
+    if (options.getTableType() == TableType.MANAGED) {
+      sql(
+          "CREATE TABLE %s (i INT, s STRING) USING DELTA %s COMMENT '%s'",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE, comment);
+    } else {
+      sql(
+          "CREATE TABLE %s (i INT, s STRING) USING DELTA %s COMMENT '%s' LOCATION '%s'",
+          fullTableName,
+          EXTERNAL_TBLPROPERTIES_CLAUSE,
+          comment,
+          options.getExternalTableLocation());
+    }
+    sql("INSERT INTO %s VALUES (0, 'seed')", fullTableName);
+  }
+
+  private boolean shouldReplaceSucceed(TableSetupOptions options) {
+    return options.getPartitionColumn().isEmpty() && options.getClusterColumn().isEmpty();
+  }
+
+  private String expectedReplaceFailureMessage(TableSetupOptions options) {
+    if (options.getPartitionColumn().isPresent()) {
+      return "different partitioning";
+    }
+    if (options.getClusterColumn().isPresent()) {
+      return "different clustering";
+    }
+    throw new IllegalArgumentException("Expected a metadata-changing replace case");
+  }
+
+  private void verifyTableDataAfterSuccessfulCreateOrReplace(
+      String fullTableName, boolean withAsSelect) {
+    sql("INSERT INTO %s SELECT 2, 'b'", fullTableName);
+    if (withAsSelect) {
+      check(fullTableName, List.of(List.of("1", "a"), List.of("2", "b")));
+    } else {
+      check(fullTableName, List.of(List.of("2", "b")));
     }
   }
 
@@ -751,11 +781,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
       // Verify initial data
       check(fullTableName, List.of(List.of("1", "old")));
+      long previousVersion = currentVersion(fullTableName);
 
       // 2. REPLACE TABLE AS SELECT with new data
       sql(
           "REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'new' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      assertThat(currentVersion(fullTableName)).isEqualTo(previousVersion + 1);
 
       // 3. Verify new data is present and old data is gone
       List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
@@ -814,6 +846,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "CREATE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'original' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "original")));
+      long previousVersion = currentVersion(fullTableName);
 
       // 2. Attempt RTAS with a query that fails (division by zero)
       assertThatThrownBy(
@@ -821,6 +854,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
               sql(
                   "REPLACE TABLE %s USING DELTA %s AS SELECT 1/0 AS id, 'bad' AS val",
                   fullTableName, MANAGED_TBLPROPERTIES_CLAUSE));
+      assertThat(currentVersion(fullTableName)).isEqualTo(previousVersion);
 
       // 3. Verify original data is still intact
       check(fullTableName, List.of(List.of("1", "original")));
@@ -845,11 +879,13 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 1 AS id, 'first' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
       check(fullTableName, List.of(List.of("1", "first")));
+      long previousVersion = currentVersion(fullTableName);
 
       // 2. CREATE OR REPLACE on the existing table (acts as REPLACE)
       sql(
           "CREATE OR REPLACE TABLE %s USING DELTA %s AS SELECT 2 AS id, 'second' AS val",
           fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      assertThat(currentVersion(fullTableName)).isEqualTo(previousVersion + 1);
 
       // 3. Verify old data is gone, new data is present
       List<List<String>> results = sql("SELECT * FROM %s ORDER BY id", fullTableName);
@@ -911,6 +947,23 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           assertThat(currentVersion(fullTableName)).isEqualTo(previousVersion + 1);
           check(fullTableName, List.of(List.of("2", "second")));
         });
+  }
+
+  @Test
+  public void testExternalCreateOrReplaceMissingTableWithoutLocationIsRejected() {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    String tableName = uniqueTableName("test_external_cor_missing_without_location");
+    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    tablesToCleanUp.add(fullTableName);
+
+    assertThatThrownBy(
+            () ->
+                sql(
+                    "CREATE OR REPLACE TABLE %s USING DELTA AS " + "SELECT 1 AS id, 'first' AS val",
+                    fullTableName))
+        .hasMessageContaining(
+            "Managed table creation requires table property "
+                + "'delta.feature.catalogManaged'='supported' to be set.");
   }
 
   @Test

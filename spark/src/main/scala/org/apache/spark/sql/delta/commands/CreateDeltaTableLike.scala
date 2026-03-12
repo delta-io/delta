@@ -51,9 +51,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // Whether the table is UC managed table with catalogManaged feature.
   val allowCatalogManaged: Boolean
 
-  // Whether the command is replacing an existing catalog table.
-  val allowCatalogReplace: Boolean
-
   private def normalizeLocation(location: java.net.URI): String = {
     location.normalize().toString.stripSuffix("/")
   }
@@ -108,16 +105,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       if (!allowCatalogManaged) {
         UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       }
-    }
-    // For catalog replace paths, skip the catalog update when the table already exists and the
-    // committed Delta metadata already matches `snapshot.metadata`. In that case there is nothing
-    // new to write back to the catalog. This intentionally also skips the HMS schema-alter path
-    // below, because these paths do not rely on that flow here.
-    if ((allowCatalogManaged || allowCatalogReplace) &&
-        operation != TableCreationModes.Create &&
-        tableExistsInCatalog &&
-        didNotChangeMetadata) {
-      return
     }
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path

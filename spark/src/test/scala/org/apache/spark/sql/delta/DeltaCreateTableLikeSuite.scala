@@ -374,7 +374,6 @@ class DeltaCreateTableLikeSuite extends QueryTest
           TableCreationModes.CreateOrReplace
         override val mode: SaveMode = SaveMode.ErrorIfExists
         override val allowCatalogManaged: Boolean = true
-        override val allowCatalogReplace: Boolean = false
 
         def runUpdateCatalog(): Unit = {
           updateCatalog(
