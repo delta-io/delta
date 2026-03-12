@@ -51,10 +51,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   // Whether the table is UC managed table with catalogManaged feature.
   val allowCatalogManaged: Boolean
 
-  private def normalizeLocation(location: java.net.URI): String = {
-    location.normalize().toString.stripSuffix("/")
-  }
-
   /**
    * Generates a `CatalogTable` with its `locationUri` set appropriately, depending on whether the
    * table already exists or is newly created.
@@ -64,8 +60,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     if (tableExistsInCatalog) {
       val existingTable = existingTableOpt.get
       table.storage.locationUri match {
-        case Some(location)
-            if normalizeLocation(location) != normalizeLocation(existingTable.location) =>
+        case Some(location) if location.getPath != existingTable.location.getPath =>
           throw DeltaErrors.tableLocationMismatch(table, existingTable)
         case _ =>
       }

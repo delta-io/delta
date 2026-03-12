@@ -65,8 +65,6 @@ import org.apache.spark.util.Utils
  * @param output SQL output of the command
  * @param protocol This is used to create a table with specific protocol version
  * @param allowCatalogManaged This is used to create UC managed table with catalogManaged feature
- * @param allowCatalogReplace This is used for existing catalog replace paths to initialize the
- *                            transaction against the current catalog table entry.
  * @param createTableFunc If specified, call this function to create the table, instead of
  *                        Spark `SessionCatalog#createTable` which is backed by Hive Metastore.
  */
@@ -80,7 +78,6 @@ case class CreateDeltaTableCommand(
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     override val allowCatalogManaged: Boolean = false,
-    allowCatalogReplace: Boolean = false,
     createTableFunc: Option[CatalogTable => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
@@ -799,9 +796,9 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    // For catalog replace on an existing table, pass the catalog table descriptor into
+    // For catalog-managed replace on an existing table, pass the catalog table descriptor into
     // transaction startup so the transaction is initialized against that existing table entry.
-    val catalogTableOpt = if (allowCatalogReplace && isReplace && deltaLog.tableExists) {
+    val catalogTableOpt = if (allowCatalogManaged && isReplace && deltaLog.tableExists) {
       Some(tableWithLocation)
     } else {
       None

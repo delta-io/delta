@@ -173,10 +173,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     // `ident`. We only need the fallback for REPLACE / CREATE OR REPLACE, where catalog-managed
     // tables may be resolvable through the delegated catalog even when SessionCatalog does not
     // surface them, and the command still needs to reuse the existing metadata and location.
-    val sessionCatalogExistingTableOpt = getExistingTableIfExists(id)
-    val delegatedCatalogExistingTableOpt = if (sessionCatalogExistingTableOpt.isDefined) {
-      None
-    } else {
+    val existingTableOpt = getExistingTableIfExists(id).orElse {
       operation match {
         case TableCreationModes.Replace | TableCreationModes.CreateOrReplace =>
           getExistingTableFromDelegatedCatalog(ident)
@@ -184,8 +181,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           None
       }
     }
-    val existingTableOpt =
-      sessionCatalogExistingTableOpt.orElse(delegatedCatalogExistingTableOpt)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -194,12 +189,10 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     // `DeltaCatalog#delegate#createTable`, so `isManagedLocation` should never be true if
     // Unity Catalog is not involved. For safety we also check `isUnityCatalog` here.
     val respectManagedLoc = isUnityCatalog || DeltaUtils.isTesting
-    val tableType = existingTableOpt.map(_.tableType).getOrElse {
-      if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
-        CatalogTableType.MANAGED
-      } else {
-        CatalogTableType.EXTERNAL
-      }
+    val tableType = if (location.isEmpty || (isManagedLocation && respectManagedLoc)) {
+      CatalogTableType.MANAGED
+    } else {
+      CatalogTableType.EXTERNAL
     }
     val loc = locUriOpt
       .orElse(existingTableOpt.flatMap(_.storage.locationUri))
@@ -233,13 +226,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
-      // The staged property map from UCSingleCatalog is not a full CatalogTable. Delta still needs
-      // an existing CatalogTable here so DeltaLog can recover the current location plus storage
-      // properties (including UC-vended credential props) from the real target table.
-      //
-      // `getExistingTableIfExists` only consults the V1 SessionCatalog entry. For UC-managed
-      // replace paths that can be insufficient, so we fall back to the delegated catalog lookup
-      // above and ask UCProxy / DeltaCatalog to materialize the current table as a CatalogTable.
+      // For create paths there may be no existing catalog table yet, so fall back to the new
+      // descriptor. For replace paths we expect `existingTableOpt` to be populated, so DeltaLog
+      // is resolved from the existing catalog table rather than the new DDL descriptor.
       val catalogTableOpt = existingTableOpt.orElse(
         Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
@@ -262,11 +251,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       operation,
       tableByPath = isByPath,
       allowCatalogManaged = isUnityCatalog && tableType == CatalogTableType.MANAGED,
-      allowCatalogReplace =
-        isUnityCatalog &&
-          existingTableOpt.isDefined &&
-          (operation == TableCreationModes.Replace ||
-            operation == TableCreationModes.CreateOrReplace),
       // We should invoke the Spark catalog plugin API to create the table, to
       // respect third party catalogs.
       // TODO: Spark `V2SessionCatalog` mistakenly treat tables with location as EXTERNAL table.
@@ -626,11 +610,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
    * paths. This is needed when [[getExistingTableIfExists]] only checks the V1 SessionCatalog
    * using a [[TableIdentifier]], but the existing table entry is only surfaced through the
    * delegated V2 catalog lookup on `ident`.
-   *
-   * In plain English: UCSingleCatalog stages REPLACE by plumbing a property map into Delta, not a
-   * full existing [[CatalogTable]]. By the time Delta is constructing the write path it still needs
-   * the current target table's location and storage properties, so it asks the delegated catalog
-   * (which routes back through UCProxy) to materialize the existing table again as a CatalogTable.
    *
    * This helper is only used for Unity Catalog.
    */
