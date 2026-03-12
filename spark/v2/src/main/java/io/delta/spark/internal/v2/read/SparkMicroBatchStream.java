@@ -91,11 +91,12 @@ public class SparkMicroBatchStream
   private static final String FILE_IDX_COL = "_file_idx";
 
   /**
-   * Bypass SLF4J (which may be NOP-bound) by writing directly to stderr. Only used for short-lived
-   * debugging of the streaming initialization path.
+   * Bypass SLF4J (which may be NOP-bound) by writing directly to stdout so the output appears
+   * alongside the test script's ">>>" lines. Only for short-lived debugging.
    */
   private static void debugLog(String msg) {
-    System.err.println("[STREAM_DEBUG " + java.time.Instant.now() + "] " + msg);
+    System.out.println(">>> [STREAM_DEBUG " + java.time.Instant.now() + "] " + msg);
+    System.out.flush();
   }
 
   private static final Set<DeltaAction> ACTION_SET =
