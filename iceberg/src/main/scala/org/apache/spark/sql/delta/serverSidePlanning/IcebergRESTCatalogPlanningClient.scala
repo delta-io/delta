@@ -28,7 +28,9 @@ import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
-import org.apache.http.impl.client.HttpClientBuilder
+import org.apache.http.client.ServiceUnavailableRetryStrategy
+import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
+import org.apache.http.protocol.HttpContext
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
@@ -309,9 +311,18 @@ class IcebergRESTCatalogPlanningClient(
     scala.util.Properties.versionNumberString
   }
 
+  // Maximum number of retries for transient HTTP failures (IOException, 5xx server errors)
+  private val HTTP_MAX_RETRIES = 3
+
+  // Interval between retries in milliseconds
+  private val HTTP_RETRY_INTERVAL_MS = 1000L
+
   private lazy val httpClient = HttpClientBuilder.create()
     .setDefaultHeaders(httpHeaders)
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
+    .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
+    .setServiceUnavailableRetryStrategy(
+      new ServerErrorRetryStrategy(HTTP_MAX_RETRIES, HTTP_RETRY_INTERVAL_MS))
     .build()
 
   override def canConvertFilters(filters: Array[Filter]): Boolean = {
@@ -369,7 +380,6 @@ class IcebergRESTCatalogPlanningClient(
     }
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
-    // TODO: Add retry logic for transient HTTP failures (e.g., connection timeouts, 5xx errors)
     val httpResponse = httpClient.execute(httpPost)
 
     // Only unpartitioned tables are supported. This map is used when parsing the response
@@ -501,6 +511,25 @@ class IcebergRESTCatalogPlanningClient(
     if (httpClient != null) {
       httpClient.close()
     }
+  }
+
+  /**
+   * Retry strategy for server errors (5xx status codes).
+   * Retries up to maxRetries times with a fixed interval.
+   * Does NOT retry on client errors (4xx) since those indicate request-level issues.
+   */
+  private class ServerErrorRetryStrategy(maxRetries: Int, retryIntervalMs: Long)
+      extends ServiceUnavailableRetryStrategy {
+
+    override def retryRequest(
+        response: org.apache.http.HttpResponse,
+        executionCount: Int,
+        context: HttpContext): Boolean = {
+      val statusCode = response.getStatusLine.getStatusCode
+      statusCode >= 500 && executionCount <= maxRetries
+    }
+
+    override def getRetryInterval: Long = retryIntervalMs
   }
 
   private def parsePlanTableScanResponse(
