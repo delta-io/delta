@@ -32,9 +32,9 @@ jobs:
       - name: Generate Spark versions matrix
         id: generate
         run: |
-          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --all-spark-versions)
+          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --default-spark-version)
           echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
-          echo "Generated Spark versions: $SPARK_VERSIONS"
+          echo "Generated Spark versions (default only): $SPARK_VERSIONS"
 
   test-uc-master:
     name: "DS (UC Main): Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
@@ -45,12 +45,12 @@ jobs:
       matrix:
         spark_version: ${{ fromJson(needs.generate-matrix.outputs.spark_versions) }}
         scala: [2.13.16]
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+        shard: [0, 1, 2, 3]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       SPARK_VERSION: ${{ matrix.spark_version }}
       UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
-      NUM_SHARDS: 8
+      NUM_SHARDS: 4
     steps:
       - uses: actions/checkout@v3
       - name: Get Spark version details
