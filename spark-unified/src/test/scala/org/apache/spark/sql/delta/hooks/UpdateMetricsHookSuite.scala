@@ -36,11 +36,10 @@ import org.apache.spark.sql.types.StructType
  * Test suite for UpdateMetricsHook functionality.
  *
  * Tests cover:
+ * - resolveTableId: UC table ID resolution priority
  * - buildRequest: file and row metric extraction without Delta infrastructure
  * - JSON payload structure matching the server contract (snake_case, nested)
- * - Hook behavior and error handling
  * - Error handling (commits succeed even when HTTP fails)
- * - Basic mock server integration
  * - Smoke test: run() fires HTTP POST with correct payload for UC-managed table
  */
 class UpdateMetricsHookSuite extends QueryTest
@@ -124,8 +123,6 @@ class UpdateMetricsHookSuite extends QueryTest
   // ---------------------------------------------------------------------------
 
   test("buildRequest: file metrics from synthetic AddFile/RemoveFile actions") {
-    val hook = UpdateMetricsHook(None)
-
     val add1 = AddFile("f1.parquet", Map.empty, 1024L,
       System.currentTimeMillis(), dataChange = true)
     val add2 = AddFile("f2.parquet", Map.empty, 2048L,
@@ -157,8 +154,6 @@ class UpdateMetricsHookSuite extends QueryTest
   }
 
   test("buildRequest: row metrics prefer operationMetrics over file stats") {
-    val hook = UpdateMetricsHook(None)
-
     // Sub-case 1: operationMetrics present - must win over file-level numLogicalRecords
     val addFileWithStats = AddFile("f.parquet", Map.empty, 1000L,
       System.currentTimeMillis(), dataChange = true,
