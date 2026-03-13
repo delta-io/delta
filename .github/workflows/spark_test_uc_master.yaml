@@ -20,8 +20,6 @@ jobs:
   test-uc-master:
     name: "UC Integration Tests (UC Main)"
     runs-on: ubuntu-24.04
-    env:
-      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
       - name: Get default Spark version details
@@ -47,12 +45,17 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-uc-master-spark${{ steps.spark-details.outputs.spark_version }}
       - name: Build Unity Catalog from source
-        run: bash project/scripts/setup_unitycatalog_main.sh
+        id: uc-build
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
+          UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+          echo "uc_version=$UC_VERSION" >> $GITHUB_OUTPUT
+          echo "UC version: $UC_VERSION"
       - name: Run UC integration tests
         run: |
           build/sbt \
             -DsparkVersion=${{ steps.spark-details.outputs.spark_version }} \
-            -DunityCatalogVersion=${{ env.UNITY_CATALOG_VERSION }} \
+            -DunityCatalogVersion=${{ steps.uc-build.outputs.uc_version }} \
             sparkUnityCatalog/test kernelUnityCatalog/test
       - name: Upload test reports
         if: always()

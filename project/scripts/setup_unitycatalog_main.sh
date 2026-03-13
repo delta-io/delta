@@ -21,6 +21,15 @@ git clone --depth 50 "$UC_REPO" "$UC_DIR"
 cd "$UC_DIR"
 git checkout "$UC_REF"
 
+# Extract the version UC will publish (e.g. "0.5.0-SNAPSHOT")
+UC_VERSION=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
+if [[ -z "$UC_VERSION" ]]; then
+  echo "ERROR: Could not extract UC version from version.sbt" >&2
+  exit 1
+fi
+echo ">>> UC version: $UC_VERSION"
+echo "$UC_VERSION" > "$UC_DIR/.uc-version"
+
 echo ">>> Building and publishing UC client + server to local Maven repo"
 ./build/sbt \
   "set client / Compile / packageDoc / publishArtifact := false" \
