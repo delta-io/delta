@@ -30,6 +30,7 @@ import org.apache.http.util.EntityUtils
 import org.apache.http.{HttpHeaders, HttpStatus}
 import org.apache.http.impl.client.HttpClientBuilder
 import org.apache.http.message.BasicHeader
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
@@ -68,7 +69,7 @@ private case class CatalogConfigResponse(
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    token: String) extends ServerSidePlanningClient with AutoCloseable {
+    token: String) extends ServerSidePlanningClient with AutoCloseable with Logging {
 
   // Normalize baseUri to handle trailing slashes
   private val baseUri = baseUriRaw.stripSuffix("/")
@@ -186,8 +187,8 @@ class IcebergRESTCatalogPlanningClient(
    * Returns None on any error or if no prefix is defined in the config.
    */
   private def fetchCatalogPrefix(): Option[String] = {
+    val configUri = s"$baseUri/config?warehouse=$catalogName"
     try {
-      val configUri = s"$baseUri/config?warehouse=$catalogName"
       val httpGet = new HttpGet(configUri)
       val response = httpClient.execute(httpGet)
       try {
@@ -203,7 +204,10 @@ class IcebergRESTCatalogPlanningClient(
         response.close()
       }
     } catch {
-      case _: Exception => None
+      case e: Exception =>
+        logWarning(s"Failed to fetch catalog prefix from $configUri. " +
+          s"Falling back to base URI. Error: ${e.getMessage}")
+        None
     }
   }
 
