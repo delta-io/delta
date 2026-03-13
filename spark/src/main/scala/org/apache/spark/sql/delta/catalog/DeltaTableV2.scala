@@ -42,6 +42,7 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, Ca
 import org.apache.spark.sql.catalyst.plans.logical.{AnalysisHelper, LogicalPlan, SubqueryAlias}
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.{SupportsWrite, Table, TableCapability, TableCatalog, V2TableWithV1Fallback}
+import org.apache.spark.sql.connector.catalog.SupportsTypeEvolution
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.catalog.TableCapability._
 import org.apache.spark.sql.connector.catalog.V1Table
@@ -50,7 +51,7 @@ import org.apache.spark.sql.connector.write.{LogicalWriteInfo, SupportsDynamicOv
 import org.apache.spark.sql.errors.QueryCompilationErrors
 import org.apache.spark.sql.execution.datasources.LogicalRelation
 import org.apache.spark.sql.sources.{BaseRelation, Filter, InsertableRelation}
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{AtomicType, DataType, NullType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 import org.apache.spark.util.{Clock, SystemClock}
 
@@ -69,8 +70,19 @@ class DeltaTableV2 private(
     val options: Map[String, String])
   extends Table
   with SupportsWrite
+  with SupportsTypeEvolution
   with V2TableWithV1Fallback
   with DeltaLogging {
+
+  override def canChangeType(currentType: DataType, newType: DataType): Boolean =
+    (currentType, newType) match {
+      case (NullType, _: AtomicType) => true
+      case (currentType: AtomicType, newType: AtomicType) =>
+        TypeWidening.isEnabled(initialSnapshot.protocol, initialSnapshot.metadata) &&
+          TypeWidening.isTypeChangeSupported(currentType, newType,
+            uniformIcebergCompatibleOnly = UniversalFormat.icebergEnabled(initialSnapshot.metadata))
+      case _ => false
+  }
 
   case class PathInfo(
       rootPath: Path,
@@ -259,10 +271,17 @@ class DeltaTableV2 private(
     base.asJava
   }
 
-  override def capabilities(): ju.Set[TableCapability] = Set(
-    ACCEPT_ANY_SCHEMA, BATCH_READ,
-    V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC
-  ).asJava
+  override def capabilities(): ju.Set[TableCapability] = {
+    val baseCapabilities = mutable.Set(
+      ACCEPT_ANY_SCHEMA, BATCH_READ,
+      V1_BATCH_WRITE, OVERWRITE_BY_FILTER, TRUNCATE, OVERWRITE_DYNAMIC)
+    // AUTOMATIC_SCHEMA_EVOLUTION tells Spark to use the schema evolution rules to evolve the
+    // table schema when new columns or type changes are detected.
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_DML_USE_DSV2_SCHEMA_EVOLUTION)) {
+      baseCapabilities += AUTOMATIC_SCHEMA_EVOLUTION
+    }
+    baseCapabilities.asJava
+  }
 
   def tableExists: Boolean = deltaLog.tableExists
 
