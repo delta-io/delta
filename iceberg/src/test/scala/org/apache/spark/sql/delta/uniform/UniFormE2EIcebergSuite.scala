@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.uniform
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+
 import org.apache.spark.{SparkConf, SparkSessionSwitch}
 import org.apache.spark.sql.{Row, SparkSession}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -67,4 +68,3 @@ trait WriteDeltaHMSReadIceberg extends UniFormE2ETest
 /**
  * No test should go here. Please add tests in [[UniFormE2EIcebergSuiteBase]]
  */
-class UniFormE2EIcebergSuite extends UniFormE2EIcebergSuiteBase with WriteDeltaHMSReadIceberg

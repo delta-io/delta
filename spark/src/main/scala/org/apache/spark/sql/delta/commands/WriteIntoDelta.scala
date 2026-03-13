@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 import scala.collection.mutable
+import scala.util.Try
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta._
@@ -110,8 +111,14 @@ case class WriteIntoDelta(
         txn, sparkSession
       )
       val operation = DeltaOperations.Write(
-        mode, Option(partitionColumns),
-        options.replaceWhere, options.userMetadata
+        mode = mode,
+        partitionBy = Option(partitionColumns),
+        predicate = options.replaceWhere,
+        userMetadata = options.userMetadata,
+        isDynamicPartitionOverwrite =
+          if (Try(options.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None,
+        canOverwriteSchema = if (options.canOverwriteSchema) Some(true) else None,
+        canMergeSchema = if (options.canMergeSchema) Some(true) else None
       )
       txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
     }

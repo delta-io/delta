@@ -229,6 +229,9 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
     if (closed) {
       throw new IllegalStateException("Can't call `next` on a closed iterator.");
     }
+    if (Thread.currentThread().isInterrupted()) {
+      throw new IllegalStateException("Thread was interrupted");
+    }
 
     if (!hasNext()) {
       throw new NoSuchElementException("No next element");
@@ -479,7 +482,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     deltaReadSchema,
                     checkpointPredicate);
 
-            long version = checkpointVersion(nextFilePath);
+            long version = nextLogFile.getVersion();
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         default:

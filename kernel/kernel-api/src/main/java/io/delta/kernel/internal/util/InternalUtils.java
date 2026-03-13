@@ -29,7 +29,6 @@ import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -94,7 +93,7 @@ public class InternalUtils {
    */
   public static long microsSinceEpoch(Timestamp timestamp) {
     LocalDateTime localTimestamp = timestamp.toLocalDateTime();
-    return ChronoUnit.MICROS.between(EPOCH_DATETIME, localTimestamp);
+    return TimestampUtils.toEpochMicros(localTimestamp);
   }
 
   /**

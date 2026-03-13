@@ -121,11 +121,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tableName)).map(_._2))
   }
 
-  def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
-    assert(expectedFormat ==
-      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
-  }
-
   def assertJsonPredicateHints(tableName: String, expectedHints: Seq[String]): Unit = {
     assert(expectedHints ==
       TestClientForDeltaFormatSharing.jsonPredicateHints.filter(_._1.contains(tableName)).map(_._2)
@@ -866,15 +861,10 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read data for simple cdf query") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf"
-      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
-      // older versions can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         sql(s"""
                |CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA PARTITIONED BY (c2)
-               |TBLPROPERTIES (delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
-               |'delta.logRetentionDuration' = '$largeRetentionHours hours')
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)
                |""".stripMargin)
         // 2 inserts in version 1, 1 with c1=2
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "one"), (2, "two")""")
@@ -1151,17 +1141,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   test("DeltaSharingDataSource able to read cdf with special chars") {
     withTempDir { tempDir =>
       val deltaTableName = "delta_table_cdf_special"
-      // Set the deletedFileRetentionDuration and logRetentionDuration to a large value so that
-      // older versions can be accessed
-      val largeRetentionHours = 2 * System.currentTimeMillis().millis.toHours
       withTable(deltaTableName) {
         // scalastyle:off nonascii
         sql(s"""CREATE TABLE $deltaTableName (`第一列` INT, c2 STRING)
                |USING DELTA PARTITIONED BY (c2)
                |TBLPROPERTIES(
-               |delta.enableChangeDataFeed = true,
-               |'delta.deletedFileRetentionDuration' = '$largeRetentionHours hours',
-               |'delta.logRetentionDuration' = '$largeRetentionHours hours'
+               |delta.enableChangeDataFeed = true
                |)""".stripMargin)
         // The table operations take about 20~30 seconds.
         for (i <- 0 to 9) {
@@ -1707,6 +1692,53 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             )
             checkAnswer(df, expected)
           }
+        }
+      }
+    }
+  }
+  test("callerOrg option is passed to DeltaSharingRestClient") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_caller_org"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+
+        val sharedTableName = "shared_table_caller_org"
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName)
+        DeltaSharingUtils.overrideSingleBlock[Long](
+          blockId = TestClientForDeltaFormatSharing.getBlockId(
+            sharedTableName, "getTableVersion"),
+          value = 1
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath =
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(DeltaSharingOptions.CALLER_ORG_OPTION, "test-org")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "test-org",
+            "callerOrg should be passed through to the client"
+          )
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "",
+            "callerOrg should be empty when not set"
+          )
         }
       }
     }

@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta.catalog
 
 import io.delta.spark.internal.v2.catalog.SparkTable
-import org.apache.spark.sql.delta.sources.DeltaSQLConfV2
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import java.io.File
@@ -27,7 +27,7 @@ import java.util.Locale
  * Unit tests for DeltaCatalog's V2 connector routing logic.
  *
  * Verifies that DeltaCatalog correctly routes table loading based on
- * DeltaSQLConfV2.V2_ENABLE_MODE:
+ * DeltaSQLConf.V2_ENABLE_MODE:
  * - STRICT mode: Kernel's SparkTable (V2 connector)
  * - NONE mode (default): DeltaTableV2 (V1 connector)
  */
@@ -44,7 +44,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
         val tableName = s"test_catalog_${mode.toLowerCase(Locale.ROOT)}"
         val location = new File(tempDir, tableName).getAbsolutePath
 
-        withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> mode) {
+        withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
           sql(s"CREATE TABLE $tableName (id INT, name STRING) USING delta LOCATION '$location'")
 
           val catalog = spark.sessionState.catalogManager.v2SessionCatalog
@@ -65,7 +65,7 @@ class DeltaCatalogSuite extends DeltaSQLCommandTest {
       withTempDir { tempDir =>
         val path = tempDir.getAbsolutePath
 
-        withSQLConf(DeltaSQLConfV2.V2_ENABLE_MODE.key -> mode) {
+        withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> mode) {
           sql(s"CREATE TABLE delta.`$path` (id INT, name STRING) USING delta")
 
           val catalog = spark.sessionState.catalogManager.v2SessionCatalog

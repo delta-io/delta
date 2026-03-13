@@ -96,14 +96,35 @@ class ProtocolChangedException(message: String)
  * @since 1.0.0
  */
 @Evolving
-class ConcurrentAppendException(message: String)
+class ConcurrentAppendException private (
+    errorClass: String,
+    message: String,
+    messageParameters: Array[String] = Array.empty)
   extends org.apache.spark.sql.delta.ConcurrentAppendException(message)
     with DeltaThrowable {
+  def this(message: String) = this(message, "DELTA_CONCURRENT_APPEND.WITHOUT_HINT", Array.empty)
   def this(messageParameters: Array[String]) = {
-    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_APPEND", messageParameters))
+    this(
+      "DELTA_CONCURRENT_APPEND.WITHOUT_HINT",
+      DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_APPEND.WITHOUT_HINT", messageParameters),
+      messageParameters
+    )
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_APPEND"
+  override def getErrorClass: String = errorClass
   override def getMessage: String = message
+  def getMessageParametersArray: Array[String] = messageParameters
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+  }
+}
+
+object ConcurrentAppendException {
+  def apply(subClass: String, messageParameters: Array[String]): ConcurrentAppendException = {
+    val errorClass = s"DELTA_CONCURRENT_APPEND.$subClass"
+    val message = DeltaThrowableHelper.getMessage(errorClass, messageParameters)
+    new ConcurrentAppendException(errorClass, message, messageParameters)
+  }
 }
 
 /**
@@ -114,14 +135,35 @@ class ConcurrentAppendException(message: String)
  * @since 1.0.0
  */
 @Evolving
-class ConcurrentDeleteReadException(message: String)
+class ConcurrentDeleteReadException private (
+    message: String,
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
   extends org.apache.spark.sql.delta.ConcurrentDeleteReadException(message)
     with DeltaThrowable {
+  def this(message: String) = this(message,
+    "DELTA_CONCURRENT_DELETE_READ.WITHOUT_HINT", Array.empty)
   def this(messageParameters: Array[String]) = {
-    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DELETE_READ", messageParameters))
+    this(DeltaThrowableHelper.getMessage(
+      "DELTA_CONCURRENT_DELETE_READ.WITHOUT_HINT", messageParameters),
+      "DELTA_CONCURRENT_DELETE_READ.WITHOUT_HINT",
+      messageParameters
+    )
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_DELETE_READ"
+  override def getErrorClass: String = errorClass
   override def getMessage: String = message
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+  }
+}
+
+object ConcurrentDeleteReadException {
+  def apply(subClass: String, messageParameters: Array[String]): ConcurrentDeleteReadException = {
+    val errorClass = s"DELTA_CONCURRENT_DELETE_READ.$subClass"
+    val message = DeltaThrowableHelper.getMessage(errorClass, messageParameters)
+    new ConcurrentDeleteReadException(message, errorClass, messageParameters)
+  }
 }
 
 /**
@@ -132,14 +174,35 @@ class ConcurrentDeleteReadException(message: String)
  * @since 1.0.0
  */
 @Evolving
-class ConcurrentDeleteDeleteException(message: String)
+class ConcurrentDeleteDeleteException private (
+    message: String,
+    errorClass: String,
+    messageParameters: Array[String] = Array.empty)
   extends org.apache.spark.sql.delta.ConcurrentDeleteDeleteException(message)
     with DeltaThrowable {
+  def this(message: String) = this(message,
+    "DELTA_CONCURRENT_DELETE_DELETE.WITHOUT_HINT", Array.empty)
   def this(messageParameters: Array[String]) = {
-    this(DeltaThrowableHelper.getMessage("DELTA_CONCURRENT_DELETE_DELETE", messageParameters))
+    this(DeltaThrowableHelper.getMessage(
+      "DELTA_CONCURRENT_DELETE_DELETE.WITHOUT_HINT", messageParameters),
+      "DELTA_CONCURRENT_DELETE_DELETE.WITHOUT_HINT",
+      messageParameters
+    )
   }
-  override def getErrorClass: String = "DELTA_CONCURRENT_DELETE_DELETE"
+  override def getErrorClass: String = errorClass
   override def getMessage: String = message
+
+  override def getMessageParameters: java.util.Map[String, String] = {
+    DeltaThrowableHelper.getMessageParameters(errorClass, errorSubClass = null, messageParameters)
+  }
+}
+
+object ConcurrentDeleteDeleteException {
+  def apply(subClass: String, messageParameters: Array[String]): ConcurrentDeleteDeleteException = {
+    val errorClass = s"DELTA_CONCURRENT_DELETE_DELETE.$subClass"
+    val message = DeltaThrowableHelper.getMessage(errorClass, messageParameters)
+    new ConcurrentDeleteDeleteException(message, errorClass, messageParameters)
+  }
 }
 
 /**

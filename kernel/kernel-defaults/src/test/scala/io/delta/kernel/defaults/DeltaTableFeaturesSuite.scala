@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.defaults
 
+import java.nio.file.{Files, Paths}
 import java.util.Collections
 
 import scala.collection.immutable.Seq
@@ -37,6 +38,8 @@ import io.delta.kernel.utils.CloseableIterable.emptyIterable
 import org.apache.spark.sql.delta.{DeltaLog, DeltaTableFeatureException}
 import org.apache.spark.sql.delta.actions.Protocol
 
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.hadoop.ParquetFileReader
 import org.scalatest.funsuite.AnyFunSuite
 
 class DeltaTableFeaturesTransactionBuilderV1Suite extends DeltaTableFeaturesSuiteBase
@@ -404,6 +407,117 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
     }
   }
   /* ---- End: type widening tests ---- */
+
+  /* ---- Start: materialize partition columns tests ---- */
+  test("materialize partition columns in parquet schema when feature is enabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a partitioned table with materialize partition columns feature enabled
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testPartitionSchema,
+        partCols = testPartitionColumns,
+        data = Seq(Map("part1" -> Literal.ofInt(1), "part2" -> Literal.ofInt(2)) ->
+          dataPartitionBatches1),
+        tableProperties = Map("delta.feature.materializePartitionColumns" -> "supported"))
+
+      // Verify the feature is enabled in protocol
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE))
+
+      // Find data parquet files (excluding checkpoints)
+      val dataFiles = Files.walk(Paths.get(tablePath)).iterator().asScala
+        .filter(path =>
+          path.toString.endsWith(".parquet") &&
+            !path.toString.contains("_delta_log"))
+        .toSeq
+
+      assert(dataFiles.nonEmpty, "Expected at least one data file to be written")
+
+      // Read parquet schema from the first data file
+      val parquetMetadata = ParquetFileReader.readFooter(
+        configuration,
+        new Path(dataFiles.head.toString))
+      val parquetSchema = parquetMetadata.getFileMetaData.getSchema
+
+      // Verify that partition columns are present in the parquet schema
+      val fieldNames: Set[String] = (0 until parquetSchema.getFieldCount).map(i =>
+        parquetSchema.getType(i).getName).toSet
+
+      assert(
+        fieldNames.contains("part1"),
+        s"Partition column 'part1' should be present in parquet schema. Found fields: $fieldNames")
+      assert(
+        fieldNames.contains("part2"),
+        s"Partition column 'part2' should be present in parquet schema. Found fields: $fieldNames")
+      assert(
+        fieldNames.contains("id"),
+        s"Data column 'id' should be present in parquet schema. Found fields: $fieldNames")
+
+      // Verify data using Kernel and Spark readers
+      verifyWrittenContent(
+        tablePath,
+        testPartitionSchema,
+        dataPartitionBatches1.flatMap(_.toTestRows))
+    }
+  }
+
+  test("partition columns NOT in parquet schema when materializePartitionColumns is disabled") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create a partitioned table without the feature (default behavior)
+      appendData(
+        engine,
+        tablePath,
+        isNewTable = true,
+        testPartitionSchema,
+        partCols = testPartitionColumns,
+        data = Seq(Map("part1" -> Literal.ofInt(1), "part2" -> Literal.ofInt(2)) ->
+          dataPartitionBatches1))
+
+      // Verify the feature is NOT enabled in protocol
+      val protocol = getProtocol(engine, tablePath)
+      assert(!protocol.supportsFeature(TableFeatures.MATERIALIZE_PARTITION_COLUMNS_W_FEATURE))
+
+      // Find data parquet files (excluding checkpoints)
+      val dataFiles = Files.walk(Paths.get(tablePath)).iterator().asScala
+        .filter(path =>
+          path.toString.endsWith(".parquet") &&
+            !path.toString.contains("_delta_log"))
+        .toSeq
+
+      assert(dataFiles.nonEmpty, "Expected at least one data file to be written")
+
+      // Read parquet schema from the first data file.
+      val parquetMetadata = ParquetFileReader.readFooter(
+        configuration,
+        new Path(dataFiles.head.toString))
+      val parquetSchema = parquetMetadata.getFileMetaData.getSchema
+
+      // Verify that partition columns are NOT present in the parquet schema.
+      val fieldNames: Set[String] = (0 until parquetSchema.getFieldCount).map(i =>
+        parquetSchema.getType(i).getName).toSet
+
+      assert(
+        !fieldNames.contains("part1"),
+        s"Partition column 'part1' should NOT be present in parquet schema. Found fields: " +
+          fieldNames.toString)
+      assert(
+        !fieldNames.contains("part2"),
+        s"Partition column 'part2' should NOT be present in parquet schema. Found fields: " +
+          fieldNames.toString)
+      assert(
+        fieldNames.contains("id"),
+        s"Data column 'id' should be present in parquet schema. Found fields: $fieldNames")
+
+      // Verify data using Kernel and Spark readers.
+      verifyWrittenContent(
+        tablePath,
+        testPartitionSchema,
+        dataPartitionBatches1.flatMap(_.toTestRows))
+    }
+  }
+  /* ---- End: materialize partition columns tests ---- */
 
   ///////////////////////////////////////////////////////////////////////////
   // Helper methods

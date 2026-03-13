@@ -24,6 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.Relocated.StreamExecution
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSource, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaColumnMappingSelectedTestMixin
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -32,6 +33,7 @@ import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.Path
 
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row}
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.StreamingExecutionRelation
 import org.apache.spark.sql.streaming.{DataStreamReader, StreamTest}
@@ -752,4 +754,42 @@ class DeltaSourceNameColumnMappingSuite extends DeltaSourceSuite
 
   override protected def isCdcTest: Boolean = false
 
+}
+
+// Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.
+// Batch size 1 triggers a backfill on every commit (commitVersion % 1 == 0), testing the most
+// granular backfill path. Batch size 2 triggers backfill every other commit, testing the boundary
+// between backfilled and unbackfilled commits. Batch size 100 leaves most commits unbackfilled,
+// testing the production-like path where streaming must read from both the commit coordinator
+// and the filesystem. This follows the same pattern as other CatalogManaged (CCv2) test suites
+// (DeltaLogSuite, DeltaCDCStreamSuite, etc.).
+
+class DeltaSourceIdColumnMappingWithCatalogManagedBatch1Suite
+    extends DeltaSourceIdColumnMappingSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSourceIdColumnMappingWithCatalogManagedBatch2Suite
+    extends DeltaSourceIdColumnMappingSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaSourceIdColumnMappingWithCatalogManagedBatch100Suite
+    extends DeltaSourceIdColumnMappingSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}
+
+class DeltaSourceNameColumnMappingWithCatalogManagedBatch1Suite
+    extends DeltaSourceNameColumnMappingSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
+}
+
+class DeltaSourceNameColumnMappingWithCatalogManagedBatch2Suite
+    extends DeltaSourceNameColumnMappingSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaSourceNameColumnMappingWithCatalogManagedBatch100Suite
+    extends DeltaSourceNameColumnMappingSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }

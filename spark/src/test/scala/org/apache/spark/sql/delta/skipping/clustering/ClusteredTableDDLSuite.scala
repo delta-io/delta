@@ -725,6 +725,8 @@ trait ClusteredTableDDLSuiteBase
   }
 
   test("optimize clustered table and trigger regular compaction") {
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "OPTIMIZE is blocked on catalog-managed tables")
     withClusteredTable(testTable, "a INT, b STRING", "a, b") {
       val tableIdentifier = TableIdentifier(testTable)
       verifyClusteringColumns(tableIdentifier, Seq("a", "b"))
@@ -768,6 +770,8 @@ trait ClusteredTableDDLSuiteBase
   }
 
   test("optimize clustered table - error scenarios") {
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "OPTIMIZE is blocked on catalog-managed tables")
     withClusteredTable(testTable, "a INT, b STRING", "a") {
       // Specify partition predicate.
       val e = intercept[DeltaUnsupportedOperationException] {
@@ -875,6 +879,8 @@ trait ClusteredTableDDLSuiteBase
 
 
   test("validate CLONE on clustered table") {
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "OPTIMIZE is blocked on catalog-managed tables")
     import testImplicits._
     val srcTable = "SrcTbl"
     val dstTable1 = "DestTbl1"

@@ -239,8 +239,7 @@ class AutoCompactExecutionSuite extends
     checkAutoCompactionWorks(dir, spark.range(10).toDF("id"))
   }
 
-  // TODO: Re-enable this test after fixing Variant data skipping in Spark 4.1.0+
-  ignore("variant auto compact kicks in when enabled - table config") {
+  test("variant auto compact kicks in when enabled - table config") {
     withTempDir { dir =>
       withSQLConf(
           "spark.databricks.delta.properties.defaults.autoOptimize.autoCompact" -> "true",
@@ -252,8 +251,7 @@ class AutoCompactExecutionSuite extends
     }
   }
 
-  // TODO: Re-enable this test after fixing Variant data skipping in Spark 4.1.0+
-  ignore("variant auto compact kicks in when enabled - session config") {
+  test("variant auto compact kicks in when enabled - session config") {
     withTempDir { dir =>
       withSQLConf(
           DeltaSQLConf.DELTA_AUTO_COMPACT_ENABLED.key -> "true",

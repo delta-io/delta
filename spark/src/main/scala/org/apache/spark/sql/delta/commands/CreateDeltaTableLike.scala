@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -24,6 +24,7 @@ import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.types.StructType
 
@@ -136,8 +137,6 @@ trait CreateDeltaTableLike extends SQLConfHelper {
     // If we have to update the catalog, use the correct schema and table properties, otherwise
     // empty out the schema and property information
     if (conf.getConf(DeltaSQLConf.DELTA_UPDATE_CATALOG_ENABLED)) {
-      // In the case we're creating a Delta table on an existing path and adopting the schema
-      val schema = if (table.schema.isEmpty) snapshot.schema else table.schema
       val truncationThreshold = spark.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_UPDATE_CATALOG_LONG_FIELD_TRUNCATION_THRESHOLD)
       val (truncatedSchema, additionalProperties) = UpdateCatalog.truncateSchemaIfNecessary(
@@ -154,13 +153,23 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           ++ additionalProperties,
         storage = storageProps,
         tracksPartitionsInCatalog = true)
-    } else {
+    } else if (allowCatalogManaged) {
       // Setting table properties is required for creating catalogManaged tables.
-      val properties: Map[String, String] =
-        if (allowCatalogManaged) UpdateCatalog.updatedProperties(snapshot) else Map.empty
+      table.copy(
+        // Here we use snapshot.schema instead of table.schema because it reflects the actual
+        // committed state of the table.
+        // Delta does not have a distinct storage type for Char/Varchar; in snapshots, they are
+        // represented in String type with extra type metadata. We convert them to back to the
+        // original Char/Varchar types when storing them in the catalog.
+        schema = CharVarcharUtils.getRawSchema(snapshot.schema),
+        partitionColumnNames = snapshot.metadata.partitionColumns,
+        properties = UpdateCatalog.updatedProperties(snapshot),
+        storage = storageProps,
+        tracksPartitionsInCatalog = true)
+    } else {
       table.copy(
         schema = new StructType(),
-        properties = properties,
+        properties = Map.empty,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,
@@ -169,15 +178,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
-   * Horrible hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
+   * Differentiate between DataFrameWriterV1 and V2 so that we can decide
    * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
    * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
    * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    */
-  protected def isV1Writer: Boolean = {
-    Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
+  protected def isV1WriterSaveAsTableOverwrite: Boolean = {
+    val options = new DeltaOptions(table.storage.properties, conf)
+    CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(options, mode)
   }
 }

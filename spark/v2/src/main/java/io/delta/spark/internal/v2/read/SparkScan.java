@@ -41,11 +41,13 @@ import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
+import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -58,25 +60,26 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Collections.unmodifiableList(
           Arrays.asList(
               DeltaOptions.STARTING_VERSION_OPTION(),
+              DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
+              DeltaOptions.IGNORE_DELETES_OPTION(),
+              DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
+              DeltaOptions.EXCLUDE_REGEX_OPTION()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, maxFilesPerTrigger, and maxBytesPerTrigger are supported. User-defined custom
-   * options (not in DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreDeletes,
+   * skipChangeCommits, and excludeRegex are supported. User-defined custom options (not in
+   * DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
-                  DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
-                  DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
-                  DeltaOptions.STARTING_TIMESTAMP_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
@@ -96,6 +99,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
+  private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
@@ -105,7 +109,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
+  // Estimated size in bytes accounting for column projection, used for query optimizer cost
+  // estimation
+  private long estimatedSizeInBytes = 0L;
   private volatile boolean planned = false;
+
+  // Runtime predicates applied after planning (using Set for order-independent comparison)
+  private final Set<org.apache.spark.sql.connector.expressions.filter.Predicate>
+      appliedRuntimePredicates = new HashSet<>();
 
   public SparkScan(
       DeltaSnapshotManager snapshotManager,
@@ -116,6 +127,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
+      Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
@@ -127,6 +139,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
@@ -170,7 +183,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     validateStreamingOptions(deltaOptions);
     return new SparkMicroBatchStream(
         snapshotManager,
-        initialSnapshot,
+        // Loads a fresh snapshot as the baseline for schema change detection and table identity
+        // checks. SparkScan's initialSnapshot is from analysis time and may be stale by stream
+        // start/restart.
+        // Matches V1's DeltaDataSource.createSource() behavior.
+        snapshotManager.loadLatestSnapshot(),
         hadoopConf,
         SparkSession.active(),
         deltaOptions,
@@ -196,18 +213,142 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public Statistics estimateStatistics() {
     ensurePlanned();
+    final long plannedBytes = estimatedSizeInBytes;
+
+    // When catalog stats are available and CBO is enabled, combine table-level stats
+    // (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
+    // conf.cboEnabled || conf.planStatsEnabled.
+    boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+    if (useCatalogStats && catalogStats.isPresent()) {
+      final Statistics stats = catalogStats.get();
+      return new Statistics() {
+        @Override
+        public OptionalLong sizeInBytes() {
+          // Planned file size is authoritative (even if 0 for an empty table)
+          return OptionalLong.of(plannedBytes);
+        }
+
+        @Override
+        public OptionalLong numRows() {
+          // TODO: Use accurate row count from planned files (sum of AddFile.numRecords)
+          //  instead of catalog stats, which are stale (point-in-time from ANALYZE) and
+          //  not adjusted for partition pruning.
+          return stats.numRows();
+        }
+
+        @Override
+        public Map<NamedReference, ColumnStatistics> columnStats() {
+          // TODO: After partition pruning, column stats (e.g. min, max, nullCount,
+          //  distinctCount) could be tightened based on the pruned file-level stats.
+          return stats.columnStats();
+        }
+      };
+    }
+
+    // No catalog stats available or CBO disabled — return stats from planned files only
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
-        return OptionalLong.of(totalBytes);
+        return OptionalLong.of(plannedBytes);
       }
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown at planning time.
+        // Row count is unknown without catalog stats
         return OptionalLong.empty();
       }
     };
+  }
+
+  /**
+   * Computes the estimated size in bytes accounting for column projection.
+   *
+   * <p>This mirrors what {@code SizeInBytesOnlyStatsPlanVisitor.visitUnaryNode} (from Spark code)
+   * would compute for a {@code Project} over a {@code LogicalRelation}: {@code sizeInBytes =
+   * childSizeInBytes * outputRowSize / childRowSize}
+   *
+   * <p>Where:
+   *
+   * <ul>
+   *   <li><b>childRowSize</b> = {@code ROW_OVERHEAD + dataSchema + partitionSchema} (equivalent to
+   *       LogicalRelation output)
+   *   <li><b>outputRowSize</b> = {@code ROW_OVERHEAD + readDataSchema + partitionSchema}
+   *       (equivalent to Project output)
+   * </ul>
+   *
+   * <p>When catalog column stats are available, uses per-column {@code avgLen} instead of {@code
+   * defaultSize()} for more accurate size estimation, mirroring {@code
+   * EstimationUtils.getSizePerRow()} behavior.
+   *
+   * <p>This provides consistent statistics with the v1 code path (LogicalRelation + visitUnaryNode
+   * from Spark code directory).
+   *
+   * @param totalBytes the total size in bytes of the planned files (raw physical size)
+   * @return the estimated size in bytes after accounting for column projection
+   */
+  private long computeEstimatedSizeWithColumnProjection(long totalBytes) {
+    if (totalBytes <= 0) {
+      return totalBytes;
+    }
+
+    // Row overhead constant, matching EstimationUtils.getSizePerRow (from Spark)
+    final int ROW_OVERHEAD = 8;
+
+    // Use avgLen from catalog column stats when available for more accurate estimation
+    Map<String, OptionalLong> avgLenByColumn = getAvgLenByColumn();
+
+    final long fullSchemaRowSize =
+        ROW_OVERHEAD
+            + getSchemaSize(dataSchema, avgLenByColumn)
+            + getSchemaSize(partitionSchema, avgLenByColumn);
+    final long outputRowSize = ROW_OVERHEAD + getSchemaSize(readSchema(), avgLenByColumn);
+
+    long estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize;
+
+    return Math.max(1L, estimatedBytes);
+  }
+
+  /**
+   * Returns a map of column name to avgLen from catalog column stats, used to improve size
+   * estimation accuracy when catalog stats are available.
+   */
+  private Map<String, OptionalLong> getAvgLenByColumn() {
+    if (!catalogStats.isPresent()) {
+      return Collections.emptyMap();
+    }
+    Map<NamedReference, ColumnStatistics> colStats = catalogStats.get().columnStats();
+    if (colStats.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    Map<String, OptionalLong> result = new HashMap<>();
+    for (Map.Entry<NamedReference, ColumnStatistics> entry : colStats.entrySet()) {
+      result.put(entry.getKey().fieldNames()[0], entry.getValue().avgLen());
+    }
+    return result;
+  }
+
+  /**
+   * Computes the estimated in-memory size for a schema, using avgLen from catalog stats when
+   * available, falling back to defaultSize(). Mirrors EstimationUtils.getSizePerRow(). For
+   * StringType columns with avgLen, adds UTF8String overhead (base + offset + numBytes = 12 bytes).
+   */
+  private static long getSchemaSize(StructType schema, Map<String, OptionalLong> avgLenByColumn) {
+    long size = 0;
+    for (StructField field : schema.fields()) {
+      OptionalLong avgLen = avgLenByColumn.getOrDefault(field.name(), OptionalLong.empty());
+      if (avgLen.isPresent()) {
+        if (field.dataType() instanceof StringType) {
+          // UTF8String: base + offset + numBytes (matching EstimationUtils.getSizePerRow)
+          size += avgLen.getAsLong() + 8 + 4;
+        } else {
+          size += avgLen.getAsLong();
+        }
+      } else {
+        size += field.dataType().defaultSize();
+      }
+    }
+    return size;
   }
 
   /**
@@ -215,7 +356,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    *
    * @return the table path with trailing slash
    */
-  private String getTablePath() {
+  public String getTablePath() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final Row scanState = kernelScan.getScanState(tableEngine);
     final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
@@ -253,33 +394,74 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         throw new RuntimeException(e);
       }
     }
+
+    // Pre-compute estimated size accounting for column projection
+    estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
   }
 
-  /** Ensure the scan is planned exactly once in a thread\-safe manner. */
-  private synchronized void ensurePlanned() {
+  /**
+   * Ensure the scan is planned exactly once in a thread-safe manner, optionally applying runtime
+   * filters.
+   */
+  private synchronized void ensurePlanned(List<RuntimePredicate> runtimePredicates) {
+    // First, ensure planning is done
     if (!planned) {
       planScanFiles();
       planned = true;
     }
+
+    // Then apply runtime predicates if provided
+    if (runtimePredicates != null && !runtimePredicates.isEmpty()) {
+      // Record the applied predicates for equals/hashCode comparison
+      for (RuntimePredicate filter : runtimePredicates) {
+        appliedRuntimePredicates.add(filter.predicate);
+      }
+
+      List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
+      for (PartitionedFile pf : this.partitionedFiles) {
+        InternalRow partitionValues = pf.partitionValues();
+        boolean allMatch =
+            runtimePredicates.stream()
+                .allMatch(predicate -> predicate.evaluator.eval(partitionValues));
+        if (allMatch) {
+          runtimeFilteredPartitionedFiles.add(pf);
+        }
+      }
+
+      // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is
+      // filtered out
+      if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
+        this.partitionedFiles = runtimeFilteredPartitionedFiles;
+        this.totalBytes =
+            runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+        this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
+      }
+    }
   }
 
-  StructType getDataSchema() {
+  /** Ensure the scan is planned exactly once in a thread-safe manner. */
+  private void ensurePlanned() {
+    // Pass null to indicate no runtime predicate should be applied - just perform the scan planning
+    ensurePlanned(null);
+  }
+
+  public StructType getDataSchema() {
     return dataSchema;
   }
 
-  StructType getPartitionSchema() {
+  public StructType getPartitionSchema() {
     return partitionSchema;
   }
 
-  StructType getReadDataSchema() {
+  public StructType getReadDataSchema() {
     return readDataSchema;
   }
 
-  CaseInsensitiveStringMap getOptions() {
+  public CaseInsensitiveStringMap getOptions() {
     return options;
   }
 
-  Configuration getConfiguration() {
+  public Configuration getConfiguration() {
     return hadoopConf;
   }
 
@@ -294,7 +476,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   public void filter(org.apache.spark.sql.connector.expressions.filter.Predicate[] predicates) {
 
     // Try to convert runtime predicates to catalyst expressions, then create predicate evaluators
-    List<InterpretedPredicate> evaluators = new ArrayList<>();
+    // Only track predicates that successfully convert to evaluators
+    List<RuntimePredicate> runtimePredicates = new ArrayList<>();
     for (org.apache.spark.sql.connector.expressions.filter.Predicate predicate : predicates) {
       // only the predicates on partition columns will be converted
       Optional<Expression> catalystExpr =
@@ -303,28 +486,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         InterpretedPredicate predicateEvaluator =
             org.apache.spark.sql.catalyst.expressions.Predicate.createInterpreted(
                 catalystExpr.get());
-        evaluators.add(predicateEvaluator);
-      }
-    }
-    if (evaluators.isEmpty()) {
-      return;
-    }
-
-    // Filter existing partitionedFiles with runtime filter evaluators
-    ensurePlanned();
-    List<PartitionedFile> runtimeFilteredPartitionedFiles = new ArrayList<>();
-    for (PartitionedFile pf : this.partitionedFiles) {
-      InternalRow partitionValues = pf.partitionValues();
-      boolean allMatch = evaluators.stream().allMatch(evaluator -> evaluator.eval(partitionValues));
-      if (allMatch) {
-        runtimeFilteredPartitionedFiles.add(pf);
+        runtimePredicates.add(new RuntimePredicate(predicate, predicateEvaluator));
       }
     }
 
-    // Update partitionedFiles and totalBytes, if any partition is filtered out
-    if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
-      this.partitionedFiles = runtimeFilteredPartitionedFiles;
-      this.totalBytes = this.partitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
+    if (!runtimePredicates.isEmpty()) {
+      // Apply runtime predicates within the synchronized ensurePlanned method
+      ensurePlanned(runtimePredicates);
     }
   }
 
@@ -358,6 +526,65 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
                   + "Supported options are: [%s].",
               String.join(", ", unsupportedOptions),
               String.join(", ", SUPPORTED_STREAMING_OPTIONS)));
+    }
+  }
+
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) {
+      return true;
+    }
+    if (o == null || getClass() != o.getClass()) {
+      return false;
+    }
+    SparkScan that = (SparkScan) o;
+    return Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
+        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion()
+        && Objects.equals(dataSchema, that.dataSchema)
+        && Objects.equals(partitionSchema, that.partitionSchema)
+        && Objects.equals(readDataSchema, that.readDataSchema)
+        && Arrays.equals(pushedToKernelFilters, that.pushedToKernelFilters)
+        && Arrays.equals(dataFilters, that.dataFilters)
+        // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
+        // with pushed down filters that are also recorded in `pushedToKernelFilters`
+        && Objects.equals(options, that.options)
+        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
+        && Objects.equals(catalogStats, that.catalogStats);
+  }
+
+  @Override
+  public int hashCode() {
+    int result =
+        Objects.hash(
+            catalogStats,
+            initialSnapshot.getPath(),
+            initialSnapshot.getVersion(),
+            dataSchema,
+            partitionSchema,
+            readDataSchema,
+            options,
+            appliedRuntimePredicates);
+    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
+    result = 31 * result + Arrays.hashCode(dataFilters);
+    return result;
+  }
+
+  /**
+   * Holds a runtime predicate from {@link #filter(Predicate[])} along with its compiled evaluator.
+   *
+   * <p>Only created for predicates that can be successfully converted to Catalyst expressions
+   * (typically predicates on partition columns) and compiled into InterpretedPredicate evaluators.
+   * Predicates that cannot be converted are not instantiated as RuntimePredicate objects.
+   */
+  private static class RuntimePredicate {
+    final org.apache.spark.sql.connector.expressions.filter.Predicate predicate;
+    final InterpretedPredicate evaluator;
+
+    RuntimePredicate(
+        org.apache.spark.sql.connector.expressions.filter.Predicate predicate,
+        InterpretedPredicate evaluator) {
+      this.predicate = predicate;
+      this.evaluator = evaluator;
     }
   }
 }
