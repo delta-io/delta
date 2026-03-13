@@ -43,6 +43,7 @@ import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{Dataset, SparkSession}
+import org.apache.spark.storage.StorageLevel
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.util.SerializableConfiguration
@@ -303,67 +304,75 @@ class IcebergConverter
               )
             )
 
-            // Check for DVs before distributing - matches driver path behavior
-            val allFiles = snapshotToConvert.allFiles
-            val hasDvs = allFiles.filter("deletionVector IS NOT NULL").limit(1).count() > 0
-            if (hasDvs) {
-              throw new UnsupportedOperationException("Deletion Vector is not supported")
-            }
-
-            val distributedHelper = icebergTxn.getDistributedAppendHelper
+            // Persist allFiles to avoid double state reconstruction
+            // (once for DV check, once for manifest writing)
+            val allFiles = snapshotToConvert.allFiles.persist(StorageLevel.DISK_ONLY)
             val hadoopConf = log.newDeltaHadoopConf()
             val hadoopConfBroadcast = spark.sparkContext.broadcast(
               new SerializableConfiguration(hadoopConf))
-
-            val ctx = ManifestWriteContext(
-              tablePath = icebergTxn.getTablePath,
-              partitionSpec = icebergTxn.getPartitionSpec,
-              logicalToPhysicalPartitionNames =
-                icebergTxn.getLogicalToPhysicalPartitionNames,
-              statsSchema = snapshotToConvert.statsSchema,
-              tableSchema = snapshotToConvert.schema,
-              sessionLocalTimeZone = SQLConf.get.sessionLocalTimeZone,
-              tableVersion = snapshotToConvert.version,
-              metadataOutputLocation = icebergTxn.getMetadataOutputLocation,
-              formatVersion = icebergTxn.getFormatVersion,
-              targetManifestSizeBytes =
-                DistributedManifestWriter.DEFAULT_TARGET_MANIFEST_SIZE_BYTES,
-              hadoopConfBroadcast = hadoopConfBroadcast
-            )
-
-            val numPartitions = computeNumPartitions(snapshotToConvert.numOfFiles)
-            var manifestFiles: Seq[shadedForDelta.org.apache.iceberg.ManifestFile] = Nil
             try {
-              manifestFiles = DistributedManifestWriter.writeManifestsDistributed(
-                spark, allFiles, ctx, numPartitions)
-
-              // Track writeSize for observability parity with the driver path.
-              // Use total snapshot size since individual AddFile sizes are not
-              // available on the driver after distributed processing.
-              distributedHelper.writeSize = snapshotToConvert.sizeInBytes
-
-              if (manifestFiles.isEmpty) {
-                // No manifests written — should not happen since numOfFiles > threshold,
-                // but handle gracefully by falling through to commit without file updates.
-                logWarning("Distributed manifest writing produced no manifests " +
-                  s"for ${snapshotToConvert.numOfFiles} files.")
+              // Check for DVs before distributing
+              val hasDvs =
+                allFiles.filter("deletionVector IS NOT NULL").limit(1).count() > 0
+              if (hasDvs) {
+                throw new UnsupportedOperationException(
+                  "Deletion Vector is not supported")
               }
-              manifestFiles.foreach(distributedHelper.appendManifest)
-              distributedHelper.commit(snapshotToConvert.version)
-            } catch {
-              case NonFatal(e) =>
-                // Best-effort cleanup of orphan manifest files
-                if (manifestFiles.nonEmpty) {
-                  logWarning(s"Distributed manifest writing failed. " +
-                    s"Cleaning up ${manifestFiles.size} orphan manifests.")
-                  try {
-                    DistributedManifestWriter.cleanupManifests(manifestFiles, hadoopConf)
-                  } catch {
-                    case NonFatal(cleanupErr) =>
-                      logWarning("Failed to clean up orphan manifests.", cleanupErr)
-                  }
+
+              val distributedHelper = icebergTxn.getDistributedAppendHelper
+
+              val ctx = ManifestWriteContext(
+                tablePath = icebergTxn.getTablePath,
+                partitionSpec = icebergTxn.getPartitionSpec,
+                logicalToPhysicalPartitionNames =
+                  icebergTxn.getLogicalToPhysicalPartitionNames,
+                statsSchema = snapshotToConvert.statsSchema,
+                tableSchema = snapshotToConvert.schema,
+                sessionLocalTimeZone = SQLConf.get.sessionLocalTimeZone,
+                tableVersion = snapshotToConvert.version,
+                metadataOutputLocation = icebergTxn.getMetadataOutputLocation,
+                formatVersion = icebergTxn.getFormatVersion,
+                targetManifestSizeBytes =
+                  DistributedManifestWriter.DEFAULT_TARGET_MANIFEST_SIZE_BYTES,
+                hadoopConfBroadcast = hadoopConfBroadcast
+              )
+
+              val numPartitions = computeNumPartitions(snapshotToConvert.numOfFiles)
+              var manifestFiles: Seq[shadedForDelta.org.apache.iceberg.ManifestFile] =
+                Nil
+              try {
+                manifestFiles = DistributedManifestWriter.writeManifestsDistributed(
+                  spark, allFiles, ctx, numPartitions)
+
+                // Track writeSize for observability parity with the driver path.
+                distributedHelper.writeSize = snapshotToConvert.sizeInBytes
+
+                if (manifestFiles.isEmpty) {
+                  logWarning("Distributed manifest writing produced no manifests " +
+                    s"for ${snapshotToConvert.numOfFiles} files.")
                 }
-                throw e
+                manifestFiles.foreach(distributedHelper.appendManifest)
+                distributedHelper.commit(snapshotToConvert.version)
+              } catch {
+                case NonFatal(e) =>
+                  // Best-effort cleanup of orphan manifest files
+                  if (manifestFiles.nonEmpty) {
+                    logWarning(s"Distributed manifest writing failed. " +
+                      s"Cleaning up ${manifestFiles.size} orphan manifests.")
+                    try {
+                      DistributedManifestWriter.cleanupManifests(
+                        manifestFiles, hadoopConf)
+                    } catch {
+                      case NonFatal(cleanupErr) =>
+                        logWarning(
+                          "Failed to clean up orphan manifests.", cleanupErr)
+                    }
+                  }
+                  throw e
+              }
+            } finally {
+              allFiles.unpersist()
+              hadoopConfBroadcast.destroy()
             }
           } else {
             // Driver path: stream AddFiles via toLocalIterator,
@@ -383,58 +392,78 @@ class IcebergConverter
               )
             )
 
-            val allFiles = snapshotToConvert.allFiles
-            val hasDvs = allFiles.filter("deletionVector IS NOT NULL").limit(1).count() > 0
-            if (hasDvs) {
-              throw new UnsupportedOperationException("Deletion Vector is not supported")
-            }
-
-            val batchedHelper = icebergTxn.getDistributedAppendHelper
+            // Persist allFiles to avoid double state reconstruction
+            // (once for DV check, once for manifest writing)
+            val allFiles = snapshotToConvert.allFiles.persist(StorageLevel.DISK_ONLY)
             val hadoopConf = log.newDeltaHadoopConf()
             val hadoopConfBroadcast = spark.sparkContext.broadcast(
               new SerializableConfiguration(hadoopConf))
-
-            val targetManifestSize = spark.sessionState.conf.getConf(
-              DeltaSQLConf.DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES)
-
-            val ctx = ManifestWriteContext(
-              tablePath = icebergTxn.getTablePath,
-              partitionSpec = icebergTxn.getPartitionSpec,
-              logicalToPhysicalPartitionNames =
-                icebergTxn.getLogicalToPhysicalPartitionNames,
-              statsSchema = snapshotToConvert.statsSchema,
-              tableSchema = snapshotToConvert.schema,
-              sessionLocalTimeZone = SQLConf.get.sessionLocalTimeZone,
-              tableVersion = snapshotToConvert.version,
-              metadataOutputLocation = icebergTxn.getMetadataOutputLocation,
-              formatVersion = icebergTxn.getFormatVersion,
-              targetManifestSizeBytes = targetManifestSize,
-              hadoopConfBroadcast = hadoopConfBroadcast
-            )
-
-            val addFileIterator = allFiles.toLocalIterator().asScala
-            var manifestFiles: Seq[shadedForDelta.org.apache.iceberg.ManifestFile] = Nil
             try {
-              manifestFiles = DistributedManifestWriter
-                .writeManifestsForPartition(addFileIterator, ctx)
-                .toSeq
+              val hasDvs =
+                allFiles.filter("deletionVector IS NOT NULL").limit(1).count() > 0
+              if (hasDvs) {
+                throw new UnsupportedOperationException(
+                  "Deletion Vector is not supported")
+              }
 
-              batchedHelper.writeSize = snapshotToConvert.sizeInBytes
-              manifestFiles.foreach(batchedHelper.appendManifest)
-              batchedHelper.commit(snapshotToConvert.version)
-            } catch {
-              case NonFatal(e) =>
-                if (manifestFiles.nonEmpty) {
-                  logWarning(s"Batched driver manifest writing failed. " +
-                    s"Cleaning up ${manifestFiles.size} orphan manifests.")
-                  try {
-                    DistributedManifestWriter.cleanupManifests(manifestFiles, hadoopConf)
-                  } catch {
-                    case NonFatal(cleanupErr) =>
-                      logWarning("Failed to clean up orphan manifests.", cleanupErr)
+              val batchedHelper = icebergTxn.getDistributedAppendHelper
+
+              val targetManifestSize = spark.sessionState.conf.getConf(
+                DeltaSQLConf
+                  .DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES)
+
+              val ctx = ManifestWriteContext(
+                tablePath = icebergTxn.getTablePath,
+                partitionSpec = icebergTxn.getPartitionSpec,
+                logicalToPhysicalPartitionNames =
+                  icebergTxn.getLogicalToPhysicalPartitionNames,
+                statsSchema = snapshotToConvert.statsSchema,
+                tableSchema = snapshotToConvert.schema,
+                sessionLocalTimeZone = SQLConf.get.sessionLocalTimeZone,
+                tableVersion = snapshotToConvert.version,
+                metadataOutputLocation = icebergTxn.getMetadataOutputLocation,
+                formatVersion = icebergTxn.getFormatVersion,
+                targetManifestSizeBytes = targetManifestSize,
+                hadoopConfBroadcast = hadoopConfBroadcast
+              )
+
+              // toLocalIterator returns a closeable iterator; ensure it is
+              // closed even if writeManifestsForPartition throws partway through
+              val javaIter = allFiles.toLocalIterator()
+              var manifestFiles: Seq[shadedForDelta.org.apache.iceberg.ManifestFile] =
+                Nil
+              try {
+                manifestFiles = DistributedManifestWriter
+                  .writeManifestsForPartition(javaIter.asScala, ctx)
+                  .toSeq
+
+                batchedHelper.writeSize = snapshotToConvert.sizeInBytes
+                manifestFiles.foreach(batchedHelper.appendManifest)
+                batchedHelper.commit(snapshotToConvert.version)
+              } catch {
+                case NonFatal(e) =>
+                  if (manifestFiles.nonEmpty) {
+                    logWarning(s"Batched driver manifest writing failed. " +
+                      s"Cleaning up ${manifestFiles.size} orphan manifests.")
+                    try {
+                      DistributedManifestWriter.cleanupManifests(
+                        manifestFiles, hadoopConf)
+                    } catch {
+                      case NonFatal(cleanupErr) =>
+                        logWarning(
+                          "Failed to clean up orphan manifests.", cleanupErr)
+                    }
                   }
+                  throw e
+              } finally {
+                javaIter match {
+                  case c: java.io.Closeable => c.close()
+                  case _ => // Iterator doesn't implement Closeable
                 }
-                throw e
+              }
+            } finally {
+              allFiles.unpersist()
+              hadoopConfBroadcast.destroy()
             }
           }
 

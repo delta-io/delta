@@ -179,7 +179,7 @@ object DistributedManifestWriter extends DeltaLogging {
         fileIO.deleteFile(manifest.path())
       } catch {
         case e: Exception =>
-          // Log but don't throw from cleanup
+          logWarning(s"Failed to delete orphan manifest: ${manifest.path()}", e)
       }
     }
   }
