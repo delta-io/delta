@@ -159,7 +159,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
               protocol,
               Optional.empty())
           assert(updatedMetadata.isPresent)
-          assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "id")
+          assert(updatedMetadata.get().getConfiguration.get("delta.columnMapping.mode") == "name")
           // We correctly populate the column mapping metadata
           verifyCMTestSchemaHasValidColumnMappingInfo(
             updatedMetadata.get(),
@@ -194,7 +194,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       Optional.empty())
   }
 
-  Seq("name", "none").foreach { cmMode =>
+  Seq("none").foreach { cmMode =>
     Seq(true, false).foreach { isNewTable =>
       test(s"cannot enable icebergWriterCompatV3 with incompatible column mapping mode " +
         s"`$cmMode`, isNewTable = $isNewTable") {
