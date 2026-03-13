@@ -184,13 +184,18 @@ public final class Literal implements Expression {
   public static Literal ofDecimal(BigDecimal value, int precision, int scale) {
     // throws an error if rounding is required to set the specified scale
     BigDecimal valueToStore = value.setScale(scale);
+    // Java's BigDecimal.precision() returns the count of significant digits in the
+    // unscaled value, which can be less than scale (e.g. BigDecimal.valueOf(0, 18) has
+    // precision=1, scale=18). Ensure the SQL precision is at least scale so that
+    // DecimalType(precision, scale) is always valid.
+    int adjustedPrecision = Math.max(precision, scale);
     checkArgument(
-        valueToStore.precision() <= precision,
+        valueToStore.precision() <= adjustedPrecision,
         "Decimal precision=%s for decimal %s exceeds max precision %s",
         valueToStore.precision(),
         valueToStore,
-        precision);
-    return new Literal(valueToStore, new DecimalType(precision, scale));
+        adjustedPrecision);
+    return new Literal(valueToStore, new DecimalType(adjustedPrecision, scale));
   }
 
   /**
