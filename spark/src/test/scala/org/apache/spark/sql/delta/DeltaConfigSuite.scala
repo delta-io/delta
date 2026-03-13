@@ -77,6 +77,128 @@ class DeltaConfigSuite extends SparkFunSuite
     }
   }
 
+  test("auto-normalize table properties without delta prefix") {
+    // Test 1: logRetentionDuration auto-normalization
+    withTempDir { dir =>
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES ('logRetentionDuration' = 'interval 7 days')
+           |""".stripMargin)
+
+      val log = DeltaLog.forTable(spark, dir)
+      val config = log.snapshot.metadata.configuration
+
+      // Should be normalized to delta.logRetentionDuration
+      assert(config.contains("delta.logRetentionDuration"),
+        s"Expected delta.logRetentionDuration but got: $config")
+      assert(!config.contains("logRetentionDuration"),
+        "Original key should not be present")
+    }
+
+    // Test 2: Non-delta property should pass through unchanged
+    withTempDir { dir =>
+      sql(
+        s"""CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta
+           |TBLPROPERTIES ('myCustomProp' = 'myValue')
+           |""".stripMargin)
+
+      val log = DeltaLog.forTable(spark, dir)
+      val config = log.snapshot.metadata.configuration
+
+      assert(config.contains("myCustomProp"),
+        "Custom property should remain unchanged")
+    }
+  }
+
+  test("auto-normalize table properties with ALTER TABLE") {
+    // Test 1: ALTER TABLE SET with non-prefixed logRetentionDuration
+    withTempDir { dir =>
+      // Create table without any special properties
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      // Use ALTER TABLE to add property without delta. prefix
+      sql(
+        s"""ALTER TABLE delta.`${dir.getCanonicalPath}`
+           |SET TBLPROPERTIES ('logRetentionDuration' = 'interval 10 days')
+           |""".stripMargin)
+
+      DeltaLog.clearCache()
+      val log = DeltaLog.forTable(spark, dir)
+      val config = log.snapshot.metadata.configuration
+
+      // Should be normalized to delta.logRetentionDuration
+      assert(config.contains("delta.logRetentionDuration"),
+        s"Expected delta.logRetentionDuration but got: $config")
+      assert(config("delta.logRetentionDuration") == "interval 10 days",
+        "Value should match what was set")
+      assert(!config.contains("logRetentionDuration"),
+        "Original non-prefixed key should not be present")
+    }
+
+    // Test 2: ALTER TABLE SET with non-prefixed deletedFileRetentionDuration
+    withTempDir { dir =>
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      sql(
+        s"""ALTER TABLE delta.`${dir.getCanonicalPath}`
+           |SET TBLPROPERTIES ('deletedFileRetentionDuration' = 'interval 14 days')
+           |""".stripMargin)
+
+      DeltaLog.clearCache()
+      val log = DeltaLog.forTable(spark, dir)
+      val config = log.snapshot.metadata.configuration
+
+      assert(config.contains("delta.deletedFileRetentionDuration"),
+        s"Expected delta.deletedFileRetentionDuration but got: $config")
+    }
+
+    // Test 3: ALTER TABLE with custom (non-delta) property should pass through
+    withTempDir { dir =>
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      sql(
+        s"""ALTER TABLE delta.`${dir.getCanonicalPath}`
+           |SET TBLPROPERTIES ('myCustomProperty' = 'customValue')
+           |""".stripMargin)
+
+      DeltaLog.clearCache()
+      val log = DeltaLog.forTable(spark, dir)
+      val config = log.snapshot.metadata.configuration
+
+      assert(config.contains("myCustomProperty"),
+        "Custom property should remain unchanged")
+      assert(config("myCustomProperty") == "customValue")
+    }
+
+    // Test 4: ALTER TABLE to set property on table created without any properties
+    withTempDir { dir =>
+      // Create table without any table properties
+      sql(s"CREATE TABLE delta.`${dir.getCanonicalPath}` (id bigint) USING delta")
+
+      // Verify no logRetentionDuration is set initially
+      val initialLog = DeltaLog.forTable(spark, dir)
+      assert(!initialLog.snapshot.metadata.configuration.contains("delta.logRetentionDuration"),
+        "Property should not exist initially")
+
+      // Set property using non-prefixed version via ALTER TABLE
+      sql(
+        s"""ALTER TABLE delta.`${dir.getCanonicalPath}`
+           |SET TBLPROPERTIES ('logRetentionDuration' = 'interval 20 days')
+           |""".stripMargin)
+
+      DeltaLog.clearCache()
+      val log = DeltaLog.forTable(spark, dir)
+      val config = log.snapshot.metadata.configuration
+
+      assert(config.contains("delta.logRetentionDuration"),
+        "Property should be normalized to delta.logRetentionDuration")
+      assert(config("delta.logRetentionDuration") == "interval 20 days",
+        "Value should be set to 20 days")
+      assert(!config.contains("logRetentionDuration"),
+        "Non-prefixed key should not be present")
+    }
+  }
+
   test("Optional Calendar Interval config") {
     val clock = new ManualClock(System.currentTimeMillis())
 
