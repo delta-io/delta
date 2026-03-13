@@ -1312,8 +1312,8 @@ public class SparkMicroBatchStream
    * Get all files from a snapshot at the specified version, sorted by modificationTime and path,
    * with indices assigned sequentially, and wrapped with BEGIN/END sentinels.
    *
-   * <p>Mimics DeltaSourceSnapshot in DSv1. Uses a single unified cache for the initial snapshot
-   * regardless of CDC mode.
+   * <p>Mimics DeltaSourceSnapshot in DSv1. A given stream instance is either CDC or non-CDC for its
+   * entire lifetime, so the cache is safe to reuse without mode keying.
    *
    * @param version The snapshot version to read
    * @param cdcChangeType If present, wraps each file as a CDC action with this change type
@@ -1327,7 +1327,7 @@ public class SparkMicroBatchStream
       return Utils.toCloseableIterator(cache.files.iterator());
     }
 
-    List<IndexedFile> indexedFiles = loadAndValidateSnapshotInternal(version, cdcChangeType);
+    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version, cdcChangeType);
 
     cachedInitialSnapshot.set(
         new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
@@ -1336,15 +1336,14 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Shared implementation for loading and validating snapshot files.
+   * Loads snapshot files at the specified version, sorted and wrapped with sentinels.
    *
    * @param version The snapshot version
    * @param cdcChangeType If present, each file gets this as its CDC change type (e.g. "insert").
    *     The commit timestamp is derived from the loaded snapshot.
    * @return Sorted list of IndexedFiles with BEGIN/END sentinels
    */
-  private List<IndexedFile> loadAndValidateSnapshotInternal(
-      long version, Optional<String> cdcChangeType) {
+  private List<IndexedFile> loadAndValidateSnapshot(long version, Optional<String> cdcChangeType) {
     Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
     long commitTimestamp = cdcChangeType.isPresent() ? snapshot.getTimestamp(engine) : -1;
 
