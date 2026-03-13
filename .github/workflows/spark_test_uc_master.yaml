@@ -1,4 +1,4 @@
-## Non-blocking CI job that runs Delta Spark tests against Unity Catalog built
+## Non-blocking CI job that runs UC integration tests against Unity Catalog built
 ## from source (main branch). This gives early warning of upcoming UC
 ## incompatibilities without blocking PR merges.
 ##
@@ -17,48 +17,21 @@ on:
       - '**.txt'
 
 jobs:
-  generate-matrix:
-    name: "Generate Spark Versions Matrix"
-    runs-on: ubuntu-24.04
-    outputs:
-      spark_versions: ${{ steps.generate.outputs.spark_versions }}
-    steps:
-      - uses: actions/checkout@v3
-      - name: install java
-        uses: actions/setup-java@v3
-        with:
-          distribution: "zulu"
-          java-version: "17"
-      - name: Generate Spark versions matrix
-        id: generate
-        run: |
-          SPARK_VERSIONS=$(python3 project/scripts/get_spark_version_info.py --default-spark-version)
-          echo "spark_versions=$SPARK_VERSIONS" >> $GITHUB_OUTPUT
-          echo "Generated Spark versions (default only): $SPARK_VERSIONS"
-
   test-uc-master:
-    name: "DS (UC Main): Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+    name: "UC Integration Tests (UC Main)"
     runs-on: ubuntu-24.04
-    needs: generate-matrix
-    strategy:
-      fail-fast: false
-      matrix:
-        spark_version: ${{ fromJson(needs.generate-matrix.outputs.spark_versions) }}
-        scala: [2.13.16]
-        shard: [0, 1, 2, 3]
     env:
-      SCALA_VERSION: ${{ matrix.scala }}
-      SPARK_VERSION: ${{ matrix.spark_version }}
       UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
-      NUM_SHARDS: 4
     steps:
       - uses: actions/checkout@v3
-      - name: Get Spark version details
+      - name: Get default Spark version details
         id: spark-details
         run: |
-          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "${{ matrix.spark_version }}" targetJvm | jq -r)
+          SPARK_VERSION=$(python3 project/scripts/get_spark_version_info.py --default-spark-version | jq -r '.[0]')
+          JVM_VERSION=$(python3 project/scripts/get_spark_version_info.py --get-field "$SPARK_VERSION" targetJvm | jq -r)
+          echo "spark_version=$SPARK_VERSION" >> $GITHUB_OUTPUT
           echo "jvm_version=$JVM_VERSION" >> $GITHUB_OUTPUT
-          echo "Using JVM version: $JVM_VERSION for Spark ${{ matrix.spark_version }}"
+          echo "Using Spark $SPARK_VERSION with JVM $JVM_VERSION"
       - name: install java
         uses: actions/setup-java@v3
         with:
@@ -72,60 +45,19 @@ jobs:
             ~/.ivy2
             ~/.m2
             ~/.cache/coursier
-          key: delta-sbt-cache-uc-master-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
-      - name: Install Job dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
-          sudo apt install libedit-dev
-          curl -LO https://github.com/bufbuild/buf/releases/download/v1.28.1/buf-Linux-x86_64.tar.gz
-          mkdir -p ~/buf
-          tar -xvzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
-          rm buf-Linux-x86_64.tar.gz
-          sudo apt install python3-pip --fix-missing
-          sudo pip3 install pipenv==2024.4.1
-          curl https://pyenv.run | bash
-          export PATH="~/.pyenv/bin:$PATH"
-          eval "$(pyenv init -)"
-          eval "$(pyenv virtualenv-init -)"
-          pyenv install 3.9
-          pyenv global system 3.9
-          pipenv --python 3.9 install
-          pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
-          pipenv run pip install flake8==3.9.0
-          pipenv run pip install black==23.12.1
-          pipenv run pip install importlib_metadata==3.10.0
-          pipenv run pip install mypy==1.8.0
-          pipenv run pip install mypy-protobuf==3.3.0
-          pipenv run pip install cryptography==37.0.4
-          pipenv run pip install twine==4.0.1
-          pipenv run pip install wheel==0.33.4
-          pipenv run pip install setuptools==41.1.0
-          pipenv run pip install pydocstyle==3.0.0
-          pipenv run pip install pandas==2.2.0
-          pipenv run pip install pyarrow==11.0.0
-          pipenv run pip install pypandoc==1.3.3
-          pipenv run pip install numpy==1.22.4
-          pipenv run pip install grpcio==1.67.0
-          pipenv run pip install grpcio-status==1.67.0
-          pipenv run pip install googleapis-common-protos==1.65.0
-          pipenv run pip install protobuf==5.29.1
-          pipenv run pip install googleapis-common-protos-stubs==2.2.0
-          pipenv run pip install grpc-stubs==1.24.11
-      - name: Scala structured logging style check
-        run: |
-          if [ -f ./dev/spark_structured_logging_style.py ]; then
-              python3 ./dev/spark_structured_logging_style.py
-          fi
+          key: delta-sbt-cache-uc-master-spark${{ steps.spark-details.outputs.spark_version }}
       - name: Build Unity Catalog from source
         run: bash project/scripts/setup_unitycatalog_main.sh
-      - name: Run Scala/Java tests
+      - name: Run UC integration tests
         run: |
-          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
+          build/sbt \
+            -DsparkVersion=${{ steps.spark-details.outputs.spark_version }} \
+            -DunityCatalogVersion=${{ env.UNITY_CATALOG_VERSION }} \
+            sparkUnityCatalog/test kernelUnityCatalog/test
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports-uc-master-spark${{ matrix.spark_version }}-shard${{ matrix.shard }}
+          name: test-reports-uc-master
           path: "**/target/test-reports/*.xml"
           retention-days: 7
