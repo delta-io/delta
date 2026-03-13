@@ -55,9 +55,16 @@ public class CommitRangeImpl implements CommitRange {
       long startVersion,
       long endVersion,
       List<ParsedDeltaData> deltas) {
-    checkArgument(startVersion <= endVersion, "must have startVersion <= endVersion");
-    checkArgument(
-        deltas.size() == endVersion - startVersion + 1, "deltaFiles size must match size of range");
+    if (deltas.isEmpty()) {
+      // Empty ranges are represented with endVersion < startVersion.
+      checkArgument(
+          endVersion < startVersion, "empty CommitRange must have endVersion < startVersion");
+    } else {
+      checkArgument(startVersion <= endVersion, "must have startVersion <= endVersion");
+      checkArgument(
+          deltas.size() == endVersion - startVersion + 1,
+          "deltaFiles size must match size of range");
+    }
     this.dataPath = requireNonNull(dataPath, "dataPath cannot be null");
     this.startBoundary = requireNonNull(startBoundary, "startBoundary cannot be null");
     this.endBoundaryOpt = requireNonNull(endBoundaryOpt, "endSpecOpt cannot be null");
@@ -122,8 +129,10 @@ public class CommitRangeImpl implements CommitRange {
     requireNonNull(engine, "engine cannot be null");
     requireNonNull(startSnapshot, "startSnapshot cannot be null");
     requireNonNull(actionSet, "actionSet cannot be null");
-    checkArgument(
-        startSnapshot.getVersion() == startVersion,
-        "startSnapshot must have version = startVersion");
+    if (!deltas.isEmpty()) {
+      checkArgument(
+          startSnapshot.getVersion() == startVersion,
+          "startSnapshot must have version = startVersion");
+    }
   }
 }
