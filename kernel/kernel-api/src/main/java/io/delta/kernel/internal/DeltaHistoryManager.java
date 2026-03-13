@@ -33,6 +33,7 @@ import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.InCommitTimestampUtils;
 import io.delta.kernel.internal.util.Tuple2;
+import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.FileNotFoundException;
@@ -499,12 +500,17 @@ public final class DeltaHistoryManager {
                       .listFrom(FileNames.listingPrefix(logPath, startVersion)),
               "Listing files in the delta log starting from %s",
               FileNames.listingPrefix(logPath, startVersion));
-
-      if (!files.hasNext()) {
-        // We treat an empty directory as table not found
-        throw new TableNotFoundException(tablePath.toString());
+      try {
+        if (!files.hasNext()) {
+          // We treat an empty directory as table not found
+          files.close();
+          throw new TableNotFoundException(tablePath.toString());
+        }
+        return files;
+      } catch (Exception e) {
+        Utils.closeCloseablesSilently(files);
+        throw e;
       }
-      return files;
     } catch (FileNotFoundException e) {
       throw new TableNotFoundException(tablePath.toString());
     } catch (IOException io) {
@@ -519,11 +525,15 @@ public final class DeltaHistoryManager {
    */
   private static List<Commit> getCommits(Engine engine, Path logPath, long start)
       throws TableNotFoundException {
-    CloseableIterator<Commit> commits =
+    try (CloseableIterator<Commit> commits =
         listFrom(engine, logPath, start)
             .filter(fs -> FileNames.isCommitFile(getName(fs.getPath())))
-            .map(fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()));
-    return monotonizeCommitTimestamps(commits);
+            .map(
+                fs -> new Commit(FileNames.deltaVersion(fs.getPath()), fs.getModificationTime()))) {
+      return monotonizeCommitTimestamps(commits);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Could not close iterator", e);
+    }
   }
 
   /**
