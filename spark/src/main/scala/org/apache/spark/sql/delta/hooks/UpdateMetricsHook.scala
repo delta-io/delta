@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -38,7 +39,7 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
   override val name: String = "Update UC Metrics"
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
-    if (!isUCManagedTable(txn.deltaLog, catalogTable)) return
+    if (!isUCManagedTable(spark, txn.deltaLog, catalogTable)) return
 
     try {
       val tableId = txn.deltaLog.tableId
@@ -72,7 +73,8 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
       log"${MDC(DeltaLogKeys.ERROR, error.getMessage)}", error)
   }
 
-  private def isUCManagedTable(
+  private[hooks] def isUCManagedTable(
+      spark: SparkSession,
       deltaLog: DeltaLog,
       catalogTable: Option[CatalogTable]): Boolean = {
     if (deltaLog.tableId.isEmpty) return false
@@ -80,9 +82,10 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     catalogTable match {
       case Some(ct) =>
         ct.tableType == CatalogTableType.MANAGED &&
-        (ct.identifier.catalog.isDefined ||
-        ct.properties.get("provider").exists(
-          _.toLowerCase(java.util.Locale.ROOT) == "delta"))
+        ct.identifier.catalog.exists { catalogName =>
+          spark.conf.getOption(s"spark.sql.catalog.$catalogName").contains(
+            UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS)
+        }
       case None => false
     }
   }

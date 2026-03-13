@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -38,6 +39,51 @@ class UpdateMetricsHookSuite extends QueryTest
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "false")
+  }
+
+  test("isUCManagedTable: requires MANAGED table and UC catalog connector") {
+    withTempDir { dir =>
+      spark.range(1).write.format("delta").save(dir.getCanonicalPath)
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val hook = UpdateMetricsHook(None)
+
+      spark.conf.set("spark.sql.catalog.uc_catalog", "io.unitycatalog.spark.UCSingleCatalog")
+      spark.conf.set(
+        "spark.sql.catalog.non_uc_catalog",
+        "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+
+      val managedUCTable = CatalogTable(
+        identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
+        tableType = CatalogTableType.MANAGED,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType()
+      )
+      assert(hook.isUCManagedTable(spark, deltaLog, Some(managedUCTable)))
+
+      val managedNonUCTable = CatalogTable(
+        identifier = TableIdentifier("t", Some("default"), Some("non_uc_catalog")),
+        tableType = CatalogTableType.MANAGED,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType()
+      )
+      assert(!hook.isUCManagedTable(spark, deltaLog, Some(managedNonUCTable)))
+
+      val externalUCTable = CatalogTable(
+        identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType()
+      )
+      assert(!hook.isUCManagedTable(spark, deltaLog, Some(externalUCTable)))
+
+      val noCatalogIdentifier = CatalogTable(
+        identifier = TableIdentifier("t", Some("default"), None),
+        tableType = CatalogTableType.MANAGED,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType()
+      )
+      assert(!hook.isUCManagedTable(spark, deltaLog, Some(noCatalogIdentifier)))
+    }
   }
 
   test("UCMetricsClient: sends minimal payload with Authorization header") {
@@ -67,8 +113,9 @@ class UpdateMetricsHookSuite extends QueryTest
       assert(authHeader.get == "Bearer test-token-123", "Auth token must match")
 
       val body = mockServer.getLastRequestBody()
-      assert(body.contains(""""table_id":"abc-123""""), "body must contain table_id")
-      assert(body.contains(""""commit_report""""), "body must contain commit_report wrapper")
+      val actualPayload = JsonUtils.fromJson[Map[String, Any]](body)
+      val expectedPayload = JsonUtils.fromJson[Map[String, Any]](JsonUtils.toJson(request))
+      assert(actualPayload == expectedPayload, "request JSON should match expected payload")
     } finally {
       mockServer.stop()
     }
@@ -156,9 +203,12 @@ class UpdateMetricsHookSuite extends QueryTest
 
         assert(mockServer.getRequestCount() == 1, "Expected exactly 1 HTTP POST")
         val body = mockServer.getLastRequestBody()
-        assert(body.contains(s""""table_id":"${deltaLog.tableId}""""),
-          "payload must contain the table UUID")
-        assert(body.contains(""""commit_report""""), "payload must contain commit_report wrapper")
+        val expectedRequest = ReportDeltaMetrics.buildRequest(
+          deltaLog.tableId, Seq.empty, 0L)
+        val actualPayload = JsonUtils.fromJson[Map[String, Any]](body)
+        val expectedPayload =
+          JsonUtils.fromJson[Map[String, Any]](JsonUtils.toJson(expectedRequest))
+        assert(actualPayload == expectedPayload, "smoke test payload should match expected JSON")
       }
     } finally {
       mockServer.stop()
