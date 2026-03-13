@@ -69,6 +69,9 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === Read options ===
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+    "streaming with ignoreDeletes = true skips delete-only commits",
+    "streaming with ignoreDeletes = true still fails on change commits",
+    "streaming with skipChangeCommits = true skips both delete and change commits",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -103,7 +106,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // ========== Error handling tests ==========
     "streaming query should fail when table is deleted and recreated with new id",
-    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
     // ========== Misc tests ==========
@@ -118,10 +122,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
-
-    // === read options ===
-    "skip change commits",
-    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
 
     // === Schema Evolution ===
     // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection

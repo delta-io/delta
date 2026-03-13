@@ -64,10 +64,17 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    *     requirements
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV3Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      Optional<Protocol> prevProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+            INSTANCE.compatFeatureName(),
+            isCreatingNewTable,
+            newMetadata,
+            newProtocol,
+            prevProtocol));
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
@@ -90,7 +97,8 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                       .validateAndUpdateIcebergCompatV3Metadata(
                           inputContext.isCreatingNewTable,
                           inputContext.newMetadata,
-                          inputContext.newProtocol));
+                          inputContext.newProtocol,
+                          inputContext.prevProtocol));
 
   /**
    * Current set of allowed table features for Iceberg writer compat V3. This combines the common
