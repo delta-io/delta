@@ -34,9 +34,9 @@ import org.apache.spark.sql.SparkSession
  * HTTP client for sending commit metrics to the UC metrics endpoint.
  */
 object UCMetricsClient {
-  private val CATALOG_CONF_PREFIX = "spark.sql.catalog"
-  private val CATALOG_URI_CONF_SUFFIX = "uri"
-  private val METRICS_ENDPOINT_PATH = "/api/2.1/unity-catalog/delta/preview/metrics"
+  private val CATALOG_URI_CONF_SUFFIX = ".uri"
+  private val CATALOG_CONF_PREFIX = "spark.sql.catalog."
+  private val METRICS_ENDPOINT_SUFFIX = "/api/2.1/unity-catalog/delta/preview/metrics"
   // Short timeout for best-effort delivery; hook must not block commits
   private val HTTP_TIMEOUT_MS = 5000L
 
@@ -71,6 +71,7 @@ object UCMetricsClient {
 
     try {
       val httpPost = new HttpPost(endpointUrl)
+      httpPost.setHeader(HttpHeaders.CONTENT_TYPE, ContentType.APPLICATION_JSON.getMimeType)
       httpPost.setHeader(HttpHeaders.AUTHORIZATION, s"Bearer $authToken")
 
       val jsonPayload = JsonUtils.toJson(request)
@@ -80,9 +81,11 @@ object UCMetricsClient {
       try {
         val statusCode = response.getStatusLine.getStatusCode
         if (statusCode < 200 || statusCode >= 300) {
-          val responseBody = Option(response.getEntity)
-            .map(EntityUtils.toString)
-            .getOrElse("<no response body>")
+          val responseBody = if (response.getEntity != null) {
+            EntityUtils.toString(response.getEntity)
+          } else {
+            "<no response body>"
+          }
           throw new RuntimeException(
             s"UC metrics endpoint returned error status $statusCode: $responseBody")
         }
@@ -95,10 +98,10 @@ object UCMetricsClient {
   }
 
   private def getEndpointUrl(spark: SparkSession, catalogName: String): String = {
-    val uriKey = s"$CATALOG_CONF_PREFIX.$catalogName.$CATALOG_URI_CONF_SUFFIX"
+    val uriKey = s"$CATALOG_CONF_PREFIX$catalogName$CATALOG_URI_CONF_SUFFIX"
     spark.conf.getOption(uriKey) match {
       case Some(uri) if uri.nonEmpty =>
-        s"${uri.stripSuffix("/")}$METRICS_ENDPOINT_PATH"
+        s"${uri.stripSuffix("/")}$METRICS_ENDPOINT_SUFFIX"
       case _ =>
         throw new IllegalArgumentException(
           s"UC catalog base URI not configured. Set $uriKey")
