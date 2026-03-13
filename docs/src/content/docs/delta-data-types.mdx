@@ -1,0 +1,72 @@
+---
+title: Data types
+description: Supported data types and Parquet type mappings in Delta Lake.
+---
+
+Delta Lake supports a set of data types for table columns. The schema is stored in the transaction log using a JSON representation. Data is stored in Parquet files, and each Delta type maps to specific Parquet physical and logical types.
+
+## Supported data types
+
+| Type | Description |
+|------|-------------|
+| **boolean** | True or false |
+| **byte** | 1-byte signed integer |
+| **short** | 2-byte signed integer |
+| **int** / **integer** | 4-byte signed integer |
+| **long** | 8-byte signed integer |
+| **float** | 4-byte single-precision floating-point |
+| **double** | 8-byte double-precision floating-point |
+| **decimal** | Fixed precision and scale (up to 38 digits) |
+| **string** | UTF-8 encoded string |
+| **char(n)** | Fixed-length character type (see [Character types](#character-types-char-and-varchar)) |
+| **varchar(n)** | Variable-length character type with maximum length n |
+| **binary** | Sequence of bytes |
+| **date** | Calendar date (year-month-day) |
+| **timestamp** | Microsecond timestamp (UTC) |
+| **timestamp without time zone** | Microsecond timestamp without timezone (requires `timestampNtz` feature) |
+| **array** | Ordered list of elements of one type |
+| **map** | Key-value pairs |
+| **struct** | Named fields, each with a type |
+| **variant** | Semi-structured data (requires `variantType` table feature) |
+
+## Character types (CHAR and VARCHAR)
+
+Delta supports character types with a maximum length:
+
+- **CHAR(n)**: Fixed-length character type. Values are padded with spaces to length `n` when written. Stored in Parquet the same as string (UTF-8 binary).
+- **VARCHAR(n)**: Variable-length character type with maximum length `n`. Writers must reject values longer than `n`. Stored in Parquet the same as string (UTF-8 binary).
+
+In the schema, CHAR and VARCHAR are serialized as the primitive type `string` with column metadata (`__CHAR_VARCHAR_TYPE_STRING`) indicating the logical type (e.g. `"char(10)"` or `"varchar(20)"`). Engines that do not support CHAR/VARCHAR may treat these columns as plain string.
+
+## Delta type to Parquet type mappings
+
+The following table describes how Delta types are stored in Parquet files. Parquet [physical types](https://parquet.apache.org/docs/file-format/types/) and [logical types](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md) are used for storage.
+
+| Delta type | Parquet physical type | Parquet logical type |
+|------------|------------------------|----------------------|
+| boolean | `boolean` | — |
+| byte | `int32` | INT(8, signed) |
+| short | `int32` | INT(16, signed) |
+| int | `int32` | INT(32, signed) |
+| long | `int64` | INT(64, signed) |
+| date | `int32` | DATE |
+| timestamp | `int96` or `int64` | TIMESTAMP(UTC, microseconds) |
+| timestamp without time zone | `int96` or `int64` | TIMESTAMP(no UTC, microseconds) |
+| float | `float` | — |
+| double | `double` | — |
+| decimal | `int32`, `int64`, or `fixed_length_binary` | DECIMAL(precision, scale) |
+| string | `binary` | string (UTF-8) |
+| char(n), varchar(n) | `binary` | string (UTF-8) |
+| binary | `binary` | — |
+| array | 2-level or 3-level list | LIST |
+| map | 2-level or 3-level | MAP |
+| struct | `group` | — |
+| variant | struct (fields: `value`, `metadata`) | — |
+
+The **variant** type is stored as a Parquet struct with two required binary fields, `value` and `metadata`, as defined in the [Variant data type](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#variant-data-type) section of the protocol. It requires the `variantType` table feature.
+
+## Protocol and feature references
+
+- Full specification: [Delta Transaction Log Protocol](https://github.com/delta-io/delta/blob/master/PROTOCOL.md) (PROTOCOL.md)
+- [Schema serialization format](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#schema-serialization-format) and [Delta data type to Parquet type mappings](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#delta-data-type-to-parquet-type-mappings)
+- [Variant data type](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#variant-data-type) and [Character types (CHAR/VARCHAR)](https://github.com/delta-io/delta/blob/master/PROTOCOL.md#character-types-charvarchar)
