@@ -1377,6 +1377,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL =
+    buildConf("writeChecksumFile.histogramFollowsProtocol")
+      .internal()
+      .doc("""When true, writes the file size histogram to CRC files using the Delta spec field
+             |name "fileSizeHistogram". When false, uses the legacy Delta-Spark field name
+             |"histogramOpt".""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
+
   private val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
   val FORCED_CHECKSUM_VALIDATION_INTERVAL =
     buildConf("versionChecksum.forcedValidationInterval")
