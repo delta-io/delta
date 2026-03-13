@@ -1444,7 +1444,7 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
       "org.apache.flink" % "flink-streaming-java" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-api-java-bridge" % flinkVersion % "provided",
-      "io.unitycatalog" % "unitycatalog-client" % "0.3.1",
+      "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion,
       "org.apache.httpcomponents" % "httpclient" % "4.5.14" % Runtime,
       "dev.failsafe" % "failsafe" % "3.2.0",
       "com.github.ben-manes.caffeine" % "caffeine" % "3.1.8",
@@ -1462,7 +1462,8 @@ lazy val flink = (project in file("flink"))
       "org.apache.flink" % "flink-table-runtime" % flinkVersion % Test,
       "org.apache.flink" % "flink-test-utils-junit" % flinkVersion  % Test,
       "org.slf4j" % "slf4j-log4j12" % "2.0.17" % "test",
-      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test
+      "com.github.tomakehurst" % "wiremock-jre8" % "2.35.0" % Test,
+      "com.databricks" %% "databricks-connect" % "18.0.0" % Test,
     ),
     // Use jupiter
     excludeDependencies ++= Seq(
