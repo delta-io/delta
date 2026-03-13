@@ -16,7 +16,6 @@
 
 package io.delta.storage;
 
-import io.delta.storage.utils.ReflectionUtils;
 import org.apache.hadoop.fs.Path;
 
 import java.io.InterruptedIOException;
@@ -30,27 +29,12 @@ import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 
-import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.services.dynamodbv2.AmazonDynamoDBClient;
-import com.amazonaws.services.dynamodbv2.model.AttributeDefinition;
-import com.amazonaws.services.dynamodbv2.model.AttributeValue;
-import com.amazonaws.services.dynamodbv2.model.ComparisonOperator;
-import com.amazonaws.services.dynamodbv2.model.Condition;
-import com.amazonaws.services.dynamodbv2.model.ConditionalCheckFailedException;
-import com.amazonaws.services.dynamodbv2.model.DescribeTableResult;
-import com.amazonaws.services.dynamodbv2.model.TableDescription;
-import com.amazonaws.services.dynamodbv2.model.ExpectedAttributeValue;
-import com.amazonaws.services.dynamodbv2.model.GetItemRequest;
-import com.amazonaws.services.dynamodbv2.model.KeySchemaElement;
-import com.amazonaws.services.dynamodbv2.model.KeyType;
-import com.amazonaws.services.dynamodbv2.model.ProvisionedThroughput;
-import com.amazonaws.services.dynamodbv2.model.PutItemRequest;
-import com.amazonaws.services.dynamodbv2.model.QueryRequest;
-import com.amazonaws.services.dynamodbv2.model.ResourceNotFoundException;
-import com.amazonaws.services.dynamodbv2.model.ResourceInUseException;
-import com.amazonaws.services.dynamodbv2.model.ScalarAttributeType;
-import com.amazonaws.regions.Region;
-import com.amazonaws.regions.Regions;
+import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.dynamodb.model.*;
+import software.amazon.awssdk.auth.credentials.AwsCredentialsProvider;
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
+
+import software.amazon.awssdk.regions.Region;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -103,7 +87,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     /**
      * Member fields
      */
-    private final AmazonDynamoDBClient client;
+    private final DynamoDbClient client;
     private final String tableName;
     private final String credentialsProviderName;
     private final String regionName;
@@ -116,7 +100,7 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         credentialsProviderName = getParam(
             hadoopConf,
             DDB_CLIENT_CREDENTIALS_PROVIDER,
-            "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
+            "software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider"
         );
         regionName = getParam(hadoopConf, DDB_CLIENT_REGION, "us-east-1");
 
@@ -182,33 +166,37 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
             String tablePath,
             String fileName) {
         final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
-        attributes.put(ATTR_TABLE_PATH, new AttributeValue(tablePath));
-        attributes.put(ATTR_FILE_NAME, new AttributeValue(fileName));
+        attributes.put(ATTR_TABLE_PATH, AttributeValue.builder().s(tablePath).build());
+        attributes.put(ATTR_FILE_NAME, AttributeValue.builder().s(fileName).build());
 
-        Map<String, AttributeValue> item = client.getItem(
-            new GetItemRequest(tableName, attributes).withConsistentRead(true)
-        ).getItem();
+        Map<String, AttributeValue> item = client.getItem(GetItemRequest.builder()
+            .tableName(tableName)
+            .consistentRead(true)
+            .key(attributes)
+            .build()
+        ).item();
 
-        return item != null ? Optional.of(dbResultToCommitEntry(item)) : Optional.empty();
+        return item != null && !item.isEmpty() ? Optional.of(dbResultToCommitEntry(item)) : Optional.empty();
     }
 
     @Override
     protected Optional<ExternalCommitEntry> getLatestExternalEntry(Path tablePath) {
         final Map<String, Condition> conditions = new ConcurrentHashMap<>();
-        conditions.put(
-            ATTR_TABLE_PATH,
-            new Condition()
-                .withComparisonOperator(ComparisonOperator.EQ)
-                .withAttributeValueList(new AttributeValue(tablePath.toString()))
-        );
+        conditions.put(ATTR_TABLE_PATH, Condition.builder() // Updated Condition builder
+            .comparisonOperator(ComparisonOperator.EQ)
+            .attributeValueList(AttributeValue.builder().s(tablePath.toString()).build())
+            .build());
 
-        final List<Map<String,AttributeValue>> items = client.query(
-            new QueryRequest(tableName)
-                .withConsistentRead(true)
-                .withScanIndexForward(false)
-                .withLimit(1)
-                .withKeyConditions(conditions)
-        ).getItems();
+        final List<Map<String,AttributeValue>> items = client.query(QueryRequest.builder() // Updated QueryRequest
+            .tableName(tableName)
+            .consistentRead(true)
+            .scanIndexForward(false)
+            .limit(1)
+            .keyConditions(conditions)
+            .build()
+        ).items();
+
+
 
         if (items.isEmpty()) {
             return Optional.empty();
@@ -223,37 +211,34 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
     private ExternalCommitEntry dbResultToCommitEntry(Map<String, AttributeValue> item) {
         final AttributeValue expireTimeAttr = item.get(ATTR_EXPIRE_TIME);
         return new ExternalCommitEntry(
-            new Path(item.get(ATTR_TABLE_PATH).getS()),
-            item.get(ATTR_FILE_NAME).getS(),
-            item.get(ATTR_TEMP_PATH).getS(),
-            item.get(ATTR_COMPLETE).getS().equals("true"),
-            expireTimeAttr != null ? Long.parseLong(expireTimeAttr.getN()) : null
+            new Path(item.get(ATTR_TABLE_PATH).s()),
+            item.get(ATTR_FILE_NAME).s(),
+            item.get(ATTR_TEMP_PATH).s(),
+            Boolean.parseBoolean(item.get(ATTR_COMPLETE).s()),
+            expireTimeAttr != null ? Long.parseLong(expireTimeAttr.n()) : null
         );
     }
 
     private PutItemRequest createPutItemRequest(ExternalCommitEntry entry, boolean overwrite) {
         final Map<String, AttributeValue> attributes = new ConcurrentHashMap<>();
-        attributes.put(ATTR_TABLE_PATH, new AttributeValue(entry.tablePath.toString()));
-        attributes.put(ATTR_FILE_NAME, new AttributeValue(entry.fileName));
-        attributes.put(ATTR_TEMP_PATH, new AttributeValue(entry.tempPath));
-        attributes.put(
-            ATTR_COMPLETE,
-            new AttributeValue().withS(Boolean.toString(entry.complete))
-        );
+        attributes.put(ATTR_TABLE_PATH, AttributeValue.builder().s(entry.tablePath.toString()).build());
+        attributes.put(ATTR_FILE_NAME, AttributeValue.builder().s(entry.fileName).build());
+        attributes.put(ATTR_TEMP_PATH, AttributeValue.builder().s(entry.tempPath).build());
+        attributes.put(ATTR_COMPLETE, AttributeValue.builder().s(Boolean.toString(entry.complete)).build());
 
         if (entry.expireTime != null) {
-            attributes.put(
-                ATTR_EXPIRE_TIME,
-                new AttributeValue().withN(entry.expireTime.toString())
-            );
+            attributes.put(ATTR_EXPIRE_TIME, AttributeValue.builder().n(entry.expireTime.toString()).build());
         }
 
-        final PutItemRequest pr = new PutItemRequest(tableName, attributes);
+        final PutItemRequest pr = PutItemRequest.builder() // Updated PutItemRequest builder
+            .tableName(tableName)
+            .item(attributes)
+            .build();
 
         if (!overwrite) {
             Map<String, ExpectedAttributeValue> expected = new ConcurrentHashMap<>();
-            expected.put(ATTR_FILE_NAME, new ExpectedAttributeValue(false));
-            pr.withExpected(expected);
+            expected.put(ATTR_FILE_NAME, ExpectedAttributeValue.builder().exists(false).build());
+            pr.toBuilder().expected(expected);
         }
 
         return pr;
@@ -263,12 +248,12 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         int retries = 0;
         boolean created = false;
         while(retries < 20) {
-            String status = "CREATING";
+            TableStatus status = TableStatus.CREATING;
             try {
                 // https://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/dynamodbv2/model/TableDescription.html#getTableStatus--
-                DescribeTableResult result = client.describeTable(tableName);
-                TableDescription descr = result.getTable();
-                status = descr.getTableStatus();
+                DescribeTableResponse result = client.describeTable(request -> request.tableName(tableName));
+                TableDescription table = result.table();
+                status = table.tableStatus();
             } catch (ResourceNotFoundException e) {
                 final long rcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_RCU, "5"));
                 final long wcu = Long.parseLong(getParam(hadoopConf, DDB_CREATE_TABLE_WCU, "5"));
@@ -278,33 +263,28 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
                     "Creating it now with provisioned throughput of {} RCUs and {} WCUs.",
                     tableName, regionName, rcu, wcu);
                 try {
-                    client.createTable(
-                        // attributeDefinitions
-                        java.util.Arrays.asList(
-                            new AttributeDefinition(ATTR_TABLE_PATH, ScalarAttributeType.S),
-                            new AttributeDefinition(ATTR_FILE_NAME, ScalarAttributeType.S)
-                        ),
-                        tableName,
-                        // keySchema
-                        Arrays.asList(
-                            new KeySchemaElement(ATTR_TABLE_PATH, KeyType.HASH),
-                            new KeySchemaElement(ATTR_FILE_NAME, KeyType.RANGE)
-                        ),
-                        new ProvisionedThroughput(rcu, wcu)
-                    );
+                    client.createTable(request -> request
+                        .attributeDefinitions(
+                             AttributeDefinition.builder().attributeName(ATTR_TABLE_PATH).attributeType(ScalarAttributeType.S).build(),
+                             AttributeDefinition.builder().attributeName(ATTR_FILE_NAME).attributeType(ScalarAttributeType.S).build())
+                        .tableName(tableName)
+                        .keySchema(
+                             KeySchemaElement.builder().attributeName(ATTR_TABLE_PATH).keyType(KeyType.HASH).build(),
+                             KeySchemaElement.builder().attributeName(ATTR_FILE_NAME).keyType(KeyType.RANGE).build())
+                        .provisionedThroughput(ProvisionedThroughput.builder().readCapacityUnits(rcu).writeCapacityUnits(wcu).build()));
                     created = true;
                 } catch (ResourceInUseException e3) {
                     // race condition - table just created by concurrent process
                 }
             }
-            if (status.equals("ACTIVE")) {
+            if (status == TableStatus.ACTIVE) {
                 if (created) {
                     LOG.info("Successfully created DynamoDB table `{}`", tableName);
                 } else {
                     LOG.info("Table `{}` already exists", tableName);
                 }
                 break;
-            } else if (status.equals("CREATING")) {
+            } else if (status == TableStatus.CREATING) {
                 retries += 1;
                 LOG.info("Waiting for `{}` table creation", tableName);
                 try {
@@ -319,15 +299,16 @@ public class S3DynamoDBLogStore extends BaseExternalLogStore {
         };
     }
 
-    private AmazonDynamoDBClient getClient() throws java.io.IOException {
+    private DynamoDbClient getClient() throws java.io.IOException {
         try {
-            final AWSCredentialsProvider awsCredentialsProvider =
-                    ReflectionUtils.createAwsCredentialsProvider(credentialsProviderName, initHadoopConf());
-            final AmazonDynamoDBClient client = new AmazonDynamoDBClient(awsCredentialsProvider);
-            client.setRegion(Region.getRegion(Regions.fromName(regionName)));
+            final AwsCredentialsProvider awsCredentialsProvider = DefaultCredentialsProvider.create();
+            final DynamoDbClient client = DynamoDbClient.builder()
+                .region(Region.of(regionName))
+                .credentialsProvider(awsCredentialsProvider)
+                .build();
             return client;
-        } catch (ReflectiveOperationException e) {
-            throw new java.io.IOException(e);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to create DynamoDB client", e);
         }
     }
 
