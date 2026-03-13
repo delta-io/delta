@@ -75,7 +75,22 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       List<DynamicTest> tests = new ArrayList<>();
       for (TableType tableType : ALL_TABLE_TYPES) {
         String testName = String.format("%s(%s)", method.getName(), tableType);
-        tests.add(DynamicTest.dynamicTest(testName, () -> method.invoke(this, tableType)));
+        tests.add(
+            DynamicTest.dynamicTest(
+                testName,
+                () -> {
+                  try {
+                    method.invoke(this, tableType);
+                  } catch (java.lang.reflect.InvocationTargetException e) {
+                    // Unwrap so JUnit sees the original exception. Without this,
+                    // TestAbortedException (thrown by Assumptions) gets wrapped and
+                    // JUnit treats the test as failed instead of skipped.
+                    Throwable cause = e.getCause();
+                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                    if (cause instanceof Error) throw (Error) cause;
+                    throw e;
+                  }
+                }));
       }
       containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
     }
@@ -209,8 +224,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       String tableProperties,
       TestCode testCode)
       throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String fullTableName = fullTableName(tableName);
 
     // Create th partition cause.
     StringBuilder partitionCause = new StringBuilder();
@@ -302,6 +316,27 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       String tableName, String tableSchema, TableType tableType, TestCode testCode)
       throws Exception {
     withNewTable(tableName, tableSchema, null, tableType, testCode);
+  }
+
+  /** Returns the fully qualified table name for a given simple table name. */
+  protected String fullTableName(String simpleName) {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
+  }
+
+  /** Returns the current (latest) version of the table. */
+  protected long currentVersion(String tableName) {
+    return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
+  }
+
+  /** Returns the timestamp of the current (latest) version. */
+  protected String currentTimestamp(String tableName) {
+    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  }
+
+  /** Helper to build an expected row as a list of string values. */
+  protected static List<String> row(String... values) {
+    return List.of(values);
   }
 
   /** Functional interface for test code that takes a temporary directory. */

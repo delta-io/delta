@@ -68,7 +68,7 @@ private case class CatalogConfigResponse(
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    token: String) extends ServerSidePlanningClient with AutoCloseable {
+    token: String) extends ServerSidePlanningClient {
 
   // Normalize baseUri to handle trailing slashes
   private val baseUri = baseUriRaw.stripSuffix("/")

@@ -41,6 +41,7 @@ import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
+import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.partitioning.KeyGroupedPartitioning;
 import org.apache.spark.sql.connector.read.partitioning.Partitioning;
 import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
@@ -49,6 +50,7 @@ import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -67,22 +69,23 @@ public class SparkScan
               DeltaOptions.STARTING_VERSION_OPTION(),
               DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
+              DeltaOptions.IGNORE_DELETES_OPTION(),
+              DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
+              DeltaOptions.EXCLUDE_REGEX_OPTION()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, and maxBytesPerTrigger are supported.
-   * User-defined custom options (not in DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreDeletes,
+   * skipChangeCommits, and excludeRegex are supported. User-defined custom options (not in
+   * DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
-                  DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
-                  DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
@@ -103,6 +106,7 @@ public class SparkScan
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
+  private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
@@ -130,6 +134,7 @@ public class SparkScan
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
+      Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
@@ -141,6 +146,7 @@ public class SparkScan
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
@@ -214,15 +220,49 @@ public class SparkScan
   @Override
   public Statistics estimateStatistics() {
     ensurePlanned();
+    final long plannedBytes = estimatedSizeInBytes;
+
+    // When catalog stats are available and CBO is enabled, combine table-level stats
+    // (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
+    // conf.cboEnabled || conf.planStatsEnabled.
+    boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+    if (useCatalogStats && catalogStats.isPresent()) {
+      final Statistics stats = catalogStats.get();
+      return new Statistics() {
+        @Override
+        public OptionalLong sizeInBytes() {
+          // Planned file size is authoritative (even if 0 for an empty table)
+          return OptionalLong.of(plannedBytes);
+        }
+
+        @Override
+        public OptionalLong numRows() {
+          // TODO: Use accurate row count from planned files (sum of AddFile.numRecords)
+          //  instead of catalog stats, which are stale (point-in-time from ANALYZE) and
+          //  not adjusted for partition pruning.
+          return stats.numRows();
+        }
+
+        @Override
+        public Map<NamedReference, ColumnStatistics> columnStats() {
+          // TODO: After partition pruning, column stats (e.g. min, max, nullCount,
+          //  distinctCount) could be tightened based on the pruned file-level stats.
+          return stats.columnStats();
+        }
+      };
+    }
+
+    // No catalog stats available or CBO disabled — return stats from planned files only
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
-        return OptionalLong.of(estimatedSizeInBytes);
+        return OptionalLong.of(plannedBytes);
       }
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown at planning time.
+        // Row count is unknown without catalog stats
         return OptionalLong.empty();
       }
     };
@@ -244,6 +284,10 @@ public class SparkScan
    *       (equivalent to Project output)
    * </ul>
    *
+   * <p>When catalog column stats are available, uses per-column {@code avgLen} instead of {@code
+   * defaultSize()} for more accurate size estimation, mirroring {@code
+   * EstimationUtils.getSizePerRow()} behavior.
+   *
    * <p>This provides consistent statistics with the v1 code path (LogicalRelation + visitUnaryNode
    * from Spark code directory).
    *
@@ -258,10 +302,14 @@ public class SparkScan
     // Row overhead constant, matching EstimationUtils.getSizePerRow (from Spark)
     final int ROW_OVERHEAD = 8;
 
-    // TODO(#5952): update below with column stats from catalog when it becomes available
+    // Use avgLen from catalog column stats when available for more accurate estimation
+    Map<String, OptionalLong> avgLenByColumn = getAvgLenByColumn();
+
     final long fullSchemaRowSize =
-        ROW_OVERHEAD + dataSchema.defaultSize() + partitionSchema.defaultSize();
-    final long outputRowSize = ROW_OVERHEAD + readSchema().defaultSize();
+        ROW_OVERHEAD
+            + getSchemaSize(dataSchema, avgLenByColumn)
+            + getSchemaSize(partitionSchema, avgLenByColumn);
+    final long outputRowSize = ROW_OVERHEAD + getSchemaSize(readSchema(), avgLenByColumn);
 
     long estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize;
 
@@ -269,11 +317,53 @@ public class SparkScan
   }
 
   /**
+   * Returns a map of column name to avgLen from catalog column stats, used to improve size
+   * estimation accuracy when catalog stats are available.
+   */
+  private Map<String, OptionalLong> getAvgLenByColumn() {
+    if (!catalogStats.isPresent()) {
+      return Collections.emptyMap();
+    }
+    Map<NamedReference, ColumnStatistics> colStats = catalogStats.get().columnStats();
+    if (colStats.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    Map<String, OptionalLong> result = new HashMap<>();
+    for (Map.Entry<NamedReference, ColumnStatistics> entry : colStats.entrySet()) {
+      result.put(entry.getKey().fieldNames()[0], entry.getValue().avgLen());
+    }
+    return result;
+  }
+
+  /**
+   * Computes the estimated in-memory size for a schema, using avgLen from catalog stats when
+   * available, falling back to defaultSize(). Mirrors EstimationUtils.getSizePerRow(). For
+   * StringType columns with avgLen, adds UTF8String overhead (base + offset + numBytes = 12 bytes).
+   */
+  private static long getSchemaSize(StructType schema, Map<String, OptionalLong> avgLenByColumn) {
+    long size = 0;
+    for (StructField field : schema.fields()) {
+      OptionalLong avgLen = avgLenByColumn.getOrDefault(field.name(), OptionalLong.empty());
+      if (avgLen.isPresent()) {
+        if (field.dataType() instanceof StringType) {
+          // UTF8String: base + offset + numBytes (matching EstimationUtils.getSizePerRow)
+          size += avgLen.getAsLong() + 8 + 4;
+        } else {
+          size += avgLen.getAsLong();
+        }
+      } else {
+        size += field.dataType().defaultSize();
+      }
+    }
+    return size;
+  }
+
+  /**
    * Get the table path from the scan state.
    *
    * @return the table path with trailing slash
    */
-  private String getTablePath() {
+  public String getTablePath() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final Row scanState = kernelScan.getScanState(tableEngine);
     final String tableRoot = ScanStateRow.getTableRoot(scanState).toUri().toString();
@@ -500,13 +590,15 @@ public class SparkScan
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
-        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates);
+        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
+        && Objects.equals(catalogStats, that.catalogStats);
   }
 
   @Override
   public int hashCode() {
     int result =
         Objects.hash(
+            catalogStats,
             initialSnapshot.getPath(),
             initialSnapshot.getVersion(),
             dataSchema,

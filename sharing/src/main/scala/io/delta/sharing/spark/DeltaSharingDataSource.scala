@@ -78,7 +78,8 @@ private[sharing] class DeltaSharingDataSource
         path,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
-        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
+        callerOrg = options.callerOrg
       )
       val schemaToUse = deltaLog.snapshot().schema
       if (schemaToUse.isEmpty) {
@@ -105,7 +106,8 @@ private[sharing] class DeltaSharingDataSource
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       val dsTable = DeltaSharingTable(
         share = parsedPath.share,
@@ -199,7 +201,8 @@ private[sharing] class DeltaSharingDataSource
         path,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
-        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET
+        responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
+        callerOrg = options.callerOrg
       )
       DeltaSharingSource(SparkSession.active, deltaLog, options)
     } else if (responseFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
@@ -217,7 +220,8 @@ private[sharing] class DeltaSharingDataSource
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.STREAMING_SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       val dsTable = DeltaSharingTable(
         share = parsedPath.share,
@@ -273,7 +277,8 @@ private[sharing] class DeltaSharingDataSource
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = true,
         versionAsOf = None,
-        timestampAsOf = None
+        timestampAsOf = None,
+        callerOrg = options.callerOrg
       )
       logInfo(s"Streaming format resolved via getMetadata: ${deltaTableMetadata.respondedFormat} " +
         s"for path:$path")
@@ -293,7 +298,8 @@ private[sharing] class DeltaSharingDataSource
       shareCredentialsOptions: Map[String, String],
       forStreaming: Boolean,
       versionAsOf: Option[Long],
-      timestampAsOf: Option[String]): (DeltaSharingTable, DeltaTableMetadata) = {
+      timestampAsOf: Option[String],
+      callerOrg: Option[String] = None): (DeltaSharingTable, DeltaTableMetadata) = {
     val responseFormat = {
       if (sqlContext.sparkSession.sessionState.conf.getConf(
         DeltaSQLConf.DELTA_SHARING_FORCE_DELTA_FORMAT)) {
@@ -320,7 +326,8 @@ private[sharing] class DeltaSharingDataSource
       forStreaming = forStreaming,
       // Indicating that the client is able to process response format in both parquet and delta.
       responseFormat = responseFormat,
-      readerFeatures = readerFeatures
+      readerFeatures = readerFeatures,
+      callerOrg = callerOrg
     )
     val dsTable = DeltaSharingTable(
       share = parsedPath.share,
@@ -356,7 +363,8 @@ private[sharing] class DeltaSharingDataSource
         path,
         shareCredentialsOptions = options.shareCredentialsOptions,
         forStreaming = false,
-        responseFormat = options.responseFormat
+        responseFormat = options.responseFormat,
+        callerOrg = options.callerOrg
       )
       deltaLog.createRelation(
         options.versionAsOf,
@@ -377,7 +385,8 @@ private[sharing] class DeltaSharingDataSource
         responseFormat = options.responseFormat,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       val dsTable = DeltaSharingTable(
         share = parsedPath.share,
@@ -439,7 +448,8 @@ private[sharing] class DeltaSharingDataSource
       shareCredentialsOptions = options.shareCredentialsOptions,
       forStreaming = false,
       versionAsOf = options.versionAsOf,
-      timestampAsOf = options.timestampAsOf
+      timestampAsOf = options.timestampAsOf,
+      callerOrg = options.callerOrg
     )
 
     if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_PARQUET) {
@@ -450,7 +460,8 @@ private[sharing] class DeltaSharingDataSource
         options.shareCredentialsOptions,
         forStreaming = false,
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_PARQUET,
-        initDeltaTableMetadata = Some(deltaTableMetadata)
+        initDeltaTableMetadata = Some(deltaTableMetadata),
+        callerOrg = options.callerOrg
       )
       deltaLog.createRelation(options.versionAsOf, options.timestampAsOf, options.cdfOptions)
     } else if (deltaTableMetadata.respondedFormat == DeltaSharingOptions.RESPONSE_FORMAT_DELTA) {
@@ -468,7 +479,8 @@ private[sharing] class DeltaSharingDataSource
         responseFormat = DeltaSharingOptions.RESPONSE_FORMAT_DELTA,
         // comma separated delta reader features, used to tell delta sharing server what delta
         // reader features the client is able to process.
-        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(",")
+        readerFeatures = DeltaSharingUtils.SUPPORTED_READER_FEATURES.mkString(","),
+        callerOrg = options.callerOrg
       )
       getHadoopFsRelationForDeltaSnapshotQuery(
         path = path,
