@@ -147,4 +147,33 @@ class DataTypeSuite extends AnyFunSuite {
       assert(dt1.isWriteCompatible(dt2) == expected)
     }
   }
+
+  test("check MapType cannot be created with collated key") {
+    intercept[IllegalArgumentException] {
+      // invalid version for SPARK.UTF8_BINARY
+      new MapType(new StringType("SPARK.UTF8_BINARY.23"), StringType.STRING, true)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(utf8LcaseString, StringType.STRING, true)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(unicodeString, StringType.STRING, false)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(new ArrayType(unicodeString, true), StringType.STRING, true)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(
+        new StructType().add("c1", StringType.STRING).add("c1", utf8LcaseString),
+        StringType.STRING,
+        false)
+    }
+    intercept[IllegalArgumentException] {
+      new MapType(
+        new StructType().add("c1", StringType.STRING)
+          .add("c1", new ArrayType(unicodeString, false)),
+        StringType.STRING,
+        false)
+    }
+  }
 }
