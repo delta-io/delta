@@ -412,6 +412,91 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
     }
   }
 
+  test("check constructDataSkippingFilter - STIntersectBoxes") {
+    import io.delta.kernel.expressions.STIntersectBoxes
+
+    val testCases: Seq[(StructType, Predicate, Option[DataSkippingPredicate])] = Seq(
+      // StringType geo column → translated to STATS_NAME predicate referencing the
+      // standard minValues / maxValues stat columns (same physical slot, string-valued)
+      (
+        new StructType().add("geo_col", StringType.STRING),
+        new STIntersectBoxes(new Column("geo_col"), 1.0, 2.0, 3.0, 4.0),
+        Some(dataSkippingPredicate(
+          STIntersectBoxes.STATS_NAME,
+          Seq(
+            nestedCol(s"$MIN.geo_col"),
+            nestedCol(s"$MAX.geo_col"),
+            literal(1.0),
+            literal(2.0),
+            literal(3.0),
+            literal(4.0)),
+          Set(nestedCol(s"$MIN.geo_col"), nestedCol(s"$MAX.geo_col"))))),
+
+      // Non-StringType geo column → not eligible; returns None (conservative, no skipping)
+      (
+        new StructType().add("geo_col", IntegerType.INTEGER),
+        new STIntersectBoxes(new Column("geo_col"), 0.0, 0.0, 10.0, 10.0),
+        None),
+
+      // Column not present in the schema → returns None
+      (
+        new StructType().add("other_col", StringType.STRING),
+        new STIntersectBoxes(new Column("geo_col"), 0.0, 0.0, 10.0, 10.0),
+        None),
+
+      // NOT(STIntersectBoxes) → returns None (negating geo-bbox skipping is not supported;
+      // the result is conservative: all files are read)
+      (
+        new StructType().add("geo_col", StringType.STRING),
+        new Predicate("NOT", new STIntersectBoxes(new Column("geo_col"), 0.0, 0.0, 10.0, 10.0)),
+        None),
+
+      // AND(STIntersectBoxes, regularPredicate) → both legs contribute a skipping predicate
+      (
+        new StructType()
+          .add("geo_col", StringType.STRING)
+          .add("a", IntegerType.INTEGER),
+        createPredicate(
+          "AND",
+          new STIntersectBoxes(new Column("geo_col"), 0.0, 0.0, 10.0, 10.0),
+          createPredicate("=", col("a"), literal(5), Optional.empty[CollationIdentifier]),
+          Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          "AND",
+          dataSkippingPredicate(
+            STIntersectBoxes.STATS_NAME,
+            Seq(
+              nestedCol(s"$MIN.geo_col"),
+              nestedCol(s"$MAX.geo_col"),
+              literal(0.0),
+              literal(0.0),
+              literal(10.0),
+              literal(10.0)),
+            Set(nestedCol(s"$MIN.geo_col"), nestedCol(s"$MAX.geo_col"))),
+          dataSkippingPredicate(
+            "AND",
+            dataSkippingPredicate(
+              "<=",
+              Seq(nestedCol(s"$MIN.a"), literal(5)),
+              Set(nestedCol(s"$MIN.a"))),
+            dataSkippingPredicate(
+              ">=",
+              Seq(nestedCol(s"$MAX.a"), literal(5)),
+              Set(nestedCol(s"$MAX.a"))))))))
+
+    testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
+      val dataSkippingPredicateOpt =
+        JavaOptionalOps(constructDataSkippingFilter(predicate, schema)).toScala
+      (dataSkippingPredicateOpt, expectedDataSkippingPredicateOpt) match {
+        case (Some(actualPredicate), Some(expectedPredicate)) =>
+          assert(actualPredicate == expectedPredicate)
+        case (None, None) => // pass
+        case _ =>
+          fail(s"Expected $expectedDataSkippingPredicateOpt, found $dataSkippingPredicateOpt")
+      }
+    }
+  }
+
   test("check constructDataSkippingFilter with collations") {
     val utf8Lcase = CollationIdentifier.fromString("SPARK.UTF8_LCASE.75")
     val unicode = CollationIdentifier.fromString("ICU.UNICODE.74.1")

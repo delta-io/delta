@@ -246,6 +246,43 @@ public class StatsSchemaHelper {
   }
 
   /**
+   * Geo stats are stored as WKT POINT strings (e.g. "POINT (xmin ymin)") in the standard minValues
+   * / maxValues statistics sections.
+   */
+  public boolean isGeoSkippingEligibleColumn(Column column) {
+    return isSkippingEligibleMinMaxColumn(column)
+        && logicalToDataType.get(column) instanceof StringType;
+  }
+
+  /**
+   * Returns the minValues stats column for a geometry column. The value is a WKT POINT string
+   * "POINT [Z|M|ZM] (xmin ymin [...])" representing the min bounding-box corner.
+   */
+  public Column getGeoStatMinColumn(Column logicalColumn) {
+    checkArgument(
+        isGeoSkippingEligibleColumn(logicalColumn),
+        "%s is not a valid geo-skipping-eligible column (must be a StringType leaf) for data"
+            + " schema: %s",
+        logicalColumn,
+        dataSchema);
+    return getMinColumn(logicalColumn, Optional.empty())._1;
+  }
+
+  /**
+   * Returns the maxValues stats column for a geometry column. The value is a WKT POINT string
+   * "POINT [Z|M|ZM] (xmax ymax [...])" representing the max bounding-box corner.
+   */
+  public Column getGeoStatMaxColumn(Column logicalColumn) {
+    checkArgument(
+        isGeoSkippingEligibleColumn(logicalColumn),
+        "%s is not a valid geo-skipping-eligible column (must be a StringType leaf) for data"
+            + " schema: %s",
+        logicalColumn,
+        dataSchema);
+    return getMaxColumn(logicalColumn, Optional.empty())._1;
+  }
+
+  /**
    * Returns true if the given column is skipping-eligible using min/max statistics. This means the
    * column exists, is a leaf column, and is of a skipping-eligible data-type.
    */
