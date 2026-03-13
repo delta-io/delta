@@ -22,6 +22,7 @@ import java.util.function.Consumer
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaFileProviderUtils, DummySnapshot, IcebergConstants, NoMapping, Snapshot}
@@ -33,11 +34,12 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.MetadataUpdate
 import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
+import shadedForDelta.org.apache.iceberg.unityCatalog.{UnityCatalog, UnityCatalogTableOperations}
 import shadedForDelta.org.apache.iceberg.util.LocationUtil
 
 import org.apache.spark.internal.MDC
@@ -53,6 +55,9 @@ sealed trait IcebergConversionMode  {
 }
 // Used by Post-commit Delta UniForm (Iceberg conversion in Delta post commit hook)
 case object UNIFORM_POST_COMMIT_MODE extends IcebergConversionMode {
+}
+// Used by atomic Delta UniForm
+case object UNIFORM_CC_MODE extends IcebergConversionMode {
 }
 /**
  * Used to prepare (convert) and then commit a set of Delta actions into the Iceberg table located
@@ -73,6 +78,7 @@ class IcebergConversionTransaction(
     protected val tableOp: IcebergTableOp = WRITE_TABLE,
     protected val lastConvertedIcebergSnapshotId: Option[Long] = None,
     protected val lastConvertedDeltaVersion: Option[Long] = None,
+    protected val lastConvertedIcebergMetadataPath: Option[String] = None,
     protected val metadataUpdates: java.util.ArrayList[MetadataUpdate] =
       new java.util.ArrayList[MetadataUpdate]()
     ) extends DeltaLogging {
@@ -456,30 +462,75 @@ class IcebergConversionTransaction(
     committed = true
   }
 
+  /**
+   * Retrieves the converted Iceberg metadata location and its current snapshot.
+   * This method should only be called after a successful table conversion operation
+   *
+   * @return A tuple containing:
+   *         - String: The path where the Iceberg metadata file was written
+   *         - IcebergMetadata: The converted Iceberg metadata
+   * @throws IllegalStateException if the Iceberg metadata has not been converted
+   * @throws UnsupportedOperationException if called on non-UnityCatalogTableOperations
+   */
+  def getConvertedIcebergMetadata: (String, TableMetadata) =
+    txn.asInstanceOf[BaseTransaction].underlyingOps() match {
+      case ops: UnityCatalogTableOperations =>
+        ops.getLastWrittenTableMetadataWithLocation.toScala match {
+          case Some((metadataPath, tableMetadata)) =>
+            (metadataPath, tableMetadata)
+          case _ => throw new IllegalStateException(
+            "Could not get converted Iceberg metadata: new written metadata not found")
+        }
+      case _ =>
+        throw new IllegalStateException(
+          "Could not get converted Iceberg metadata:" +
+            " underlying UnityCatalogTableOperations not found"
+        )
+    }
+
   ///////////////////////
   // Protected Methods //
   ///////////////////////
 
   protected def createIcebergTxn(tableOpOpt: Option[IcebergTableOp] = None):
       IcebergTransaction = {
-    val hiveCatalog = IcebergTransactionUtils.createHiveCatalog(conf, metadataUpdates)
-    val icebergTableId = IcebergTransactionUtils
-      .convertSparkTableIdentifierToIcebergHive(catalogTable.identifier)
+    val baseMetadataPath =
+      (tableOpOpt.getOrElse(tableOp), lastConvertedIcebergMetadataPath) match {
+        case (CREATE_TABLE, None) => None
+        case (CREATE_TABLE, Some(_)) =>
+          throw new IllegalStateException(
+            "Unexpected base metadata path for CREATE_TABLE operation")
+        case (op, None) =>
+          throw new IllegalStateException(s"Missing base metadata path for $op operation")
+        case (_, Some(path)) => Some(path)
+      }
 
-    val tableExists = hiveCatalog.tableExists(icebergTableId)
+    val ucTable = new UnityCatalog(
+      metadataUpdates,
+      baseMetadataPath.toJava
+    )
+    ucTable.initialize(null, new java.util.HashMap[String, String]())
+    ucTable.setConf(conf)
+
+    val icebergIdentifier =
+      IcebergTransactionUtils.convertSparkTableIdentifierToIceberg(catalogTable.identifier)
+
+    val tableExists = ucTable.tableExists(icebergIdentifier)
 
     def tableBuilder = {
-      hiveCatalog
-        .buildTable(icebergTableId, icebergSchema)
+      val tableLocation = postCommitSnapshot.deltaLog.dataPath.toString
+      ucTable
+        .buildTable(icebergIdentifier, icebergSchema)
         .withPartitionSpec(partitionSpec)
         .withProperties(convert.properties.asJava)
+        .withLocation(tableLocation)
     }
 
-    tableOpOpt.getOrElse(tableOp) match {
+    val txn = tableOpOpt.getOrElse(tableOp) match {
       case WRITE_TABLE =>
         if (tableExists) {
           recordFrameProfile("IcebergConversionTransaction", "loadTable") {
-            hiveCatalog.loadTable(icebergTableId).newTransaction()
+            ucTable.loadTable(icebergIdentifier).newTransaction()
           }
         } else {
           throw new IllegalStateException(s"Cannot write to table $tablePath. Table doesn't exist.")
@@ -501,6 +552,7 @@ class IcebergConversionTransaction(
           throw new IllegalStateException(s"Cannot replace table $tablePath. Table doesn't exist.")
         }
     }
+    txn
   }
 
   ////////////////////
