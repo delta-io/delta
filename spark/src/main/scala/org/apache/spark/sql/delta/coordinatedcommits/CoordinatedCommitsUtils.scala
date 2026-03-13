@@ -166,7 +166,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         if (catalog.getClass.getName == UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
           // UC is the current commit coordinator.
-          Some("unity-catalog")
+          Some(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
         } else {
           // Other catalog (e.g., `spark_catalog`) is the commit coordinator.
           Some(catalog.name)

@@ -45,7 +45,7 @@ class UCManagedTableKillSwitchSuite
    */
   private class UCManagedTxn(log: DeltaLog, snap: Snapshot)
       extends OptimisticTransaction(log, None, snap) {
-    override protected[delta] def isUCManagedTable: Boolean = true
+    override protected[delta] lazy val isUCManagedTable: Boolean = true
   }
 
   private val clusteringOnId: Seq[DomainMetadata] =

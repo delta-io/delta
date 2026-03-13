@@ -87,11 +87,15 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
                   try {
                     method.invoke(this, tableType);
                   } catch (InvocationTargetException e) {
-                    // Unwrap so JUnit sees the original exception. Without this,
-                    // TestAbortedException (thrown by Assumptions) gets wrapped and
-                    // JUnit treats the test as failed instead of skipped.
+                    // Unwrap so JUnit sees the original exception type. Without this,
+                    // TestAbortedException (thrown by Assumptions) gets wrapped and JUnit
+                    // treats the test as failed instead of skipped. Also unwrap
+                    // RuntimeException/Error so assertThrows() in individual tests still
+                    // matches the expected exception class rather than InvocationTargetException.
                     Throwable cause = e.getCause();
                     if (cause instanceof TestAbortedException) throw (TestAbortedException) cause;
+                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                    if (cause instanceof Error) throw (Error) cause;
                     throw e;
                   }
                 }));
@@ -357,8 +361,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
               throw new AssertionError(
                   "Expected exception containing '"
                       + expectedMessage
-                      + "' but got: "
-                      + e.getMessage(),
+                      + "' in cause chain, but none found. Top-level: "
+                      + e,
                   e);
             });
   }

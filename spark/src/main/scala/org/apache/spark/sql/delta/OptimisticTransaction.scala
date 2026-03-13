@@ -577,7 +577,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
     // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
     // "spark_catalog" registration). New table creation is naturally excluded because
-    // isCatalogOwned is false until the first commit.
+    // isCatalogOwned is false until the first commit. REPLACE TABLE is currently also blocked
+    // here and will need to be explicitly allowed once UC supports metadata propagation.
+    // Intentionally conservative: configuration is compared as a whole map, which also
+    // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
+    // a temporary kill switch - once Delta supports propagating metadata updates to UC,
+    // this check will be removed entirely.
     val existingMetadata = snapshot.metadata
     if (isUCManagedTable &&
         (proposedNewMetadata.schemaString != existingMetadata.schemaString ||
@@ -591,12 +596,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns true if this transaction targets a UC-managed CatalogOwned table.
+   * True if this transaction targets a UC-managed CatalogOwned table.
    *
-   * Visibility is protected[delta] (not private) to allow test subclasses to override
-   * without requiring UCSingleCatalog.
+   * Computed once as a lazy val because catalogTable and SparkSession are immutable for
+   * the lifetime of a transaction. Visibility is protected[delta] (not private) to allow
+   * test subclasses to override without requiring UCSingleCatalog.
    */
-  protected[delta] def isUCManagedTable: Boolean = {
+  protected[delta] lazy val isUCManagedTable: Boolean = {
     snapshot.isCatalogOwned &&
       catalogTable.exists { ct =>
         ct.tableType == CatalogTableType.MANAGED &&
@@ -1975,6 +1981,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
           case dm: DomainMetadata if isClusteringChangedOnUCManagedTable(dm) =>
             // Temporary: block clustering changes on UC-managed tables (commitLarge() path).
             // commitLarge() bypasses prepareCommit(), so this guard is needed separately.
+            // The check is intentionally inside the lazy map: commitLarge streams actions to
+            // avoid materialising large sets, so an eager pre-scan is not practical. The
+            // exception is thrown before any data is written to the commit coordinator because
+            // the iterator is consumed first during serialisation.
             throw DeltaErrors.operationNotSupportedException(
               "Clustering column changes on Unity Catalog managed tables")
           case a: AddFile =>
