@@ -65,6 +65,13 @@ public abstract class DeltaV2TestBase {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
   }
 
+  protected void createEmptyPartitionedTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta PARTITIONED BY (name) LOCATION '%s'",
+            tableName, path));
+  }
+
   protected void createSchemaEvolutionTestTable(String path, String tableName) {
     spark.sql(
         String.format(
