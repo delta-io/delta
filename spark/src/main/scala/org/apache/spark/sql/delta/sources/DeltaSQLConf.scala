@@ -1384,7 +1384,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
              |name "fileSizeHistogram". When false, uses the legacy Delta-Spark field name
              |"histogramOpt".""".stripMargin)
       .booleanConf
-      .createWithDefault(false)
+      .createWithDefault(true)
 
   private val FORCED_CHECKSUM_VALIDATION_INTERVAL_DEFAULT = 400
   val FORCED_CHECKSUM_VALIDATION_INTERVAL =
