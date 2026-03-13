@@ -42,10 +42,17 @@ public class IcebergCompatV2MetadataValidatorAndUpdater
    *     requirements
    */
   public static Optional<Metadata> validateAndUpdateIcebergCompatV2Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      Optional<Protocol> prevProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+            INSTANCE.compatFeatureName(),
+            isCreatingNewTable,
+            newMetadata,
+            newProtocol,
+            prevProtocol));
   }
 
   /**

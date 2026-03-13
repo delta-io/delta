@@ -182,7 +182,7 @@ class IcebergConverter
    *    Convert Iceberg Metadata for a complete snapshot. Used for conversion
    *    after delta commits and in create table
    */
-  private def convertSnapshotInternal(
+  protected def convertSnapshotInternal(
       snapshotToConvert: Snapshot,
       readSnapshotOpt: Option[Snapshot],
       lastConvertedInfo: LastConvertedIcebergInfo,
@@ -460,7 +460,6 @@ class IcebergConverter
       icebergTxn.commit()
       logInfo(s"icebergTxn committed for table ${Option(catalogTable).map(_.identifier)} " +
         s"with converted delta version ${snapshotToConvert.version}")
-      validateIcebergCommit(snapshotToConvert, catalogTable)
 
       recordDeltaEvent(
         snapshotToConvert.deltaLog,

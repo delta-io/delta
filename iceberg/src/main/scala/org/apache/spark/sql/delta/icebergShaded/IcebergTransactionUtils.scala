@@ -276,6 +276,24 @@ object IcebergTransactionUtils
   }
 
   /**
+  * Encode Spark table identifier to Iceberg table identifier by putting "database" and "catalog"
+  * to the "namespace" in Iceberg table identifier
+  */
+  def convertSparkTableIdentifierToIceberg(
+      identifier: SparkTableIdentifier): IcebergTableIdentifier = {
+    val namespace = (identifier.database, identifier.catalog) match {
+      case (Some(database), Some(catalog)) => Namespace.of(database, catalog)
+      case (Some(database), None) => Namespace.of(database)
+      case (None, Some(catalog)) =>
+        throw new IllegalArgumentException(
+          "Spark does not allow the constructors to skip the `database` when `catalog` is used"
+        )
+      case (None, None) => Namespace.empty()
+    }
+    IcebergTableIdentifier.of(namespace, identifier.table)
+  }
+
+  /**
    * Encode Spark table identifier to Iceberg table identifier by putting
    * only "database" to the "namespace" in Iceberg table identifier.
    * See [[HiveCatalog.isValidateNamespace]]
