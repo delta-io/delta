@@ -1,0 +1,92 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.delta.hooks
+
+// scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
+import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
+import org.apache.spark.sql.delta.logging.DeltaLogKeys
+import org.apache.spark.sql.delta.metering.DeltaLogging
+
+import org.apache.spark.internal.MDC
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+
+/**
+ * Post-commit hook that sends commit metrics to Unity Catalog for UC-managed Delta tables.
+ *
+ * This hook is best-effort: failures are logged as warnings but never fail the commit.
+ *
+ * @param catalogTable The catalog table metadata (required to identify UC-managed tables)
+ */
+case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
+    extends PostCommitHook with DeltaLogging {
+
+  override val name: String = "Update UC Metrics"
+
+  override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
+    if (!isUCManagedTable(spark, txn.deltaLog, catalogTable)) return
+
+    try {
+      val tableId = txn.deltaLog.tableId
+      if (tableId.isEmpty) {
+        throw new IllegalStateException("UC-managed table must have a table ID")
+      }
+
+      val request = ReportDeltaMetrics.buildRequest(
+        tableId, txn.committedActions, txn.committedVersion)
+      val catalogName = catalogTable.flatMap(_.identifier.catalog)
+      UCMetricsClient.sendMetrics(spark, request, catalogName = catalogName)
+
+      logInfo(
+        log"Successfully sent UC metrics for table " +
+        log"${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
+        log"version ${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}")
+
+    } catch {
+      case e: Exception =>
+        logWarning(
+          log"Failed to send UC metrics for table " +
+          log"${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
+          log"version ${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}: " +
+          log"${MDC(DeltaLogKeys.ERROR, e.getMessage)}", e)
+    }
+  }
+
+  override def handleError(spark: SparkSession, error: Throwable, version: Long): Unit = {
+    logWarning(
+      log"UC metrics hook failed for version ${MDC(DeltaLogKeys.VERSION, version)}: " +
+      log"${MDC(DeltaLogKeys.ERROR, error.getMessage)}", error)
+  }
+
+  private[hooks] def isUCManagedTable(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      catalogTable: Option[CatalogTable]): Boolean = {
+    if (deltaLog.tableId.isEmpty) return false
+
+    catalogTable match {
+      case Some(ct) =>
+        ct.tableType == CatalogTableType.MANAGED &&
+        ct.identifier.catalog.exists { catalogName =>
+          spark.conf.getOption(s"spark.sql.catalog.$catalogName").contains(
+            UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS)
+        }
+      case None => false
+    }
+  }
+}
