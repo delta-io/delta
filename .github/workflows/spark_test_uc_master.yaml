@@ -1,0 +1,57 @@
+## Non-blocking CI job that runs UC integration tests against Unity Catalog built
+## from source (main branch). This gives early warning of upcoming UC
+## incompatibilities without blocking PR merges.
+##
+## To make this blocking, add the job name to the required status checks in
+## the branch protection rules for `master`.
+
+name: "Delta Spark (UC Master)"
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+
+jobs:
+  test-uc-master:
+    name: "UC Integration Tests (UC Main)"
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v3
+      - name: install java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Cache Scala, SBT, Maven local
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.m2
+            ~/.cache/coursier
+          key: delta-sbt-cache-uc-master
+      - name: Build Unity Catalog from source
+        id: uc-build
+        run: |
+          bash project/scripts/setup_unitycatalog_main.sh
+          UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+          echo "uc_version=$UC_VERSION" >> $GITHUB_OUTPUT
+          echo "UC version: $UC_VERSION"
+      - name: Run UC integration tests
+        run: |
+          build/sbt \
+            -DunityCatalogVersion=${{ steps.uc-build.outputs.uc_version }} \
+            sparkUnityCatalog/test kernelUnityCatalog/test
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-uc-master
+          path: "**/target/test-reports/*.xml"
+          retention-days: 7
