@@ -155,10 +155,32 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Option(allTableProperties.get("location"))
     }
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      // Preserve the catalog name in the V1 identifier because this `id` becomes
+      // `tableDesc.identifier` for the rest of the create/replace flow. Downstream
+      // catalog-update logic reads `table.identifier.catalog`; without it, the table
+      // looks like an unqualified V1 table and may be handled through the current/session
+      // catalog path instead of its original catalog.
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      if (isUnityCatalog) {
+        base.copy(catalog = Some(name())) // `name()` here is the catalog name.
+      } else {
+        base
+      }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    // `getExistingTableIfExists` only checks the V1 SessionCatalog entry for `id`, while
+    // `getExistingTableFromDelegatedCatalog` asks the delegated V2 catalog to resolve the original
+    // `ident`. We only need the fallback for REPLACE / CREATE OR REPLACE, where catalog-managed
+    // tables may be resolvable through the delegated catalog even when SessionCatalog does not
+    // surface them, and the command still needs to reuse the existing metadata and location.
+    val existingTableOpt = getExistingTableIfExists(id).orElse {
+      operation match {
+        case TableCreationModes.Replace | TableCreationModes.CreateOrReplace =>
+          getExistingTableFromDelegatedCatalog(ident)
+        case TableCreationModes.Create =>
+          None
+      }
+    }
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -204,8 +226,13 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      // For create paths there may be no existing catalog table yet, so fall back to the new
+      // descriptor. For replace paths we expect `existingTableOpt` to be populated, so DeltaLog
+      // is resolved from the existing catalog table rather than the new DDL descriptor.
+      val catalogTableOpt = existingTableOpt.orElse(
+        Option.when(isUnityCatalog)(tableDesc))
       WriteIntoDelta(
-        DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
+        DeltaUtils.getDeltaLogFromTableOrPath(spark, catalogTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
         new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
@@ -528,7 +555,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
 
     val schema = query.map { plan =>
-      assert(tableDesc.schema.isEmpty, "Can't specify table schema in CTAS.")
+      assert(tableDesc.schema.isEmpty ||
+        tableDesc.schema == plan.schema.asNullable,
+        "Can't specify table schema in CTAS.")
       plan.schema.asNullable
     }.getOrElse(tableDesc.schema)
 
@@ -573,6 +602,31 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.notADeltaTable(table.table)
       }
       Some(oldTable)
+    } else {
+      None
+    }
+  }
+
+  /**
+   * Returns an existing Delta table by querying the delegated catalog for Unity Catalog replace
+   * paths. This is needed when [[getExistingTableIfExists]] only checks the V1 SessionCatalog
+   * using a [[TableIdentifier]], but the existing table entry is only surfaced through the
+   * delegated V2 catalog lookup on `ident`.
+   *
+   * This helper is only used for Unity Catalog.
+   */
+  private def getExistingTableFromDelegatedCatalog(
+      ident: Identifier): Option[CatalogTable] = {
+    if (isUnityCatalog) {
+      try {
+        super.loadTable(ident) match {
+          case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+            Some(v1.catalogTable)
+          case _ => None
+        }
+      } catch {
+        case _: NoSuchTableException => None
+      }
     } else {
       None
     }
@@ -654,6 +708,9 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      if (isUnityCatalog) {
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,

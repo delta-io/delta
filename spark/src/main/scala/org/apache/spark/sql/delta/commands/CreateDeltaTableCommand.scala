@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 import scala.util.Try
@@ -28,6 +29,8 @@ import org.apache.spark.sql.delta.DeltaColumnMapping.filterColumnMappingProperti
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.actions.DomainMetadata
 import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils}
 import org.apache.spark.sql.delta.hooks.{HudiConverterHook, IcebergConverterHook}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -43,11 +46,11 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.expressions.Attribute
+import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.execution.metric.SQLMetrics.createMetric
-import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.util.Utils
 
@@ -138,8 +141,12 @@ case class CreateDeltaTableCommand(
     val fileSystemOptions = table.storage.properties.filter { case (k, _) =>
       DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
     }
+    // For catalog-managed tables, the SessionCatalog entry may be absent, so fall back to
+    // `tableWithLocation` and let DeltaLog resolve through the catalog identifier instead of path.
+    val catalogTableOpt = existingTableOpt.orElse(
+      Option.when(allowCatalogManaged)(tableWithLocation))
     val deltaLog = DeltaUtils.getDeltaLogFromTableOrPath(
-      sparkSession, existingTableOpt, tableLocation, fileSystemOptions)
+      sparkSession, catalogTableOpt, tableLocation, fileSystemOptions)
     CoordinatedCommitsUtils.validateConfigurationsForCreateDeltaTableCommand(
       sparkSession, deltaLog.tableExists, query, tableWithLocation.properties)
     CatalogOwnedTableUtils.validatePropertiesForCreateDeltaTableCommand(
@@ -759,6 +766,126 @@ case class CreateDeltaTableCommand(
   }
 
   /**
+   * For catalog-managed REPLACE/RTAS, only allow data replacement when the existing table
+   * metadata stays unchanged. If the command would change schema, partitioning, clustering,
+   * comment, or user-visible properties, fail before writing files.
+   * TODO: Remove this guard once catalog-managed replace supports atomic metadata sync.
+   *
+   * @return true if the caller should skip `updateMetadataForNewTableInReplace`.
+   */
+  private def catalogManagedReplacePreservesMetadata(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      tableDesc: CatalogTable,
+      schema: StructType): Boolean = {
+    // Only use this metadata-preserving path for catalog-managed replace on an
+    // existing table; otherwise fall back to the normal replace flow.
+    if (!(allowCatalogManaged && isReplace && txn.readVersion > -1L)) {
+      return false
+    }
+
+    val existingMetadata = txn.snapshot.metadata
+    val existingSchema =
+      DeltaTableUtils.removeInternalDeltaMetadata(
+        sparkSession, existingMetadata.schema)
+    // Query-derived schemas (for example from CTAS/RTAS SELECT output) may mark every column
+    // nullable even when the table metadata keeps NOT NULL constraints, so compare those
+    // nullability-insensitively. Explicit DDL schemas should preserve nullability exactly.
+    val (existingSchemaToCompare, requestedSchemaToCompare, exactSchemaMetadataMismatch) =
+      if (query.isDefined) {
+        (existingSchema.asNullable, schema.asNullable, false)
+      } else {
+        // Explicit DDL should also preserve field metadata such as column comments.
+        (existingSchema, schema, existingSchema != schema)
+      }
+    val schemaDifferences = SchemaUtils.reportDifferences(
+      existingSchemaToCompare,
+      requestedSchemaToCompare)
+    if (schemaDifferences.nonEmpty || exactSchemaMetadataMismatch) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with a " +
+          "different schema")
+    }
+
+    // When partition columns are not specified (e.g. from
+    // writeTo().replace()), treat as "preserve existing".
+    val partCols = tableDesc.partitionColumnNames
+    val existPartCols = existingMetadata.partitionColumns
+    if (partCols.nonEmpty && partCols != existPartCols) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with " +
+          "different partitioning")
+    }
+
+    val specCluster =
+      ClusteredTableUtils.getClusterBySpecOptional(tableDesc)
+    val existCluster =
+      ClusteredTableUtils.getClusterBySpecOptional(txn.snapshot)
+    if (specCluster != existCluster) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with " +
+          "different clustering")
+    }
+
+    // Only block if the user explicitly specified a different
+    // comment. Omitted COMMENT means "preserve existing".
+    tableDesc.comment.foreach { specifiedComment =>
+      if (specifiedComment != existingMetadata.description) {
+        throw DeltaErrors.operationNotSupportedException(
+          "Replacing a catalog-managed table with a " +
+            "different comment")
+      }
+    }
+
+    // Ignore internal/catalog-generated keys when checking whether user-visible table properties
+    // changed across the replace.
+    val ignoredKeys =
+      Set(
+        TableFeatureProtocolUtils.propertyKey(CatalogOwnedTableFeature),
+        UC_TABLE_ID_KEY,
+        UC_TABLE_ID_KEY_OLD,
+        TableCatalog.PROP_IS_MANAGED_LOCATION,
+        ClusteredTableUtils.PROP_CLUSTERING_COLUMNS)
+        .map(_.toLowerCase(Locale.ROOT))
+
+    // Normalize properties for comparison by dropping internal/non-user-facing keys and
+    // lowercasing the remaining property names.
+    def normalizeProperties(
+        props: Map[String, String]): Map[String, String] = {
+      var normalized = filterColumnMappingProperties(props)
+      if (ClusteredTableUtils.isSupported(txn.protocol)) {
+        normalized =
+          ClusteredTableUtils.removeInternalTableProperties(
+            normalized)
+      }
+      normalized.iterator
+        .map { case (key, value) => key.toLowerCase(Locale.ROOT) -> value }
+        .filterNot { case (key, _) => ignoredKeys.contains(key) }
+        .toMap
+    }
+
+    val specProps = normalizeProperties(tableDesc.properties)
+    val existProps = normalizeProperties(
+      existingMetadata.configuration)
+
+    // Explicitly specified properties must match the existing metadata. Properties omitted from
+    // the command are treated as "preserve existing", since catalog-managed replace skips
+    // metadata updates.
+    val changedKeys = specProps.collect {
+      case (key, value)
+        if existProps.get(key) != Some(value) => key
+    }.toSeq.sorted
+    if (changedKeys.nonEmpty) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Replacing a catalog-managed table with " +
+          "different properties " +
+          s"(changed: ${changedKeys.mkString(", ")})")
+    }
+
+    true
+  }
+
+  /**
    * With DataFrameWriterV2, methods like `replace()` or `createOrReplace()` mean that the
    * metadata of the table should be replaced. If overwriteSchema=false is provided with these
    * methods, then we will verify that the metadata match exactly.
@@ -777,6 +904,11 @@ case class CreateDeltaTableCommand(
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
+      // If this catalog-managed replace preserves metadata, skip the metadata rewrite below;
+      // otherwise this helper throws.
+      if (catalogManagedReplacePreservesMetadata(sparkSession, txn, tableDesc, schema)) {
+        return
+      }
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
       var newMetadata = getProvidedMetadata(table, schema.json)
@@ -802,7 +934,14 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    // For catalog-managed replace on an existing table, pass the catalog table descriptor into
+    // transaction startup so the transaction is initialized against that existing table entry.
+    val catalogTableOpt = if (allowCatalogManaged && isReplace && deltaLog.tableExists) {
+      Some(tableWithLocation)
+    } else {
+      None
+    }
+    val txn = deltaLog.startTransaction(catalogTableOpt, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion
