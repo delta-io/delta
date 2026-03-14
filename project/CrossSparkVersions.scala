@@ -219,7 +219,8 @@ case class SparkVersionSpec(
   supportHudi: Boolean = true,
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
-  jacksonVersion: String = "2.15.2",
+  jacksonVersion: String = "2.20.1",
+  jacksonAnnotationsVersion: String = "2.20",
   additionalResolvers: Seq[Resolver] = Seq.empty
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
@@ -269,7 +270,8 @@ object SparkVersionSpec {
     supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.18.2",
+    jacksonAnnotationsVersion = "2.18.2"
   )
 
   private val spark41 = SparkVersionSpec(
@@ -280,7 +282,8 @@ object SparkVersionSpec {
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.20.0",
+    jacksonAnnotationsVersion = "2.20"
   )
 
   private val spark42Snapshot = SparkVersionSpec(
@@ -291,7 +294,8 @@ object SparkVersionSpec {
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2",
+    jacksonVersion = "2.20.1",
+    jacksonAnnotationsVersion = "2.20",
     // Artifact updates in maven central for roaringbitmap stopped after 1.3.0.
     // Spark master uses 1.5.3. Relevant Spark PR here https://github.com/apache/spark/pull/52892
     additionalResolvers = Seq("jitpack" at "https://jitpack.io")
@@ -415,10 +419,13 @@ object CrossSparkVersions extends AutoPlugin {
         val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
           .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
           .jacksonVersion
+        val jacksonAnnotationsVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
+          .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
+          .jacksonAnnotationsVersion
         Seq(
           "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
           "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
+          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationsVer,
           "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
           "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
         )
