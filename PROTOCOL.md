@@ -35,6 +35,8 @@
   - [Table Features for New and Existing Tables](#table-features-for-new-and-existing-tables)
   - [Supported Features](#supported-features)
   - [Active Features](#active-features)
+- [Table Properties](#table-properties)
+  - [Statistics Collection Properties](#statistics-collection-properties)
 - [Column Mapping](#column-mapping)
   - [Writer Requirements for Column Mapping](#writer-requirements-for-column-mapping)
   - [Reader Requirements for Column Mapping](#reader-requirements-for-column-mapping)
@@ -941,10 +943,29 @@ A feature being supported does not imply that it is active. For example, a table
 ## Active Features
 A feature is active on a table when it is supported *and* its metadata requirements are satisfied. Each feature defines its own metadata requirements, as stated in the corresponding sections of this document. For example, the Append-only feature is active when the `appendOnly` feature name is present in a `protocol`'s `writerFeatures` *and* a table property `delta.appendOnly` set to `true`.
 
+# Table Properties
+
+Delta tables support configuration through table properties stored in the `configuration` field of the [metadata](#change-metadata) action. The following table properties are recognized by the Delta protocol:
+
+## Statistics Collection Properties
+
+The following table properties specify which columns should have per-column statistics collected in [Per-file Statistics](#per-file-statistics). Writers are recommended to respect these properties when collecting statistics.
+
+Property | Description
+-|-
+`delta.dataSkippingStatsColumns` | A comma-separated list of column names for which to collect per-column statistics. Column names may refer to nested struct fields using dot notation (e.g., `a.b.c`), in which case statistics are collected for all leaf fields within that struct. Column names containing special characters (including commas, dots, or spaces) must be enclosed in backticks (e.g., `` `column.with" +special,chars` ``). When this property is set, it takes precedence over `delta.dataSkippingNumIndexedCols`. Partition columns cannot be specified.
+`delta.dataSkippingNumIndexedCols` | The number of leading leaf columns in the table schema for which to collect per-column statistics. Defaults to 32. This property is ignored if `delta.dataSkippingStatsColumns` is set. A negative value indicates that statistics should be collected for all columns.
+
+When neither property is set, statistics should be collected for the first 32 leaf columns in the table schema (excluding partition columns).
+
+For [clustered tables](#clustered-table), all clustering columns should be included in the set of columns for which statistics are collected, whether determined by `delta.dataSkippingStatsColumns`, `delta.dataSkippingNumIndexedCols`, or the default.
+
 # Column Mapping
 Delta can use column mapping to avoid any column naming restrictions, and to support the renaming and dropping of columns without having to rewrite all the data. There are two modes of column mapping, by `name` and by `id`. In both modes, every column - nested or leaf - is assigned a unique _physical_ name, and a unique 32-bit integer as an id. The physical name is stored as part of the column metadata with the key `delta.columnMapping.physicalName`. The column id is stored within the metadata with the key `delta.columnMapping.id`.
 
 The column mapping is governed by the table property `delta.columnMapping.mode` being one of `none`, `id`, and `name`. The table property should only be honored if the table's protocol has reader and writer versions and/or table features that support the `columnMapping` table feature. For readers this is Reader Version 2, or Reader Version 3 with the `columnMapping` table feature listed as supported. For writers this is Writer Version 5 or 6, or Writer Version 7 with the `columnMapping` table feature supported.
+
+When column mapping is enabled, [per-column statistics](#per-file-statistics) are keyed by physical column names.
 
 The following is an example for the column definition of a table that leverages column mapping. See the [appendix](#schema-serialization-format) for a more complete schema definition.
 ```json
@@ -1788,7 +1809,8 @@ Enablement:
 When the Clustered Table is supported (when the `writerFeatures` field of a table's `protocol` action contains `clustering`), then:
 - Writers must track clustering column names in a `domainMetadata` action with `delta.clustering` as the `domain` and a `configuration` containing all clustering column names.
   If [Column Mapping](#column-mapping) is enabled, the physical column names should be used.
-- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action. 
+- Writers must write out [per-file statistics](#per-file-statistics) and per-column statistics for clustering columns in `add` action.
+  Clustering columns should be included in the set of columns for which statistics are collected (see [Statistics Collection Properties](#statistics-collection-properties)).
   If a new column is included in the clustering columns list, it is required for all table files to have statistics for these added columns.
 - When a clustering implementation clusters files, writers must set the name of the clustering implementation in the `clusteringProvider` field when adding `add` actions for clustered files.
   - By default, a clustering implementation must only recluster files that have the field `clusteringProvider` set to the name of the same clustering implementation, or to the names of other clustering implementations that are superseded by the current clustering implementation. In addition, a clustering implementation may cluster any files with an unset `clusteringProvider` field (i.e., unclustered files).
@@ -2516,6 +2538,7 @@ Bytes | Name | Description
 ## Per-file Statistics
 `add` and `remove` actions can optionally contain statistics about the data in the file being added or removed from the table.
 These statistics can be used for eliminating files based on query predicates or as inputs to query optimization.
+See [Statistics Collection Properties](#statistics-collection-properties) for table properties that control which columns have statistics collected.
 
 Global statistics record information about the entire file.
 The following global statistic is currently supported:
