@@ -2115,6 +2115,35 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_UNIFORM_ICEBERG_DISTRIBUTED_CONVERSION_ENABLED =
+    buildConf("uniform.iceberg.distributed.conversion.enabled")
+      .doc("If enabled, Iceberg manifest generation will be distributed across Spark executors " +
+        "using mapPartitions instead of collecting all files to the driver. " +
+        "This avoids OOM for tables with millions of files.")
+      .internal()
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UNIFORM_ICEBERG_DISTRIBUTED_CONVERSION_THRESHOLD =
+    buildConf("uniform.iceberg.distributed.conversion.threshold")
+      .doc("Minimum number of files in a snapshot to trigger distributed Iceberg manifest " +
+        "generation when uniform.iceberg.distributed.conversion.enabled is true. " +
+        "Tables below this threshold use the existing driver-only path.")
+      .internal()
+      .longConf
+      .checkValue(_ > 0, "threshold must be positive")
+      .createWithDefault(100000)
+
+  val DELTA_UNIFORM_ICEBERG_BATCHED_DRIVER_TARGET_MANIFEST_SIZE_BYTES =
+    buildConf("uniform.iceberg.batched.driver.target.manifest.size.bytes")
+      .doc("Target manifest file size in bytes for the batched driver conversion path. " +
+        "When the accumulated file sizes exceed this threshold, the current manifest is " +
+        "closed and a new one is started.")
+      .internal()
+      .longConf
+      .checkValue(_ > 0, "target manifest size must be positive")
+      .createWithDefault(8L * 1024 * 1024)
+
   val DELTA_OPTIMIZE_MIN_FILE_SIZE =
     buildConf("optimize.minFileSize")
         .internal()
