@@ -17,7 +17,6 @@ package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
 import java.util.Objects;
-import java.util.Set;
 
 /**
  * The data type representing geography values. A Geography must have a fixed Spatial Reference
@@ -34,33 +33,22 @@ public final class GeographyType extends DataType {
   public static final String DEFAULT_SRID = "OGC:CRS84";
   public static final String DEFAULT_ALGORITHM = "spherical";
 
-  public static final Set<String> VALID_ALGORITHMS =
-      Set.of("spherical", "vincenty", "thomas", "andoyer", "karney");
-
   private final String srid;
   private final String algorithm;
 
-  /** Returns a GeographyType with the default SRID and algorithm. */
-  public static GeographyType ofDefault() {
-    return new GeographyType(DEFAULT_SRID, DEFAULT_ALGORITHM);
+  /** Create a GeographyType with the default SRID and algorithm. */
+  public GeographyType() {
+    this(DEFAULT_SRID, DEFAULT_ALGORITHM);
   }
 
   /**
-   * Returns a GeographyType with the specified SRID and default algorithm.
+   * Create a GeographyType with the specified SRID and default algorithm.
    *
    * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
+   * @throws IllegalArgumentException if the SRID is null or empty
    */
-  public static GeographyType ofSRID(String srid) {
-    return new GeographyType(srid, DEFAULT_ALGORITHM);
-  }
-
-  /**
-   * Returns a GeographyType with the default SRID and the specified algorithm.
-   *
-   * @param algorithm one of: spherical, vincenty, thomas, andoyer, karney
-   */
-  public static GeographyType ofAlgorithm(String algorithm) {
-    return new GeographyType(DEFAULT_SRID, algorithm);
+  public GeographyType(String srid) {
+    this(srid, DEFAULT_ALGORITHM);
   }
 
   /**
@@ -68,8 +56,7 @@ public final class GeographyType extends DataType {
    *
    * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
    * @param algorithm the algorithm for geometric calculations (any non-null, non-empty string)
-   * @throws IllegalArgumentException if the SRID or algorithm is null or empty or algorithm is
-   *     invalid
+   * @throws IllegalArgumentException if the SRID or algorithm is null or empty
    */
   public GeographyType(String srid, String algorithm) {
     if (srid == null || srid.isEmpty()) {
@@ -77,11 +64,6 @@ public final class GeographyType extends DataType {
     }
     if (algorithm == null || algorithm.isEmpty()) {
       throw new IllegalArgumentException("Algorithm cannot be null or empty");
-    }
-    if (!VALID_ALGORITHMS.contains(algorithm)) {
-      throw new IllegalArgumentException(
-          "Algorithm must be one of: spherical, vincenty, thomas, andoyer, karney, got: "
-              + algorithm);
     }
     this.srid = srid;
     this.algorithm = algorithm;
