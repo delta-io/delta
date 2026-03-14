@@ -137,6 +137,108 @@ public class ExpressionUtilsTest {
     assertFalse(result.isPresent(), "StringStartsWith with null value should not be converted");
   }
 
+  @Test
+  public void testInFilter_BasicConversion() {
+    In filter = new In("city", new Object[] {"hz", "sh", "bj"});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "In filter should be converted");
+    assertFalse(result.isPartial(), "In filter should be fully converted");
+    assertEquals("IN", result.get().getName());
+    // Children: column + 3 literals
+    assertEquals(4, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testInFilter_SingleValue() {
+    In filter = new In("id", new Object[] {42});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "In filter with single value should be converted");
+    assertFalse(result.isPartial(), "In filter should be fully converted");
+    assertEquals("IN", result.get().getName());
+    // Children: column + 1 literal
+    assertEquals(2, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testInFilter_EmptyValues() {
+    In filter = new In("city", new Object[] {});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    // Empty IN list always evaluates to FALSE; push ALWAYS_FALSE so the kernel skips all files.
+    assertTrue(result.isPresent(), "In filter with empty values should push ALWAYS_FALSE");
+    assertEquals("ALWAYS_FALSE", result.get().getName());
+  }
+
+  @Test
+  public void testInFilter_WithNullValue() {
+    // null in the values array makes the IN expression unsafe to push down (SQL null semantics)
+    In filter = new In("city", new Object[] {"hz", null, "bj"});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with null value should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_WithUnsupportedType() {
+    In filter = new In("col", new Object[] {42, new Object()});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with unconvertible value should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_InAndFilter() {
+    // AND(In(...), EqualTo(...)) — both convertible, should be fully pushed down
+    In inFilter = new In("city", new Object[] {"hz", "sh"});
+    EqualTo eqFilter = new EqualTo("part", 1);
+    org.apache.spark.sql.sources.And andFilter =
+        new org.apache.spark.sql.sources.And(inFilter, eqFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+
+    assertTrue(result.isPresent(), "AND(In, EqualTo) should be converted");
+    assertFalse(result.isPartial(), "AND(In, EqualTo) should be fully converted");
+    assertTrue(
+        result.get() instanceof io.delta.kernel.expressions.And,
+        "Result should be an AND predicate");
+  }
+
+  @Test
+  public void testInFilter_NotInWithNullValue() {
+    // NOT(IN(col, 1, null)): null in the IN list causes IN to bail → NOT also bails
+    In inFilter = new In("city", new Object[] {"hz", null});
+    Not notFilter = new Not(inFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
+
+    assertFalse(
+        result.isPresent(), "NOT(IN(..., null)) should not be pushed down due to null in IN list");
+  }
+
+  @Test
+  public void testInFilter_ORWithUnsupportedFilter() {
+    // OR(In(...), StringEndsWith(...)) — one branch unsupported, whole OR cannot be pushed
+    In inFilter = new In("city", new Object[] {"hz", "sh"});
+    StringEndsWith endsWithFilter = new StringEndsWith("name", "foo");
+    Or orFilter = new Or(inFilter, endsWithFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter);
+
+    assertFalse(
+        result.isPresent(),
+        "OR(In, unsupported) should not be pushed down when one branch is unsupported");
+  }
+
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(
