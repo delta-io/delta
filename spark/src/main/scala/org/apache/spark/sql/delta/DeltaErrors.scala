@@ -3960,6 +3960,23 @@ trait DeltaErrorsBase
     )
   }
 
+  def invalidUnityCatalogExistingTableHandoff(
+      operation: String,
+      reason: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF",
+      messageParameters = Array(operation, reason))
+  }
+
+  def unityCatalogStagedReplaceTargetChangedRetry(
+      table: String,
+      expectedTableId: String,
+      actualTableId: String): Throwable = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_UNITY_CATALOG_STAGED_REPLACE_TARGET_CHANGED",
+      messageParameters = Array(table, expectedTableId, actualTableId))
+  }
+
   def cannotResolveSourceColumnException(columnPath: Seq[String]): Throwable = {
     new DeltaIllegalArgumentException(
       errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",

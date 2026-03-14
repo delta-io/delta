@@ -1662,6 +1662,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_INVALID_UNITY_CATALOG_EXISTING_TABLE_HANDOFF" : {
+    "message" : [
+      "Invalid Unity Catalog existing-table handoff for operation <operation>: <reason>."
+    ],
+    "sqlState" : "KD00H"
+  },
   "DELTA_INVALID_TABLE_VALUE_FUNCTION" : {
     "message" : [
       "Function <function> is an unsupported table valued function for CDC reads."
@@ -2948,6 +2954,12 @@
       "<operation> is blocked by the catalog for Catalog-Managed tables."
     ],
     "sqlState" : "0AKDC"
+  },
+  "DELTA_UNITY_CATALOG_STAGED_REPLACE_TARGET_CHANGED" : {
+    "message" : [
+      "The Unity Catalog staged replace target for table <table> changed before commit. Expected table id <expectedTableId> but found <actualTableId>. Retry the operation."
+    ],
+    "sqlState" : "KD00I"
   },
   "DELTA_UNSUPPORTED_CLONE_REPLACE_SAME_TABLE" : {
     "message" : [
