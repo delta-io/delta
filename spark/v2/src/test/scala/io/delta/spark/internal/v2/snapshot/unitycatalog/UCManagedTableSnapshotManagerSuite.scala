@@ -15,11 +15,12 @@
  */
 package io.delta.spark.internal.v2.snapshot.unitycatalog
 
-import java.util.Optional
+import java.util.{Collections, Optional}
 
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.data.TransactionStateRow
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -275,6 +276,54 @@ class UCManagedTableSnapshotManagerSuite
       intercept[IllegalArgumentException] {
         manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
       }
+    }
+  }
+
+  // ==================== buildCreateTableTransaction ====================
+
+  test("buildCreateTableTransaction: returns expected transaction state") {
+    withTempDir { tempDir =>
+      val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getCanonicalPath)
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val manager = createManager(ucClient, tablePath)
+
+      val txn = manager.buildCreateTableTransaction(
+        testSchema,
+        Collections.emptyMap[String, String](),
+        Optional.empty(),
+        "UCManagedSM-test-v2.0")
+
+      val state = txn.getTransactionState(defaultEngine)
+      val expectedConfig = Map(
+        "io.unitycatalog.tableId" -> testUcTableId,
+        "delta.enableInCommitTimestamps" -> "true").asJava
+
+      assert(TransactionStateRow.getLogicalSchema(state) == testSchema)
+      assert(TransactionStateRow.getConfiguration(state) == expectedConfig)
+      assert(TransactionStateRow.getPartitionColumnsList(state).isEmpty)
+      assert(TransactionStateRow.getTablePath(state) == tablePath)
+    }
+  }
+
+  test("buildCreateTableTransaction: merges user properties with UC config") {
+    withTempDir { tempDir =>
+      val tablePath = defaultEngine.getFileSystemClient.resolvePath(tempDir.getCanonicalPath)
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val manager = createManager(ucClient, tablePath)
+
+      val userProps = new java.util.HashMap[String, String]()
+      userProps.put("delta.appendOnly", "true")
+
+      val txn = manager.buildCreateTableTransaction(
+        testSchema, userProps, Optional.empty(), "UCManagedSM-test-v2.0")
+
+      val state = txn.getTransactionState(defaultEngine)
+      val expectedConfig = Map(
+        "io.unitycatalog.tableId" -> testUcTableId,
+        "delta.enableInCommitTimestamps" -> "true",
+        "delta.appendOnly" -> "true").asJava
+
+      assert(TransactionStateRow.getConfiguration(state) == expectedConfig)
     }
   }
 
