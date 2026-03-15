@@ -523,6 +523,86 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     IcebergRESTServerTestUtils.populateTestData(spark, tableName)
   }
 
+  test("retry on transient 503 server error") {
+    withTempTable("retryTest503") { table =>
+      populateTestData(s"rest_catalog.${defaultNamespace}.retryTest503")
+
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      try {
+        server.clearCaptured()
+        // Configure server to fail the first plan request with 503
+        server.setFailNextPlanRequests(1, 503)
+
+        // Client should retry and succeed on the second attempt
+        val scanPlan = client.planScan(defaultNamespace.toString, "retryTest503")
+        assert(scanPlan != null, "Scan plan should not be null after retry")
+        assert(scanPlan.files.nonEmpty, "Scan plan should have files after successful retry")
+
+        // Verify 2 requests were made: 1 failed (503) + 1 success
+        assert(server.getPlanRequestCount() == 2,
+          s"Expected 2 plan requests (1 retry), got ${server.getPlanRequestCount()}")
+      } finally {
+        server.clearCaptured()
+        client.close()
+      }
+    }
+  }
+
+  test("retries exhausted on persistent 503 server error") {
+    // No populateTestData needed: failure injection intercepts at the servlet level before
+    // table data is accessed, so we only need the table to exist for a valid URI.
+    withTempTable("retryTestExhausted") { table =>
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      try {
+        server.clearCaptured()
+        // Configure server to fail more requests than the client will retry (max 3 retries = 4
+        // total attempts). Setting 10 failures ensures all retries see 503.
+        server.setFailNextPlanRequests(10, 503)
+
+        val exception = intercept[java.io.IOException] {
+          client.planScan(defaultNamespace.toString, "retryTestExhausted")
+        }
+        assert(exception.getMessage.contains("503"),
+          s"Error should mention 503 status code. Got: ${exception.getMessage}")
+
+        // Verify 4 requests were made: 1 original + 3 retries (max retries = 3)
+        assert(server.getPlanRequestCount() == 4,
+          s"Expected 4 plan requests (1 + 3 retries), got ${server.getPlanRequestCount()}")
+      } finally {
+        server.clearCaptured()
+        client.close()
+      }
+    }
+  }
+
+  test("no retry on 404 client error") {
+    // No populateTestData needed: failure injection intercepts at the servlet level before
+    // table data is accessed, so we only need the table to exist for a valid URI.
+    withTempTable("retryTest404") { table =>
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      try {
+        server.clearCaptured()
+        // Configure server to fail all plan requests with 404
+        // Using a high count ensures the test fails if the client retries
+        server.setFailNextPlanRequests(10, 404)
+
+        // Client should NOT retry 404 and should throw immediately
+        val exception = intercept[java.io.IOException] {
+          client.planScan(defaultNamespace.toString, "retryTest404")
+        }
+        assert(exception.getMessage.contains("404"),
+          s"Error should mention 404 status code. Got: ${exception.getMessage}")
+
+        // Verify only 1 request was made (no retry for 404)
+        assert(server.getPlanRequestCount() == 1,
+          s"Expected 1 plan request (no retry for 404), got ${server.getPlanRequestCount()}")
+      } finally {
+        server.clearCaptured()
+        client.close()
+      }
+    }
+  }
+
   test("User-Agent header format") {
     val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", "test_catalog", "")
     try {
