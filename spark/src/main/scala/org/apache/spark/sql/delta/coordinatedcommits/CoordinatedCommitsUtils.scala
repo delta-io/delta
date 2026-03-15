@@ -194,6 +194,16 @@ object CatalogOwnedTableUtils extends DeltaLogging {
     )
 
   /**
+   * QoL table property defaults for CatalogOwned tables that are not tied to a specific table
+   * feature. These are applied alongside [[QOL_TABLE_FEATURES_AND_PROPERTIES]] during table
+   * creation. User-set values (in table properties or session defaults) take precedence.
+   */
+  val QOL_TABLE_PROPERTIES: Seq[(DeltaConfig[_], String)] = Seq(
+    (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_JSON, "false"),
+    (DeltaConfigs.CHECKPOINT_WRITE_STATS_AS_STRUCT, "true")
+  )
+
+  /**
    * Return true if we should enable CatalogOwned either via default spark
    * session configuration during creating a new table,
    * or via the explicit table property overrides.
@@ -238,11 +248,13 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   def updateMetadataForQoLFeatures(
       spark: SparkSession,
       metadata: Metadata): Metadata = {
-    val qoLConfigsToAdd = QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
-      case (feature, config, targetValue) if
-          !isAlreadyConfigured(config, metadata.configuration, spark) =>
-        config.key -> targetValue
-    }.toMap
+    val qoLConfigsToAdd =
+      (QOL_TABLE_FEATURES_AND_PROPERTIES.map { case (_, config, value) => config -> value } ++
+        QOL_TABLE_PROPERTIES)
+      .collect {
+        case (config, targetValue) if !isAlreadyConfigured(config, metadata.configuration, spark) =>
+          config.key -> targetValue
+      }
     metadata.copy(configuration = metadata.configuration ++ qoLConfigsToAdd)
   }
 
