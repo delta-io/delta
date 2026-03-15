@@ -93,7 +93,17 @@ object SparkMimaExcludes {
 
       // Changes in 4.1.0
       // TODO: change in type hierarchy due to removal of DeltaThrowableConditionShim
-      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*")
+      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*"),
+
+      // Changes in 4.2.0
+      // DeletionVectorReadFunction.wrap gained a 3rd parameter (isVectorizedReader) in #5775
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction.wrap"),
+      // MDC and logBasedOnLevel were removed from Spark's Logging trait in Spark 4.2.0-SNAPSHOT
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.MDC"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel"),
+      // SparkScan and SparkScanBuilder constructors changed (internal classes, multiple PRs)
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.spark.internal.v2.read.SparkScan.this"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.spark.internal.v2.read.SparkScanBuilder.this")
 
       // scalastyle:on line.size.limit
   )
