@@ -254,6 +254,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
+        schemaProvider.getRawSchema(),
         catalogStats,
         merged);
   }
@@ -407,6 +408,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     StructType getPartitionSchema() {
       return withInit(() -> partitionSchema);
+    }
+
+    StructType getRawSchema() {
+      return withInit(() -> rawSchema);
     }
 
     Column[] getColumns() {
