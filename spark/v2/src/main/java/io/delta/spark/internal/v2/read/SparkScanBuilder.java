@@ -24,6 +24,7 @@ import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.ExpressionUtils;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
@@ -109,9 +110,14 @@ public class SparkScanBuilder
     List<Filter> dataFilterList = new ArrayList<>();
     List<Filter> postScanFilters = new ArrayList<>();
 
+    // Combine data and partition schemas for decimal type alignment during filter conversion.
+    // This allows decimal literal types to be widened to match the column's declared type,
+    // preventing type mismatch errors in the Kernel's expression evaluator during data skipping.
+    StructType fullTableSchema = combineSchemas(dataSchema, partitionSchema);
+
     for (Filter filter : filters) {
       ExpressionUtils.FilterClassificationResult classification =
-          ExpressionUtils.classifyFilter(filter, partitionColumnSet);
+          ExpressionUtils.classifyFilter(filter, partitionColumnSet, fullTableSchema);
       // Collect kernel predicates if supported
       if (classification.isKernelSupported) {
         convertedKernelPredicates.add(classification.kernelPredicate.get());
@@ -174,6 +180,14 @@ public class SparkScanBuilder
         kernelScanBuilder.build(),
         catalogStats,
         options);
+  }
+
+  /** Combines data schema and partition schema into a single schema for column type lookups. */
+  private static StructType combineSchemas(StructType dataSchema, StructType partitionSchema) {
+    StructField[] combined =
+        Stream.concat(Arrays.stream(dataSchema.fields()), Arrays.stream(partitionSchema.fields()))
+            .toArray(StructField[]::new);
+    return new StructType(combined);
   }
 
   CaseInsensitiveStringMap getOptions() {
