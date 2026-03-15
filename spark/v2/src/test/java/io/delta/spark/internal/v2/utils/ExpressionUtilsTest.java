@@ -678,7 +678,7 @@ public class ExpressionUtilsTest {
 
   @Test
   public void testDecimalLiteralExceedsColumnPrecision() {
-    // Literal 123456.00 has precision 7 integral digits + 2 scale = precision 8,
+    // Literal 123456.00 has 6 integral digits + 2 scale = precision 8,
     // column is Decimal(7,2) which holds max 99999.99 → skip pushdown
     LessThan filter = new LessThan("price", new BigDecimal("123456.00"));
     ExpressionUtils.ConvertedPredicate result =
