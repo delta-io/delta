@@ -23,6 +23,7 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.kernel.internal.ScanImpl;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
@@ -109,6 +110,12 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
+  private long totalRows = 0L;
+  // true iff every AddFile in the scan had numRecords in its stats JSON
+  private boolean rowCountKnown = false;
+  // per-file row counts, keyed by filePath; populated during planning for use after runtime
+  // filtering
+  private Map<String, Long> fileRowCounts = new HashMap<>();
   // Estimated size in bytes accounting for column projection, used for query optimizer cost
   // estimation
   private long estimatedSizeInBytes = 0L;
@@ -255,8 +262,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown without catalog stats
-        return OptionalLong.empty();
+        return rowCountKnown ? OptionalLong.of(totalRows) : OptionalLong.empty();
       }
     };
   }
@@ -370,7 +376,22 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
-    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    // TODO: Promote getScanFiles(Engine, boolean includeStats) to the public Scan interface to
+    // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
+    // instanceof check is the only way to request per-file statistics from the kernel.
+    final Iterator<FilteredColumnarBatch> scanFileBatches;
+    if (kernelScan instanceof ScanImpl && isRowStatsEnabled()) {
+      // Only parse stats JSON when the optimizer will use numRows (CBO or planStats enabled),
+      // matching V1's behavior (LogicalRelation.computeStats()) and avoiding unnecessary per-file
+      // stats JSON parsing cost on every scan.
+      scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
+      rowCountKnown = true; // assume all files have stats; set to false on first miss
+    } else {
+      // Stats will not be collected: either kernel scan is not ScanImpl, or CBO/planStats is
+      // disabled. numRows() will return OptionalLong.empty().
+      rowCountKnown = false;
+      scanFileBatches = kernelScan.getScanFiles(tableEngine);
+    }
 
     final String[] locations = new String[0];
     final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
@@ -389,6 +410,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
+
+          Optional<Long> numRecords = addFile.getNumRecords();
+          if (numRecords.isPresent()) {
+            totalRows += numRecords.get();
+            fileRowCounts.put(partitionedFile.filePath().toString(), numRecords.get());
+          } else {
+            rowCountKnown = false;
+          }
         }
       } catch (IOException e) {
         throw new RuntimeException(e);
@@ -428,13 +457,30 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         }
       }
 
-      // Update partitionedFiles, totalBytes, and estimatedSizeInBytes if any partition is
-      // filtered out
+      // Update partitionedFiles, totalBytes, totalRows, and estimatedSizeInBytes if any partition
+      // is filtered out
       if (runtimeFilteredPartitionedFiles.size() < this.partitionedFiles.size()) {
         this.partitionedFiles = runtimeFilteredPartitionedFiles;
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
+        if (rowCountKnown) {
+          long newTotalRows = 0L;
+          for (PartitionedFile pf : runtimeFilteredPartitionedFiles) {
+            Long count = fileRowCounts.get(pf.filePath().toString());
+            if (count == null) {
+              // rowCountKnown=true guarantees every AddFile had numRecords in its stats JSON.
+              // A missing entry indicates a logic bug in planScanFiles().
+              throw new IllegalStateException(
+                  "Missing row count for file: "
+                      + pf.filePath()
+                      + ". This is a bug: when rowCountKnown=true every file must have an"
+                      + " entry in fileRowCounts.");
+            }
+            newTotalRows += count;
+          }
+          this.totalRows = newTotalRows;
+        }
       }
     }
   }
@@ -494,6 +540,21 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       // Apply runtime predicates within the synchronized ensurePlanned method
       ensurePlanned(runtimePredicates);
     }
+  }
+
+  /**
+   * Returns whether row count statistics should be collected and reported.
+   *
+   * <p>Matches V1 behavior: {@code LogicalRelation.computeStats()} only reports numRows when {@code
+   * spark.sql.cbo.enabled} or {@code spark.sql.statistics.planStatsEnabled} is true. This gating
+   * avoids the cost of per-file stats JSON parsing on every scan when the optimizer would not use
+   * the statistics anyway.
+   */
+  private boolean isRowStatsEnabled() {
+    return sqlConf.cboEnabled()
+        || "true"
+            .equalsIgnoreCase(
+                sqlConf.getConfString("spark.sql.statistics.planStatsEnabled", "false"));
   }
 
   /**
