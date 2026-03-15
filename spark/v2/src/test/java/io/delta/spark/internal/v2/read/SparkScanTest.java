@@ -1279,7 +1279,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         "spark.sql.cbo.enabled",
         "true",
         () -> {
-          // Path-based table — no catalog table, no stats
+          // Path-based table — no catalog table, no ANALYZE TABLE stats
           Identifier id = Identifier.of(new String[] {"default"}, tblName);
           SparkTable sparkTable = new SparkTable(id, path);
 
@@ -1289,8 +1289,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Without catalog stats, numRows should be empty
-          assertFalse(stats.numRows().isPresent(), "numRows should be empty for path-based table");
+          // Per-file Delta stats (numRecords in the transaction log) are available even without
+          // catalog stats from ANALYZE TABLE, so numRows should be present.
+          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
+          assertEquals(1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
         });
@@ -1480,8 +1482,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Without catalog stats, we fall back to file-only stats
-          assertFalse(stats.numRows().isPresent(), "numRows should be empty without catalog stats");
+          // Per-file Delta stats (numRecords in the transaction log) provide numRows even when
+          // ANALYZE TABLE has not been run and no catalog stats exist.
+          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
+          assertEquals(1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
         });
