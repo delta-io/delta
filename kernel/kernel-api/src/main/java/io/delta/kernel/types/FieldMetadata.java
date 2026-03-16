@@ -176,14 +176,11 @@ public final class FieldMetadata {
     if (this.metadata.size() != that.metadata.size()) return false;
     return this.metadata.entrySet().stream()
         .allMatch(
-            e ->
-                Objects.equals(e.getValue(), that.metadata.get(e.getKey()))
-                    || (e.getValue() != null
-                        && e.getValue().getClass().isArray()
-                        && that.metadata.get(e.getKey()) != null
-                        && that.metadata.get(e.getKey()).getClass().isArray()
-                        && Arrays.equals(
-                            (Object[]) e.getValue(), (Object[]) that.metadata.get(e.getKey()))));
+            e -> {
+              Object value = e.getValue();
+              Object otherValue = that.metadata.get(e.getKey());
+              return Objects.deepEquals(value, otherValue);
+            });
   }
 
   @Override

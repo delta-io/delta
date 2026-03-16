@@ -317,10 +317,9 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta1.equalsIgnoreKeys(meta2, ignoreNullKey)).isTrue
   }
 
-  test("equals returns false (not NPE) for same-size metadata with different keys") {
-    // Regression test for GitHub issue #5821:
-    // Two metadata maps with same size but different keys caused NPE in equals()
-    // because that.metadata.get(e.getKey()) returns null and .getClass() was called on it.
+  test("equals returns false for same-size metadata with different keys") {
+    // Regression test for GitHub issue #5821: same-size maps with different keys
+    // caused NPE because that.metadata.get(e.getKey()) returns null.
     val meta1 = FieldMetadata.builder()
       .putString("keyA", "value")
       .build()
@@ -332,7 +331,7 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta2.equals(meta1)).isFalse
   }
 
-  test("equals returns false (not NPE) for same-size metadata with different keys and arrays") {
+  test("equals returns false for same-size metadata with different keys and array values") {
     val meta1 = FieldMetadata.builder()
       .putStringArray("keyA", Array("a", "b"))
       .build()
@@ -344,16 +343,31 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta2.equals(meta1)).isFalse
   }
 
-  test("hashCode does not NPE when metadata contains null values") {
+  test("equals handles null values correctly") {
+    val metaWithNull = FieldMetadata.builder().putNull("key").build()
+    val metaWithValue = FieldMetadata.builder().putString("key", "value").build()
+    val metaWithNull2 = FieldMetadata.builder().putNull("key").build()
+
+    assertThat(metaWithNull.equals(metaWithValue)).isFalse
+    assertThat(metaWithValue.equals(metaWithNull)).isFalse
+    assertThat(metaWithNull.equals(metaWithNull2)).isTrue
+  }
+
+  test("hashCode/equals contract holds for metadata with null values") {
     // Regression test for GitHub issue #5821:
     // hashCode() called entry.getValue().getClass() without null check.
-    val meta = FieldMetadata.builder()
+    val meta1 = FieldMetadata.builder()
+      .putNull("nullKey")
+      .putString("key", "value")
+      .build()
+    val meta2 = FieldMetadata.builder()
       .putNull("nullKey")
       .putString("key", "value")
       .build()
 
-    // Should not throw NPE
-    meta.hashCode()
+    // Equal objects must have equal hashCodes
+    assertThat(meta1.equals(meta2)).isTrue
+    assertThat(meta1.hashCode()).isEqualTo(meta2.hashCode())
   }
 
   test("equalsIgnoreKeys throws when keys is null") {
