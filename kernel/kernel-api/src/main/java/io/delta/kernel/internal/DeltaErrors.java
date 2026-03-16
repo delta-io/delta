@@ -260,6 +260,16 @@ public final class DeltaErrors {
             columnName, unsupportedChars));
   }
 
+  public static KernelException nestedNotNullConstraint(
+      String fieldPath, DataType nestedType, String nestType) {
+    return new KernelException(
+        format(
+            "The %s type of the field %s contains a NOT NULL constraint that is not "
+                + "enforceable. Delta does not support NOT NULL constraints on nested types "
+                + "within arrays or maps. Nested type: %s",
+            nestType, fieldPath, nestedType));
+  }
+
   public static KernelException requiresSchemaForNewTable(String tablePath) {
     return new TableNotFoundException(
         tablePath, "Must provide a new schema to write to a new table.");

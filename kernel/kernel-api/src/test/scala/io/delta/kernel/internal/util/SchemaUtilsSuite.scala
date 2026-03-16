@@ -1086,7 +1086,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
               .add(
                 "renamed_id",
                 IntegerType.INTEGER,
-                false,
+                true,
                 fieldMetadata(id = 2, physicalName = "inconsistent_name")),
             IntegerType.INTEGER,
             false),
@@ -1128,7 +1128,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add(
             "renamed_id",
             IntegerType.INTEGER,
-            false,
+            true,
             FieldMetadata.builder().putString(COLUMN_MAPPING_PHYSICAL_NAME_KEY, "id").build()),
         IntegerType.INTEGER,
         false))),
@@ -1168,7 +1168,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           .add(
             "renamed_id",
             IntegerType.INTEGER,
-            false,
+            true,
             FieldMetadata.builder().putLong(COLUMN_MAPPING_ID_KEY, 1).build()),
         IntegerType.INTEGER,
         false))),
@@ -1291,38 +1291,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
         "required_field",
         IntegerType.INTEGER,
         false,
-        fieldMetadata(3, "required_field"))),
-    // Map with struct key where non-nullable field is added to struct
-    (
-      mapWithStructKey,
-      mapWithStructKey(
-        new MapType(
-          new StructType()
-            .add(
-              "renamed_id",
-              IntegerType.INTEGER,
-              true,
-              fieldMetadata(id = 2, physicalName = "id"))
-            .add(
-              "required_field",
-              IntegerType.INTEGER,
-              false,
-              fieldMetadata(id = 3, physicalName = "required_field")),
-          IntegerType.INTEGER,
-          false),
-        fieldMetadata(id = 1, physicalName = "map"))),
-    // Struct of array of structs where non-nullable field is added to struct
-    (
-      structWithArrayOfStructs,
-      structWithArrayOfStructs(
-        arrayType = new ArrayType(
-          new StructType().add(
-            "renamed_id",
-            IntegerType.INTEGER,
-            fieldMetadata(4, "id"))
-            .add("required_field", IntegerType.INTEGER, false, fieldMetadata(5, "required_field")),
-          false),
-        arrayName = "renamed_array")))
+        fieldMetadata(3, "required_field"))))
 
   test("validateUpdatedSchema fails when non-nullable field is added with " +
     "allowNewRequiredFields=false") {
@@ -1353,33 +1322,7 @@ class SchemaUtilsSuite extends AnyFunSuite {
           "id",
           IntegerType.INTEGER,
           false,
-          fieldMetadata(id = 1, physicalName = "id"))),
-    // Map with struct key where existing id field has nullability tightened
-    (
-      mapWithStructKey,
-      mapWithStructKey(
-        new MapType(
-          new StructType()
-            .add(
-              "renamed_id",
-              IntegerType.INTEGER,
-              false,
-              fieldMetadata(id = 2, physicalName = "id")),
-          IntegerType.INTEGER,
-          false),
-        fieldMetadata(id = 1, physicalName = "map"))),
-    // Struct of array of structs where id field in inner struct has nullability tightened
-    (
-      structWithArrayOfStructs,
-      structWithArrayOfStructs(
-        arrayType = new ArrayType(
-          new StructType().add(
-            "renamed_id",
-            IntegerType.INTEGER,
-            false,
-            fieldMetadata(4, "id")),
-          false),
-        arrayName = "renamed_array")))
+          fieldMetadata(id = 1, physicalName = "id"))))
 
   test("validateUpdatedSchema fails when existing nullability is tightened with " +
     "allowNewRequiredFields=false") {
@@ -2097,5 +2040,133 @@ class SchemaUtilsSuite extends AnyFunSuite {
       dummyProtocol,
       emptySet(),
       false)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Nested NOT NULL Constraint Validation
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("validateSchema rejects ArrayType with non-nullable struct element fields") {
+    val schema = new StructType()
+      .add(
+        "arr",
+        new ArrayType(
+          new StructType()
+            .add("a", INTEGER, false /* non-nullable */ ),
+          true /* containsNull */ ))
+    expectFailure("element", "arr", "NOT NULL") {
+      validateSchema(schema)
+    }
+  }
+
+  test("validateSchema rejects MapType with non-nullable struct value fields") {
+    val schema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("v", INTEGER, false /* non-nullable */ ),
+          true /* valueContainsNull */ ))
+    expectFailure("value", "m", "NOT NULL") {
+      validateSchema(schema)
+    }
+  }
+
+  test("validateSchema rejects MapType with non-nullable struct key fields") {
+    val schema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          new StructType()
+            .add("k", INTEGER, false /* non-nullable */ ),
+          StringType.STRING,
+          true /* valueContainsNull */ ))
+    expectFailure("key", "m", "NOT NULL") {
+      validateSchema(schema)
+    }
+  }
+
+  test("validateSchema rejects deeply nested non-nullable struct fields in arrays") {
+    val schema = new StructType()
+      .add(
+        "arr",
+        new ArrayType(
+          new ArrayType(
+            new StructType()
+              .add("x", INTEGER, false /* non-nullable */ ),
+            true),
+          true))
+    expectFailure("element", "arr", "NOT NULL") {
+      validateSchema(schema)
+    }
+  }
+
+  test("validateSchema rejects non-nullable struct fields nested in array within map value") {
+    val schema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add(
+              "inner_arr",
+              new ArrayType(
+                new StructType()
+                  .add("deep", INTEGER, false /* non-nullable */ ),
+                true),
+              true),
+          true))
+    expectFailure("NOT NULL") {
+      validateSchema(schema)
+    }
+  }
+
+  test("validateSchema accepts schema with all-nullable nested types in arrays") {
+    val schema = new StructType()
+      .add(
+        "arr",
+        new ArrayType(
+          new StructType()
+            .add("a", INTEGER, true /* nullable */ )
+            .add("b", StringType.STRING, true /* nullable */ ),
+          true /* containsNull */ ))
+    // Should not throw
+    validateSchema(schema)
+  }
+
+  test("validateSchema accepts schema with all-nullable nested types in maps") {
+    val schema = new StructType()
+      .add(
+        "m",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("v", INTEGER, true /* nullable */ ),
+          true /* valueContainsNull */ ))
+    // Should not throw
+    validateSchema(schema)
+  }
+
+  test("validateSchema accepts schema with primitive array elements") {
+    val schema = new StructType()
+      .add("arr", new ArrayType(INTEGER, true))
+      .add("arr2", new ArrayType(StringType.STRING, false))
+    // Primitive elements with containsNull=false is not an error for top-level arrays
+    // (only nested non-nullable struct fields are rejected)
+    validateSchema(schema)
+  }
+
+  test("validateSchema rejects array element with containsNull=false nested array") {
+    // ArrayType(ArrayType(IntType, false), true) - inner array has containsNull=false
+    val schema = new StructType()
+      .add(
+        "arr",
+        new ArrayType(
+          new ArrayType(INTEGER, false /* containsNull=false */ ),
+          true))
+    expectFailure("element", "arr", "NOT NULL") {
+      validateSchema(schema)
+    }
   }
 }
