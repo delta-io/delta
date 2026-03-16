@@ -456,7 +456,8 @@
     "message" : [
       "Cannot shallow clone a table without statistics and with row tracking enabled.",
       "If you want to enable row tracking you need to first collect statistics on the source table.",
-      "You can recompute statistics for the table using StatisticsCollection.recompute(spark, deltaLog)."
+      "You can collect statistics by rewriting the data files, for example by running:",
+      "OPTIMIZE table_name"
     ],
     "sqlState" : "22000"
   },
@@ -2350,7 +2351,8 @@
   "DELTA_ROW_ID_ASSIGNMENT_WITHOUT_STATS" : {
     "message" : [
       "Cannot assign row IDs without row count statistics.",
-      "You can recompute statistics for the table using StatisticsCollection.recompute(spark, deltaLog)."
+      "You can collect statistics by rewriting the data files, for example by running:",
+      "OPTIMIZE table_name"
     ],
     "sqlState" : "22000"
   },
