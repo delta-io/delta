@@ -1292,7 +1292,8 @@ public class SparkScanTest extends DeltaV2TestBase {
           // Per-file Delta stats (numRecords in the transaction log) are available even without
           // catalog stats from ANALYZE TABLE, so numRows should be present.
           assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
-          assertEquals(1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
+          assertEquals(
+              1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
         });
@@ -1485,7 +1486,8 @@ public class SparkScanTest extends DeltaV2TestBase {
           // Per-file Delta stats (numRecords in the transaction log) provide numRows even when
           // ANALYZE TABLE has not been run and no catalog stats exist.
           assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
-          assertEquals(1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
+          assertEquals(
+              1L, stats.numRows().getAsLong(), "numRows should match the inserted row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
         });
