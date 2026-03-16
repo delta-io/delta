@@ -1265,6 +1265,20 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableDeletionVectors' = true)",
+                      tableName);
+                  sql(
+                      "INSERT INTO %s SELECT /*+ COALESCE(1) */ * FROM VALUES "
+                          + "(1, 'User1'), (2, 'User2'), (3, 'User3') AS t(id, name)",
+                      tableName);
+                  sql("DELETE FROM %s WHERE id >= 1", tableName);
+                },
+            false,
+            "Full DELETE with DV: full file delete via WHERE clause"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
                   sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
                   sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
                   sql("DELETE FROM %s", tableName);
@@ -1309,6 +1323,21 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                 },
             false,
             "MERGE: AddFile + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableDeletionVectors' = true)",
+                      tableName);
+                  // Coalesce to to ensure DV is partial delete
+                  sql(
+                      "INSERT INTO %s SELECT /*+ COALESCE(1) */ * FROM VALUES "
+                          + "(1, 'User1'), (2, 'User2'), (3, 'User3') AS t(id, name)",
+                      tableName);
+                  sql("DELETE FROM %s WHERE id = 1", tableName);
+                },
+            false,
+            "Partial DELETE with DV: AddFile(with DV) + RemoveFile"),
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
