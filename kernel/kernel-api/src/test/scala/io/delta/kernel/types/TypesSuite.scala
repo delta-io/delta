@@ -76,6 +76,9 @@ class TypesSuite extends AnyFunSuite {
       }
       assert(ex1.getMessage.contains("does not support collated string types as keys"))
       assert(ex1.getMessage.contains("UTF8_BINARY"))
+      assert(
+        ex1.getMessage.contains(collatedString.toString),
+        s"Error message should include the found type but was: ${ex1.getMessage}")
 
       // 2-arg StructField constructor
       val ex2 = intercept[IllegalArgumentException] {
@@ -84,6 +87,9 @@ class TypesSuite extends AnyFunSuite {
           new StructField("value", IntegerType.INTEGER, true))
       }
       assert(ex2.getMessage.contains("does not support collated string types as keys"))
+      assert(
+        ex2.getMessage.contains(collatedString.toString),
+        s"Error message should include the found type but was: ${ex2.getMessage}")
     }
   }
 
