@@ -107,15 +107,26 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        // Catalog-managed / CC tables are owned by the delegated V2 catalog plugin (for example
+        // Unity Catalog), so SessionCatalog's post-commit UpdateCatalogHook must not run.
+        if (!allowCatalogManaged) {
+          UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        }
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        cleaned,
-        ignoreIfExists = false,
-        validateLocation = false)
+        createTableFunc match {
+          case Some(createFunc) =>
+            // This is the new missing-table path where creation is delegated through the V2
+            // catalog plugin (for example Unity Catalog) instead of SessionCatalog.createTable().
+            createFunc(cleaned)
+          case None =>
+            spark.sessionState.catalog.createTable(
+              cleaned,
+              ignoreIfExists = false,
+              validateLocation = false)
+        }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
