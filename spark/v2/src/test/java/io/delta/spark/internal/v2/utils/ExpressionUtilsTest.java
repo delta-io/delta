@@ -751,6 +751,27 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testDecimalPartialPushDownInAndFilter() {
+    // AND(price > 99.999, price < 200.00) where left has scale=3 exceeding column's scale=2.
+    // Only the right side should be pushed down (partial pushdown).
+    GreaterThan left = new GreaterThan("price", new BigDecimal("99.999"));
+    LessThan right = new LessThan("price", new BigDecimal("200.00"));
+    org.apache.spark.sql.sources.And andFilter = new org.apache.spark.sql.sources.And(left, right);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, decimalSchema);
+
+    assertTrue(result.isPresent(), "AND filter should partially push down the valid side");
+    assertTrue(result.isPartial(), "Result should be marked as partial conversion");
+    // Only the right side (price < 200.00) should be pushed
+    Predicate pred = result.get();
+    assertEquals("<", pred.getName());
+    Literal literal = (Literal) pred.getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+    assertEquals(new BigDecimal("200.00"), literal.getValue());
+  }
+
+  @Test
   public void testDecimalLiteralInCompoundFilter() {
     // AND(price >= 100.00, price <= 200.00) with Decimal(7,2) column
     GreaterThanOrEqual left = new GreaterThanOrEqual("price", new BigDecimal("100.00"));

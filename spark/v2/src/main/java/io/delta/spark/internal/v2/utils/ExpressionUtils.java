@@ -494,9 +494,7 @@ public final class ExpressionUtils {
       Filter filter, Set<String> partitionColumnSet, StructType tableSchema) {
     // try to convert Spark filter to Kernel Predicate
     ConvertedPredicate convertedPredicate =
-        tableSchema != null
-            ? ExpressionUtils.convertSparkFilterToKernelPredicate(filter, tableSchema)
-            : ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, tableSchema);
 
     boolean isKernelSupported = convertedPredicate.isPresent();
     boolean isPartialConversion = convertedPredicate.isPartial();
