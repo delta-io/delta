@@ -2152,8 +2152,9 @@ class SchemaUtilsSuite extends AnyFunSuite {
     val schema = new StructType()
       .add("arr", new ArrayType(INTEGER, true))
       .add("arr2", new ArrayType(StringType.STRING, false))
-    // Primitive elements with containsNull=false is not an error for top-level arrays
-    // (only nested non-nullable struct fields are rejected)
+    // Top-level arrays with primitive elements pass regardless of containsNull, because
+    // the check applies typeAsNullable to the element type (primitives are unchanged).
+    // containsNull=false is only flagged when it appears as a nested element type.
     validateSchema(schema)
   }
 
@@ -2168,5 +2169,33 @@ class SchemaUtilsSuite extends AnyFunSuite {
     expectFailure("element", "arr", "NOT NULL") {
       validateSchema(schema)
     }
+  }
+
+  test("validateSchema rejects nested MapType with valueContainsNull=false and struct key") {
+    // When a MapType with a StructType key appears as an array element, Spark's typeAsNullable
+    // sets valueContainsNull=true, so the type differs and the constraint is unenforceable.
+    // Note: at the top level, valueContainsNull is preserved (only key/value types are checked).
+    val schema = new StructType()
+      .add(
+        "arr",
+        new ArrayType(
+          new MapType(
+            new StructType()
+              .add("k", INTEGER, true /* nullable */ ),
+            StringType.STRING,
+            false /* valueContainsNull=false */ ),
+          true /* containsNull */ ))
+    expectFailure("element", "arr", "NOT NULL") {
+      validateSchema(schema)
+    }
+  }
+
+  test("validateSchema accepts top-level non-nullable struct fields") {
+    // Non-nullable constraints on top-level struct fields ARE enforceable —
+    // the restriction only applies to types nested within arrays/maps
+    val schema = new StructType()
+      .add("id", INTEGER, false /* non-nullable */ )
+      .add("name", StringType.STRING, false /* non-nullable */ )
+    validateSchema(schema)
   }
 }
