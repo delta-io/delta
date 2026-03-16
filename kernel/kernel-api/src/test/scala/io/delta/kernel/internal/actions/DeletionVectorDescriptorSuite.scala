@@ -59,6 +59,30 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
     }
   }
 
+  test("getUniqueId returns offset value not Optional toString") {
+    val dv = new DeletionVectorDescriptor(
+      "u",
+      "ab^-aqEH.-t@S}K{vb[*k^",
+      Optional.of[Integer](4),
+      40,
+      2L)
+
+    val uniqueId = dv.getUniqueId()
+    assert(uniqueId === "uab^-aqEH.-t@S}K{vb[*k^@4")
+    assert(!uniqueId.contains("Optional"))
+  }
+
+  test("getUniqueId without offset returns just storageType and path") {
+    val dv = new DeletionVectorDescriptor(
+      "i",
+      "inline_data_here",
+      Optional.empty[Integer](),
+      16,
+      3L)
+
+    assert(dv.getUniqueId() === "iinline_data_here")
+  }
+
   test("serializeToBase64 throws for non-inline DV without offset") {
     val ex = intercept[IllegalArgumentException] {
       val dv = new DeletionVectorDescriptor(
