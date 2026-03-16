@@ -32,9 +32,11 @@ private[serverSidePlanning] trait ServerSidePlanningMetadata {
   def planningEndpointUri: String
 
   /**
-   * Authentication token for the planning endpoint.
+   * Supplier of authentication tokens for the planning endpoint.
+   * Called on each request to get a fresh token (supports OAuth refresh).
+   * Returns None if no authentication is configured.
    */
-  def authToken: Option[String]
+  def tokenSupplier: Option[() => String]
 
   /**
    * Catalog name for configuration lookups.
@@ -56,7 +58,7 @@ private[serverSidePlanning] case class DefaultMetadata(
     catalogName: String,
     tableProps: Map[String, String] = Map.empty) extends ServerSidePlanningMetadata {
   override def planningEndpointUri: String = ""
-  override def authToken: Option[String] = None
+  override def tokenSupplier: Option[() => String] = None
   override def tableProperties: Map[String, String] = tableProps
 }
 

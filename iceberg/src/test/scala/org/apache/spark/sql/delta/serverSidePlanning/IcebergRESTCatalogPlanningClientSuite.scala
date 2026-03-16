@@ -78,7 +78,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   // Tests that the REST /plan endpoint returns 0 files for an empty table.
   test("basic plan table scan via IcebergRESTCatalogPlanningClient") {
     withTempTable("testTable") { table =>
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
         assert(scanPlan != null, "Scan plan should not be null")
@@ -106,7 +106,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
         .map(row => (new Path(row.getString(0)).getName, row.getLong(1)))
         .toMap
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         val scanPlan = client.planScan(defaultNamespace.toString, "tableWithData")
         assert(scanPlan != null, "Scan plan should not be null")
@@ -145,7 +145,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
     withTempTable("testTable") { table =>
       // Client expects baseUri to include the /v1 path (per Iceberg REST spec)
-      val client = new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
       try {
         // Make a call that will trigger the lazy initialization of icebergRestCatalogUriRoot
         // which internally calls fetchCatalogPrefix()
@@ -173,7 +173,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
 
     withTempTable("testTable") { table =>
       // Client expects baseUri to include the /v1 path (per Iceberg REST spec)
-      val client = new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(s"$serverUri/v1", "test_catalog", () => "")
       try {
         // Make a call that will trigger the lazy initialization
         val scanPlan = client.planScan(defaultNamespace.toString, "testTable")
@@ -200,7 +200,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     withTempTable("filterTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.filterTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         val testCases = Seq(
           (EqualTo("longCol", 2L), "EqualTo numeric (long)"),
@@ -310,7 +310,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
           Set("`address.city`"))
       )
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         testCases.foreach { testCase =>
           // Clear previous captured projection
@@ -343,7 +343,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.limitTest"
       populateTestData(tableName)
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null, "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null, () => "")
       try {
         // Test different limit values
         val testCases = Seq(
@@ -378,7 +378,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
       val tableName = s"rest_catalog.${defaultNamespace}.filterProjectionLimitTest"
       populateTestData(tableName)
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         // Note: Filter types are already tested in "filter sent to IRC server" test.
         // Here we verify filter, projection, AND limit are sent together correctly.
@@ -456,7 +456,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     withTempTable("caseSensitiveTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.caseSensitiveTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, null, "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, null, () => "")
       try {
         server.clearCaptured()
 
@@ -481,7 +481,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     withTempTable("residualTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.residualTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         // Verify that a trivial (alwaysTrue) residual is accepted
         server.setTestResidual(Expressions.alwaysTrue())
@@ -625,7 +625,7 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
   }
 
   test("User-Agent header format") {
-    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", "test_catalog", "")
+    val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", "test_catalog", () => "")
     try {
       val userAgent = client.getUserAgent()
 
