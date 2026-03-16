@@ -94,9 +94,149 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  // TODO: Add saveAsTable overwrite/replaceWhere coverage once UCSingleCatalog supports REPLACE
-  // TABLE AS SELECT (RTAS). Currently, saveAsTable with mode("overwrite") routes through Spark's
-  // V2 catalog path as RTAS, which throws UnsupportedOperationException in UCSingleCatalog.
+  @Test
+  public void testSaveAsTableOverwriteReplacesWholeTable() throws Exception {
+    withManagedDynamicPartitionOverwriteTable(
+        "save_as_table_overwrite_test",
+        tableName -> {
+          insertManagedDpoBaseRows(tableName);
+          long versionBeforeOverwrite = currentVersion(tableName);
+
+          spark()
+              .sql(
+                  "SELECT * FROM VALUES "
+                      + "(TIMESTAMP'2025-10-17 09:00:00', '2025-10-17', 9, 'tenant_overwrite', 900) "
+                      + "AS src(time, time_date_level, time_hour_level, tenant, eventMetaId)")
+              .write()
+              .mode("overwrite")
+              .format("delta")
+              .saveAsTable(tableName);
+
+          assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
+          assertThat(readManagedDpoRows(tableName))
+              .containsExactly(
+                  row("2025-10-17 09:00:00", "2025-10-17", "9", "tenant_overwrite", "900"));
+        });
+  }
+
+  @Test
+  public void testSaveAsTableOverwriteWithReplaceWhereReplacesOnlyMatchingPartition()
+      throws Exception {
+    withManagedDynamicPartitionOverwriteTable(
+        "save_as_table_replace_where_test",
+        tableName -> {
+          insertManagedDpoBaseRows(tableName);
+          long versionBeforeOverwrite = currentVersion(tableName);
+
+          spark()
+              .sql(
+                  "SELECT * FROM VALUES "
+                      + "(TIMESTAMP'2025-10-15 12:45:00', '2025-10-15', 12, 'tenant_3_replace_where', 312) "
+                      + "AS src(time, time_date_level, time_hour_level, tenant, eventMetaId)")
+              .write()
+              .mode("overwrite")
+              .option("replaceWhere", "time_date_level = '2025-10-15' AND time_hour_level = 12")
+              .format("delta")
+              .saveAsTable(tableName);
+
+          assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
+          assertThat(readManagedDpoRows(tableName))
+              .containsExactly(
+                  row("2025-10-15 10:00:00", "2025-10-15", "10", "tenant_1", "1"),
+                  row("2025-10-15 11:00:00", "2025-10-15", "11", "tenant_2", "2"),
+                  row("2025-10-15 12:45:00", "2025-10-15", "12", "tenant_3_replace_where", "312"));
+        });
+  }
+
+  @Test
+  public void testSaveAsTableDynamicPartitionOverwriteRewritesOnlyTouchedPartition()
+      throws Exception {
+    withManagedDynamicPartitionOverwriteTable(
+        "save_as_table_dynamic_partition_overwrite_test",
+        tableName -> {
+          insertManagedDpoBaseRows(tableName);
+          long versionBeforeOverwrite = currentVersion(tableName);
+
+          overwriteTableWithDynamicPartitionOverwrite(
+              tableName,
+              spark()
+                  .sql(
+                      String.format(
+                          "SELECT time, time_date_level, time_hour_level, "
+                              + "concat(tenant, '_updated') AS tenant, eventMetaId + 100 AS eventMetaId "
+                              + "FROM %s WHERE time_hour_level = 12",
+                          tableName))
+                  .limit(2));
+
+          assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
+          // Only partition 12 should be rewritten; partitions 10 and 11 must remain unchanged.
+          assertThat(readManagedDpoRows(tableName))
+              .containsExactly(
+                  row("2025-10-15 10:00:00", "2025-10-15", "10", "tenant_1", "1"),
+                  row("2025-10-15 11:00:00", "2025-10-15", "11", "tenant_2", "2"),
+                  row("2025-10-15 12:00:00", "2025-10-15", "12", "tenant_3_updated", "103"));
+        });
+  }
+
+  @Test
+  public void testSaveAsTableDynamicPartitionOverwriteReplacesExistingAndAddsNewPartition()
+      throws Exception {
+    withManagedDynamicPartitionOverwriteTable(
+        "save_as_table_dynamic_partition_overwrite_multiple_partitions_test",
+        tableName -> {
+          insertManagedDpoBaseRows(tableName);
+          long versionBeforeOverwrite = currentVersion(tableName);
+
+          overwriteTableWithDynamicPartitionOverwrite(
+              tableName,
+              spark()
+                  .sql(
+                      "SELECT * FROM VALUES "
+                          + "(TIMESTAMP'2025-10-15 11:30:00', '2025-10-15', 11, 'tenant_2_replaced', 22), "
+                          + "(TIMESTAMP'2025-10-15 13:00:00', '2025-10-15', 13, 'tenant_4', 4) "
+                          + "AS src(time, time_date_level, time_hour_level, tenant, eventMetaId)"));
+
+          assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
+          // Partition 11 is replaced, partition 13 is inserted, and partitions 10/12 survive.
+          assertThat(readManagedDpoRows(tableName))
+              .containsExactly(
+                  row("2025-10-15 10:00:00", "2025-10-15", "10", "tenant_1", "1"),
+                  row("2025-10-15 11:30:00", "2025-10-15", "11", "tenant_2_replaced", "22"),
+                  row("2025-10-15 12:00:00", "2025-10-15", "12", "tenant_3", "3"),
+                  row("2025-10-15 13:00:00", "2025-10-15", "13", "tenant_4", "4"));
+        });
+  }
+
+  @Test
+  public void testSaveAsTableDynamicPartitionOverwriteMatchesFullPartitionTuple() throws Exception {
+    withManagedDynamicPartitionOverwriteTable(
+        "save_as_table_dynamic_partition_overwrite_full_partition_tuple_test",
+        tableName -> {
+          insertManagedDpoBaseRows(tableName);
+          sql(
+              "INSERT INTO %s VALUES "
+                  + "(TIMESTAMP'2025-10-16 10:00:00', '2025-10-16', 10, 'tenant_4', 4)",
+              tableName);
+          long versionBeforeOverwrite = currentVersion(tableName);
+
+          overwriteTableWithDynamicPartitionOverwrite(
+              tableName,
+              spark()
+                  .sql(
+                      "SELECT * FROM VALUES "
+                          + "(TIMESTAMP'2025-10-15 10:15:00', '2025-10-15', 10, 'tenant_1_replaced', 10) "
+                          + "AS src(time, time_date_level, time_hour_level, tenant, eventMetaId)"));
+
+          assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
+          // Only (2025-10-15, 10) should be replaced; (2025-10-16, 10) must remain untouched.
+          assertThat(readManagedDpoRows(tableName))
+              .containsExactly(
+                  row("2025-10-15 10:15:00", "2025-10-15", "10", "tenant_1_replaced", "10"),
+                  row("2025-10-15 11:00:00", "2025-10-15", "11", "tenant_2", "2"),
+                  row("2025-10-15 12:00:00", "2025-10-15", "12", "tenant_3", "3"),
+                  row("2025-10-16 10:00:00", "2025-10-16", "10", "tenant_4", "4"));
+        });
+  }
 
   @Test
   public void testSaveByPathBlockedForManagedTable() throws Exception {
@@ -280,6 +420,44 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
               .insertInto(tableName);
           check(tableName, List.of(row("1", "A"), row("2", "B"), row("3", "A"), row("4", "B")));
         });
+  }
+
+  private void withManagedDynamicPartitionOverwriteTable(String tableName, TestCode testCode)
+      throws Exception {
+    withNewTable(
+        tableName,
+        "time TIMESTAMP NOT NULL, time_date_level STRING, time_hour_level INT, tenant STRING, "
+            + "eventMetaId INT",
+        "time_date_level, time_hour_level",
+        TableType.MANAGED,
+        testCode);
+  }
+
+  private void insertManagedDpoBaseRows(String tableName) {
+    sql(
+        "INSERT INTO %s VALUES "
+            + "(TIMESTAMP'2025-10-15 10:00:00', '2025-10-15', 10, 'tenant_1', 1), "
+            + "(TIMESTAMP'2025-10-15 11:00:00', '2025-10-15', 11, 'tenant_2', 2), "
+            + "(TIMESTAMP'2025-10-15 12:00:00', '2025-10-15', 12, 'tenant_3', 3)",
+        tableName);
+  }
+
+  private List<List<String>> readManagedDpoRows(String tableName) {
+    return sql(
+        "SELECT CAST(time AS STRING), time_date_level, "
+            + "CAST(time_hour_level AS STRING), tenant, CAST(eventMetaId AS STRING) "
+            + "FROM %s ORDER BY time_date_level, time_hour_level",
+        tableName);
+  }
+
+  private void overwriteTableWithDynamicPartitionOverwrite(
+      String tableName, Dataset<Row> sourceData) {
+    sourceData
+        .write()
+        .mode("overwrite")
+        .option("partitionOverwriteMode", "dynamic")
+        .format("delta")
+        .saveAsTable(tableName);
   }
 
   private Dataset<Row> intDf(Integer... ids) {
