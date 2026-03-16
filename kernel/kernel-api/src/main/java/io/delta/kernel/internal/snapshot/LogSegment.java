@@ -96,6 +96,7 @@ public class LogSegment {
   private final Lazy<List<FileStatus>> deltasAndCheckpointsReversed;
   private final Lazy<List<FileStatus>> compactionsReversed;
   private final Lazy<List<FileStatus>> deltasCheckpointsCompactionsReversed;
+  private final int versionBasedHashCode;
 
   /**
    * Provides information around which files in the transaction log need to be read to create the
@@ -211,6 +212,10 @@ public class LogSegment {
     this.deltasCheckpointsCompactionsReversed =
         lazyLoadDeltasCheckpointsCompactionsReversed(
             deltasAndCheckpointsReversed, compactionsReversed, compactions);
+
+    // Hash by version numbers, not file paths, so staged commit renames (N.uuid.json -> N.json)
+    // don't invalidate pagination tokens between paginated reads. See #4927.
+    this.versionBasedHashCode = computeVersionBasedHashCode(deltas, checkpoints, compactions);
 
     logger.debug("Created LogSegment: {}", this);
   }
@@ -418,21 +423,7 @@ public class LogSegment {
 
   @Override
   public int hashCode() {
-    // Compare by version numbers rather than file paths so that staged commit renames
-    // (e.g. N.uuid.json -> N.json) don't change the hash. See #4927.
-    List<Long> deltaVersions =
-        deltas.stream()
-            .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
-            .collect(Collectors.toList());
-    List<Long> checkpointVersions =
-        checkpoints.stream()
-            .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
-            .collect(Collectors.toList());
-    List<Tuple2<Long, Long>> compactionVersions =
-        compactions.stream()
-            .map(fs -> FileNames.logCompactionVersions(new Path(fs.getPath())))
-            .collect(Collectors.toList());
-    return Objects.hash(deltaVersions, checkpointVersions, compactionVersions);
+    return versionBasedHashCode;
   }
 
   //////////////////////////////
@@ -576,6 +567,28 @@ public class LogSegment {
   //////////////////////////
   // Other helper methods //
   //////////////////////////
+
+  /**
+   * Computes a hash based on version numbers rather than file paths. This ensures that staged
+   * commit renames (e.g. {@code N.uuid.json} -> {@code N.json}) produce the same hash, which is
+   * required for pagination token validation across paginated reads.
+   */
+  private static int computeVersionBasedHashCode(
+      List<FileStatus> deltas, List<FileStatus> checkpoints, List<FileStatus> compactions) {
+    List<Long> deltaVersions =
+        deltas.stream()
+            .map(fs -> FileNames.deltaVersion(new Path(fs.getPath())))
+            .collect(Collectors.toList());
+    List<Long> checkpointVersions =
+        checkpoints.stream()
+            .map(fs -> FileNames.checkpointVersion(new Path(fs.getPath())))
+            .collect(Collectors.toList());
+    List<Tuple2<Long, Long>> compactionVersions =
+        compactions.stream()
+            .map(fs -> FileNames.logCompactionVersions(new Path(fs.getPath())))
+            .collect(Collectors.toList());
+    return Objects.hash(deltaVersions, checkpointVersions, compactionVersions);
+  }
 
   private Lazy<List<FileStatus>> lazyLoadDeltasAndCheckpointsReversed(
       List<FileStatus> deltasAndCheckpoints) {
