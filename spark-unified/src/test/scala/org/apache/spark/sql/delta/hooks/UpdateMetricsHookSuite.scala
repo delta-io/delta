@@ -219,7 +219,7 @@ class UpdateMetricsHookSuite extends QueryTest
 class SimpleMockServer(port: Int) {
   private var serverSocket: ServerSocket = _
   private var serverThread: Thread = _
-  private var running = false
+  @volatile private var running = false
   private var responseCode = 200
   private val requestCount = new AtomicInteger(0)
   private var lastRequestBody = ""
