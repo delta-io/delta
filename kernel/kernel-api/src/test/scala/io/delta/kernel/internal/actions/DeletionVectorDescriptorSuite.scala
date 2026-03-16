@@ -20,9 +20,7 @@ import java.util.{Base64, Optional}
 
 import org.scalatest.funsuite.AnyFunSuite
 
-/**
- * Tests for DeletionVectorDescriptor.serializeToBase64().
- */
+/** Tests for [[DeletionVectorDescriptor]]. */
 class DeletionVectorDescriptorSuite extends AnyFunSuite {
 
   // Test cases: (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality)
@@ -59,28 +57,22 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
     }
   }
 
-  test("getUniqueId returns offset value not Optional toString") {
-    val dv = new DeletionVectorDescriptor(
-      "u",
-      "ab^-aqEH.-t@S}K{vb[*k^",
-      Optional.of[Integer](4),
-      40,
-      2L)
+  testCases.foreach { case (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality) =>
+    test(s"getUniqueId - $storageType storage type") {
+      val dv = new DeletionVectorDescriptor(
+        storageType,
+        pathOrInlineDv,
+        offset.map(Integer.valueOf).map(Optional.of[Integer]).getOrElse(Optional.empty[Integer]()),
+        sizeInBytes,
+        cardinality)
 
-    val uniqueId = dv.getUniqueId()
-    assert(uniqueId === "uab^-aqEH.-t@S}K{vb[*k^@4")
-    assert(!uniqueId.contains("Optional"))
-  }
-
-  test("getUniqueId without offset returns just storageType and path") {
-    val dv = new DeletionVectorDescriptor(
-      "i",
-      "inline_data_here",
-      Optional.empty[Integer](),
-      16,
-      3L)
-
-    assert(dv.getUniqueId() === "iinline_data_here")
+      val expectedId = if (offset.isDefined) {
+        storageType + pathOrInlineDv + "@" + offset.get
+      } else {
+        storageType + pathOrInlineDv
+      }
+      assert(dv.getUniqueId() === expectedId)
+    }
   }
 
   test("serializeToBase64 throws for non-inline DV without offset") {
