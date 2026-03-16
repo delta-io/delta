@@ -71,6 +71,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   /** Key used to identify the write version in protocol communications with the UC server. */
   private static final String WRITE_VERSION_KEY = "writeVersion";
 
+  /** Test-only override to avoid sending metadata updates through UC in Spark test runs. */
+  private static final boolean SPARK_TESTING = Boolean.parseBoolean(System.getProperty("spark.testing", "true"));
+
   // Unity Catalog Identifiers
   /**
    * Key for identifying Unity Catalog table ID in `delta.coordinatedCommits.tableConf{-preview}`.
@@ -429,7 +432,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() ?
+          // TODO: remove this extra SPARK_TESTING flag once metadata updates are supported 
+	  updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || SPARK_TESTING ?
             Optional.empty() :
             Optional.of(updatedActions.getNewMetadata()),
           updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?

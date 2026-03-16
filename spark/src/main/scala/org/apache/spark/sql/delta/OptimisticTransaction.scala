@@ -574,6 +574,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       "Cannot update the metadata in a transaction that has already written data.")
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
+    updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
     // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
     // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
     // "spark_catalog" registration). New table creation is naturally excluded because
@@ -583,16 +584,36 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
     // a temporary kill switch - once Delta supports propagating metadata updates to UC,
     // this check will be removed entirely.
-    val existingMetadata = snapshot.metadata
-    if (isUCManagedTable &&
-        (proposedNewMetadata.schemaString != existingMetadata.schemaString ||
-         proposedNewMetadata.partitionColumns != existingMetadata.partitionColumns ||
-         proposedNewMetadata.description != existingMetadata.description ||
-         proposedNewMetadata.configuration != existingMetadata.configuration)) {
+    if (!isCreatingNewTable) {
+      throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
+    }
+  }
+
+  /**
+   * Returns true if the proposed metadata differs from the existing metadata for a UC-managed
+   * table.
+   */
+  private def hasUCManagedMetadataChange(
+      existingMetadata: Metadata,
+      proposedMetadata: Metadata): Boolean = {
+    proposedMetadata.schemaString != existingMetadata.schemaString ||
+      proposedMetadata.partitionColumns != existingMetadata.partitionColumns ||
+      proposedMetadata.description != existingMetadata.description ||
+      proposedMetadata.configuration != existingMetadata.configuration
+  }
+
+  private def throwIfUCManagedMetadataChanged(
+      existingMetadata: Metadata,
+      context: String): Unit = {
+    val proposedMetadata = newMetadata.getOrElse(existingMetadata)
+    if (isUCManagedTable && hasUCManagedMetadataChange(existingMetadata, proposedMetadata)) {
+      logWarning(log"Blocking UC-managed metadata update during " +
+        log"${MDC(DeltaLogKeys.OPERATION, context)} because metadata changed: " +
+        log"${MDC(DeltaLogKeys.METADATA_OLD, existingMetadata)} => " +
+        log"${MDC(DeltaLogKeys.METADATA_NEW, proposedMetadata)}")
       throw DeltaErrors.operationNotSupportedException(
         "Metadata changes on Unity Catalog managed tables")
     }
-    updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
   }
 
   /**
@@ -928,6 +949,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       CoordinatedCommitsUtils.getExplicitCCConfigurations(snapshot.metadata.configuration)
     val existingICTConfs =
       CoordinatedCommitsUtils.getExplicitICTConfigurations(snapshot.metadata.configuration)
+    val existingQoLConfs =
+      CoordinatedCommitsUtils.getExplicitQoLConfigurations(snapshot.metadata.configuration)
     val oldMappingMode = snapshot.metadata.columnMappingMode
     val newMappingMode = metadata.columnMappingMode
     val shouldReuseColumnMetadataForReplaceTable =
@@ -943,8 +966,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // to remove them and retain the Coordinated Commits configurations from the existing table.
     val newConfsWithoutCC = newMetadata.get.configuration --
       CoordinatedCommitsUtils.TABLE_PROPERTY_KEYS
-    var newConfs: Map[String, String] = newConfsWithoutCC ++ existingCCConfs ++
-      existingUCTableIdConf
+    val existingQoLConfsToRetain = existingQoLConfs.filterNot { case (key, _) =>
+      newConfsWithoutCC.contains(key)
+    }
+    var newConfs: Map[String, String] =
+      newConfsWithoutCC ++ existingCCConfs ++ existingQoLConfsToRetain ++ existingUCTableIdConf
     // We also need to retain the existing ICT dependency configurations, but only when the
     // existing table does have Coordinated Commits configurations or Catalog-Owned enabled.
     // Otherwise, we treat the ICT configurations the same as any other configurations,
@@ -956,6 +982,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
+    throwIfUCManagedMetadataChanged(
+      snapshot.metadata,
+      context = "updateMetadataForNewTableInReplace")
   }
 
   /**

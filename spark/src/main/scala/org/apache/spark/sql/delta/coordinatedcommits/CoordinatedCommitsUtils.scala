@@ -772,6 +772,14 @@ object CoordinatedCommitsUtils extends DeltaLogging {
   }
 
   /**
+   * Extracts the QoL configurations from the provided properties
+   */
+  def getExplicitQoLConfigurations(properties: Map[String, String]): Map[String, String] = {
+    val qolKeys = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
+    properties.filter { case (k, _) => qolKeys.contains(k) }
+  }
+
+  /**
    * Fetches the SparkSession default configurations for ICT. The `withDefaultKey`
    * flag controls whether the keys in the returned map should have the default prefix or not.
    */

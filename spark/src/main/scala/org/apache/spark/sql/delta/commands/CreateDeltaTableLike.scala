@@ -94,6 +94,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       createTableFunc: Option[CatalogTable => Unit] = None
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
+    val tableExistsInCatalog = existingTableOpt.isDefined
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
@@ -102,23 +103,45 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         } else {
           spark.sessionState.catalog.createTable(
             cleaned,
-            ignoreIfExists = existingTableOpt.isDefined || mode == SaveMode.Ignore,
+            ignoreIfExists = tableExistsInCatalog || mode == SaveMode.Ignore,
             validateLocation = false)
         }
-      case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
-        if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
       case TableCreationModes.Replace =>
-        val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
-        throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        if (!tableExistsInCatalog) {
+          val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
+          throw DeltaErrors.cannotReplaceMissingTableException(ident)
+        }
+        updateExistingTableCatalogSchema(spark, table, snapshot)
       case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        cleaned,
-        ignoreIfExists = false,
-        validateLocation = false)
+        if (tableExistsInCatalog) {
+          updateExistingTableCatalogSchema(spark, table, snapshot)
+        } else {
+          createTableFunc match {
+            case Some(createFunc) =>
+              createFunc(cleaned)
+            case None =>
+              spark.sessionState.catalog.createTable(
+                cleaned,
+                ignoreIfExists = false,
+                validateLocation = false)
+          }
+        }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
+    }
+  }
+
+  /**
+   * UC-managed tables are owned by the delegated catalog, so replacing them should not route
+   * through SessionCatalog's post-commit schema sync.
+   */
+  private def updateExistingTableCatalogSchema(
+      spark: SparkSession,
+      table: CatalogTable,
+      snapshot: Snapshot): Unit = {
+    if (!allowCatalogManaged) {
+      UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
     }
   }
 
