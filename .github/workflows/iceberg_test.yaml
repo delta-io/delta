@@ -18,6 +18,7 @@ jobs:
         scala: [2.13.16]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
       - name: install java
@@ -31,6 +32,7 @@ jobs:
           path: |
             ~/.sbt
             ~/.ivy2
+            ~/.m2
             ~/.cache/coursier
           # Change the key if dependencies are changed. For each key, GitHub Actions will cache the
           # the above directories when we use the key for the first time. After that, each run will
@@ -55,6 +57,8 @@ jobs:
           pyenv install 3.8.18
           pyenv global system 3.8.18
           pipenv --python 3.8.18 install
+      - name: Set up pinned Unity Catalog locally
+        run: bash project/scripts/setup_unitycatalog_main.sh
       - name: Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |

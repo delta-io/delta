@@ -48,6 +48,7 @@ jobs:
     env:
       SCALA_VERSION: ${{ matrix.scala }}
       SPARK_VERSION: ${{ matrix.spark_version }}
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
       # Important: This must be the same as the length of shards in matrix
       NUM_SHARDS: 8
     steps:
@@ -70,6 +71,7 @@ jobs:
           path: |
             ~/.sbt
             ~/.ivy2
+            ~/.m2
             ~/.cache/coursier
           # Change the key if dependencies are changed. For each key, GitHub Actions will cache the
           # the above directories when we use the key for the first time. After that, each run will
@@ -125,6 +127,8 @@ jobs:
           if [ -f ./dev/spark_structured_logging_style.py ]; then
               python3 ./dev/spark_structured_logging_style.py
           fi
+      - name: Set up pinned Unity Catalog for sparkUnityCatalog tests
+        run: bash project/scripts/setup_unitycatalog_main.sh
       - name: Run Scala/Java tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_python_test.yaml
         run: |

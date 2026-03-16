@@ -65,6 +65,10 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     # Pass Spark version as system property to SBT (must come before commands)
     if spark_version:
         cmd.append(f"-DsparkVersion={spark_version}")
+
+    unity_catalog_version = os.getenv("UNITY_CATALOG_VERSION")
+    if unity_catalog_version:
+        cmd.append(f"-DunityCatalogVersion={unity_catalog_version}")
     
     cmd.append("clean")
 

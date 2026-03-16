@@ -184,7 +184,12 @@ if __name__ == "__main__":
 
     if args.use_local:
         with WorkingDirectory(project_root_dir):
-            run_cmd(["build/sbt", "kernelGroup/publishM2", "storage/publishM2"], stream_output=True)
+            sbt_cmd = ["build/sbt"]
+            unity_catalog_version = os.getenv("UNITY_CATALOG_VERSION")
+            if unity_catalog_version:
+                sbt_cmd.append(f"-DunityCatalogVersion={unity_catalog_version}")
+            sbt_cmd.extend(["kernelGroup/publishM2", "storage/publishM2"])
+            run_cmd(sbt_cmd, stream_output=True)
 
     golden_file_dir = path.join(
         examples_root_dir,

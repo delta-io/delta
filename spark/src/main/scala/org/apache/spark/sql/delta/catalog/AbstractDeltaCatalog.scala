@@ -155,10 +155,20 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       Option(allTableProperties.get("location"))
     }
     val id = {
-      TableIdentifier(ident.name(), ident.namespace().lastOption)
+      // Preserve the catalog name in the V1 identifier for Unity Catalog because this `id`
+      // becomes `tableDesc.identifier` for the rest of the create/replace flow. Downstream
+      // catalog-update logic reads `table.identifier.catalog`; without it, the table looks like
+      // an unqualified V1 table and catalog updates route through the current/session catalog
+      // instead of the delegated Unity Catalog entry.
+      val base = TableIdentifier(ident.name(), ident.namespace().lastOption)
+      if (isUnityCatalog) {
+        base.copy(catalog = Some(name())) // `name()` here is the catalog name.
+      } else {
+        base
+      }
     }
     var locUriOpt = location.map(CatalogUtils.stringToURI)
-    val existingTableOpt = getExistingTableIfExists(id)
+    val existingTableOpt = getExistingTableIfExists(id, Some(ident), operation)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
     val isManagedLocation = Option(allTableProperties.get(TableCatalog.PROP_IS_MANAGED_LOCATION))
@@ -558,8 +568,17 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       properties = validatedConfigurations)
   }
 
-  /** Checks if a table already exists for the provided identifier. */
-  def getExistingTableIfExists(table: TableIdentifier): Option[CatalogTable] = {
+  /**
+   * Checks if a Delta table already exists for the provided identifier.
+   *
+   * For operations that may target an existing Unity Catalog table, this also falls back to the
+   * delegated catalog lookup when the V1 SessionCatalog does not surface the table entry.
+   */
+  def getExistingTableIfExists(
+      table: TableIdentifier,
+      identOpt: Option[Identifier],
+      operation: TableCreationModes.CreationMode)
+      : Option[CatalogTable] = {
     // If this is a path identifier, we cannot return an existing CatalogTable. The Create command
     // will check the file system itself
     if (isPathIdentifier(table)) return None
@@ -573,6 +592,45 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         throw DeltaErrors.notADeltaTable(table.table)
       }
       Some(oldTable)
+    } else if (operation != TableCreationModes.Create) {
+      identOpt match {
+        case Some(ident) => getExistingTableFromDelegatedCatalog(ident)
+        case None =>
+          logDebug(log"Delegated catalog lookup skipped because no V2 identifier was provided " +
+            log"for ${MDC(DeltaLogKeys.TABLE_NAME, table)} during ${MDC(DeltaLogKeys.OPERATION,
+              operation.toString)}.")
+          None
+      }
+    } else {
+      None
+    }
+  }
+
+  /**
+   * Returns an existing Delta table by querying the delegated catalog for Unity Catalog paths
+   * where the V1 SessionCatalog lookup does not surface the existing table entry.
+   *
+   * [[getExistingTableIfExists]] first checks the V1 catalog using a [[TableIdentifier]]. For
+   * Unity Catalog, some staged create/replace paths need a delegated V2 catalog lookup on the
+   * original [[Identifier]] to recover the existing table metadata.
+   */
+  private def getExistingTableFromDelegatedCatalog(ident: Identifier): Option[CatalogTable] = {
+    if (isUnityCatalog) {
+      try {
+        super.loadTable(ident) match {
+          case v1: V1Table if DeltaTableUtils.isDeltaTable(v1.catalogTable) =>
+            Some(v1.catalogTable)
+          case _ =>
+            logDebug(log"Delegated catalog lookup for ${MDC(DeltaLogKeys.TABLE_NAME, ident)} " +
+              log"did not return a Delta table.")
+            None
+        }
+      } catch {
+        case _: NoSuchTableException =>
+          logDebug(log"Delegated catalog lookup did not find an existing table for " +
+            log"${MDC(DeltaLogKeys.TABLE_NAME, ident)}.")
+          None
+      }
     } else {
       None
     }
@@ -617,11 +675,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   }
 
   /**
-   * The UC table ID property was renamed from an old name. In a transition period we need to
-   * translate the old UC table ID property name set by caller to new one. And in case both the new
-   * and old properties are set, remove the old one. Later in UC server it might throw error if it
-   * sees both.
-   * TODO: clean up once callers are migrated.
+   * Normalizes the deprecated UC table ID property key to the canonical key.
+   *
+   * This is temporary compatibility for callers that still send the old key during the rename
+   * transition. If both keys are present, we drop the old one and keep the canonical key only.
+   * TODO: remove once all callers stop sending the deprecated key.
    */
   private def translateUCTableIdProperty(props: util.Map[String, String]): Unit = {
     val oldTableIdProperty = Option(props.remove(UC_TABLE_ID_KEY_OLD))
@@ -654,6 +712,11 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+      if (isUnityCatalog) {
+        // Unity Catalog callers may still send the deprecated UC table-id property key.
+        // Normalize it here so the rest of the create/replace flow sees only the canonical key.
+        translateUCTableIdProperty(props)
+      }
       createDeltaTable(
         ident,
         schema,
