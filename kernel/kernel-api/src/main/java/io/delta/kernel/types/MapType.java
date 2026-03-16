@@ -33,13 +33,26 @@ public class MapType extends DataType {
   public static final String MAP_VALUE_NAME = "value";
 
   public MapType(DataType keyType, DataType valueType, boolean valueContainsNull) {
+    validateKeyType(keyType);
     this.keyField = new StructField(MAP_KEY_NAME, keyType, false);
     this.valueField = new StructField(MAP_VALUE_NAME, valueType, valueContainsNull);
   }
 
   public MapType(StructField keyField, StructField valueField) {
+    validateKeyType(keyField.getDataType());
     this.keyField = keyField;
     this.valueField = valueField;
+  }
+
+  /**
+   * Validates that the key type is not a collated StringType. MapType does not support collated
+   * string types as keys per the Delta protocol spec.
+   */
+  private static void validateKeyType(DataType keyType) {
+    if (keyType instanceof StringType && !((StringType) keyType).isUTF8BinaryCollated()) {
+      throw new IllegalArgumentException(
+          "MapType does not support collated string types as keys. Found: " + keyType);
+    }
   }
 
   public StructField getKeyField() {

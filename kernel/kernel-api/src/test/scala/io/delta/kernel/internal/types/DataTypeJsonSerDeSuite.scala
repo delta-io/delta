@@ -370,7 +370,6 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
         metadataJson = Some(
           s"""{
              |"$COLLATIONS_METADATA_KEY": {
-             |  "tags.key": "SPARK.UTF8_LCASE",
              |  "tags.value": "ICU.UNICODE"
              |},
              |"delta.typeChanges": [
@@ -386,7 +385,7 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       .add(
         "tags",
         new MapType(
-          new StructField("key", new StringType("SPARK.UTF8_LCASE"), false),
+          new StructField("key", StringType.STRING, false),
           new StructField("value", new StringType("ICU.UNICODE"), false)
             .withTypeChanges(Seq(new TypeChange(BinaryType.BINARY, StringType.STRING)).asJava)),
         true)
@@ -745,8 +744,7 @@ object DataTypeJsonSerDeSuite {
               false,
               metadataJson = Some(
                 s"""{"$COLLATIONS_METADATA_KEY"
-                 | : {"b2.key" : "ICU.UNICODE_CI",
-                 |  "b2.value" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
+                 | : {"b2.value" : "SPARK.UTF8_LCASE"}}""".stripMargin)),
             structFieldJson("b3", arrayTypeJson("\"string\"", false), true),
             structFieldJson("b4", mapTypeJson("\"string\"", "\"string\"", false), false))),
           true),
@@ -772,7 +770,7 @@ object DataTypeJsonSerDeSuite {
             .add(
               "b2",
               new MapType(
-                new StringType("ICU.UNICODE_CI"),
+                StringType.STRING,
                 new StringType("SPARK.UTF8_LCASE"),
                 true),
               false)
@@ -839,10 +837,7 @@ object DataTypeJsonSerDeSuite {
                      | : {"b1" : "SPARK.UTF8_LCASE"}}""".stripMargin)))),
               false),
             false),
-          true,
-          metadataJson = Some(
-            s"""{"$COLLATIONS_METADATA_KEY"
-               | : {"a3.element.key" : "ICU.UNICODE_CI"}}""".stripMargin)),
+          true),
         structFieldJson(
           "a4",
           arrayTypeJson(
@@ -894,7 +889,7 @@ object DataTypeJsonSerDeSuite {
           "a3",
           new ArrayType(
             new MapType(
-              new StringType("ICU.UNICODE_CI"),
+              StringType.STRING,
               new StructType()
                 .add("b1", new StringType("SPARK.UTF8_LCASE"), false),
               false),
