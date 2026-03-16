@@ -27,8 +27,10 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.http.client.methods.{HttpGet, HttpPost}
 import org.apache.http.entity.{ContentType, StringEntity}
 import org.apache.http.util.EntityUtils
-import org.apache.http.{HttpHeaders, HttpStatus}
-import org.apache.http.impl.client.HttpClientBuilder
+import org.apache.http.{HttpHeaders, HttpResponse, HttpStatus}
+import org.apache.http.client.ServiceUnavailableRetryStrategy
+import org.apache.http.impl.client.{DefaultHttpRequestRetryHandler, HttpClientBuilder}
+import org.apache.http.protocol.HttpContext
 import org.apache.http.message.BasicHeader
 import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.sources.Filter
@@ -68,7 +70,7 @@ private case class CatalogConfigResponse(
 class IcebergRESTCatalogPlanningClient(
     baseUriRaw: String,
     catalogName: String,
-    token: String) extends ServerSidePlanningClient with AutoCloseable {
+    token: String) extends ServerSidePlanningClient {
 
   // Normalize baseUri to handle trailing slashes
   private val baseUri = baseUriRaw.stripSuffix("/")
@@ -309,9 +311,16 @@ class IcebergRESTCatalogPlanningClient(
     scala.util.Properties.versionNumberString
   }
 
+  // Maximum number of retries for transient HTTP failures (IOException, 5xx server errors)
+  private val HTTP_MAX_RETRIES = 3
+
   private lazy val httpClient = HttpClientBuilder.create()
     .setDefaultHeaders(httpHeaders)
     .setConnectionTimeToLive(30, java.util.concurrent.TimeUnit.SECONDS)
+    // requestSentRetryEnabled=true: safe to retry already-sent requests because
+    // planScan is a read-only operation (idempotent POST to /plan endpoint)
+    .setRetryHandler(new DefaultHttpRequestRetryHandler(HTTP_MAX_RETRIES, true))
+    .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
     .build()
 
   override def canConvertFilters(filters: Array[Filter]): Boolean = {
@@ -369,7 +378,6 @@ class IcebergRESTCatalogPlanningClient(
     }
     val httpPost = new HttpPost(planTableScanUri)
     httpPost.setEntity(new StringEntity(requestJson, ContentType.APPLICATION_JSON))
-    // TODO: Add retry logic for transient HTTP failures (e.g., connection timeouts, 5xx errors)
     val httpResponse = httpClient.execute(httpPost)
 
     // Only unpartitioned tables are supported. This map is used when parsing the response
@@ -501,6 +509,39 @@ class IcebergRESTCatalogPlanningClient(
     if (httpClient != null) {
       httpClient.close()
     }
+  }
+
+  /**
+   * Retry strategy for server errors (5xx status codes) with exponential backoff.
+   * Retries up to maxRetries times with doubling intervals (1s, 2s, 4s, ...).
+   * Does NOT retry on client errors (4xx) since those indicate request-level issues.
+   *
+   * The ServiceUnavailableRetryStrategy interface calls retryRequest() first, then
+   * getRetryInterval(), so we capture the execution count in retryRequest() and
+   * use it to compute the backoff in getRetryInterval().
+   */
+  private class ServerErrorRetryStrategy(maxRetries: Int)
+      extends ServiceUnavailableRetryStrategy {
+
+    // ThreadLocal so concurrent planScan calls each track their own retry attempt.
+    // The HTTP client is shared and thread-safe (see class doc), so multiple threads
+    // can be retrying independently through the same strategy instance.
+    private val lastExecutionCount = new ThreadLocal[Int] {
+      override def initialValue(): Int = 1
+    }
+
+    override def retryRequest(
+        response: HttpResponse,
+        executionCount: Int,
+        context: HttpContext): Boolean = {
+      lastExecutionCount.set(executionCount)
+      val statusCode = response.getStatusLine.getStatusCode
+      statusCode >= 500 && executionCount <= maxRetries
+    }
+
+    // Exponential backoff: 1s, 2s, 4s, ...
+    override def getRetryInterval: Long =
+      java.util.concurrent.TimeUnit.SECONDS.toMillis(1L << (lastExecutionCount.get() - 1))
   }
 
   private def parsePlanTableScanResponse(

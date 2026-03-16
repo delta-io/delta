@@ -16,6 +16,8 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
@@ -266,5 +268,84 @@ class VersionChecksumHistogramCompatSuite
       assert(snapshotB.checksumOpt.get.histogramOpt.get === altHistogram,
         "Scenario B: fileSizeHistogram (last in JSON) should win over histogramOpt")
     }
+  }
+
+
+  test("writeChecksumFile writes correct field name based on conf") {
+    withTempDir { dir =>
+      spark.range(10).write.format("delta").save(dir.getAbsolutePath)
+      val deltaLog = DeltaLog.forTable(spark, dir.getAbsolutePath)
+      val testHistogram = FileSizeHistogram(
+        sortedBinBoundaries = Vector(0L, 1024L, 10240L),
+        fileCounts = Array(5L, 10L, 15L),
+        totalBytes = Array(100L, 200L, 300L))
+      val checksum = deltaLog.snapshot.checksumOpt.get.copy(histogramOpt = Some(testHistogram))
+
+      val currentSpark = spark
+      val currentLog = deltaLog
+      val writer = new RecordChecksum {
+        override val deltaLog: DeltaLog = currentLog
+        override protected def spark: org.apache.spark.sql.SparkSession = currentSpark
+        def writeChecksum(version: Long, cs: VersionChecksum): Unit =
+          writeChecksumFile(version, cs)
+      }
+
+      // Write with flag OFF (default) -- should use histogramOpt
+      val versionOff = deltaLog.snapshot.version + 1
+      withSQLConf(DeltaSQLConf.DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL.key -> "false") {
+        writer.writeChecksum(versionOff, checksum)
+      }
+      val crcJsonOff =
+        deltaLog.store.read(FileNames.checksumFile(deltaLog.logPath, versionOff)).head
+      assert(crcJsonOff.contains("\"histogramOpt\":"),
+        "Flag OFF: CRC should contain histogramOpt")
+      assert(!crcJsonOff.contains("\"fileSizeHistogram\":"),
+        "Flag OFF: CRC should not contain fileSizeHistogram")
+
+      // Write with flag ON -- should use fileSizeHistogram
+      val versionOn = versionOff + 1
+      withSQLConf(DeltaSQLConf.DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL.key -> "true") {
+        writer.writeChecksum(versionOn, checksum)
+      }
+      val crcJsonOn =
+        deltaLog.store.read(FileNames.checksumFile(deltaLog.logPath, versionOn)).head
+      assert(crcJsonOn.contains("\"fileSizeHistogram\":"),
+        "Flag ON: CRC should contain fileSizeHistogram")
+      assert(!crcJsonOn.contains("\"histogramOpt\":"),
+        "Flag ON: CRC should not contain histogramOpt")
+
+      // Both CRCs should be readable and produce the same histogram
+      val checksumOff = JsonUtils.mapper.readValue[VersionChecksum](crcJsonOff)
+      val checksumOn = JsonUtils.mapper.readValue[VersionChecksum](crcJsonOn)
+      assert(checksumOff.histogramOpt.get === testHistogram,
+        "Flag OFF: read-back histogram should match the test histogram")
+      assert(checksumOn.histogramOpt.get === testHistogram,
+        "Flag ON: read-back histogram should match the test histogram")
+    }
+  }
+
+  test("VersionChecksumProtocolCompliant fields match VersionChecksum") {
+    // Use reflection to ensure the two classes stay in sync. If someone adds a field to
+    // VersionChecksum but forgets VersionChecksumProtocolCompliant, this test will catch it.
+    val checksumFields = classOf[VersionChecksum].getDeclaredFields
+      .map(f => (f.getName, f.getType)).toSet
+    val protocolCompliantFields = classOf[VersionChecksumProtocolCompliant].getDeclaredFields
+      .map(f => (f.getName, f.getType)).toSet
+
+    // The only difference should be histogramOpt vs fileSizeHistogram (same type)
+    val expectedOnlyInChecksum = Set(("histogramOpt", classOf[Option[_]]))
+    val expectedOnlyInProtocolCompliant = Set(("fileSizeHistogram", classOf[Option[_]]))
+
+    val onlyInChecksum = checksumFields -- protocolCompliantFields
+    val onlyInProtocolCompliant = protocolCompliantFields -- checksumFields
+
+    assert(onlyInChecksum === expectedOnlyInChecksum,
+      s"Unexpected fields only in VersionChecksum: $onlyInChecksum. " +
+        "Did you add a new field to VersionChecksum without updating " +
+        "VersionChecksumProtocolCompliant?")
+    assert(onlyInProtocolCompliant === expectedOnlyInProtocolCompliant,
+      s"Unexpected fields only in VersionChecksumProtocolCompliant: $onlyInProtocolCompliant. " +
+        "Did you add a new field to VersionChecksumProtocolCompliant without updating " +
+        "VersionChecksum?")
   }
 }

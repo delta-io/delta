@@ -204,7 +204,7 @@ public class DeletionVectorDescriptor {
   }
 
   public boolean isInline() {
-    return storageType == INLINE_DV_MARKER;
+    return INLINE_DV_MARKER.equals(storageType);
   }
 
   public boolean isOnDisk() {

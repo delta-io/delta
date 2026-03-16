@@ -62,6 +62,13 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
@@ -69,6 +76,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             snapshotManager,
             dataSchema,
             partitionSchema,
+            tableSchema,
+            Optional.empty(),
             CaseInsensitiveStringMap.empty());
 
     StructType expectedSparkSchema =
@@ -105,6 +114,13 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
@@ -112,6 +128,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             snapshotManager,
             dataSchema,
             partitionSchema,
+            tableSchema,
+            Optional.empty(),
             CaseInsensitiveStringMap.empty());
     Scan scan = builder.build();
 
@@ -739,12 +757,21 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
     return new SparkScanBuilder(
         tableName,
         snapshot,
         snapshotManager,
         dataSchema,
         partitionSchema,
+        tableSchema,
+        Optional.empty(),
         CaseInsensitiveStringMap.empty());
   }
 
