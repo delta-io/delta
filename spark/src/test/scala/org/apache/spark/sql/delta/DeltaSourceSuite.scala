@@ -2264,6 +2264,147 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("fail on data loss - initial snapshot with missing files should not fail") {
+    withTempDirs { (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
+      // Delete an early delta file - this simulates data loss in the log
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
+
+      // Start a brand new stream (no prior checkpoint) - this will read the initial snapshot
+      // The initial snapshot reads from the checkpoint, not individual delta files,
+      // so failOnDataLoss should NOT be triggered even with the default option (true)
+      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 40)
+    }
+  }
+
+  test("fail on data loss - initial snapshot with checkpoint deleted and missing files") {
+    withTempDirs { (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      srcLog.checkpoint()
+
+      // Delete the checkpoint file and a delta file to simulate snapshot data loss
+      val checkpoints = new File(srcLog.logPath.toUri).listFiles()
+        .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
+      assert(checkpoints.nonEmpty)
+      checkpoints.foreach(_.delete())
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
+
+      DeltaLog.clearCache()
+
+      // Start a brand new stream - the snapshot cannot be reconstructed because both
+      // checkpoint and delta files are missing. This should fail, but NOT with
+      // failOnDataLossException since that check only applies to incremental changes.
+      val e = intercept[StreamingQueryException] {
+        val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
+        val q = df.writeStream.format("delta")
+          .option("checkpointLocation", chkLocation.getCanonicalPath)
+          .start(targetData.getCanonicalPath)
+        q.processAllAvailable()
+      }
+      // The error should be about truncated transaction log, not failOnDataLoss
+      assert(e.getCause.getMessage != DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
+      assert(e.getMessage.contains("DELTA_TRUNCATED_TRANSACTION_LOG") ||
+        e.getMessage.contains("DELTA_LOG_FILE_NOT_FOUND") ||
+        e.getCause.isInstanceOf[java.io.FileNotFoundException])
+    }
+  }
+
+  test("fail on data loss - initial snapshot with checkpoint deleted and all delta files present") {
+    withTempDirs { (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      srcLog.checkpoint()
+
+      // Delete only the checkpoint file, keep all delta files
+      val checkpoints = new File(srcLog.logPath.toUri).listFiles()
+        .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
+      assert(checkpoints.nonEmpty)
+      checkpoints.foreach(_.delete())
+
+      DeltaLog.clearCache()
+
+      // Start a brand new stream - the snapshot is reconstructed from delta files alone
+      // This should succeed because all delta files are intact
+      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 40)
+    }
+  }
+
+  test("fail on data loss - initial snapshot with gap files should not fail") {
+    withTempDirs { (srcData, targetData, chkLocation) =>
+      def addData(): Unit = {
+        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+      }
+
+      addData()
+      addData()
+      addData()
+      addData()
+
+      val srcLog = DeltaLog.forTable(spark, srcData)
+      // Create a checkpoint so that we can create a snapshot without json files before version 3
+      srcLog.checkpoint()
+      // Delete a middle delta file - this creates a gap in the log
+      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
+
+      // Start a brand new stream (no prior checkpoint) - this will read the initial snapshot
+      // The initial snapshot reads from the checkpoint, not individual delta files,
+      // so failOnDataLoss should NOT be triggered even with the default option (true)
+      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
+
+      val q = df.writeStream.format("delta")
+        .option("checkpointLocation", chkLocation.getCanonicalPath)
+        .start(targetData.getCanonicalPath)
+      q.processAllAvailable()
+      q.stop()
+
+      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 40)
+    }
+  }
+
   test("make sure that the delta sources works fine") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
 
