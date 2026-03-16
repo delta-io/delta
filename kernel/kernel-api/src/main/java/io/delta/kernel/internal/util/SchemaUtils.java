@@ -100,7 +100,6 @@ public class SchemaUtils {
     }
 
     validateSupportedType(schema);
-    validateNoUnenforceableNotNullConstraints(schema, Collections.emptyList());
     ColumnDefaults.validateSchema(schema, isColumnDefaultEnabled, isIcebergCompatV3Enabled);
   }
 
