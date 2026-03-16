@@ -116,7 +116,7 @@ object UnityCatalogMetadata {
     if (newFormatConfig.nonEmpty) {
       newFormatConfig
     } else {
-      // Legacy fallback: spark.sql.catalog.<name>.token → static type
+      // Legacy fallback: spark.sql.catalog.<name>.token -> static type
       val legacyToken = spark.conf.get(s"${catalogPrefix}token", "")
       if (legacyToken.nonEmpty) {
         Map("type" -> "static", "token" -> legacyToken)

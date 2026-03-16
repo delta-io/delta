@@ -323,7 +323,7 @@ class IcebergRESTCatalogPlanningClient(
       .setServiceUnavailableRetryStrategy(new ServerErrorRetryStrategy(HTTP_MAX_RETRIES))
 
     // Per-request interceptor: calls tokenSupplier() for a fresh token on each request.
-    // This supports OAuth token refresh — each request gets the latest valid token.
+    // This supports OAuth token refresh -- each request gets the latest valid token.
     builder.addInterceptorFirst(new org.apache.http.HttpRequestInterceptor {
       override def process(
           request: org.apache.http.HttpRequest,
