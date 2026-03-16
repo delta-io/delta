@@ -4,7 +4,7 @@ set -euo pipefail
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/TimothyW553/unitycatalog.git}"
-UC_REF="${UC_REF:-53a91702a0b282cc53d595033f8010c0f0507151}"
+UC_REF="${UC_REF:-fa1005197513d55f40c405b2724017b93bdbbac5}"
 UNITY_CATALOG_VERSION="${UNITY_CATALOG_VERSION:-0.5.0-SNAPSHOT}"
 
 # Keep publishLocal/publishM2 aligned with the shell home directory used by CI.
