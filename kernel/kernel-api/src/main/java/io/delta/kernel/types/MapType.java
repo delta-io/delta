@@ -45,13 +45,21 @@ public class MapType extends DataType {
   }
 
   /**
-   * Validates that the key type is not a collated StringType. MapType does not support collated
-   * string types as keys per the Delta protocol spec.
+   * The Delta protocol does not support collated string types as map keys. Only StringType with the
+   * default UTF8_BINARY collation is allowed.
+   *
+   * @see <a
+   *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/collated-string-type.md">
+   *     Collated String Type RFC</a>
    */
   private static void validateKeyType(DataType keyType) {
     if (keyType instanceof StringType && !((StringType) keyType).isUTF8BinaryCollated()) {
       throw new IllegalArgumentException(
-          "MapType does not support collated string types as keys. Found: " + keyType);
+          String.format(
+              "MapType does not support collated string types as keys. "
+                  + "Found key type '%s', but only StringType with default UTF8_BINARY "
+                  + "collation is allowed.",
+              keyType));
     }
   }
 

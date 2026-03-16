@@ -253,6 +253,22 @@ class DataTypeJsonSerDeSuite extends AnyFunSuite {
       }
   }
 
+  test("deserialize: schema with collated map key throws IllegalArgumentException") {
+    // A JSON schema encoding a MapType with a collated StringType key should fail
+    // deserialization because MapType rejects collated keys.
+    val json = structTypeJson(Seq(
+      structFieldJson(
+        "m",
+        mapTypeJson("\"string\"", "\"integer\"", false),
+        true,
+        metadataJson = Some(
+          s"""{"$COLLATIONS_METADATA_KEY" : {"m.key" : "ICU.UNICODE_CI"}}"""))))
+
+    intercept[IllegalArgumentException] {
+      parse(json)
+    }
+  }
+
   test("serialize/deserialize: parsed and original struct" +
     " type differing just in StringType collation") {
     val json = structTypeJson(Seq(
