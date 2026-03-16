@@ -36,10 +36,10 @@ import org.junit.jupiter.api.Test;
  *       blocks {@code delta.clustering} {@code DomainMetadata} changes (e.g. via RESTORE TABLE to a
  *       version written by an older client that had different clustering columns).
  *   <li><strong>UC catalog layer</strong> in {@code UCSingleCatalog}: {@code alterTable()} throws
- *       {@code UnsupportedOperationException} for all ALTER TABLE variants. INSERT OVERWRITE with
- *       {@code overwriteSchema=true} and {@code CREATE OR REPLACE TABLE} both route through REPLACE
- *       TABLE AS SELECT (RTAS) because {@code UCSingleCatalog} does not implement {@code
- *       StagingTableCatalog}; RTAS is not supported in OSS Delta.
+ *       {@code UnsupportedOperationException} for all ALTER TABLE variants.
+ *   <li><strong>Managed-table replace path</strong>: overwrite-or-replace operations that would
+ *       change metadata are expected to be rejected because metadata updates on UC managed Delta
+ *       tables are not supported.
  * </ol>
  *
  * <p>EXTERNAL tables are not CatalogOwned and are NOT affected by the kill switch; they continue to
@@ -57,11 +57,6 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
 
   // Error produced by UCSingleCatalog.alterTable() for all ALTER TABLE variants.
   private static final String ALTER_TABLE_ERROR = "Altering a table is not supported yet";
-
-  // Error produced by OSS Delta when REPLACE TABLE AS SELECT (RTAS) is attempted.
-  // Triggered by CREATE OR REPLACE TABLE and DataFrame saveAsTable(overwrite+overwriteSchema)
-  // when the target catalog does not implement StagingTableCatalog.
-  private static final String RTAS_ERROR = "REPLACE TABLE AS SELECT (RTAS) is not supported";
 
   // ---------------------------------------------------------------------------
   // Kill-switch tests: operations blocked by OptimisticTransaction.updateMetadata()
@@ -243,9 +238,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * INSERT OVERWRITE with {@code overwriteSchema=true} that would replace the schema of an existing
    * CatalogOwned table must be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * the overwrite-with-schema-change through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>The semantic contract under test is that the operation is rejected because it would replace
+   * metadata on a UC managed Delta table, which is not currently supported.
    */
   @Test
   public void testInsertOverwriteWithOverwriteSchemaIsBlocked() throws Exception {
@@ -262,7 +256,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_val')", sourceTable);
                 assertThrowsWithCauseContaining(
-                    RTAS_ERROR,
+                    KILL_SWITCH_ERROR,
                     () ->
                         spark()
                             .read()
@@ -280,9 +274,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * {@code CREATE OR REPLACE TABLE} with a different schema on an existing CatalogOwned table must
    * be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * {@code CREATE OR REPLACE TABLE} through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>The semantic contract under test is that the operation is rejected because it would replace
+   * metadata on a UC managed Delta table, which is not currently supported.
    */
   @Test
   public void testReplaceTableWithNewSchemaIsBlocked() throws Exception {
@@ -293,7 +286,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
           assertThrowsWithCauseContaining(
-              RTAS_ERROR,
+              KILL_SWITCH_ERROR,
               () ->
                   sql(
                       "CREATE OR REPLACE TABLE %s (id INT, name STRING, extra STRING) "
