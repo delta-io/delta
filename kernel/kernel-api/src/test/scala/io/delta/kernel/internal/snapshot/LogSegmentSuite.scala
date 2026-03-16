@@ -585,6 +585,43 @@ class LogSegmentSuite extends AnyFunSuite with MockFileSystemClientUtils with Ve
     assert(updated.getMaxPublishedDeltaVersion == Optional.of(20L))
   }
 
+  ///////////////////////////////////////////
+  // hashCode tests (staged commit renames) //
+  ///////////////////////////////////////////
+
+  test("hashCode: staged commit rename does not change hash (#4927)") {
+    // Simulate first read with staged commit file 9.uuid.json and published 10.json
+    val uuid = java.util.UUID.randomUUID.toString
+    val stagedDelta9 = FileStatus.of(s"$logPath/00000000000000000009.$uuid.json", 9, 90)
+    val publishedDelta10 = deltaFileStatus(10)
+    val segment1 = createLogSegmentForTest(
+      version = 10,
+      deltas = List(stagedDelta9, publishedDelta10).asJava)
+
+    // Simulate second read where 9.uuid.json has been renamed to 9.json
+    val publishedDelta9 = deltaFileStatus(9)
+    val segment2 = createLogSegmentForTest(
+      version = 10,
+      deltas = List(publishedDelta9, publishedDelta10).asJava)
+
+    // Hash should be the same because both segments have the same versions
+    assert(segment1.hashCode() === segment2.hashCode())
+  }
+
+  test("hashCode: real segment change produces different hash") {
+    // First read: versions 9, 10
+    val segment1 = createLogSegmentForTest(
+      version = 10,
+      deltas = deltaFileStatuses(Seq(9, 10)).toList.asJava)
+
+    // Second read: versions 9, 10, 11 (a new commit appeared)
+    val segment2 = createLogSegmentForTest(
+      version = 11,
+      deltas = deltaFileStatuses(Seq(9, 10, 11)).toList.asJava)
+
+    assert(segment1.hashCode() !== segment2.hashCode())
+  }
+
   test("newAsPublished: list all files starting from checkpoint") {
     val commits = (11 until 15).map(i => FileStatus.of(s"$logPath/$i.json")) ++
       (15 to 20).map(i => FileStatus.of(s"$logPath/$i.${java.util.UUID.randomUUID.toString}.json"))
