@@ -180,6 +180,7 @@ public final class FieldMetadata {
                 Objects.equals(e.getValue(), that.metadata.get(e.getKey()))
                     || (e.getValue() != null
                         && e.getValue().getClass().isArray()
+                        && that.metadata.get(e.getKey()) != null
                         && that.metadata.get(e.getKey()).getClass().isArray()
                         && Arrays.equals(
                             (Object[]) e.getValue(), (Object[]) that.metadata.get(e.getKey()))));
@@ -190,7 +191,7 @@ public final class FieldMetadata {
     return metadata.entrySet().stream()
         .mapToInt(
             entry ->
-                (entry.getValue().getClass().isArray()
+                (entry.getValue() != null && entry.getValue().getClass().isArray()
                     ? (entry.getKey() == null ? 0 : entry.getKey().hashCode())
                         ^ Arrays.hashCode((Object[]) entry.getValue())
                     : entry.hashCode()))

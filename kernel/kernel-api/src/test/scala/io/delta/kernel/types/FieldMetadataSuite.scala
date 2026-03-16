@@ -317,6 +317,45 @@ class FieldMetadataSuite extends AnyFunSuite {
     assertThat(meta1.equalsIgnoreKeys(meta2, ignoreNullKey)).isTrue
   }
 
+  test("equals returns false (not NPE) for same-size metadata with different keys") {
+    // Regression test for GitHub issue #5821:
+    // Two metadata maps with same size but different keys caused NPE in equals()
+    // because that.metadata.get(e.getKey()) returns null and .getClass() was called on it.
+    val meta1 = FieldMetadata.builder()
+      .putString("keyA", "value")
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putString("keyB", "value")
+      .build()
+
+    assertThat(meta1.equals(meta2)).isFalse
+    assertThat(meta2.equals(meta1)).isFalse
+  }
+
+  test("equals returns false (not NPE) for same-size metadata with different keys and arrays") {
+    val meta1 = FieldMetadata.builder()
+      .putStringArray("keyA", Array("a", "b"))
+      .build()
+    val meta2 = FieldMetadata.builder()
+      .putStringArray("keyB", Array("a", "b"))
+      .build()
+
+    assertThat(meta1.equals(meta2)).isFalse
+    assertThat(meta2.equals(meta1)).isFalse
+  }
+
+  test("hashCode does not NPE when metadata contains null values") {
+    // Regression test for GitHub issue #5821:
+    // hashCode() called entry.getValue().getClass() without null check.
+    val meta = FieldMetadata.builder()
+      .putNull("nullKey")
+      .putString("key", "value")
+      .build()
+
+    // Should not throw NPE
+    meta.hashCode()
+  }
+
   test("equalsIgnoreKeys throws when keys is null") {
     val meta1 = FieldMetadata.builder().putString("k", "v").build()
     val meta2 = FieldMetadata.builder().putString("k", "v").build()
