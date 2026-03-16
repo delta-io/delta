@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.sources.*;
@@ -740,15 +741,6 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   private SparkScanBuilder createTestScanBuilder(File tempDir) {
-    String path = tempDir.getAbsolutePath();
-    String tableName = String.format("predicate_test_%d", System.currentTimeMillis());
-    spark.sql(
-        String.format(
-            "CREATE OR REPLACE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
-            tableName, path));
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -765,15 +757,7 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("name", DataTypes.StringType, true),
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
-    return new SparkScanBuilder(
-        tableName,
-        snapshot,
-        snapshotManager,
-        dataSchema,
-        partitionSchema,
-        tableSchema,
-        Optional.empty(),
-        CaseInsensitiveStringMap.empty());
+    return createScanBuilder(tempDir, dataSchema, partitionSchema, tableSchema);
   }
 
   /**
@@ -832,16 +816,6 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   private SparkScanBuilder createDecimalTestScanBuilder(File tempDir) {
-    String path = tempDir.getAbsolutePath();
-    String tableName = String.format("decimal_test_%d", System.currentTimeMillis());
-    spark.sql(
-        String.format(
-            "CREATE OR REPLACE TABLE %s (price DECIMAL(7,2), quantity INT, dep_id INT)"
-                + " USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
-            tableName, path));
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -858,6 +832,36 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
               DataTypes.createStructField("quantity", DataTypes.IntegerType, true),
               DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
             });
+    return createScanBuilder(tempDir, dataSchema, partitionSchema, tableSchema);
+  }
+
+  /**
+   * Shared helper for creating a SparkScanBuilder with the given schemas. Both
+   * createTestScanBuilder and createDecimalTestScanBuilder delegate to this method to avoid
+   * duplicating snapshot loading and builder instantiation logic.
+   */
+  private SparkScanBuilder createScanBuilder(
+      File tempDir, StructType dataSchema, StructType partitionSchema, StructType tableSchema) {
+    String path = tempDir.getAbsolutePath();
+    String tableName = String.format("test_%d", System.currentTimeMillis());
+    // Build CREATE TABLE SQL from the tableSchema and partitionSchema
+    StringBuilder columns = new StringBuilder();
+    Set<String> partitionCols = new HashSet<>();
+    for (StructField f : partitionSchema.fields()) {
+      partitionCols.add(f.name());
+    }
+    for (StructField f : tableSchema.fields()) {
+      if (columns.length() > 0) columns.append(", ");
+      columns.append(f.name()).append(" ").append(f.dataType().sql());
+    }
+    String partitionColNames = String.join(", ", partitionCols);
+    spark.sql(
+        String.format(
+            "CREATE OR REPLACE TABLE %s (%s) USING delta PARTITIONED BY (%s) LOCATION '%s'",
+            tableName, columns, partitionColNames, path));
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new SparkScanBuilder(
         tableName,
         snapshot,
