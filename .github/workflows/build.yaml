@@ -12,6 +12,8 @@ jobs:
   test:
     name: "Build Test"
     runs-on: ubuntu-24.04
+    env:
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
 
@@ -32,8 +34,12 @@ jobs:
           path: |
             ~/.sbt
             ~/.ivy2
+            ~/.m2
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
+
+      - name: Set up pinned Unity Catalog locally
+        run: bash project/scripts/setup_unitycatalog_main.sh
 
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py

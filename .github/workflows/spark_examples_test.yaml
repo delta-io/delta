@@ -43,6 +43,7 @@ jobs:
         scala: [2.13.17]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
+      UNITY_CATALOG_VERSION: 0.5.0-SNAPSHOT
     steps:
       - uses: actions/checkout@v3
       - name: Get Spark version details
@@ -69,6 +70,7 @@ jobs:
           path: |
             ~/.sbt
             ~/.ivy2
+            ~/.m2
             ~/.cache/coursier
           # Change the key if dependencies are changed. For each key, GitHub Actions will cache the
           # the above directories when we use the key for the first time. After that, each run will
@@ -80,6 +82,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
+      - name: Set up pinned Unity Catalog locally
+        run: bash project/scripts/setup_unitycatalog_main.sh
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.
@@ -89,6 +93,7 @@ jobs:
           SPARK_PACKAGE_SUFFIX: ${{ steps.spark-details.outputs.spark_package_suffix }}
           SUPPORT_ICEBERG: ${{ steps.spark-details.outputs.support_iceberg }}
           SPARK_VERSION: ${{ steps.spark-details.outputs.spark_full_version }}
+          UNITY_CATALOG_VERSION: ${{ env.UNITY_CATALOG_VERSION }}
         run: |
           build/sbt clean
           build/sbt -DsparkVersion=${{ steps.spark-details.outputs.spark_full_version }} publishM2
@@ -99,5 +104,6 @@ jobs:
         env:
           SPARK_PACKAGE_SUFFIX: ${{ steps.spark-details.outputs.spark_package_suffix }}
           SPARK_VERSION: ${{ steps.spark-details.outputs.spark_full_version }}
+          UNITY_CATALOG_VERSION: ${{ env.UNITY_CATALOG_VERSION }}
         run: |
           cd examples/scala && build/sbt "++ $SCALA_VERSION runMain example.UnityCatalogQuickstart"

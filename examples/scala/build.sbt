@@ -20,7 +20,7 @@ organizationName := "example"
 
 val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
-val unityCatalogVersion = "0.4.0"
+val unityCatalogVersion = sys.env.getOrElse("UNITY_CATALOG_VERSION", "0.4.0")
 val jacksonVersion = "2.15.4"
 
 val defaultDeltaVersion = {

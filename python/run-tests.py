@@ -76,6 +76,9 @@ def prepare(root_dir, spark_version):
     delete_if_exists(os.path.expanduser("~/.m2/repository/io/delta/"))
     sbt_command = [sbt_path]
     sbt_command = sbt_command + [f"-DsparkVersion={spark_version}"]
+    unity_catalog_version = os.getenv("UNITY_CATALOG_VERSION")
+    if unity_catalog_version:
+        sbt_command.append(f"-DunityCatalogVersion={unity_catalog_version}")
     run_cmd(sbt_command + ["clean", "publishM2"], stream_output=True)
 
 
