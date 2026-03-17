@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.{MemoryStream, OffsetSeqLog}
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
+import io.delta.kernel.exceptions.{InvalidTableException, KernelException}
 import org.apache.commons.io.FileUtils
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.fs.{FileStatus, Path, RawLocalFileSystem}
@@ -2120,7 +2121,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("fail on data loss - starting from missing files") {
+  test("incremental: first commit file missing, fails") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2151,11 +2152,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .start(targetData.getCanonicalPath)
         q.processAllAvailable()
       }
-      assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
+      if (useDsv2) {
+        // Kernel throws KernelException when the start version is not found
+        assert(e.getCause.isInstanceOf[KernelException])
+        assert(e.getCause.getMessage.contains("no log file found for version"))
+      } else {
+        assert(e.getCause.isInstanceOf[DeltaIllegalStateException])
+        assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
+      }
     }
   }
 
-  test("fail on data loss - gaps of files") {
+  test("incremental: commit file gap between versions, fails") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2186,11 +2194,18 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
           .start(targetData.getCanonicalPath)
         q.processAllAvailable()
       }
-      assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(2L, 3L).getMessage)
+      if (useDsv2) {
+        // Kernel throws InvalidTableException when delta files are not contiguous
+        assert(e.getCause.isInstanceOf[InvalidTableException])
+        assert(e.getCause.getMessage.contains("versions are not contiguous"))
+      } else {
+        assert(e.getCause.isInstanceOf[DeltaIllegalStateException])
+        assert(e.getCause.getMessage === DeltaErrors.failOnDataLossException(2L, 3L).getMessage)
+      }
     }
   }
 
-  test("fail on data loss - starting from missing files with option off") {
+  test("incremental: first commit file missing, failOnDataLoss=false succeeds") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2227,7 +2242,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("fail on data loss - gaps of files with option off") {
+  test("incremental: commit file gap between versions, failOnDataLoss=false succeeds") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2264,7 +2279,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("fail on data loss - initial snapshot with missing files should not fail") {
+  test("initial snapshot: commit file missing but checkpoint intact, succeeds") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2281,6 +2296,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Delete an early delta file - this simulates data loss in the log
       assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 1).toUri).delete())
 
+      DeltaLog.clearCache()
+
       // Start a brand new stream (no prior checkpoint) - this will read the initial snapshot
       // The initial snapshot reads from the checkpoint, not individual delta files,
       // so failOnDataLoss should NOT be triggered even with the default option (true)
@@ -2296,8 +2313,8 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("fail on data loss - initial snapshot with checkpoint deleted and missing files") {
-    withTempDirs { (srcData, targetData, chkLocation) =>
+  test("initial snapshot: both checkpoint and commit file missing, fails") {
+    withTempDir { srcData =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
       }
@@ -2322,22 +2339,24 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       // Start a brand new stream - the snapshot cannot be reconstructed because both
       // checkpoint and delta files are missing. This should fail, but NOT with
       // failOnDataLossException since that check only applies to incremental changes.
-      val e = intercept[StreamingQueryException] {
-        val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
-        val q = df.writeStream.format("delta")
-          .option("checkpointLocation", chkLocation.getCanonicalPath)
-          .start(targetData.getCanonicalPath)
-        q.processAllAvailable()
+      // The error is thrown during DeltaLog initialization (before the stream starts),
+      // so it is not wrapped in StreamingQueryException.
+      if (useDsv2) {
+        // Kernel throws InvalidTableException when checkpoint is missing
+        val e = intercept[InvalidTableException] {
+          loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
+        }
+        assert(e.getMessage.contains("Missing checkpoint"))
+      } else {
+        val e = intercept[DeltaIllegalStateException] {
+          loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
+        }
+        assert(e.getErrorClass == "DELTA_MISSING_PART_FILES")
       }
-      // The error should be about truncated transaction log, not failOnDataLoss
-      assert(e.getCause.getMessage != DeltaErrors.failOnDataLossException(1L, 2L).getMessage)
-      assert(e.getMessage.contains("DELTA_TRUNCATED_TRANSACTION_LOG") ||
-        e.getMessage.contains("DELTA_LOG_FILE_NOT_FOUND") ||
-        e.getCause.isInstanceOf[java.io.FileNotFoundException])
     }
   }
 
-  test("fail on data loss - initial snapshot with checkpoint deleted and all delta files present") {
+  test("initial snapshot: checkpoint missing but all commit files intact, succeeds") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
         spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
@@ -2373,35 +2392,102 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("fail on data loss - initial snapshot with gap files should not fail") {
-    withTempDirs { (srcData, targetData, chkLocation) =>
-      def addData(): Unit = {
-        spark.range(10).write.format("delta").mode("append").save(srcData.getCanonicalPath)
+  test("initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
+      " restart fails") {
+    // This test simulates log retention by manually deleting delta JSON files from the
+    // filesystem. With a catalog-owned commit coordinator, unbackfilled commits live in the
+    // coordinator's memory rather than on the filesystem, so deleting a prefix of versions
+    // creates an unresolvable gap that triggers the coordinator's reconciliation guard
+    // (IllegalStateException) instead of the expected DeltaFileNotFoundException.
+    assume(!catalogOwnedDefaultCreationEnabledInTests,
+      "Log retention simulation via filesystem deletion is incompatible with " +
+        "catalog-owned commit coordinators")
+    withTempDir { srcData =>
+      withTempDir { chkLocation =>
+        // Create table with 4 versions, each with 2 files, so initial snapshot has 8 AddFiles
+        (0 until 4).foreach { _ =>
+          spark.range(10).repartition(2).write
+            .format("delta").mode("append").save(srcData.getCanonicalPath)
+        }
+
+        val srcLog = DeltaLog.forTable(spark, srcData)
+        val snapshotVersion = srcLog.snapshot.version // version 3
+
+        // Start stream with maxFilesPerTrigger=1 so each batch processes only 1 file.
+        // Use StreamManualClock + AdvanceManualClock to process exactly 1 micro-batch.
+        val df = loadStreamWithOptions(
+          srcData.getCanonicalPath,
+          Map("maxFilesPerTrigger" -> "1"))
+        val clock = new StreamManualClock(System.currentTimeMillis())
+
+        // Phase 1: Process exactly 1 file from initial snapshot, then stop.
+        // The streaming checkpoint will have isInitialSnapshot=true at snapshotVersion.
+        testStream(df)(
+          StartStream(
+            trigger = Trigger.ProcessingTime("10 seconds"),
+            triggerClock = clock,
+            checkpointLocation = chkLocation.getCanonicalPath),
+          // Process exactly 1 micro-batch (1 file out of 8)
+          AdvanceManualClock(10 * 1000L),
+          // Verify we are still mid-initial-snapshot
+          AssertOnQuery { q =>
+            val offset = DeltaSourceOffset(
+              srcLog.tableId,
+              q.lastProgress.sources(0).endOffset)
+            assert(offset.isInitialSnapshot,
+              s"Expected isInitialSnapshot=true but got offset: $offset")
+            true
+          },
+          StopStream
+        )
+
+        // Phase 2: Simulate log retention cleaning up old files.
+        // Add new versions to create a checkpoint beyond the old snapshot version.
+        (0 until 10).foreach { _ =>
+          spark.range(10).write
+            .format("delta").mode("append").save(srcData.getCanonicalPath)
+        }
+        val updatedLog = DeltaLog.forTable(spark, srcData)
+        updatedLog.checkpoint()
+
+        // Delete old checkpoint and commit files at/before the original snapshot version
+        val logDir = new File(srcLog.logPath.toUri)
+        logDir.listFiles()
+          .filter(f => FileNames.isCheckpointFile(new Path(f.getAbsolutePath)))
+          .filter { f =>
+            FileNames.getFileVersion(new Path(f.getAbsolutePath)) <= snapshotVersion
+          }
+          .foreach(_.delete())
+        (0L to snapshotVersion).foreach { v =>
+          new File(FileNames.unsafeDeltaFile(srcLog.logPath, v).toUri).delete()
+        }
+
+        DeltaLog.clearCache()
+
+        // Phase 3: Restart the stream from the same checkpoint.
+        // It will try to reconstruct the snapshot at the old version (snapshotVersion),
+        // but those files are gone. This should fail, and the error should NOT be
+        // failOnDataLossException since we are in the initial snapshot stage.
+        val df2 = loadStreamWithOptions(
+          srcData.getCanonicalPath,
+          Map("maxFilesPerTrigger" -> "1"))
+
+        if (useDsv2) {
+          testStream(df2)(
+            StartStream(checkpointLocation = chkLocation.getCanonicalPath),
+            ExpectFailure[KernelException] { e =>
+              assert(e.getMessage.contains("transaction log has been truncated"))
+            }
+          )
+        } else {
+          testStream(df2)(
+            StartStream(checkpointLocation = chkLocation.getCanonicalPath),
+            ExpectFailure[DeltaFileNotFoundException] { e =>
+              assert(e.getMessage.contains("DELTA_LOG_FILE_NOT_FOUND_FOR_STREAMING_SOURCE"))
+            }
+          )
+        }
       }
-
-      addData()
-      addData()
-      addData()
-      addData()
-
-      val srcLog = DeltaLog.forTable(spark, srcData)
-      // Create a checkpoint so that we can create a snapshot without json files before version 3
-      srcLog.checkpoint()
-      // Delete a middle delta file - this creates a gap in the log
-      assert(new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri).delete())
-
-      // Start a brand new stream (no prior checkpoint) - this will read the initial snapshot
-      // The initial snapshot reads from the checkpoint, not individual delta files,
-      // so failOnDataLoss should NOT be triggered even with the default option (true)
-      val df = loadStreamWithOptions(srcData.getCanonicalPath, Map.empty)
-
-      val q = df.writeStream.format("delta")
-        .option("checkpointLocation", chkLocation.getCanonicalPath)
-        .start(targetData.getCanonicalPath)
-      q.processAllAvailable()
-      q.stop()
-
-      assert(spark.read.format("delta").load(targetData.getCanonicalPath).count() === 40)
     }
   }
 
