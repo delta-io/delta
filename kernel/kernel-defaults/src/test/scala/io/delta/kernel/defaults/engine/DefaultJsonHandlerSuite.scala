@@ -452,6 +452,14 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     }
   }
 
+  test("parse geometry/geography POINT type") {
+    // Pending until full geometry parsing tests are added.
+    // Once available, tests should cover:
+    //   POINT (x y), POINT Z(x y z), POINT M(x y m), POINT ZM(x y z m),
+    //   and null using both GeometryType and GeographyType column schemas.
+    pending
+  }
+
   test("parse diverse type values in a map[string, string]") {
     val input =
       """
