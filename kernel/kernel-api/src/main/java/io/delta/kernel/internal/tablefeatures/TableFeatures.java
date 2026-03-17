@@ -211,7 +211,7 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return hasGeospatial(metadata)
+      return hasGeospatial(metadata);
     }
   }
 
