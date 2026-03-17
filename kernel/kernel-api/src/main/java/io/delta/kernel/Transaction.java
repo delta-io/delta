@@ -24,6 +24,7 @@ import static io.delta.kernel.internal.util.PartitionUtils.getTargetDirectory;
 import static io.delta.kernel.internal.util.PartitionUtils.validateAndSanitizePartitionValues;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static io.delta.kernel.internal.util.SchemaUtils.findColIndex;
+import static io.delta.kernel.internal.util.SchemaUtils.normalizeColumnNames;
 
 import io.delta.kernel.annotation.Evolving;
 import io.delta.kernel.annotation.Experimental;
@@ -201,8 +202,12 @@ public interface Transaction {
           }
 
           ColumnarBatch data = filteredBatch.getData();
-          if (!data.getSchema().isWriteCompatible(tableSchema)) {
-            throw dataSchemaMismatch(tablePath, tableSchema, data.getSchema());
+          // The Delta protocol requires column names to be unique regardless of casing.
+          // Normalize data column names to table schema casing before the compatibility
+          // check so that writes are not rejected solely due to a case mismatch.
+          StructType normalizedDataSchema = normalizeColumnNames(data.getSchema(), tableSchema);
+          if (!normalizedDataSchema.isWriteCompatible(tableSchema)) {
+            throw dataSchemaMismatch(tablePath, tableSchema, normalizedDataSchema);
           }
           for (String partitionColName : partitionColNames) {
             int partitionColIndex = findColIndex(data.getSchema(), partitionColName);

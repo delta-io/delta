@@ -29,7 +29,7 @@ import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.{TableFeature, TableFeatures}
 import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
-import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateUpdatedSchemaAndGetUpdatedSchema}
+import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, normalizeColumnNames, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
 import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
 import io.delta.kernel.types.IntegerType.INTEGER
@@ -2097,5 +2097,155 @@ class SchemaUtilsSuite extends AnyFunSuite {
       dummyProtocol,
       emptySet(),
       false)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // normalizeColumnNames Tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  test(
+    "normalizeColumnNames - case-mismatched names normalized, nullability and metadata preserved") {
+    val dataMetadata = FieldMetadata.builder().putString("custom", "value").build()
+    val dataSchema = new StructType(
+      java.util.Arrays.asList(
+        new StructField("userId", IntegerType.INTEGER, false /* non-nullable */, dataMetadata),
+        new StructField("name", StringType.STRING, true)))
+    val tableSchema = new StructType()
+      .add("UserId", IntegerType.INTEGER)
+      .add("Name", StringType.STRING)
+
+    val result = normalizeColumnNames(dataSchema, tableSchema)
+
+    assert(result.length() == 2)
+    // Names come from table schema
+    assert(result.at(0).getName == "UserId")
+    assert(result.at(1).getName == "Name")
+    // Nullability and metadata are preserved from data schema
+    assert(!result.at(0).isNullable)
+    assert(result.at(0).getMetadata.getString("custom") == "value")
+    assert(result.at(1).isNullable)
+  }
+
+  test("normalizeColumnNames - exact match is a no-op") {
+    val dataSchema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("name", StringType.STRING)
+    val tableSchema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("name", StringType.STRING)
+
+    val result = normalizeColumnNames(dataSchema, tableSchema)
+
+    assert(result.length() == 2)
+    assert(result.at(0).getName == "id")
+    assert(result.at(1).getName == "name")
+  }
+
+  test("normalizeColumnNames - columns in different order are resolved by name") {
+    val dataSchema = new StructType()
+      .add("name", StringType.STRING)
+      .add("id", IntegerType.INTEGER)
+    val tableSchema = new StructType()
+      .add("Id", IntegerType.INTEGER)
+      .add("Name", StringType.STRING)
+
+    val result = normalizeColumnNames(dataSchema, tableSchema)
+
+    // Result follows data schema ordering, with table schema casing
+    assert(result.at(0).getName == "Name")
+    assert(result.at(1).getName == "Id")
+  }
+
+  test("normalizeColumnNames - missing column error includes available columns") {
+    val dataSchema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("unknown", StringType.STRING)
+    val tableSchema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("name", StringType.STRING)
+
+    val e = intercept[KernelException] {
+      normalizeColumnNames(dataSchema, tableSchema)
+    }
+    assert(e.getMessage.contains("unknown"))
+    assert(e.getMessage.contains("Available columns"))
+  }
+
+  test("normalizeColumnNames - nested struct normalization") {
+    val dataSchema = new StructType()
+      .add(
+        "address",
+        new StructType()
+          .add("city", StringType.STRING)
+          .add("state", StringType.STRING))
+    val tableSchema = new StructType()
+      .add(
+        "Address",
+        new StructType()
+          .add("City", StringType.STRING)
+          .add("State", StringType.STRING))
+
+    val result = normalizeColumnNames(dataSchema, tableSchema)
+
+    assert(result.at(0).getName == "Address")
+    val nestedStruct = result.at(0).getDataType.asInstanceOf[StructType]
+    assert(nestedStruct.at(0).getName == "City")
+    assert(nestedStruct.at(1).getName == "State")
+  }
+
+  test("normalizeColumnNames - array of struct normalization") {
+    val dataSchema = new StructType()
+      .add(
+        "items",
+        new ArrayType(
+          new StructType()
+            .add("productId", IntegerType.INTEGER)
+            .add("quantity", IntegerType.INTEGER),
+          true))
+    val tableSchema = new StructType()
+      .add(
+        "Items",
+        new ArrayType(
+          new StructType()
+            .add("ProductId", IntegerType.INTEGER)
+            .add("Quantity", IntegerType.INTEGER),
+          true))
+
+    val result = normalizeColumnNames(dataSchema, tableSchema)
+
+    assert(result.at(0).getName == "Items")
+    val arrayType = result.at(0).getDataType.asInstanceOf[ArrayType]
+    val elementStruct = arrayType.getElementType.asInstanceOf[StructType]
+    assert(elementStruct.at(0).getName == "ProductId")
+    assert(elementStruct.at(1).getName == "Quantity")
+  }
+
+  test("normalizeColumnNames - map value struct normalization") {
+    val dataSchema = new StructType()
+      .add(
+        "lookup",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("firstName", StringType.STRING)
+            .add("lastName", StringType.STRING),
+          true))
+    val tableSchema = new StructType()
+      .add(
+        "Lookup",
+        new MapType(
+          StringType.STRING,
+          new StructType()
+            .add("FirstName", StringType.STRING)
+            .add("LastName", StringType.STRING),
+          true))
+
+    val result = normalizeColumnNames(dataSchema, tableSchema)
+
+    assert(result.at(0).getName == "Lookup")
+    val mapType = result.at(0).getDataType.asInstanceOf[MapType]
+    val valueStruct = mapType.getValueType.asInstanceOf[StructType]
+    assert(valueStruct.at(0).getName == "FirstName")
+    assert(valueStruct.at(1).getName == "LastName")
   }
 }

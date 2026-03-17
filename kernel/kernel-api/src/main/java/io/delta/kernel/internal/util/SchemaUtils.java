@@ -311,6 +311,46 @@ public class SchemaUtils {
   }
 
   /**
+   * Normalizes column names in the data schema to match the casing of the table schema. The Delta
+   * protocol requires that column names are unique regardless of casing, so writes should not be
+   * rejected solely due to a case mismatch between data and table column names.
+   *
+   * <p>Only column names are normalized; each field's data type, nullability, and metadata are
+   * preserved from the data schema.
+   *
+   * @param dataSchema the schema of the data being written
+   * @param tableSchema the schema of the target table
+   * @return a new StructType with column names matching the table schema casing
+   * @throws KernelException if a data column cannot be found in the table schema
+   */
+  public static StructType normalizeColumnNames(StructType dataSchema, StructType tableSchema) {
+    Map<String, StructField> tableFieldMap = new HashMap<>();
+    for (StructField field : tableSchema.fields()) {
+      tableFieldMap.put(field.getName().toLowerCase(Locale.ROOT), field);
+    }
+
+    List<StructField> normalizedFields = new ArrayList<>();
+    for (StructField dataField : dataSchema.fields()) {
+      StructField tableField = tableFieldMap.get(dataField.getName().toLowerCase(Locale.ROOT));
+      if (tableField == null) {
+        throw new KernelException(
+            String.format(
+                "Cannot resolve column '%s' in the table schema. Available columns: %s",
+                dataField.getName(), tableSchema.fieldNames()));
+      }
+      DataType normalizedType =
+          normalizeDataType(dataField.getDataType(), tableField.getDataType());
+      normalizedFields.add(
+          new StructField(
+              tableField.getName(),
+              normalizedType,
+              dataField.isNullable(),
+              dataField.getMetadata()));
+    }
+    return new StructType(normalizedFields);
+  }
+
+  /**
    * Search (case-insensitive) for the given {@code colName} in the {@code schema} and return its
    * position in the {@code schema}.
    *
@@ -357,6 +397,32 @@ public class SchemaUtils {
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
+
+  /**
+   * Recursively normalizes nested data types. For struct types, normalizes column names. For array
+   * and map types, normalizes their element/key/value types.
+   */
+  private static DataType normalizeDataType(DataType dataType, DataType tableType) {
+    if (dataType instanceof StructType && tableType instanceof StructType) {
+      return normalizeColumnNames((StructType) dataType, (StructType) tableType);
+    }
+    if (dataType instanceof ArrayType && tableType instanceof ArrayType) {
+      ArrayType dataArray = (ArrayType) dataType;
+      ArrayType tableArray = (ArrayType) tableType;
+      DataType normalizedElement =
+          normalizeDataType(dataArray.getElementType(), tableArray.getElementType());
+      return new ArrayType(normalizedElement, dataArray.containsNull());
+    }
+    if (dataType instanceof MapType && tableType instanceof MapType) {
+      MapType dataMap = (MapType) dataType;
+      MapType tableMap = (MapType) tableType;
+      DataType normalizedKey = normalizeDataType(dataMap.getKeyType(), tableMap.getKeyType());
+      DataType normalizedValue = normalizeDataType(dataMap.getValueType(), tableMap.getValueType());
+      return new MapType(normalizedKey, normalizedValue, dataMap.isValueContainsNull());
+    }
+    // For leaf types, return as-is
+    return dataType;
+  }
 
   /**
    * Compute the SchemaChanges using field IDs
