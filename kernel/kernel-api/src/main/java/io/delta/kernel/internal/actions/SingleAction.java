@@ -40,15 +40,15 @@ public class SingleAction {
   // schema for those fields here.
 
   /**
-   * Schema to use when reading the winning commit files for conflict resolution. This schema is
-   * just for resolving conflicts when doing a blind append. It doesn't cover case when the txn is
-   * reading data from the table and updating the table.
+   * Schema to use when reading the winning commit files for conflict resolution. Includes
+   * RemoveFile so that delete-read and delete-delete conflicts can be detected for non-blind-append
+   * operations like OPTIMIZE.
    */
   public static StructType CONFLICT_RESOLUTION_SCHEMA =
       new StructType()
           .add("txn", SetTransaction.FULL_SCHEMA)
-          // .add("add", AddFile.FULL_SCHEMA) // not needed for blind appends
-          // .add("remove", RemoveFile.FULL_SCHEMA) // not needed for blind appends
+          // .add("add", AddFile.FULL_SCHEMA) // not needed for current conflict checks
+          .add("remove", RemoveFile.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("commitInfo", CommitInfo.FULL_SCHEMA)
