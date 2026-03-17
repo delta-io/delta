@@ -30,6 +30,7 @@ import io.delta.kernel.defaults.internal.data.vector.DefaultBooleanVector;
 import io.delta.kernel.defaults.internal.data.vector.DefaultConstantVector;
 import io.delta.kernel.engine.ExpressionHandler;
 import io.delta.kernel.expressions.*;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.types.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -359,6 +360,39 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
               visitedInList.stream().map(e -> e.expression).collect(toList()),
               visitedInList.stream().map(e -> e.outputType).collect(toList()));
       return new ExpressionTransformResult(transformedExpression, BooleanType.BOOLEAN);
+    }
+
+    @Override
+    ExpressionTransformResult visitStIntersectsBoxesOnStats(Predicate predicate) {
+      List<ExpressionTransformResult> children =
+          predicate.getChildren().stream().map(this::visit).collect(Collectors.toList());
+      checkArgument(
+          children.size() == 4,
+          "ST_INTERSECTS_BOXES_ON_STATS expects 4 children but got %d",
+          children.size());
+      // Children 0,1 are stats columns (GeometryType/GeographyType).
+      // Children 2,3 are WKT string literals from the query bounds.
+      for (int i = 0; i < 2; i++) {
+        DataType dt = children.get(i).outputType;
+        checkArgument(
+            dt instanceof GeometryType || dt instanceof GeographyType,
+            "ST_INTERSECTS_BOXES_ON_STATS child %d must be " + "geometry/geography type, got %s",
+            i,
+            dt);
+      }
+      for (int i = 2; i < 4; i++) {
+        DataType dt = children.get(i).outputType;
+        checkArgument(
+            dt instanceof StringType,
+            "ST_INTERSECTS_BOXES_ON_STATS child %d must be " + "string (WKT), got %s",
+            i,
+            dt);
+      }
+      return new ExpressionTransformResult(
+          new Predicate(
+              "ST_INTERSECTS_BOXES_ON_STATS",
+              children.stream().map(c -> c.expression).collect(Collectors.toList())),
+          BooleanType.BOOLEAN);
     }
 
     private Predicate validateIsPredicate(
@@ -745,6 +779,38 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     ColumnVector visitIn(In in) {
       return InExpressionEvaluator.eval(
           in.getChildren().stream().map(this::visit).collect(toList()));
+    }
+
+    @Override
+    ColumnVector visitStIntersectsBoxesOnStats(Predicate predicate) {
+      List<Expression> children = predicate.getChildren();
+      ColumnVector leftMin = visit(children.get(0));
+      ColumnVector leftMax = visit(children.get(1));
+      ColumnVector rightMin = visit(children.get(2));
+      ColumnVector rightMax = visit(children.get(3));
+      int numRows = input.getSize();
+      boolean[] result = new boolean[numRows];
+      boolean[] nullability = new boolean[numRows];
+      for (int rowId = 0; rowId < numRows; rowId++) {
+        if (leftMin.isNullAt(rowId)
+            || leftMax.isNullAt(rowId)
+            || rightMin.isNullAt(rowId)
+            || rightMax.isNullAt(rowId)) {
+          nullability[rowId] = true;
+          continue;
+        }
+        double[] lMin = GeometryUtils.parsePointXY(leftMin.getString(rowId));
+        double[] lMax = GeometryUtils.parsePointXY(leftMax.getString(rowId));
+        double[] rMin = GeometryUtils.parsePointXY(rightMin.getString(rowId));
+        double[] rMax = GeometryUtils.parsePointXY(rightMax.getString(rowId));
+        result[rowId] = boxesIntersect(lMin, lMax, rMin, rMax);
+      }
+      return new DefaultBooleanVector(numRows, Optional.of(nullability), result);
+    }
+
+    private static boolean boxesIntersect(
+        double[] lMin, double[] lMax, double[] rMin, double[] rMax) {
+      return lMax[0] >= rMin[0] && rMax[0] >= lMin[0] && lMax[1] >= rMin[1] && rMax[1] >= lMin[1];
     }
 
     /**
