@@ -26,6 +26,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -44,7 +45,6 @@ import org.apache.spark.sql.connector.read.*;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
-import org.apache.spark.sql.delta.DeltaParquetFileFormat;
 import org.apache.spark.sql.execution.datasources.*;
 import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
@@ -180,12 +180,14 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    */
   @Override
   public Scan.ColumnarSupportMode columnarSupportMode() {
-    // When the table supports deletion vectors, the reader factory adds a DV column
-    // (ByteType) to the read schema. Use the same augmented schema here so the batch-read
-    // check matches what the reader will actually use.
+    // When the table supports deletion vectors, the reader factory augments the read schema
+    // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
+    // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in
+    // the future, this code path picks them up automatically.
     StructType schemaForBatchCheck =
         PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)
-            ? readDataSchema.add(DeltaParquetFileFormat.IS_ROW_DELETED_STRUCT_FIELD())
+            ? new DeletionVectorSchemaContext(readDataSchema, partitionSchema)
+                .getSchemaWithDvColumn()
             : readDataSchema;
 
     return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, schemaForBatchCheck)
