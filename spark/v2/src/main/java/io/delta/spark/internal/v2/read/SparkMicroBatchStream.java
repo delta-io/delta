@@ -34,6 +34,7 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
+import io.delta.kernel.internal.util.ColumnMapping.ColumnMappingMode;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.internal.util.Utils;
 import io.delta.kernel.internal.util.VectorUtils;
@@ -44,6 +45,8 @@ import io.delta.spark.internal.v2.utils.ScalaUtils;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
 import io.delta.spark.internal.v2.utils.StreamingHelper;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.channels.ClosedByInterruptException;
 import java.sql.Timestamp;
 import java.time.ZoneId;
 import java.util.*;
@@ -55,12 +58,14 @@ import org.apache.spark.sql.catalyst.expressions.Literal$;
 import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.*;
+import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaErrors;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.delta.DeltaStartingVersion;
 import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
+import org.apache.spark.sql.delta.TypeWidening;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -71,6 +76,8 @@ import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -80,6 +87,7 @@ import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
+import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
 public class SparkMicroBatchStream
@@ -94,10 +102,12 @@ public class SparkMicroBatchStream
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
   private final StructType readSchemaAtSourceInit;
   private final boolean shouldValidateOffsets;
+  private final Optional<Regex> excludeRegex;
   private final SparkSession spark;
   private final String tablePath;
   private final StructType readDataSchema;
@@ -178,6 +188,7 @@ public class SparkMicroBatchStream
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
+    this.skipChangeCommits = this.options.skipChangeCommits();
     // Normalize tablePath to ensure it ends with "/" for consistent path construction
     String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
     this.tablePath =
@@ -203,6 +214,7 @@ public class SparkMicroBatchStream
             (Boolean)
                 spark.sessionState().conf().getConf(DeltaSQLConf.STREAMING_OFFSET_VALIDATION()),
             "shouldValidateOffsets is null");
+    this.excludeRegex = ScalaUtils.toJavaOptional(options.excludeRegex());
     this.maxInitialSnapshotFiles =
         (Integer)
             spark
@@ -213,7 +225,7 @@ public class SparkMicroBatchStream
     boolean isStreamingFromColumnMappingTable =
         ColumnMapping.getColumnMappingMode(
                 this.snapshotAtSourceInit.getMetadata().getConfiguration())
-            != ColumnMapping.ColumnMappingMode.NONE;
+            != ColumnMappingMode.NONE;
     boolean isTypeWideningSupportedInProtocol =
         this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_PREVIEW_FEATURE)
             || this.snapshotAtSourceInit.getProtocol().supportsFeature(TYPE_WIDENING_RW_FEATURE);
@@ -222,6 +234,7 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
+    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
   }
 
   @Override
@@ -297,12 +310,26 @@ public class SparkMicroBatchStream
     Objects.requireNonNull(startOffset, "startOffset should not be null for MicroBatchStream");
     Objects.requireNonNull(limit, "limit should not be null for MicroBatchStream");
 
-    DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
-    initForTriggerAvailableNowIfNeeded(deltaStartOffset);
-    // Return null when no data is available for this batch.
-    DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
-    isFirstBatch = false;
-    return endOffset;
+    try {
+      DeltaSourceOffset deltaStartOffset = DeltaSourceOffset.apply(tableId, startOffset);
+      initForTriggerAvailableNowIfNeeded(deltaStartOffset);
+      // Return null when no data is available for this batch.
+      DeltaSourceOffset endOffset = latestOffsetInternal(deltaStartOffset, limit).orElse(null);
+      isFirstBatch = false;
+      return endOffset;
+    } catch (Exception e) {
+      // Kernel's DefaultJsonHandler wraps ClosedByInterruptException (thrown by NIO
+      // channels on thread interrupt) inside KernelEngineException (a RuntimeException).
+      // Spark's StreamExecution.isInterruptionException recognizes
+      // ClosedByInterruptException and UncheckedIOException but not
+      // KernelEngineException. Re-wrap so Spark's isInterruptedByStop — which also
+      // verifies state == TERMINATED — handles it as a clean stream shutdown.
+      Optional<ClosedByInterruptException> interruptCause = findClosedByInterruptCause(e);
+      if (interruptCause.isPresent()) {
+        throw new UncheckedIOException(interruptCause.get());
+      }
+      throw e;
+    }
   }
 
   /**
@@ -405,6 +432,11 @@ public class SparkMicroBatchStream
           continue;
         }
         AddFile addFile = indexedFile.getAddFile();
+        // TODO(#5319): Apply excludeRegex to RemoveFile/AddCDCFile when CDC is supported
+        if (excludeRegex.isPresent()
+            && excludeRegex.get().findFirstIn(addFile.getPath()).isDefined()) {
+          continue;
+        }
         PartitionedFile partitionedFile =
             PartitionUtils.buildPartitionedFile(
                 addFile, partitionSchema, tablePath, ZoneId.of(sqlConf.sessionLocalTimeZone()));
@@ -418,6 +450,15 @@ public class SparkMicroBatchStream
               "Failed to get file changes for table %s from version %d index %d to offset %s",
               tablePath, fromVersion, fromIndex, endOffset),
           e);
+    } catch (RuntimeException e) {
+      // Same interrupt handling as latestOffset(): Kernel wraps ClosedByInterruptException
+      // in KernelEngineException (a RuntimeException). Re-wrap as UncheckedIOException so
+      // Spark's isInterruptedByStop recognizes it as a clean shutdown.
+      Optional<ClosedByInterruptException> interruptCause = findClosedByInterruptCause(e);
+      if (interruptCause.isPresent()) {
+        throw new UncheckedIOException(interruptCause.get());
+      }
+      throw e;
     }
 
     long maxSplitBytes =
@@ -455,6 +496,20 @@ public class SparkMicroBatchStream
   @Override
   public void stop() {
     cachedInitialSnapshot.set(null);
+  }
+
+  /**
+   * If the given exception wraps a {@link ClosedByInterruptException} as its direct cause, returns
+   * it. This occurs when Spark interrupts the micro-batch thread during stream shutdown and the
+   * thread is blocked inside Kernel's {@code DefaultJsonHandler} reading delta log files via NIO
+   * channels.
+   */
+  static Optional<ClosedByInterruptException> findClosedByInterruptCause(Throwable t) {
+    Throwable cause = t.getCause();
+    if (cause instanceof ClosedByInterruptException) {
+      return Optional.of((ClosedByInterruptException) cause);
+    }
+    return Optional.empty();
   }
 
   ///////////////////////
@@ -756,7 +811,7 @@ public class SparkMicroBatchStream
     try {
       long version = commit.getVersion();
 
-      // First pass: Validate the commit.
+      // First pass: Validate the commit and decide whether to skip it.
       //
       // We must validate the ENTIRE commit before emitting ANY files. This is a correctness
       // requirement: commits could contain both AddFiles and RemoveFiles.
@@ -765,13 +820,15 @@ public class SparkMicroBatchStream
       //
       // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
       // TODO(#5319): don't verify metadata action when schema tracking is enabled
-      validateCommit(
-          commit,
-          version,
-          startVersion,
-          snapshotAtSourceInit.getPath(),
-          endOffsetOpt,
-          /* verifyMetadataAction= */ true);
+      boolean shouldSkipCommit =
+          validateCommitAndDecideSkipping(
+              commit,
+              version,
+              startVersion,
+              snapshotAtSourceInit.getPath(),
+              endOffsetOpt,
+              /* verifyMetadataAction= */ true);
+
       // Second pass: Build a lazy iterator of IndexedFiles.
       //
       //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
@@ -784,9 +841,13 @@ public class SparkMicroBatchStream
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
+      CloseableIterator<IndexedFile> fileActions =
+          shouldSkipCommit
+              ? Utils.toCloseableIterator(Collections.emptyIterator())
+              : getFilesFromCommit(commit, version);
       return Utils.singletonCloseableIterator(
               new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
-          .combine(getFilesFromCommit(commit, version))
+          .combine(fileActions)
           .combine(
               Utils.singletonCloseableIterator(
                   new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
@@ -814,7 +875,7 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Validates a commit and fail the stream if it's invalid. Mimics
+   * Validates a commit, fail the stream if it's invalid and decides whether to skip it. Mimics
    * DeltaSource.validateCommitAndDecideSkipping in Scala.
    *
    * @param commit the CommitActions representing a single commit
@@ -823,9 +884,10 @@ public class SparkMicroBatchStream
    * @param tablePath the path to the Delta table
    * @param endOffsetOpt optional end offset for boundary checking
    * @param verifyMetadataAction Whether to verify metadata action compatibility
+   * @return true if the commit should be skipped (no AddFiles emitted), false otherwise
    * @throws RuntimeException if the commit is invalid.
    */
-  private void validateCommit(
+  private boolean validateCommitAndDecideSkipping(
       CommitActions commit,
       long version,
       long batchStartVersion,
@@ -837,26 +899,43 @@ public class SparkMicroBatchStream
       DeltaSourceOffset endOffset = endOffsetOpt.get();
       if (endOffset.reservoirVersion() == version
           && endOffset.index() == DeltaSourceOffset.BASE_INDEX()) {
-        return;
+        return false;
       }
     }
-    // TODO(#5319): Implement ignoreChanges & skipChangeCommits & ignoreDeletes (legacy)
+
+    // TODO(#5319): Implement ignoreChanges & ignoreFileDeletion (deprecated)
+    // A check on the source table that disallows changes on the source data.
+    boolean shouldAllowChanges = skipChangeCommits;
+    // A check on the source table that disallows commits that only include deletes to the data.
+    boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
+
+    boolean hasFileAdd = false;
+    boolean shouldSkipCommit = false;
+    Metadata metadataAction = null;
+    String removeFileActionPath = null;
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
         ColumnarBatch batch = actionsIter.next();
         int numRows = batch.getSize();
-        Metadata metadataAction = null;
         for (int rowId = 0; rowId < numRows; rowId++) {
-          // RULE 1: If commit has RemoveFile(dataChange=true), fail this stream.
-          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
-          if (removeOpt.isPresent()) {
-            RemoveFile removeFile = removeOpt.get();
-            throw (RuntimeException)
-                DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFile.getPath(), tablePath);
+          // Track AddFile(dataChange=true)
+          Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
+          if (addOpt.isPresent()) {
+            hasFileAdd = true;
           }
 
-          // RULE 2: If commit has Metadata, check read-incompatible schema changes.
+          // Track RemoveFile(dataChange=true)
+          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+          if (removeOpt.isPresent()) {
+            // skip change commits include delete-only commits
+            shouldSkipCommit = skipChangeCommits;
+            if (removeFileActionPath == null) {
+              removeFileActionPath = removeOpt.get().getPath();
+            }
+          }
+
+          // Track Metadata for read-incompatible schema changes.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
             Metadata metadata = metadataOpt.get();
@@ -881,6 +960,21 @@ public class SparkMicroBatchStream
     } catch (IOException e) {
       throw new RuntimeException("Failed to process commit at version " + version, e);
     }
+
+    if (removeFileActionPath != null) {
+      if (hasFileAdd && !shouldAllowChanges) {
+        // Commit contains data changes (adds + removes) and changes are disallowed.
+        // TODO(#5319): log CommitInfo action's operation instead of path
+        throw (RuntimeException)
+            DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
+      } else if (!hasFileAdd && !shouldAllowDeletes) {
+        // Commit contains only removes (deletes) and deletes are disallowed.
+        throw (RuntimeException)
+            DeltaErrors.deltaSourceIgnoreDeleteError(version, removeFileActionPath, tablePath);
+      }
+    }
+
+    return shouldSkipCommit;
   }
 
   /**
@@ -925,7 +1019,32 @@ public class SparkMicroBatchStream
               newMetadata.getId(), oldMetadata.getId());
     }
 
-    // TODO(#5319): schema tracking for non-additive schema changes
+    // Partition column change will be ignored if user enable the unsafe flag
+    Seq<String> newPartitionColumns, oldPartitionColumns;
+    if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
+      newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+      oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
+    } else {
+      newPartitionColumns =
+          CollectionConverters.asScala(
+                  VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
+                      .map(Object::toString)
+                      .collect(Collectors.toList()))
+              .toSeq();
+      oldPartitionColumns =
+          CollectionConverters.asScala(
+                  VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
+                      .map(Object::toString)
+                      .collect(Collectors.toList()))
+              .toSeq();
+    }
+
+    checkNonAdditiveSchemaChanges(
+        oldMetadata,
+        newMetadata,
+        oldPartitionColumns,
+        newPartitionColumns,
+        validatedDuringStreamStart);
 
     // Other standard read compatibility changes
     if (!validatedDuringStreamStart
@@ -938,25 +1057,6 @@ public class SparkMicroBatchStream
       // check whether we can use `schema` (the fixed source schema we use in the same run of the
       // query) to read these new files safely.
       boolean backfilling = version < snapshotAtSourceInit.getVersion();
-      // Partition column change will be ignored if user enable the unsafe flag
-      Seq<String> newPartitionColumns, oldPartitionColumns;
-      if (schemaReadOptions.allowUnsafeStreamingReadOnPartitionColumnChanges()) {
-        newPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
-        oldPartitionColumns = (Seq<String>) Seq$.MODULE$.empty();
-      } else {
-        newPartitionColumns =
-            CollectionConverters.asScala(
-                    VectorUtils.toJavaList(newMetadata.getPartitionColumns()).stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toList()))
-                .toSeq();
-        oldPartitionColumns =
-            CollectionConverters.asScala(
-                    VectorUtils.toJavaList(oldMetadata.getPartitionColumns()).stream()
-                        .map(Object::toString)
-                        .collect(Collectors.toList()))
-                .toSeq();
-      }
 
       DeltaStreamUtils.SchemaCompatibilityResult checkResult =
           DeltaStreamUtils.checkSchemaChangesWhenNoSchemaTracking(
@@ -979,6 +1079,68 @@ public class SparkMicroBatchStream
                 Some.apply(version),
                 options.containsStartingVersionOrTimestamp());
       }
+    }
+  }
+
+  // TODO(#5319): schema tracking for non-additive schema changes
+  // TODO(#5319): Extract the entire non-additive schema check into a static utility and share it
+  // with v1 by refactoring DeltaColumnMapping.hasNoColumnMappingSchemaChanges so it can be reused
+  // by both v1 and v2.
+  // Non-additive schema changes include rename column, drop column and change column type
+  private void checkNonAdditiveSchemaChanges(
+      Metadata oldMetadata,
+      Metadata newMetadata,
+      Seq<String> oldPartitionColumns,
+      Seq<String> newPartitionColumns,
+      boolean validatedDuringStreamStart) {
+    StructType sparkNewSchema =
+        SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema());
+    StructType sparkOldSchema =
+        SchemaUtils.convertKernelSchemaToSparkSchema(oldMetadata.getSchema());
+
+    boolean shouldTrackSchema;
+    if (schemaReadOptions.typeWideningEnabled()
+        && schemaReadOptions.enableSchemaTrackingForTypeWidening()
+        && TypeWidening.containsWideningTypeChanges(sparkOldSchema, sparkNewSchema)) {
+      // If schema tracking is enabled for type widening, we will detect widening type changes and
+      // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
+      // DROP/RENAME for column mapping.
+      shouldTrackSchema = true;
+    } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
+      shouldTrackSchema = false;
+    } else {
+      ColumnMappingMode NONE = ColumnMappingMode.NONE;
+      ColumnMappingMode oldMode =
+          ColumnMapping.getColumnMappingMode(oldMetadata.getConfiguration());
+      ColumnMappingMode newMode =
+          ColumnMapping.getColumnMappingMode(newMetadata.getConfiguration());
+      if (oldMode != NONE && newMode != NONE) {
+        Preconditions.checkArgument(oldMode == newMode, "changing mode is not supported");
+        shouldTrackSchema =
+            DeltaColumnMapping.hasColMappingOrPartitionSchemaChange(
+                sparkNewSchema,
+                sparkOldSchema,
+                newPartitionColumns,
+                oldPartitionColumns,
+                /* isBothColumnMappingEnabled */ true);
+      } else if (oldMode == NONE && newMode != NONE) {
+        // TODO(#5319): We should disallow user to upgrade column mapping mode for now since we
+        // don't support schema tracking
+        shouldTrackSchema = true;
+      } else {
+        // Prohibit reading across a downgrade.
+        shouldTrackSchema = oldMode != NONE && newMode == NONE;
+      }
+    }
+
+    if (shouldTrackSchema) {
+      throw (RuntimeException)
+          DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
+              spark,
+              sparkOldSchema,
+              sparkNewSchema,
+              !validatedDuringStreamStart,
+              /* isV2DataSource= */ true);
     }
   }
 
@@ -1065,6 +1227,30 @@ public class SparkMicroBatchStream
 
     // Mark as checked
     hasCheckedReadIncompatibleSchemaChangesOnStreamStart = true;
+  }
+
+  /**
+   * Validates that the analysis-time schema matches the latest snapshot schema. This catches cases
+   * where the table schema changed after the streaming query was analyzed, and the user restarts
+   * the stream with a stale DataFrame.
+   *
+   * @param dataSchema data columns from analysis time (excludes partition columns)
+   * @param partitionSchema partition columns from analysis time
+   * @param snapshotSchema full table schema from the latest snapshot at stream start
+   */
+  private void validateSchemaCompatibilityOnStartup(
+      StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
+    // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
+    // StructType is immutable — add() returns a new instance without modifying the original.
+    StructType querySchema = dataSchema;
+    for (StructField field : partitionSchema.fields()) {
+      querySchema = querySchema.add(field);
+    }
+
+    // Compare the structural schema of the analysis-time schema and snapshot schema.
+    if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
+      throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
+    }
   }
 
   /**

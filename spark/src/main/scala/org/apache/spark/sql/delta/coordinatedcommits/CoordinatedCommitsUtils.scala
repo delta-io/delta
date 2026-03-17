@@ -166,7 +166,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         if (catalog.getClass.getName == UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
           // UC is the current commit coordinator.
-          Some("unity-catalog")
+          Some(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
         } else {
           // Other catalog (e.g., `spark_catalog`) is the commit coordinator.
           Some(catalog.name)
@@ -769,6 +769,18 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def getExplicitICTConfigurations(properties: Map[String, String]): Map[String, String] = {
     properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Extracts the explicit QoL configurations from the provided properties.
+   *
+   * These are preserved across catalog-managed REPLACE when the existing table already has the
+   * QoL defaults materialized in metadata, so a no-op REPLACE does not accidentally drop them
+   * while rebuilding the configuration map.
+   */
+  def getExplicitQoLConfigurations(properties: Map[String, String]): Map[String, String] = {
+    val qolKeys = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
+    properties.filter { case (k, _) => qolKeys.contains(k) }
   }
 
   /**

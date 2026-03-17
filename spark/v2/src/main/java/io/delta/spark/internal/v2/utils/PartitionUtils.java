@@ -93,6 +93,12 @@ public class PartitionUtils {
    * <p>Note: Partition values in AddFile use physical column names as keys when column mapping is
    * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
    * to physical partition value keys.
+   *
+   * @implNote The returned {@link InternalRow} is a {@code GenericInternalRow} (via {@code
+   *     InternalRow.fromSeq}), which has value-based {@code equals()}/{@code hashCode()}. Callers
+   *     such as {@code SparkBatch.planPartitionedInputPartitions} rely on this for grouping files
+   *     by partition key. Changing the return type to a different InternalRow subtype (e.g. {@code
+   *     UnsafeRow}) may break that contract.
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
@@ -211,9 +217,8 @@ public class PartitionUtils {
             .map(DeletionVectorSchemaContext::getSchemaWithDvColumn)
             .orElse(readDataSchema);
 
-    // TODO(https://github.com/delta-io/delta/issues/5859): Enable vectorized reader for DV tables
     boolean enableVectorizedReader =
-        !isTableSupportDv && ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
+        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, finalReadDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
@@ -249,7 +254,8 @@ public class PartitionUtils {
 
     // Wrap reader to filter deleted rows and remove internal columns if DV is enabled.
     if (dvSchemaContext.isPresent()) {
-      readFunc = DeletionVectorReadFunction.wrap(readFunc, dvSchemaContext.get());
+      readFunc =
+          DeletionVectorReadFunction.wrap(readFunc, dvSchemaContext.get(), enableVectorizedReader);
     }
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);

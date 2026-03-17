@@ -17,7 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
-import java.io.File
+import java.io.{ByteArrayOutputStream, File}
 import java.text.SimpleDateFormat
 import java.util.TimeZone
 
@@ -32,6 +32,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.StatsUtils
 import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
+import org.apache.avro.file.{DataFileReader, DataFileWriter, SeekableByteArrayInput}
+import org.apache.avro.generic.{GenericDatumReader, GenericDatumWriter, GenericRecord}
 import org.apache.iceberg.{Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
 import org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
@@ -588,6 +590,83 @@ trait ConvertIcebergToDeltaSuiteBase
       // partition spec is reverted, but partition evolution happens already
       // use assert explicitly bc we do not want checks in IcebergPartitionUtils to run first
       assert(readIcebergHadoopTable(tablePath).specs().size() > 1)
+    }
+  }
+
+  /**
+   * Strips the "schema" metadata key from all manifest Avro files of the table's current snapshot.
+   * This simulates a V2 writer that omits the optional schema field. Without passing specsById
+   * to ManifestFiles.read, reading such manifests causes an NPE in SchemaParser.fromJson.
+   */
+  private def stripSchemaFromManifests(table: Table): Unit = {
+    val manifests = table.currentSnapshot().dataManifests(table.io()).asScala
+    // scalastyle:off deltahadoopconfiguration
+    val conf = spark.sessionState.newHadoopConf()
+    // scalastyle:on deltahadoopconfiguration
+    manifests.foreach { manifest =>
+      val path = new Path(manifest.path())
+      val fs = path.getFileSystem(conf)
+
+      // Read the entire manifest file into a byte array
+      val inputStream = fs.open(path)
+      val bytes = try {
+        org.apache.commons.io.IOUtils.toByteArray(inputStream)
+      } finally {
+        inputStream.close()
+      }
+
+      val datumReader = new GenericDatumReader[GenericRecord]()
+      val reader = new DataFileReader[GenericRecord](
+        new SeekableByteArrayInput(bytes), datumReader)
+
+      // Collect records and metadata
+      val records = new java.util.ArrayList[GenericRecord]()
+      while (reader.hasNext) {
+        records.add(reader.next())
+      }
+      val avroSchema = reader.getSchema
+      val metaKeys = reader.getMetaKeys.asScala.toSeq
+
+      // Write back without the "schema" metadata key
+      val out = new ByteArrayOutputStream()
+      val datumWriter = new GenericDatumWriter[GenericRecord](avroSchema)
+      val writer = new DataFileWriter[GenericRecord](datumWriter)
+      val reservedKeys = Set("schema", "avro.schema", "avro.codec")
+      metaKeys.filterNot(reservedKeys.contains).foreach { key =>
+        writer.setMeta(key, reader.getMeta(key))
+      }
+      writer.create(avroSchema, out)
+      records.asScala.foreach(writer.append)
+      writer.close()
+      reader.close()
+
+      // Overwrite the original file
+      val outputStream = fs.create(path, true)
+      try {
+        outputStream.write(out.toByteArray)
+      } finally {
+        outputStream.close()
+      }
+    }
+  }
+
+  test("convert Iceberg table with manifest missing schema metadata") {
+    withTable(table) {
+      spark.sql(
+        s"""CREATE TABLE $table (id bigint, data string)
+           |USING iceberg PARTITIONED BY (data)
+           |TBLPROPERTIES ("format-version" = "2")""".stripMargin)
+      Seq((1L, "a"), (2L, "b")).toDF("id", "data")
+        .write.format("iceberg").mode("append").saveAsTable(table)
+      // Strip the "schema" metadata from manifest Avro files to simulate a V2 writer
+      // that omits the optional schema field. Without passing specsById to
+      // ManifestFiles.read, this causes an NPE in SchemaParser.fromJson.
+      val iceTable = readIcebergHadoopTable(tablePath)
+      stripSchemaFromManifests(iceTable)
+      convert(s"iceberg.`$tablePath`")
+      checkAnswer(
+        spark.read.format("delta").load(tablePath),
+        Row(1, "a") :: Row(2, "b") :: Nil)
     }
   }
 

@@ -47,6 +47,15 @@ trait DeltaSQLConfUtils {
  */
 trait DeltaSQLConfBase extends DeltaSQLConfUtils {
 
+  // Values for flags that also support log-only mode.
+  final object BooleanStringOrLogOnly {
+    final val FALSE = "false"
+    final val TRUE = "true"
+    final val LOG_ONLY = "log-only"
+
+    final val VALUES = Set(FALSE, TRUE, LOG_ONLY)
+  }
+
   object DeltaBreakingChangeEnum {
     val OFF = "OFF"
     val LOG_ONLY = "LOG_ONLY"
@@ -215,6 +224,25 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "the data columns.")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_PARTITION_COLUMN_CHANGE_CHECK = buildConf("partitionColumnChangeCheck")
+    .internal()
+    .doc("""Controls the validation behavior when changes to partition columns are detected.
+           |Possible values:
+           |  - "false": Disables validation for partition column changes.
+           |  - "true": Enables validation and throws an error if an illegal change is detected.
+           |  - "log-only": Logs the detected illegal change but does not block the operation.
+           |""".stripMargin)
+    .stringConf
+    .transform(_.toLowerCase(Locale.ROOT))
+    .checkValues(BooleanStringOrLogOnly.VALUES)
+    .createWithDefault(
+      if (DeltaUtils.isTesting) {
+        BooleanStringOrLogOnly.TRUE
+      } else {
+        BooleanStringOrLogOnly.LOG_ONLY
+      }
+    )
 
   val DELTA_COMMIT_VALIDATION_ENABLED =
     buildConf("commitValidation.enabled")
@@ -441,6 +469,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("When true, statistics are used for skipping")
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_ALWAYS_COLLECT_STATS =
+    buildConf("alwaysCollectStats.enabled")
+      .internal()
+      .doc("When true, row counts are collected from file statistics even when there are no " +
+        "data filters. This is useful for ensuring PreparedDeltaFileIndex always has row count " +
+        "information available. Note: this may have a small performance overhead as it requires " +
+        "summing numRecords from all files.")
+      .booleanConf
+      .createWithDefault(false)
 
   val DELTA_LIMIT_PUSHDOWN_ENABLED =
     buildConf("stats.limitPushdown.enabled")
@@ -738,6 +776,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |""".stripMargin)
       .booleanConf
       .createWithDefault(DeltaUtils.isTesting)
+
+  val DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED =
+    buildConf("insert.byName.schemaEvolution.enabled")
+      .internal()
+      .doc(
+        """When enabled, SQL INSERT INTO BY NAME operations allow schema evolution: extra columns in
+          |the source that are not in the target table schema are added to the target schema when
+          |schema evolution (mergeSchema) is also enabled. Disable this flag to revert to the old
+          |behavior where extra columns always cause an error, regardless of schema evolution
+          |settings.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
@@ -1324,6 +1374,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL =
+    buildConf("writeChecksumFile.histogramFollowsProtocol")
+      .internal()
+      .doc("""When true, writes the file size histogram to CRC files using the Delta spec field
+             |name "fileSizeHistogram". When false, uses the legacy Delta-Spark field name
+             |"histogramOpt".""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -3138,7 +3197,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
-      .createWithDefault(50000)
+      .createWithDefault(100000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
