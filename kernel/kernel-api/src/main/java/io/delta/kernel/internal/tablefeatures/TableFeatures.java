@@ -92,7 +92,11 @@ public class TableFeatures {
 
     @Override
     public Set<TableFeature> requiredFeatures() {
-      return Collections.singleton(IN_COMMIT_TIMESTAMP_W_FEATURE);
+      // Match Spark's CatalogOwnedTableFeature: vacuumProtocolCheck ensures vacuum operations
+      // check the protocol before deleting files on catalog-managed tables.
+      return Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(IN_COMMIT_TIMESTAMP_W_FEATURE, VACUUM_PROTOCOL_CHECK_RW_FEATURE)));
     }
   }
 

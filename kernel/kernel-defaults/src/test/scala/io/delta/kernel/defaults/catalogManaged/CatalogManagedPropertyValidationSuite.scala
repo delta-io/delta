@@ -317,9 +317,10 @@ class CatalogManagedPropertyValidationSuite extends AnyFunSuite with TestUtils {
             .contains("true")
           assert(ictEnabled == testCase.expectedIctEnabled)
 
-          // If catalogManaged is supported, ICT feature should also be supported
+          // If catalogManaged is supported, its dependencies should also be supported
           if (testCase.expectedCatalogManagedSupported) {
             assert(protocol.supportsFeature(TableFeatures.IN_COMMIT_TIMESTAMP_W_FEATURE))
+            assert(protocol.supportsFeature(TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE))
 
             assert(
               customCatalogCommitter
