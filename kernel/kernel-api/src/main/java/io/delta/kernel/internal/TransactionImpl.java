@@ -322,6 +322,10 @@ public class TransactionImpl implements Transaction {
     return protocol;
   }
 
+  public Metadata getMetadata() {
+    return metadata;
+  }
+
   public Optional<SetTransaction> getSetTxnOpt() {
     return setTxnOpt;
   }
@@ -404,10 +408,10 @@ public class TransactionImpl implements Transaction {
       List<DomainMetadata> resolvedDomainMetadatas =
           domainMetadataState.getComputedDomainMetadatasToCommit();
 
-      // If row tracking is supported, assign base row IDs and default row commit versions to any
-      // AddFile actions that do not yet have them. If the row ID high watermark changes, emit a
-      // DomainMetadata action to update it.
-      if (TableFeatures.isRowTrackingSupported(protocol)) {
+      // If row tracking is supported and not suspended, assign base row IDs and default row
+      // commit versions to any AddFile actions that do not yet have them. If the row ID high
+      // watermark changes, emit a DomainMetadata action to update it.
+      if (TableFeatures.isRowTrackingSupported(protocol) && !RowTracking.isSuspended(metadata)) {
         List<DomainMetadata> updatedDomainMetadata =
             RowTracking.updateRowIdHighWatermarkIfNeeded(
                 readSnapshotOpt,
