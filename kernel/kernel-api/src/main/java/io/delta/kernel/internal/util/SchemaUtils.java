@@ -354,6 +354,43 @@ public class SchemaUtils {
     return field.withNewMetadata(metadata);
   }
 
+  /**
+   * Recursively checks if any field in the schema contains type widening metadata (non-empty type
+   * changes). This includes type changes on fields nested inside {@link ArrayType} and {@link
+   * MapType}.
+   *
+   * @param schema the schema to check
+   * @return true if any field in the schema tree has type widening metadata
+   */
+  public static boolean containsTypeWideningMetadata(StructType schema) {
+    for (StructField field : schema.fields()) {
+      if (containsTypeWideningMetadataInField(field)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Removes all type widening metadata ({@code delta.typeChanges}) from the schema. Returns a new
+   * schema with all type changes cleared. Required for DROP TABLE FEATURE (typeWidening).
+   *
+   * <p>If the schema contains no type widening metadata, the same schema object is returned.
+   *
+   * @param schema the schema to remove type widening metadata from
+   * @return a new schema with all type changes cleared, or the same schema if no changes existed
+   */
+  public static StructType removeTypeWideningMetadata(StructType schema) {
+    if (!containsTypeWideningMetadata(schema)) {
+      return schema;
+    }
+    List<StructField> cleanedFields = new ArrayList<>();
+    for (StructField field : schema.fields()) {
+      cleanedFields.add(removeTypeWideningMetadataFromField(field));
+    }
+    return new StructType(cleanedFields);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                                           ///
   /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -866,5 +903,75 @@ public class SchemaUtils {
     } else {
       throw unsupportedDataType(dataType);
     }
+  }
+
+  private static boolean containsTypeWideningMetadataInField(StructField field) {
+    if (!field.getTypeChanges().isEmpty()) {
+      return true;
+    }
+    return containsTypeWideningMetadataInDataType(field.getDataType());
+  }
+
+  private static boolean containsTypeWideningMetadataInDataType(DataType dataType) {
+    if (dataType instanceof StructType) {
+      return containsTypeWideningMetadata((StructType) dataType);
+    }
+    if (dataType instanceof ArrayType) {
+      return containsTypeWideningMetadataInField(((ArrayType) dataType).getElementField());
+    }
+    if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      return containsTypeWideningMetadataInField(mapType.getKeyField())
+          || containsTypeWideningMetadataInField(mapType.getValueField());
+    }
+    return false;
+  }
+
+  private static StructField removeTypeWideningMetadataFromField(StructField field) {
+    DataType cleanedType = removeTypeWideningMetadataFromDataType(field.getDataType());
+    boolean hasTypeChanges = !field.getTypeChanges().isEmpty();
+    boolean typeChanged = cleanedType != field.getDataType();
+
+    if (!hasTypeChanges && !typeChanged) {
+      return field;
+    }
+
+    FieldMetadata cleanedMetadata = removeTypeChangesFromMetadata(field.getMetadata());
+    return new StructField(field.getName(), cleanedType, field.isNullable(), cleanedMetadata);
+  }
+
+  private static DataType removeTypeWideningMetadataFromDataType(DataType dataType) {
+    if (dataType instanceof StructType) {
+      return removeTypeWideningMetadata((StructType) dataType);
+    }
+    if (dataType instanceof ArrayType) {
+      ArrayType arrayType = (ArrayType) dataType;
+      StructField cleanedElement = removeTypeWideningMetadataFromField(arrayType.getElementField());
+      if (cleanedElement != arrayType.getElementField()) {
+        return new ArrayType(cleanedElement);
+      }
+      return dataType;
+    }
+    if (dataType instanceof MapType) {
+      MapType mapType = (MapType) dataType;
+      StructField cleanedKey = removeTypeWideningMetadataFromField(mapType.getKeyField());
+      StructField cleanedValue = removeTypeWideningMetadataFromField(mapType.getValueField());
+      if (cleanedKey != mapType.getKeyField() || cleanedValue != mapType.getValueField()) {
+        return new MapType(cleanedKey, cleanedValue);
+      }
+      return dataType;
+    }
+    return dataType;
+  }
+
+  /** Removes the {@code delta.typeChanges} key from field metadata if present. */
+  private static FieldMetadata removeTypeChangesFromMetadata(FieldMetadata metadata) {
+    if (!metadata.contains(StructField.DELTA_TYPE_CHANGES_KEY)) {
+      return metadata;
+    }
+    return FieldMetadata.builder()
+        .fromMetadata(metadata)
+        .remove(StructField.DELTA_TYPE_CHANGES_KEY)
+        .build();
   }
 }

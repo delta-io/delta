@@ -31,7 +31,7 @@ import io.delta.kernel.internal.types.DataTypeJsonSerDe
 import io.delta.kernel.internal.util.ColumnMapping.{COLUMN_MAPPING_ID_KEY, COLUMN_MAPPING_MODE_KEY, COLUMN_MAPPING_PHYSICAL_NAME_KEY}
 import io.delta.kernel.internal.util.SchemaUtils.{computeSchemaChangesById, validateUpdatedSchemaAndGetUpdatedSchema}
 import io.delta.kernel.internal.util.VectorUtils.stringStringMapValue
-import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, StringType, StructField, StructType, TypeChange, VariantType}
+import io.delta.kernel.types.{ArrayType, ByteType, DataType, DoubleType, FieldMetadata, IntegerType, LongType, MapType, ShortType, StringType, StructField, StructType, TypeChange, VariantType}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.LongType.LONG
 import io.delta.kernel.types.TimestampType.TIMESTAMP
@@ -2097,5 +2097,163 @@ class SchemaUtilsSuite extends AnyFunSuite {
       dummyProtocol,
       emptySet(),
       false)
+  }
+
+  ///////////////////////////////////////////////////////////////////////////
+  // Type Widening Metadata Lifecycle Tests
+  ///////////////////////////////////////////////////////////////////////////
+
+  test("containsTypeWideningMetadata - returns true for field with type changes") {
+    val typeChange = new TypeChange(IntegerType.INTEGER, LongType.LONG)
+    val field = new StructField("id", LongType.LONG, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val schema = new StructType(List(field).asJava)
+
+    assert(SchemaUtils.containsTypeWideningMetadata(schema))
+  }
+
+  test("containsTypeWideningMetadata - returns false for schema without type changes") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("name", StringType.STRING)
+
+    assert(!SchemaUtils.containsTypeWideningMetadata(schema))
+  }
+
+  test("containsTypeWideningMetadata - returns true for nested struct with type changes") {
+    val typeChange = new TypeChange(IntegerType.INTEGER, LongType.LONG)
+    val innerField = new StructField("inner_id", LongType.LONG, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val innerStruct = new StructType(List(innerField).asJava)
+    val schema = new StructType().add("outer", innerStruct)
+
+    assert(SchemaUtils.containsTypeWideningMetadata(schema))
+  }
+
+  test("containsTypeWideningMetadata - returns true for array element with type changes") {
+    val typeChange = new TypeChange(ByteType.BYTE, IntegerType.INTEGER)
+    val elementField = new StructField("element", IntegerType.INTEGER, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val arrayType = new ArrayType(elementField)
+    val schema = new StructType().add("arr", arrayType)
+
+    assert(SchemaUtils.containsTypeWideningMetadata(schema))
+  }
+
+  test("containsTypeWideningMetadata - returns true for map value with type changes") {
+    val typeChange = new TypeChange(IntegerType.INTEGER, LongType.LONG)
+    val valueField = new StructField("value", LongType.LONG, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val keyField = new StructField("key", StringType.STRING, false)
+    val mapType = new MapType(keyField, valueField)
+    val schema = new StructType().add("map_col", mapType)
+
+    assert(SchemaUtils.containsTypeWideningMetadata(schema))
+  }
+
+  test("removeTypeWideningMetadata - removes type changes and preserves field properties") {
+    val customMetadata = FieldMetadata.builder()
+      .putString("comment", "user column")
+      .build()
+    val typeChange = new TypeChange(IntegerType.INTEGER, LongType.LONG)
+    val field = new StructField("id", LongType.LONG, false /* nullable */, customMetadata)
+      .withTypeChanges(List(typeChange).asJava)
+    val schema = new StructType(List(field).asJava)
+
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+
+    assert(!SchemaUtils.containsTypeWideningMetadata(cleaned))
+    val cleanedField = cleaned.get("id")
+    // Type changes and metadata key are removed
+    assert(cleanedField.getTypeChanges.isEmpty)
+    assert(!cleanedField.getMetadata.contains(StructField.DELTA_TYPE_CHANGES_KEY))
+    // Field properties are preserved
+    assert(cleanedField.getName == "id")
+    assert(cleanedField.getDataType == LongType.LONG)
+    assert(!cleanedField.isNullable)
+    assert(cleanedField.getMetadata.getString("comment") == "user column")
+  }
+
+  test("removeTypeWideningMetadata - returns same schema when no type changes") {
+    val schema = new StructType()
+      .add("id", IntegerType.INTEGER)
+      .add("name", StringType.STRING)
+
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+
+    assert(cleaned eq schema) // identity check - same object returned
+  }
+
+  test("removeTypeWideningMetadata - removes type changes from nested struct") {
+    val typeChange = new TypeChange(IntegerType.INTEGER, LongType.LONG)
+    val innerField = new StructField("inner_id", LongType.LONG, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val innerStruct = new StructType(List(innerField).asJava)
+    val schema = new StructType().add("outer", innerStruct)
+
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+
+    assert(!SchemaUtils.containsTypeWideningMetadata(cleaned))
+    val cleanedInner = cleaned.get("outer").getDataType.asInstanceOf[StructType]
+    assert(cleanedInner.get("inner_id").getTypeChanges.isEmpty)
+  }
+
+  test("removeTypeWideningMetadata - removes type changes from array elements") {
+    val typeChange = new TypeChange(ByteType.BYTE, IntegerType.INTEGER)
+    val elementField = new StructField("element", IntegerType.INTEGER, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val arrayType = new ArrayType(elementField)
+    val schema = new StructType().add("arr", arrayType)
+
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+
+    assert(!SchemaUtils.containsTypeWideningMetadata(cleaned))
+    val cleanedArray = cleaned.get("arr").getDataType.asInstanceOf[ArrayType]
+    assert(cleanedArray.getElementField.getTypeChanges.isEmpty)
+    assert(!cleaned.get("arr").getMetadata.contains(StructField.DELTA_TYPE_CHANGES_KEY))
+  }
+
+  test("removeTypeWideningMetadata - removes type changes from map value field") {
+    val typeChange = new TypeChange(IntegerType.INTEGER, LongType.LONG)
+    val valueField = new StructField("value", LongType.LONG, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val keyField = new StructField("key", StringType.STRING, false)
+    val mapType = new MapType(keyField, valueField)
+    val schema = new StructType().add("map_col", mapType)
+
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+
+    assert(!SchemaUtils.containsTypeWideningMetadata(cleaned))
+    val cleanedMap = cleaned.get("map_col").getDataType.asInstanceOf[MapType]
+    assert(cleanedMap.getValueField.getTypeChanges.isEmpty)
+    assert(!cleaned.get("map_col").getMetadata.contains(StructField.DELTA_TYPE_CHANGES_KEY))
+  }
+
+  test("removeTypeWideningMetadata - handles multiple type changes on same field") {
+    // Simulate byte -> int -> long widening history
+    val typeChanges = List(
+      new TypeChange(ByteType.BYTE, IntegerType.INTEGER),
+      new TypeChange(IntegerType.INTEGER, LongType.LONG)).asJava
+    val field = new StructField("id", LongType.LONG, true)
+      .withTypeChanges(typeChanges)
+    val schema = new StructType(List(field).asJava)
+
+    assert(SchemaUtils.containsTypeWideningMetadata(schema))
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+
+    assert(!SchemaUtils.containsTypeWideningMetadata(cleaned))
+    assert(cleaned.get("id").getTypeChanges.isEmpty)
+    assert(cleaned.get("id").getDataType == LongType.LONG)
+  }
+
+  test("removeTypeWideningMetadata - round trip: contains returns false after removal") {
+    val typeChange = new TypeChange(ByteType.BYTE, IntegerType.INTEGER)
+    val field = new StructField("id", IntegerType.INTEGER, true)
+      .withTypeChanges(List(typeChange).asJava)
+    val schema = new StructType(List(field).asJava)
+
+    assert(SchemaUtils.containsTypeWideningMetadata(schema))
+    val cleaned = SchemaUtils.removeTypeWideningMetadata(schema)
+    assert(!SchemaUtils.containsTypeWideningMetadata(cleaned))
   }
 }
