@@ -65,7 +65,7 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     # Pass Spark version as system property to SBT (must come before commands)
     if spark_version:
         cmd.append(f"-DsparkVersion={spark_version}")
-
+    
     cmd.append("clean")
 
     test_cmd = "test"
