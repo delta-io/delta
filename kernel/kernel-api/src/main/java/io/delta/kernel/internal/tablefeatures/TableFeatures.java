@@ -211,12 +211,7 @@ public class TableFeatures {
 
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return new SchemaIterable(metadata.getSchema())
-          .stream()
-              .anyMatch(
-                  element ->
-                      element.getField().getDataType() instanceof GeometryType
-                          || element.getField().getDataType() instanceof GeographyType);
+      return hasGeospatial(metadata)
     }
   }
 
@@ -875,6 +870,15 @@ public class TableFeatures {
     } else {
       return getDependencyFeatures(requiredFeatures);
     }
+  }
+
+  public static boolean hasGeospatial(Metadata metadata) {
+    new SchemaIterable(metadata.getSchema())
+        .stream()
+        .anyMatch(
+            element ->
+            element.getField().getDataType() instanceof GeometryType
+            || element.getField().getDataType() instanceof GeographyType);
   }
 
   /**
