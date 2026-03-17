@@ -45,7 +45,8 @@ public class RowTracking {
    *
    * @param metadata the metadata to check
    * @return true if row tracking is suspended
-   * @throws KernelException if both enableRowTracking and rowTrackingSuspended are true
+   * @throws io.delta.kernel.exceptions.KernelException if both enableRowTracking and
+   *     rowTrackingSuspended are true
    */
   public static boolean isSuspended(Metadata metadata) {
     boolean suspended = TableConfig.ROW_TRACKING_SUSPENDED.fromMetadata(metadata);
