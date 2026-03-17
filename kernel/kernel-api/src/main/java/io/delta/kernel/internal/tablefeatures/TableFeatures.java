@@ -873,12 +873,12 @@ public class TableFeatures {
   }
 
   public static boolean hasGeospatial(Metadata metadata) {
-    new SchemaIterable(metadata.getSchema())
+    return new SchemaIterable(metadata.getSchema())
         .stream()
-        .anyMatch(
-            element ->
-            element.getField().getDataType() instanceof GeometryType
-            || element.getField().getDataType() instanceof GeographyType);
+            .anyMatch(
+                element ->
+                    element.getField().getDataType() instanceof GeometryType
+                        || element.getField().getDataType() instanceof GeographyType);
   }
 
   /**
