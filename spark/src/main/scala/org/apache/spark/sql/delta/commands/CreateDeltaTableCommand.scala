@@ -786,6 +786,11 @@ case class CreateDeltaTableCommand(
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
+      if (allowCatalogManaged && txn.snapshot.isCatalogOwned) {
+        // Preserve the existing Delta metadata id across REPLACE. This is distinct from the
+        // Unity Catalog table id stored in `io.unitycatalog.tableId`.
+        newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)
+      }
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
@@ -802,7 +807,7 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    val txn = deltaLog.startTransaction(existingTableOpt, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion
