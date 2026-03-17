@@ -544,6 +544,8 @@ public class TransactionMetadataFactory {
     if (columnMappingMetadata.isPresent()) {
       newMetadata = columnMappingMetadata;
     }
+    // Validate column ID and physical name uniqueness as a safety check against metadata corruption
+    ColumnMapping.checkColumnIdAndPhysicalNameAssignments(getEffectiveMetadata());
     // We also resolve the user provided clustering columns here using the updated schema
     StructType updatedSchema = getEffectiveMetadata().getSchema();
     this.physicalNewClusteringColumns =
