@@ -185,7 +185,7 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
       val converter = new IcebergConverter()
       val (metadataPath, lastConvertedVersion) =
         converter.convertUncommitedTxn(txnInfo, attemptDeltaVersion, deltaLog, catalogTable)
-      val icebergTable = new HadoopTables(spark.sessionState.newHadoopConf).load(metadataPath)
+      val icebergTable = new HadoopTables(deltaLog.newDeltaHadoopConf()).load(metadataPath)
       val numFilesInIceberg = icebergTable.currentSnapshot().summary().get("total-data-files").toInt
       assert(numFilesInIceberg === currSnapshot.numOfFiles + 1)
       assert(lastConvertedVersion.isEmpty)
@@ -230,7 +230,7 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
       val converter = new IcebergConverter()
       val (metadataPath, lastConvertedVersion) =
         converter.convertUncommitedTxn(txnInfo, attemptDeltaVersion, deltaLog, catalogTable)
-      val icebergTable = new HadoopTables(spark.sessionState.newHadoopConf).load(metadataPath)
+      val icebergTable = new HadoopTables(deltaLog.newDeltaHadoopConf()).load(metadataPath)
       val numFilesInIceberg = icebergTable.currentSnapshot().summary().get("total-data-files").toInt
       assert(numFilesInIceberg === currSnapshot.numOfFiles + 2)
       assert(lastConvertedVersion.isEmpty)
