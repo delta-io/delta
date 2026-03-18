@@ -185,10 +185,15 @@ public class DeltaSparkParquetDataWriter implements DataWriter<InternalRow> {
     }
   }
 
+  /**
+   * Lazily initializes the Parquet OutputWriter. File naming follows V1's {@code
+   * DelayedCommitProtocol.getFileName}: {@code part-{split%05d}-{uuid}.parquet}. Random prefix
+   * subdirs and CDC-specific naming ({@code cdc-} prefix) will be added when partition and CDC
+   * support are wired in.
+   */
   private void initWriter() {
     Configuration conf = hadoopConf.value();
-    String fileName =
-        String.format("part-%d-%d-%s.parquet", partitionId, taskId, UUID.randomUUID());
+    String fileName = String.format("part-%05d-%s.parquet", partitionId, UUID.randomUUID());
     outputPath = new Path(targetDirectory, fileName);
 
     TaskAttemptContextImpl taskAttemptContext =
