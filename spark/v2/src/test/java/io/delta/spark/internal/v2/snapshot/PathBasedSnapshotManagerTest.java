@@ -21,11 +21,25 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.data.Row;
+import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -399,5 +413,86 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
           .history()
           .checkVersionExists(versionToCheck, Option.empty(), mustBeRecreatable, allowOutOfRange);
     }
+  }
+
+  private static final StructType CREATE_TABLE_SCHEMA =
+      new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+
+  private static Stream<Arguments> buildCreateTableTransactionTestCases() {
+    Map<String, String> propsWithRetention = new HashMap<>();
+    propsWithRetention.put("delta.appendOnly", "true");
+    propsWithRetention.put("delta.logRetentionDuration", "interval 60 days");
+
+    StructType partitionedSchema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("region", StringType.STRING)
+            .add("amount", IntegerType.INTEGER);
+
+    StructType multiPartitionSchema =
+        new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("year", IntegerType.INTEGER)
+            .add("region", StringType.STRING)
+            .add("value", IntegerType.INTEGER);
+
+    Map<String, String> appendOnlyProps = new HashMap<>();
+    appendOnlyProps.put("delta.appendOnly", "true");
+
+    return Stream.of(
+        Arguments.of(
+            "unpartitioned defaults",
+            CREATE_TABLE_SCHEMA,
+            Collections.<String, String>emptyMap(),
+            Optional.empty(),
+            Collections.emptyList()),
+        Arguments.of(
+            "table properties",
+            CREATE_TABLE_SCHEMA,
+            propsWithRetention,
+            Optional.empty(),
+            Collections.emptyList()),
+        Arguments.of(
+            "single partition column",
+            partitionedSchema,
+            Collections.<String, String>emptyMap(),
+            Optional.of(DataLayoutSpec.partitioned(Arrays.asList(new Column("region")))),
+            Arrays.asList("region")),
+        Arguments.of(
+            "properties and multiple partition columns",
+            multiPartitionSchema,
+            appendOnlyProps,
+            Optional.of(
+                DataLayoutSpec.partitioned(
+                    Arrays.asList(new Column("year"), new Column("region")))),
+            Arrays.asList("year", "region")));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("buildCreateTableTransactionTestCases")
+  public void testBuildCreateTableTransaction_returnsExpectedTransactionState(
+      String testName,
+      StructType expectedSchema,
+      Map<String, String> expectedConfig,
+      Optional<DataLayoutSpec> layoutSpec,
+      List<String> expectedPartitionColumns,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            expectedSchema, new HashMap<>(expectedConfig), layoutSpec, "PathBasedSM-test-v1.0");
+
+    Row state = txn.getTransactionState(defaultEngine);
+
+    assertEquals(expectedSchema, TransactionStateRow.getLogicalSchema(state), testName);
+    assertEquals(expectedConfig, TransactionStateRow.getConfiguration(state));
+    assertEquals(expectedPartitionColumns, TransactionStateRow.getPartitionColumnsList(state));
+    assertEquals(
+        defaultEngine.getFileSystemClient().resolvePath(testTablePath),
+        TransactionStateRow.getTablePath(state));
   }
 }

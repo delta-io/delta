@@ -17,9 +17,13 @@ package io.delta.spark.internal.v2.snapshot;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 
@@ -108,4 +112,16 @@ public interface DeltaSnapshotManager {
    * @return a CommitRange representing the specified range of commits
    */
   CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion);
+
+  /**
+   * Builds a create-table transaction for version 0 commits.
+   *
+   * <p>Callers can commit the returned transaction with either empty actions for metadata-only
+   * CREATE TABLE or with data actions for future CTAS-style flows.
+   */
+  Transaction buildCreateTableTransaction(
+      StructType kernelSchema,
+      Map<String, String> tableProperties,
+      Optional<DataLayoutSpec> dataLayoutSpec,
+      String engineInfo);
 }

@@ -15,16 +15,16 @@
  */
 package io.delta.spark.internal.v2.catalog;
 
-import io.delta.kernel.TableManager;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
-import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
-import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.utils.CloseableIterable;
+import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
+import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -37,10 +37,6 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.delta.DeltaTableUtils;
-import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
-import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
-import org.apache.spark.sql.delta.util.CatalogTableUtils;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -65,14 +61,14 @@ public final class CreateTableCommitCoordinator {
     io.delta.kernel.types.StructType kernelSchema =
         io.delta.spark.internal.v2.utils.SchemaUtils.convertSparkSchemaToKernelSchema(schema);
     Engine engine = createKernelEngine(spark, properties);
-
-    CreateTableTransactionBuilder txnBuilder =
-        buildCreateTableTransaction(
-            spark, catalogName, location, kernelSchema, tableProperties, engineInfo);
-
-    toDataLayoutSpec(partitions).ifPresent(txnBuilder::withDataLayoutSpec);
-
-    Transaction txn = txnBuilder.build(engine);
+    DeltaSnapshotManager snapshotManager =
+        SnapshotManagerFactory.forCreateTable(
+            location,
+            engine,
+            UCUtils.extractTableInfoForCreate(location, tableProperties, catalogName, spark));
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            kernelSchema, tableProperties, toDataLayoutSpec(partitions), engineInfo);
     txn.commit(engine, dataActions);
   }
 
@@ -81,46 +77,6 @@ public final class CreateTableCommitCoordinator {
     Map<String, String> filtered = new HashMap<>(properties);
     filtered.entrySet().removeIf(entry -> isHadoopOption(entry.getKey()));
     return filtered;
-  }
-
-  private static CreateTableTransactionBuilder buildCreateTableTransaction(
-      SparkSession spark,
-      String catalogName,
-      String location,
-      io.delta.kernel.types.StructType schema,
-      Map<String, String> tableProperties,
-      String engineInfo) {
-    if (CatalogTableUtils.isUnityCatalogManagedTableFromProperties(tableProperties)) {
-      scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
-          UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
-      scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
-      if (configOpt.isEmpty()) {
-        throw new IllegalArgumentException(
-            "Cannot create UC client for catalog '" + catalogName + "'.");
-      }
-
-      UCCatalogConfig config = configOpt.get();
-      UCCatalogManagedClient ucCatalogClient =
-          new UCCatalogManagedClient(
-              UCTokenBasedRestClientFactory$.MODULE$.createUCClient(
-                  config.uri(), config.authConfig()));
-
-      String ucTableId = tableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
-      if (ucTableId == null || ucTableId.isEmpty()) {
-        ucTableId = tableProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
-      }
-      if (ucTableId == null || ucTableId.isEmpty()) {
-        throw new IllegalArgumentException(
-            "Cannot create a UC managed table without property io.unitycatalog.tableId");
-      }
-
-      return ucCatalogClient
-          .buildCreateTableTransaction(ucTableId, location, schema, engineInfo)
-          .withTableProperties(tableProperties);
-    }
-
-    return TableManager.buildCreateTableTransaction(location, schema, engineInfo)
-        .withTableProperties(tableProperties);
   }
 
   private static String resolveLocation(
@@ -172,6 +128,7 @@ public final class CreateTableCommitCoordinator {
     Map<String, String> filtered = new HashMap<>(properties);
     filtered.remove(TableCatalog.PROP_LOCATION);
     filtered.remove(TableCatalog.PROP_PROVIDER);
+    filtered.remove(TableCatalog.PROP_COMMENT);
     filtered.remove(TableCatalog.PROP_OWNER);
     filtered.remove(TableCatalog.PROP_EXTERNAL);
     filtered.remove("path");
