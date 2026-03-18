@@ -159,6 +159,8 @@ class IcebergConverter
     // Validation on parameters
     def validate(): Unit = {
       conversionMode match {
+        case UNIFORM_CC_MODE =>
+          assert(additionalDeltaActionsToCommit.nonEmpty)
         case _ =>
           assert(additionalDeltaActionsToCommit.isEmpty)
       }
@@ -206,23 +208,11 @@ class IcebergConverter
           additionalDeltaActionsToCommit = Some(txnInfo.finalActionsToCommit),
           opType = "delta.iceberg.conversion.convertUncommitedTxn"
         ),
-        refreshedTable,
+        refreshedTable
       )
 
       val (newMetadataPath, _) = icebergTxn.getConvertedIcebergMetadata
-      // Return lastDeltaVersionConverted to enable UC server-side validation.
-      // The validation ensures incoming conversions start from (lastDeltaConvertedVersion + 1),
-      // providing additional safety at the cost of potential conflicts in edge cases.
-      // This can be disabled via DELTA_UNIFORM_ATOMIC_CONVERSION_BASE_VERSION_VALIDATION_ENABLED.
-      val updatedLastDeltaVersionConverted =
-        if (spark.sessionState.conf.getConf(
-          DeltaSQLConf.DELTA_UNIFORM_ATOMIC_CONVERSION_BASE_VERSION_VALIDATION_ENABLED)
-        ) {
-          lastDeltaVersionConverted
-        } else {
-          None
-        }
-      (newMetadataPath, updatedLastDeltaVersionConverted)
+      (newMetadataPath, None)
     }
 
   private def refreshCatalogTableIfNeeded(
