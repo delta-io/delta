@@ -2056,6 +2056,96 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
   }
 
+  for {
+    readChangeFeed <- Seq(true, false)
+    midVersionEndOffset <- Seq(true, false)
+  } {
+    test("fail on missing trailing commit - trailing commit disappears between latestOffset" +
+        s" and getBatch readChangeFeed=$readChangeFeed" +
+        s" midVersionEndOffset=$midVersionEndOffset") {
+      withTempDir { srcData =>
+        withSQLConf(
+          DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> readChangeFeed.toString) {
+          // Version 0: exactly 1 file
+          spark.range(10).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          // Version 1: exactly 1 file
+          spark.range(10, 20).coalesce(1).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+          // Version 2: exactly 3 files so rate limiting can produce a mid-version offset
+          spark.range(20, 30).repartition(3).write.format("delta").mode("append")
+            .save(srcData.getCanonicalPath)
+
+          val srcLog = DeltaLog.forTable(spark, srcData)
+          srcLog.update()
+
+          // Construct a DeltaSource manually so we can call latestOffset and getBatch separately.
+          // When midVersionEndOffset=true, we use maxFilesPerTrigger to force latestOffset to
+          // stop mid-version, producing a non-BASE_INDEX offset where reservoirVersion is
+          // the actual version. When false, all versions are consumed and the offset is bumped
+          // to (version+1, BASE_INDEX).
+          val optionsMap = {
+            var m = Map("startingVersion" -> "0")
+            if (readChangeFeed) m += (DeltaOptions.CDC_READ_OPTION -> "true")
+            if (midVersionEndOffset) m += ("maxFilesPerTrigger" -> "3")
+            m
+          }
+          val source = DeltaSource(
+            spark,
+            srcLog,
+            catalogTableOpt = None,
+            new DeltaOptions(optionsMap, spark.sessionState.conf),
+            srcLog.update(),
+            metadataPath = "")
+
+          val latestOfs = source.latestOffset(null, source.getDefaultReadLimit)
+          assert(latestOfs != null)
+          val endOffset = DeltaSourceOffset(srcLog.unsafeVolatileTableId, latestOfs)
+
+          if (midVersionEndOffset) {
+            // maxFilesPerTrigger=3 admits version 0 (1 file) + version 1 (1 file) +
+            // version 2's first file (1 file) = 3 files, stopping mid-version 2.
+            assert(endOffset.reservoirVersion == 2,
+              s"Expected version 2 but got ${endOffset.reservoirVersion}")
+            assert(endOffset.index == 0)
+          } else {
+            // All versions consumed; offset is bumped to (version=3, BASE_INDEX).
+            assert(endOffset.reservoirVersion == 3)
+            assert(endOffset.index == DeltaSourceOffset.BASE_INDEX)
+          }
+
+          // Delete version 2's commit file to simulate it disappearing after latestOffset.
+          srcLog.checkpoint()
+          val commitFile = new File(FileNames.unsafeDeltaFile(srcLog.logPath, 2).toUri)
+          assert(commitFile.exists(), s"Commit file should exist: $commitFile")
+          assert(commitFile.delete(), s"Failed to delete commit file: $commitFile")
+
+          if (catalogOwnedDefaultCreationEnabledInTests) {
+            // With coordinated commits, manually deleting the commit file creates an
+            // inconsistency between the filesystem and the commit coordinator's state.
+            // SnapshotManagement detects this gap before the streaming layer's trailing
+            // commit check can fire, throwing an IllegalStateException.
+            val e = intercept[IllegalStateException] {
+              source.getBatch(startOffsetOption = None, endOffset)
+            }
+            assert(e.getMessage.contains(
+              "unexpectedly still requires additional file-system listing"))
+          } else {
+            // getBatch reads versions 0-1 (version 2 is gone), so maxVersionSeen = 1.
+            // lastExpectedVersion = 2 in both cases:
+            //   mid-version:  endOffset=(v2, index=0) -> lastExpectedVersion = 2
+            //   fully consumed: endOffset=(v3, BASE_INDEX) -> lastExpectedVersion = 3 - 1 = 2
+            val e = intercept[DeltaIllegalStateException] {
+              source.getBatch(startOffsetOption = None, endOffset)
+            }
+            assert(e.getMessage ===
+              DeltaErrors.streamingTrailingCommitMissing(2L, 1L).getMessage)
+          }
+        }
+      }
+    }
+  }
+
   test("incremental: first commit file missing, fails") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
@@ -3173,9 +3263,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
 
   test("streaming processes 100 sequential single-value commits and contains all values 0 to 99") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      // TODO(#6339): enable batch size 2 after fix PR merged
-      assume(!catalogOwnedCoordinatorBackfillBatchSize.contains(2),
-        "Test cannot pass with batch size 2 due to issue #6339")
       // Write the first value to initialize the Delta table
       Seq(0).toDF("x").write.format("delta").save(inputDir.toString)
 

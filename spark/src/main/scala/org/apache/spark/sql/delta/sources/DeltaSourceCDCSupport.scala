@@ -203,8 +203,23 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
     val changes = getFileChangesForCDC(
       startVersion, startIndex, isInitialSnapshot, limits = None, Some(endOffset))
 
+    // Versions before startVersion have already been processed, so we treat
+    // startVersion - 1 as already "seen".
+    var maxVersionSeen = startVersion - 1
+    // The last commit version we expect the iterator to cover.
+    // If endOffset.index < 0, we don't need to read any file from
+    // endOffset.reservoirVersion, so the last version we must see is one before it.
+    // Similarly if start >= end (no data to read from that version), subtract 1.
+    val lastExpectedVersion = if (endOffset.index >= 0 &&
+      (startVersion < endOffset.reservoirVersion || startIndex < endOffset.index)) {
+      endOffset.reservoirVersion
+    } else {
+      endOffset.reservoirVersion - 1
+    }
+    // iterator will be materialized during CDCReader.changesToDF
     val groupedFileAndCommitInfoActions =
       changes.map { case (v, indexFiles, commitInfoOpt) =>
+        maxVersionSeen = v
         (v, indexFiles.filter(_.hasFileAction).map(_.getFileAction).toSeq ++ commitInfoOpt)
       }
 
@@ -227,6 +242,11 @@ trait DeltaSourceCDCSupport { self: DeltaSource =>
         case e: FileNotFoundException =>
           throw DeltaErrors.logFileNotFoundExceptionForStreamingSource(e)
       }
+    }
+    if (spark.sessionState.conf.getConf(DeltaSQLConf.STREAMING_TRAILING_COMMIT_VALIDATION) &&
+        maxVersionSeen < lastExpectedVersion) {
+      throw DeltaErrors.streamingTrailingCommitMissing(
+        lastExpectedVersion, maxVersionSeen)
     }
     logInfo(log"Getting CDC dataFrame for delta_log_path=" +
       log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)} with " +

@@ -496,6 +496,15 @@ trait DeltaErrorsBase
     )
   }
 
+  def streamingTrailingCommitMissing(
+      expectedVersion: Long,
+      seenVersion: Long): DeltaIllegalStateException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_STREAMING_TRAILING_COMMIT_MISSING",
+      messageParameters = Array(s"$expectedVersion", s"$seenVersion")
+    )
+  }
+
   def staticPartitionsNotSupportedException: Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_UNSUPPORTED_STATIC_PARTITIONS",
