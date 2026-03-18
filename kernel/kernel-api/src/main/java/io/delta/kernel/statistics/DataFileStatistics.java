@@ -25,6 +25,7 @@ import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
+import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.internal.util.JsonUtils;
 import io.delta.kernel.types.*;
 import java.io.IOException;
@@ -378,6 +379,18 @@ public class DataFileStatistics {
    */
   private void validateLiteralType(StructField field, Literal literal) {
     DataType fieldType = field.getDataType();
+    // Geospatial stats must be POINT WKT
+    if (fieldType instanceof GeometryType || fieldType instanceof GeographyType) {
+      if (!(literal.getDataType() instanceof GeometryType)
+          && !(literal.getDataType() instanceof GeographyType)) {
+        throw DeltaErrors.statsTypeMismatch(field.getName(), fieldType, literal.getDataType());
+      }
+      String wkt = (String) literal.getValue();
+      if (wkt != null) {
+        GeometryUtils.validatePointWKT(wkt);
+      }
+      return;
+    }
     // Variant stats are Z85-encoded strings
     DataType expectedLiteralType = fieldType instanceof VariantType ? StringType.STRING : fieldType;
     if (literal.getDataType() == null

@@ -49,6 +49,19 @@ public class GeometryUtils {
   }
 
   /**
+   * Validates that the given string is a well-formed WKT POINT. Throws KernelException if the
+   * string is null or not a valid POINT WKT.
+   */
+  public static void validatePointWKT(String wkt) {
+    try {
+      parsePointXY(wkt);
+    } catch (IllegalArgumentException e) {
+      throw new io.delta.kernel.exceptions.KernelException(
+          String.format("Geospatial stats must be a valid POINT WKT but got: %s", wkt), e);
+    }
+  }
+
+  /**
    * Parses the x and y coordinates from a WKT POINT string. Returns double[]{x, y}.
    *
    * <p>Supported formats: POINT (x y), POINT Z(x y z), POINT M(x y m), POINT ZM(x y z m).

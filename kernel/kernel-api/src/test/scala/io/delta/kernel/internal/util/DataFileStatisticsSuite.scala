@@ -1091,10 +1091,10 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
         |  "numRecords": 50,
         |  "minValues": {
         |    "geom": "POINT (1 2)",
-        |    "geog": "LINESTRING (0 0, 1 1)"
+        |    "geog": "POINT (10 20)"
         |  },
         |  "maxValues": {
-        |    "geom": "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        |    "geom": "POINT (3 4)",
         |    "geog": "POINT (30 40)"
         |  },
         |  "nullCount": {
@@ -1113,13 +1113,11 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     val minValues = stats.getMinValues
     assert(minValues.get(new Column("geom")).getValue == "POINT (1 2)")
     assert(minValues.get(new Column("geom")).getDataType.isInstanceOf[GeometryType])
-    assert(minValues.get(new Column("geog")).getValue ==
-      "LINESTRING (0 0, 1 1)")
+    assert(minValues.get(new Column("geog")).getValue == "POINT (10 20)")
     assert(minValues.get(new Column("geog")).getDataType.isInstanceOf[GeographyType])
 
     val maxValues = stats.getMaxValues
-    assert(maxValues.get(new Column("geom")).getValue ==
-      "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")
+    assert(maxValues.get(new Column("geom")).getValue == "POINT (3 4)")
     assert(maxValues.get(new Column("geog")).getValue == "POINT (30 40)")
 
     assert(stats.getNullCount.get(new Column("geom")) == 3L)
@@ -1218,6 +1216,97 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     }
     assert(exception.getMessage.contains("Type mismatch"))
     assert(exception.getMessage.contains("geom"))
+  }
+
+  test("deserializing non-POINT geospatial stats throws KernelException") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+
+    val lineStringJson =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": {
+         |    "geom": "LINESTRING (0 0, 1 1)"
+         |  }
+         |}""".stripMargin
+
+    val ex1 = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(lineStringJson, schema)
+    }
+    assert(ex1.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
+
+    val polygonJson =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": {
+         |    "geom": "POLYGON ((0 0, 1 0, 1 1, 0 0))"
+         |  }
+         |}""".stripMargin
+
+    val ex2 = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(polygonJson, schema)
+    }
+    assert(ex2.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
+  }
+
+  test("serializing non-POINT geospatial literal throws KernelException") {
+    val schema = new StructType()
+      .add("geog", GeographyType.ofDefault())
+
+    val minValues = Map[Column, Literal](
+      new Column("geog") -> Literal.ofGeospatialWKT(
+        "LINESTRING (0 0, 1 1)",
+        GeographyType.ofDefault())).asJava
+
+    val stats = new DataFileStatistics(
+      10,
+      minValues,
+      Collections.emptyMap[Column, Literal](),
+      Collections.emptyMap[Column, java.lang.Long](),
+      Optional.empty())
+
+    val exception = intercept[KernelException] {
+      stats.serializeAsJson(schema)
+    }
+    assert(exception.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
+  }
+
+  test("deserializing malformed POINT WKT throws KernelException") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+
+    // POINT with wrong coordinate count
+    val wrongCoordCount =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": { "geom": "POINT (1 2 3)" }
+         |}""".stripMargin
+    val ex1 = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(wrongCoordCount, schema)
+    }
+    assert(ex1.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
+
+    // POINT with non-numeric coordinates
+    val nonNumeric =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": { "geom": "POINT (abc def)" }
+         |}""".stripMargin
+    val ex2 = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(nonNumeric, schema)
+    }
+    assert(ex2.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
+
+    // POINT with missing parens
+    val missingParens =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": { "geom": "POINT 1 2" }
+         |}""".stripMargin
+    val ex3 = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(missingParens, schema)
+    }
+    assert(ex3.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
   }
 
 }
