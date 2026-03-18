@@ -475,7 +475,8 @@ class IcebergConverter
       icebergTxn: IcebergConversionTransaction,
       actionsToCommit: Seq[Action],
       prevSnapshotOpt: Option[SnapshotDescriptor],
-      deltaVersion: Long): Option[CommitInfo] = {
+      deltaVersion: Long,
+      extraSnapshotProperties: Map[String, String] = Map.empty): Option[CommitInfo] = {
 
     var commitInfo: Option[CommitInfo] = None
     var addFiles: Seq[AddFile] = Nil
@@ -584,6 +585,10 @@ class IcebergConverter
 
     removeFiles.foreach(txnHelper.add)
     addFiles.foreach(txnHelper.add)
+    // Inject extra snapshot summary properties (e.g., preserved Kafka offsets)
+    if (extraSnapshotProperties.nonEmpty) {
+      txnHelper.setSnapshotProperties(extraSnapshotProperties)
+    }
     // Make sure the next snapshot sequence number is deltaVersion
     txnHelper.commit(deltaVersion)
 

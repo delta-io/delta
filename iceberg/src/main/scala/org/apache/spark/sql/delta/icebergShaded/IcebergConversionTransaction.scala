@@ -117,6 +117,21 @@ class IcebergConversionTransaction(
     def add(add: AddFile): Unit = throw new UnsupportedOperationException
     def add(remove: RemoveFile): Unit = throw new UnsupportedOperationException
 
+    /**
+     * Set extra snapshot-level summary properties before commit.
+     * Used to preserve non-Delta-originated fields (e.g., Kafka offsets)
+     * during REPLACE_TABLE replay.
+     */
+    def setSnapshotProperties(properties: Map[String, String]): Unit = {
+      impl match {
+        case a: AppendFiles => properties.foreach { case (k, v) => a.set(k, v) }
+        case o: OverwriteFiles => properties.foreach { case (k, v) => o.set(k, v) }
+        case r: RewriteFiles => properties.foreach { case (k, v) => r.set(k, v) }
+        case d: DeleteFiles => properties.foreach { case (k, v) => d.set(k, v) }
+        case _ => // PendingUpdate types that don't support summary properties
+      }
+    }
+
     def commit(expectedSequenceNumber: Long): Unit = {
       assert(!committed, "Already committed.")
       impl.commit()
