@@ -1671,41 +1671,92 @@ trait DataSkippingDeltaTestsBase extends QueryTest
           s"STRUCT(CAST(strTs AS $timestampType) AS ts) AS nested")
 
       val tempDir = Utils.createTempDir()
-      val r = DeltaLog.forTable(spark, tempDir)
-      df.coalesce(1).write.format("delta").save(r.dataPath.toString)
+      val log = DeltaLog.forTable(spark, tempDir)
+      df.coalesce(1).write.format("delta").save(log.dataPath.toString)
 
-      // Check to ensure that the value actually in the file is always in range queries.
-      val hits = Seq(
-        s"""ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""nested.ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""nested.ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""TS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
-        s"""nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""")
+      checkSkipping(
+        log,
+        // Check to ensure that the value actually in the file is always in range queries.
+        hits = Seq(
+          s"""ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+          s"""ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+          s"""nested.ts >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+          s"""nested.ts <= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+          s"""TS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)""",
+          s"""nEstED.tS >= cast("2019-09-09 01:02:03.456789" AS $timestampType)"""),
+        // Check the range of values that are far enough away to be data skipped. Note that the
+        // values are aligned with millisecond boundaries because of the JSON serialization
+        // truncation.
+        misses = Seq(
+          s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+          s"""ts <= cast("2019-09-04 01:02:03.455999" AS $timestampType)""",
+          s"""nested.ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+          s"""nested.ts <= cast("2019-09-09 01:02:03.455999" AS $timestampType)""",
+          s"""TS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+          s"""nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)"""),
+        data = data,
+        checkEmptyUnusedFiltersForHits = false)
+    }
+  }
 
-      // Check the range of values that are far enough away to be data skipped. Note that the values
-      // are aligned with millisecond boundaries because of the JSON serialization truncation.
-      val misses = Seq(
-        s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
-        s"""ts <= cast("2019-09-04 01:02:03.455999" AS $timestampType)""",
-        s"""nested.ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
-        s"""nested.ts <= cast("2019-09-09 01:02:03.455999" AS $timestampType)""",
-        s"""TS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
-        s"""nEstED.tS >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""")
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType with Long.MaxValue") {
+      val maxVal = "294247-01-10 04:00:54.775807Z"
+      val tempDir = Utils.createTempDir()
+      val log = DeltaLog.forTable(spark, tempDir)
+      Seq(maxVal).toDF("strTs")
+        .selectExpr(s"CAST(strTs AS $timestampType) AS ts")
+        .coalesce(1)
+        .write
+        .format("delta")
+        .save(log.dataPath.toString)
 
-      hits.foreach { predicate =>
-        Given(predicate)
-        if (filesRead(r, predicate) != 1) {
-          failPretty(s"Expected hit but got miss for $predicate", predicate, data)
-        }
-      }
+      checkSkipping(
+        log,
+        hits = Seq(
+          s"""ts >= cast("$maxVal" AS $timestampType)""",
+          s"""ts >= "$maxVal"""",
+          s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+          // This still hits because of JSON truncation to milliseconds
+          s"""ts < cast("$maxVal" AS $timestampType)""".stripMargin),
+        misses = Seq(
+          s"""ts <= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+          s"""ts > cast("$maxVal" AS $timestampType)"""),
+        data = maxVal,
+        checkEmptyUnusedFiltersForHits = false)
+    }
+  }
 
-      misses.foreach { predicate =>
-        Given(predicate)
-        if (filesRead(r, predicate) != 0) {
-          failPretty(s"Expected miss but got hit for $predicate", predicate, data)
-        }
-      }
+  for (timestampType <- Seq("TIMESTAMP", "TIMESTAMP_NTZ")) {
+    test(s"data skipping on $timestampType near Long.MaxValue") {
+      val tempDir = Utils.createTempDir()
+      val log = DeltaLog.forTable(spark, tempDir)
+
+      val nearMaxMicros = Long.MaxValue - 999L
+
+      // Create DataFrame with the near-max timestamp value
+      Seq(nearMaxMicros).toDF("microsSinceEpoch")
+        .selectExpr(s"TIMESTAMP_MICROS(microsSinceEpoch) AS ts")
+        .selectExpr(s"CAST(ts AS $timestampType) AS ts")
+        .coalesce(1)
+        .write
+        .format("delta")
+        .save(log.dataPath.toString)
+
+      checkSkipping(
+        log,
+        // maxValue of the stats on ts will be saturated to Long.MaxValue instead
+        // of being added 1000 microseconds, which will cause a long overflow.
+        hits = Seq(
+          s"ts >= TIMESTAMP_MICROS($nearMaxMicros)",
+          s"ts >= TIMESTAMP_MICROS(${nearMaxMicros - 100})",
+          s"""ts >= cast("2019-09-09 01:02:03.457001" AS $timestampType)""",
+          s"ts >= TIMESTAMP_MICROS(${Long.MaxValue - 1000})",
+          s"ts < TIMESTAMP_MICROS($nearMaxMicros)"),
+        misses = Seq(
+          s"""ts <= cast("2019-09-09 01:02:03.457001" AS $timestampType)"""),
+        data = nearMaxMicros.toString,
+        checkEmptyUnusedFiltersForHits = false)
     }
   }
 

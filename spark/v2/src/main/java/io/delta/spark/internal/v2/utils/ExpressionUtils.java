@@ -18,12 +18,15 @@ package io.delta.spark.internal.v2.utils;
 import static org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.delta.kernel.expressions.AlwaysFalse;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.In;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Or;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.util.InternalUtils;
+import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.Timestamp;
 import java.util.*;
@@ -32,6 +35,8 @@ import org.apache.spark.sql.catalyst.expressions.Expression;
 import org.apache.spark.sql.connector.expressions.LiteralValue;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.sources.*;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DecimalType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.unsafe.types.UTF8String;
@@ -56,6 +61,8 @@ public final class ExpressionUtils {
    *   <li>Comparison: EqualTo, GreaterThan, LessThan, etc.
    *   <li>Null tests: IsNull, IsNotNull
    *   <li>Null-safe comparison: EqualNullSafe
+   *   <li>String prefix: StringStartsWith
+   *   <li>Set membership: In
    *   <li>Logical operators: And, Or, Not
    * </ul>
    *
@@ -64,7 +71,25 @@ public final class ExpressionUtils {
    *     not supported, along with a boolean indicating whether the conversion was partial
    */
   public static ConvertedPredicate convertSparkFilterToKernelPredicate(Filter filter) {
-    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/);
+    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/, null);
+  }
+
+  /**
+   * Converts a Spark SQL filter to a Delta Kernel predicate with table schema for type alignment.
+   *
+   * <p>When a table schema is provided, decimal literal types in comparison filters are widened to
+   * match the column's declared decimal type. This prevents type mismatch errors in the Kernel's
+   * expression evaluator during data skipping, where stats column types (from the table schema)
+   * must match the filter literal types exactly.
+   *
+   * @param filter the Spark SQL filter to convert
+   * @param tableSchema the table schema for looking up column types, may be null
+   * @return ConvertedPredicate containing the converted Kernel predicate, or empty if conversion is
+   *     not supported, along with a boolean indicating whether the conversion was partial
+   */
+  public static ConvertedPredicate convertSparkFilterToKernelPredicate(
+      Filter filter, StructType tableSchema) {
+    return convertSparkFilterToKernelPredicate(filter, true /*canPartialPushDown*/, tableSchema);
   }
 
   /**
@@ -80,10 +105,23 @@ public final class ExpressionUtils {
   @VisibleForTesting
   static ConvertedPredicate convertSparkFilterToKernelPredicate(
       Filter filter, boolean canPartialPushDown) {
+    return convertSparkFilterToKernelPredicate(filter, canPartialPushDown, null);
+  }
+
+  /**
+   * Core implementation of filter-to-predicate conversion with partial pushdown control and
+   * optional table schema for decimal type alignment.
+   *
+   * @param filter the Spark SQL filter to convert
+   * @param canPartialPushDown whether partial pushdown is allowed for AND filters
+   * @param tableSchema the table schema for looking up column types, may be null
+   */
+  private static ConvertedPredicate convertSparkFilterToKernelPredicate(
+      Filter filter, boolean canPartialPushDown, StructType tableSchema) {
     if (filter instanceof EqualTo) {
       EqualTo f = (EqualTo) filter;
       return new ConvertedPredicate(
-          convertValueToKernelLiteral(f.value())
+          convertComparisonLiteral(f.value(), f.attribute(), tableSchema)
               .map(l -> new Predicate("=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof EqualNullSafe) {
@@ -93,31 +131,31 @@ public final class ExpressionUtils {
       return new ConvertedPredicate(
           f.value() == null
               ? Optional.of(new Predicate("IS_NULL", kernelColumn(f.attribute())))
-              : convertValueToKernelLiteral(f.value())
+              : convertComparisonLiteral(f.value(), f.attribute(), tableSchema)
                   .map(l -> new Predicate("=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof GreaterThan) {
       GreaterThan f = (GreaterThan) filter;
       return new ConvertedPredicate(
-          convertValueToKernelLiteral(f.value())
+          convertComparisonLiteral(f.value(), f.attribute(), tableSchema)
               .map(l -> new Predicate(">", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof GreaterThanOrEqual) {
       GreaterThanOrEqual f = (GreaterThanOrEqual) filter;
       return new ConvertedPredicate(
-          convertValueToKernelLiteral(f.value())
+          convertComparisonLiteral(f.value(), f.attribute(), tableSchema)
               .map(l -> new Predicate(">=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof LessThan) {
       LessThan f = (LessThan) filter;
       return new ConvertedPredicate(
-          convertValueToKernelLiteral(f.value())
+          convertComparisonLiteral(f.value(), f.attribute(), tableSchema)
               .map(l -> new Predicate("<", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof LessThanOrEqual) {
       LessThanOrEqual f = (LessThanOrEqual) filter;
       return new ConvertedPredicate(
-          convertValueToKernelLiteral(f.value())
+          convertComparisonLiteral(f.value(), f.attribute(), tableSchema)
               .map(l -> new Predicate("<=", kernelColumn(f.attribute()), l)));
     }
     if (filter instanceof IsNull) {
@@ -130,10 +168,37 @@ public final class ExpressionUtils {
       return new ConvertedPredicate(
           Optional.of(new Predicate("IS_NOT_NULL", kernelColumn(f.attribute()))));
     }
+    if (filter instanceof StringStartsWith) {
+      StringStartsWith f = (StringStartsWith) filter;
+      return new ConvertedPredicate(
+          convertValueToKernelLiteral(f.value())
+              .map(l -> new Predicate("STARTS_WITH", kernelColumn(f.attribute()), l)));
+    }
+    if (filter instanceof org.apache.spark.sql.sources.In) {
+      org.apache.spark.sql.sources.In f = (org.apache.spark.sql.sources.In) filter;
+      // An empty IN list can never match any row. Push ALWAYS_FALSE so the kernel skips
+      // all files entirely, rather than scanning every file only to discard every row.
+      if (f.values().length == 0) {
+        return new ConvertedPredicate(Optional.of(AlwaysFalse.ALWAYS_FALSE));
+      }
+      List<io.delta.kernel.expressions.Expression> literals = new ArrayList<>();
+      for (Object value : f.values()) {
+        Optional<Literal> lit = convertValueToKernelLiteral(value);
+        if (!lit.isPresent()) {
+          // A value that can't be converted (e.g. null, unsupported type) makes the whole
+          // IN expression unsafe to push down; return empty to keep it for post-scan evaluation.
+          return new ConvertedPredicate(Optional.empty());
+        }
+        literals.add(lit.get());
+      }
+      return new ConvertedPredicate(Optional.of(new In(kernelColumn(f.attribute()), literals)));
+    }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;
-      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
-      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left =
+          convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown, tableSchema);
+      ConvertedPredicate right =
+          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown, tableSchema);
       boolean isPartial = left.isPartial() || right.isPartial();
       if (left.isPresent() && right.isPresent()) {
         return new ConvertedPredicate(Optional.of(new And(left.get(), right.get())), isPartial);
@@ -148,8 +213,10 @@ public final class ExpressionUtils {
     }
     if (filter instanceof org.apache.spark.sql.sources.Or) {
       org.apache.spark.sql.sources.Or f = (org.apache.spark.sql.sources.Or) filter;
-      ConvertedPredicate left = convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown);
-      ConvertedPredicate right = convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown);
+      ConvertedPredicate left =
+          convertSparkFilterToKernelPredicate(f.left(), canPartialPushDown, tableSchema);
+      ConvertedPredicate right =
+          convertSparkFilterToKernelPredicate(f.right(), canPartialPushDown, tableSchema);
       // OR requires both operands to be convertible for correctness
       boolean isPartial = left.isPartial() || right.isPartial();
       if (!left.isPresent() || !right.isPresent()) {
@@ -178,12 +245,72 @@ public final class ExpressionUtils {
       // NOT(age < 30) = NOT(true) = false → system excludes both row
       // We will return incorrect result, then.
       ConvertedPredicate child =
-          convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/);
+          convertSparkFilterToKernelPredicate(f.child(), false /*canPartialPushDown*/, tableSchema);
       return new ConvertedPredicate(
           child.getConvertedPredicate().map(c -> new Predicate("NOT", c)), child.isPartial());
     }
 
     return new ConvertedPredicate(Optional.empty());
+  }
+
+  /**
+   * Converts a filter literal value to a Kernel Literal, aligning decimal types with the column's
+   * declared type from the table schema when available.
+   *
+   * <p>When the value is a {@link java.math.BigDecimal} and the table schema is provided, this
+   * method looks up the column's declared {@link org.apache.spark.sql.types.DecimalType} and widens
+   * the literal to match. This prevents type mismatch errors in the Kernel's expression evaluator
+   * during data skipping, where stats column types must match the filter literal types exactly.
+   *
+   * <p>If the literal's scale exceeds the column's scale, or the widened value exceeds the column's
+   * precision, the filter cannot be safely pushed down and an empty Optional is returned.
+   *
+   * @param value the filter literal value
+   * @param attribute the column name referenced by the filter
+   * @param tableSchema the table schema for type lookup, may be null
+   * @return Optional containing the Kernel Literal with aligned type, or empty if conversion fails
+   */
+  private static Optional<Literal> convertComparisonLiteral(
+      Object value, String attribute, StructType tableSchema) {
+    if (value instanceof BigDecimal && tableSchema != null) {
+      BigDecimal bd = (BigDecimal) value;
+      Optional<DataType> columnType = lookupColumnType(attribute, tableSchema);
+      if (columnType.isPresent() && columnType.get() instanceof DecimalType) {
+        DecimalType colDecimalType = (DecimalType) columnType.get();
+        return widenDecimalLiteral(bd, colDecimalType.precision(), colDecimalType.scale());
+      }
+    }
+    return convertValueToKernelLiteral(value);
+  }
+
+  /**
+   * Widens a BigDecimal literal to match the target decimal precision and scale. Returns empty if
+   * the literal cannot be safely represented in the target type (e.g., the literal has more decimal
+   * digits than the target scale, or the widened value exceeds the target precision).
+   */
+  private static Optional<Literal> widenDecimalLiteral(
+      BigDecimal bd, int targetPrecision, int targetScale) {
+    if (bd.scale() <= targetScale) {
+      BigDecimal widened = bd.setScale(targetScale);
+      if (widened.precision() <= targetPrecision) {
+        return Optional.of(Literal.ofDecimal(widened, targetPrecision, targetScale));
+      }
+    }
+    // Literal doesn't fit in column type or has higher scale - skip pushdown
+    return Optional.empty();
+  }
+
+  /**
+   * Looks up the data type of a top-level column in the table schema using case-insensitive name
+   * matching. Returns empty for nested columns or if the column is not found.
+   */
+  private static Optional<DataType> lookupColumnType(String attribute, StructType tableSchema) {
+    for (StructField field : tableSchema.fields()) {
+      if (field.name().equalsIgnoreCase(attribute)) {
+        return Optional.of(field.dataType());
+      }
+    }
+    return Optional.empty();
   }
 
   /**
@@ -267,9 +394,9 @@ public final class ExpressionUtils {
       Double d = (Double) value;
       return Optional.of(Literal.ofDouble(d));
     }
-    if (value instanceof java.math.BigDecimal) {
+    if (value instanceof BigDecimal) {
       // Preserve precision and scale from the original BigDecimal
-      java.math.BigDecimal bd = (java.math.BigDecimal) value;
+      BigDecimal bd = (BigDecimal) value;
       return Optional.of(Literal.ofDecimal(bd, bd.precision(), bd.scale()));
     }
     if (value instanceof UTF8String) {
@@ -373,9 +500,25 @@ public final class ExpressionUtils {
    */
   public static FilterClassificationResult classifyFilter(
       Filter filter, Set<String> partitionColumnSet) {
+    return classifyFilter(filter, partitionColumnSet, null);
+  }
+
+  /**
+   * Classifies a Spark Filter with table schema for decimal type alignment.
+   *
+   * @param filter the Spark Filter to classify
+   * @param partitionColumnSet a set of partition column names (in lower case) for identifying data
+   *     filters
+   * @param tableSchema the table schema for aligning decimal literal types, may be null
+   * @return FilterClassificationResult containing classification details
+   */
+  public static FilterClassificationResult classifyFilter(
+      Filter filter, Set<String> partitionColumnSet, StructType tableSchema) {
     // try to convert Spark filter to Kernel Predicate
     ConvertedPredicate convertedPredicate =
-        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+        tableSchema != null
+            ? ExpressionUtils.convertSparkFilterToKernelPredicate(filter, tableSchema)
+            : ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
 
     boolean isKernelSupported = convertedPredicate.isPresent();
     boolean isPartialConversion = convertedPredicate.isPartial();

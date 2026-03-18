@@ -182,7 +182,11 @@ class IcebergFileManifest(
     val dataFiles =
           spark
             .createDataset(manifestFiles)
-            .flatMap(ManifestFiles.read(_, localTable.io()).asScala.map(new DataFileWrapper(_)))
+            .flatMap(
+              ManifestFiles.read(_, localTable.io(), localTable.specs())
+                .asScala.map(new DataFileWrapper(_)
+            )
+          )
     dataFiles
   }
 

@@ -38,7 +38,8 @@
 
 package io.delta.tables
 
-import java.io.File
+import java.io.{BufferedReader, File, InputStreamReader}
+import java.util.concurrent.TimeUnit
 
 import org.scalatest.{BeforeAndAfterAll, Suite}
 
@@ -117,13 +118,58 @@ trait RemoteSparkSession extends BeforeAndAfterAll { self: Suite =>
     builder.environment().put("SPARK_LOCAL_IP", "127.0.0.1")
     builder.directory(new File(sparkHome))
     builder.redirectError(ProcessBuilder.Redirect.INHERIT)
-    builder.redirectOutput(ProcessBuilder.Redirect.INHERIT)
     builder.start()
+  }
+
+  private val SERVER_READY_TIMEOUT_SECONDS = 120
+
+  /**
+   * Wait for the server process to print "Ready for client connections." to stdout,
+   * indicating the gRPC port is bound and accepting connections.
+   */
+  private def waitForServerReady(process: Process): Unit = {
+    val reader = new BufferedReader(new InputStreamReader(process.getInputStream))
+    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(SERVER_READY_TIMEOUT_SECONDS)
+    var ready = false
+    var line: String = null
+    while (!ready && System.nanoTime() < deadline) {
+      line = reader.readLine()
+      if (line == null) {
+        throw new RuntimeException(
+          "Spark Connect server process exited before becoming ready. " +
+            s"Exit code: ${process.exitValue()}")
+      }
+      // Mirror to stdout so server logs are still visible in test output.
+      // scalastyle:off println
+      println(line)
+      // scalastyle:on println
+      if (line.contains("Ready for client connections.")) {
+        ready = true
+      }
+    }
+    if (!ready) {
+      process.destroy()
+      throw new RuntimeException(
+        s"Spark Connect server did not become ready within $SERVER_READY_TIMEOUT_SECONDS seconds")
+    }
+    // Continue forwarding server stdout in background so the process doesn't block on a full
+    // output buffer.
+    val forwarder = new Thread(() => {
+      var l: String = null
+      while ({ l = reader.readLine(); l != null }) {
+        // scalastyle:off println
+        println(l)
+        // scalastyle:on println
+      }
+    })
+    forwarder.setDaemon(true)
+    forwarder.start()
   }
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    server
+    val process = server
+    waitForServerReady(process)
     spark = SparkSession.builder().remote(s"sc://localhost:$serverPort").create()
   }
 

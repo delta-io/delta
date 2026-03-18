@@ -21,7 +21,7 @@ import java.util.{Base64, Optional}
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Tests for DeletionVectorDescriptor.serializeToBase64().
+ * Tests for DeletionVectorDescriptor.
  */
 class DeletionVectorDescriptorSuite extends AnyFunSuite {
 
@@ -56,6 +56,21 @@ class DeletionVectorDescriptorSuite extends AnyFunSuite {
 
       assert(dis.readUTF() === pathOrInlineDv)
       dis.close()
+    }
+  }
+
+  // Regression test: isInline() must use .equals() not == for String comparison.
+  // Using `new String(...)` creates non-interned Strings that would fail with ==.
+  testCases.foreach { case (storageType, pathOrInlineDv, offset, sizeInBytes, cardinality) =>
+    test(s"isInline with non-interned string - $storageType storage type") {
+      val dv = new DeletionVectorDescriptor(
+        new String(storageType), // deliberately non-interned
+        pathOrInlineDv,
+        offset.map(Integer.valueOf).map(Optional.of[Integer]).getOrElse(Optional.empty[Integer]()),
+        sizeInBytes,
+        cardinality)
+
+      assert(dv.isInline() === (storageType == "i"))
     }
   }
 

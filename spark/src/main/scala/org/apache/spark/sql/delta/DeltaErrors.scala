@@ -1085,6 +1085,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedPartitionColumnChange(
+      operation: String,
+      oldPartitionColumns: Seq[String],
+      newPartitionColumns: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+      messageParameters = Array(
+        operation,
+        oldPartitionColumns.mkString(", "),
+        newPartitionColumns.mkString(", ")
+      )
+    )
+  }
+
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
     val msg = if (colsDropped) {
       " Columns which are of NullType have been dropped."
@@ -1229,6 +1243,14 @@ trait DeltaErrorsBase
         version.get.toString
       ))
     }
+  }
+
+  def streamingSchemaMismatchOnRestart(
+      querySchema: StructType,
+      tableSchema: StructType): RuntimeException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART",
+      messageParameters = Array(formatSchema(querySchema), formatSchema(tableSchema)))
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -3199,7 +3221,8 @@ trait DeltaErrorsBase
       spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
-      detectedDuringStreaming: Boolean): Throwable = {
+      detectedDuringStreaming: Boolean,
+      isV2DataSource: Boolean = false): Throwable = {
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
@@ -3209,7 +3232,8 @@ trait DeltaErrorsBase
       generateDocsLinkOption(spark, docLink).getOrElse("-"),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
-        "detectedDuringStreaming" -> detectedDuringStreaming.toString
+        "detectedDuringStreaming" -> detectedDuringStreaming.toString,
+        "isV2DataSource" -> isV2DataSource.toString
       ))
   }
 
@@ -3597,6 +3621,7 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
+        icebergCompatVersion.toString,
         icebergCompatVersion.toString,
         icebergCompatVersion.toString
       ),
@@ -4335,7 +4360,9 @@ class DeltaStreamingNonAdditiveSchemaIncompatibleException(
     val enableNonAdditiveSchemaEvolution: Boolean = false,
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
-    errorClass = if (enableNonAdditiveSchemaEvolution) {
+    errorClass = if (additionalProperties.getOrElse("isV2DataSource", "false") == "true") {
+      "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2"
+    } else if (enableNonAdditiveSchemaEvolution) {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"
     } else {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE"

@@ -431,12 +431,29 @@ public class DataTypeJsonSerDe {
   private static String FIXED_DECIMAL_REGEX = "decimal\\(\\s*(\\d+)\\s*,\\s*(\\-?\\d+)\\s*\\)";
   private static Pattern FIXED_DECIMAL_PATTERN = Pattern.compile(FIXED_DECIMAL_REGEX);
 
+  // Geometry patterns
+  private static final String GEOMETRY_REGEX = "geometry\\(\\s*([\\w]+:-?[\\w]+)\\s*\\)";
+  private static final Pattern GEOMETRY_PATTERN = Pattern.compile(GEOMETRY_REGEX);
+
+  // Geography patterns
+  private static final String GEOGRAPHY_CRS_ALG_REGEX =
+      "geography\\(\\s*(\\w+:-?\\w+)\\s*,\\s*(\\w+)\\s*\\)";
+  private static final Pattern GEOGRAPHY_CRS_ALG_PATTERN = Pattern.compile(GEOGRAPHY_CRS_ALG_REGEX);
+  private static final String GEOGRAPHY_CRS_REGEX = "geography\\(\\s*(\\w+:-?\\w+)\\s*\\)";
+  private static final Pattern GEOGRAPHY_CRS_PATTERN = Pattern.compile(GEOGRAPHY_CRS_REGEX);
+  private static final String GEOGRAPHY_ALG_REGEX = "geography\\(\\s*(\\w+)\\s*\\)";
+  private static final Pattern GEOGRAPHY_ALG_PATTERN = Pattern.compile(GEOGRAPHY_ALG_REGEX);
+
   /** Parses primitive string type names to a {@link DataType} */
   private static DataType nameToType(String name) {
     if (BasePrimitiveType.isPrimitiveType(name)) {
       return BasePrimitiveType.createPrimitive(name);
     } else if (name.equals("decimal")) {
       return DecimalType.USER_DEFAULT;
+    } else if (name.equals("geometry")) {
+      return GeometryType.ofDefault();
+    } else if (name.equals("geography")) {
+      return GeographyType.ofDefault();
     } else if ("void".equalsIgnoreCase(name)) {
       // Earlier versions of Delta had VOID type which is not specified in Delta Protocol.
       // It is not readable or writable. Throw a user-friendly error message.
@@ -448,6 +465,40 @@ public class DataTypeJsonSerDe {
         int precision = Integer.parseInt(decimalMatcher.group(1));
         int scale = Integer.parseInt(decimalMatcher.group(2));
         return new DecimalType(precision, scale);
+      }
+
+      // geometry has a special pattern with an SRID
+      Matcher geometryMatcher = GEOMETRY_PATTERN.matcher(name);
+      if (geometryMatcher.matches()) {
+        String srid = geometryMatcher.group(1);
+        return GeometryType.ofSRID(srid);
+      }
+
+      // geography has different patterns:
+      // 1. geography(<srid>, <algorithm>) - both specified
+      // 2. geography(<srid>) - SRID specified (contains colon)
+      // 3. geography(<algorithm>) - algorithm specified (no colon)
+
+      // First check for both CRS and algorithm (contains comma)
+      Matcher geographyCrsAlgMatcher = GEOGRAPHY_CRS_ALG_PATTERN.matcher(name);
+      if (geographyCrsAlgMatcher.matches()) {
+        String srid = geographyCrsAlgMatcher.group(1);
+        String algorithm = geographyCrsAlgMatcher.group(2);
+        return new GeographyType(srid, algorithm);
+      }
+
+      // Check for CRS pattern (contains colon)
+      Matcher geographyCrsMatcher = GEOGRAPHY_CRS_PATTERN.matcher(name);
+      if (geographyCrsMatcher.matches()) {
+        String srid = geographyCrsMatcher.group(1);
+        return GeographyType.ofSRID(srid);
+      }
+
+      // Check for algorithm pattern (no colon)
+      Matcher geographyAlgMatcher = GEOGRAPHY_ALG_PATTERN.matcher(name);
+      if (geographyAlgMatcher.matches()) {
+        String algorithm = geographyAlgMatcher.group(1);
+        return GeographyType.ofAlgorithm(algorithm);
       }
 
       // We have encountered a type that is beyond the specification of the protocol
@@ -507,6 +558,12 @@ public class DataTypeJsonSerDe {
       // Always serialize `StringType` as "string" without including collation info, since collation
       // is stored in the field metadata.
       gen.writeString("string");
+    } else if (dataType instanceof GeometryType) {
+      GeometryType geometryType = (GeometryType) dataType;
+      gen.writeString(geometryType.simpleString());
+    } else if (dataType instanceof GeographyType) {
+      GeographyType geographyType = (GeographyType) dataType;
+      gen.writeString(geographyType.simpleString());
     } else {
       gen.writeString(dataType.toString());
     }
