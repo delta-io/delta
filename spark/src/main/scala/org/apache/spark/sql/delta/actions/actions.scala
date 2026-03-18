@@ -259,6 +259,24 @@ object Protocol {
       writerFeatures = if (supportsWriterFeatures(minWriterVersion)) Some(Set()) else None)
   }
 
+  /**
+   * Construct a [[Protocol]] case class with explicitly provided reader/writer versions and
+   * feature sets. Unlike the 2-param apply which infers feature sets from version numbers,
+   * this factory accepts all four fields directly. This is useful when constructing a Protocol
+   * from an [[AbstractProtocol]] (e.g. adapting a Kernel Protocol for the V2 connector).
+   */
+  def apply(
+      minReaderVersion: Int,
+      minWriterVersion: Int,
+      readerFeatures: Option[Set[String]],
+      writerFeatures: Option[Set[String]]): Protocol = {
+    new Protocol(
+      minReaderVersion = minReaderVersion,
+      minWriterVersion = minWriterVersion,
+      readerFeatures = readerFeatures,
+      writerFeatures = writerFeatures)
+  }
+
   /** Returns the required protocol for a given feature. Takes into account dependent features. */
   def forTableFeature(tf: TableFeature): Protocol = {
     // Every table feature is a writer feature.

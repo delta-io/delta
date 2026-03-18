@@ -23,10 +23,11 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.streaming.{JsonSchemaSerializer, PartitionAndDataSchema, SchemaTrackingLog}
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaOptions}
 import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.v2.interop.{AbstractMetadata, AbstractProtocol}
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.Path
@@ -94,13 +95,11 @@ case class PersistedMetadata(
   lazy val protocol: Option[Protocol] =
     protocolJson.map(Action.fromJson).map(_.asInstanceOf[Protocol])
 
-  def validateAgainstSnapshot(snapshot: SnapshotDescriptor): Unit = {
-    if (snapshot.deltaLog.unsafeVolatileTableId != tableId) {
-      throw DeltaErrors.incompatibleSchemaLogDeltaTable(
-        tableId, snapshot.deltaLog.unsafeVolatileTableId)
+  def validateAgainstTableId(sourceTableId: String): Unit = {
+    if (sourceTableId != tableId) {
+      throw DeltaErrors.incompatibleSchemaLogDeltaTable(tableId, sourceTableId)
     }
   }
-
 }
 
 object PersistedMetadata {
@@ -112,16 +111,23 @@ object PersistedMetadata {
   def apply(
       tableId: String,
       deltaCommitVersion: Long,
-      metadata: Metadata,
-      protocol: Protocol,
+      metadata: AbstractMetadata,
+      protocol: AbstractProtocol,
       sourceMetadataPath: String): PersistedMetadata = {
+    val partitionSchema: StructType =
+      new StructType(metadata.partitionColumns.map(c => metadata.schema(c)).toArray)
+    val sparkProtocol = Protocol(
+      protocol.minReaderVersion,
+      protocol.minWriterVersion,
+      protocol.readerFeatures,
+      protocol.writerFeatures)
     PersistedMetadata(tableId, deltaCommitVersion,
-      metadata.schema.json, metadata.partitionSchema.json,
+      metadata.schema.json, partitionSchema.json,
       // The schema is bound to the specific source
       sourceMetadataPath,
       // Table configurations come from the Metadata action
       Some(metadata.configuration),
-      Some(protocol.json)
+      Some(sparkProtocol.json)
     )
   }
 }
@@ -132,7 +138,8 @@ object PersistedMetadata {
  * This schema log is NOT meant to be shared across different Delta streaming source instances.
  *
  * @param rootMetadataLocation Metadata log location
- * @param sourceSnapshot Delta source snapshot for the Delta streaming source
+ * @param sourceTableId The unique identifier of the Delta table being tracked.
+ * @param sourceDataPath The data path of the Delta table, used for error messages.
  * @param sourceMetadataPathOpt The source metadata path that is used during streaming execution.
  * @param initMetadataLogEagerly If true, initialize metadata log as early as possible, otherwise,
  *                             initialize only when detecting non-additive schema change.
@@ -140,7 +147,8 @@ object PersistedMetadata {
 class DeltaSourceMetadataTrackingLog private(
     sparkSession: SparkSession,
     rootMetadataLocation: String,
-    sourceSnapshot: SnapshotDescriptor,
+    sourceTableId: String,
+    sourceDataPath: String,
     sourceMetadataPathOpt: Option[String] = None,
     val initMetadataLogEagerly: Boolean = true) {
 
@@ -160,7 +168,7 @@ class DeltaSourceMetadataTrackingLog private(
       sparkSession, rootMetadataLocation, schemaSerializer)
 
   // Validate schema at log init
-  trackingLog.getCurrentTrackedSchema.foreach(_.validateAgainstSnapshot(sourceSnapshot))
+  trackingLog.getCurrentTrackedSchema.foreach(_.validateAgainstTableId(sourceTableId))
 
   /**
    * Get the global latest metadata for this metadata location.
@@ -222,7 +230,7 @@ class DeltaSourceMetadataTrackingLog private(
     } catch {
       case FailedToEvolveSchema =>
         throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-          rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
+          rootMetadataLocation, sourceDataPath)
     }
   }
 }
@@ -248,7 +256,9 @@ object DeltaSourceMetadataTrackingLog extends Logging {
   def create(
       sparkSession: SparkSession,
       rootMetadataLocation: String,
-      sourceSnapshot: SnapshotDescriptor,
+      sourceTableId: String,
+      sourceDataPath: String,
+      deltaLog: DeltaLog,
       catalogTableOpt: Option[CatalogTable],
       parameters: Map[String, String],
       sourceMetadataPathOpt: Option[String] = None,
@@ -257,11 +267,12 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
     val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
     val metadataTrackingLocation = fullMetadataTrackingLocation(
-      rootMetadataLocation, sourceSnapshot.deltaLog.unsafeVolatileTableId, sourceTrackingId)
+      rootMetadataLocation, sourceTableId, sourceTrackingId)
     val log = new DeltaSourceMetadataTrackingLog(
       sparkSession,
       metadataTrackingLocation,
-      sourceSnapshot,
+      sourceTableId,
+      sourceDataPath,
       sourceMetadataPathOpt,
       initMetadataLogEagerly
     )
@@ -270,7 +281,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     // 1. table snapshot to check for partition and tahoe id mismatch
     // 2. source metadata path to ensure we are not using the wrong schema log for the source
     log.getCurrentTrackedMetadata.foreach { schema =>
-      schema.validateAgainstSnapshot(sourceSnapshot)
+      schema.validateAgainstTableId(sourceTableId)
       if (sparkSession.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED)) {
         sourceMetadataPathOpt.foreach { metadataPath =>
@@ -295,7 +306,7 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       // if it's OK for the stream to proceed.
       getMergedConsecutiveMetadataChanges(
         sparkSession,
-        sourceSnapshot.deltaLog,
+        deltaLog,
         catalogTableOpt,
         log.getCurrentTrackedMetadata.get
       ).foreach { mergedSchema =>
