@@ -179,6 +179,17 @@ object DeltaV2SourceSuite {
     // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
     // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
+    // These tests directly use DeltaSource, not applicable to the v2 path.
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=true midVersionEndOffset=false",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=true",
+    "fail on missing trailing commit - trailing commit disappears between latestOffset and" +
+      " getBatch readChangeFeed=false midVersionEndOffset=false",
+    "fail on missing trailing commit - empty batch from startIndex >= endIndex is not a" +
+      " false positive",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch
