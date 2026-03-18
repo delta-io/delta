@@ -223,8 +223,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   )(implicit log: DeltaLog): DeltaSourceMetadataTrackingLog =
     DeltaSourceMetadataTrackingLog.create(
       spark, getDefaultSchemaLocation.toString,
-      log.unsafeVolatileTableId, log.dataPath.toString, log,
-      catalogTableOpt = None,
+      log.unsafeVolatileTableId, log.dataPath.toString,
       parameters = sourceTrackingId.map(DeltaOptions.STREAMING_SOURCE_TRACKING_ID -> _).toMap,
       initMetadataLogEagerly = initializeEagerly)
 
@@ -538,11 +537,11 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       val schemaLocation = getDefaultSchemaLocation.toString
       val snapshot = log.update()
       val schemaLog1 = DeltaSourceMetadataTrackingLog.create(
-        spark, schemaLocation, log.unsafeVolatileTableId, log.dataPath.toString, log,
-        catalogTableOpt = None, parameters = Map.empty)
+        spark, schemaLocation, log.unsafeVolatileTableId, log.dataPath.toString,
+        parameters = Map.empty)
       val schemaLog2 = DeltaSourceMetadataTrackingLog.create(
-        spark, schemaLocation, log.unsafeVolatileTableId, log.dataPath.toString, log,
-        catalogTableOpt = None, Map.empty)
+        spark, schemaLocation, log.unsafeVolatileTableId, log.dataPath.toString,
+        parameters = Map.empty)
       val newSchema =
         PersistedMetadata("1", 1,
           makeMetadata(new StructType(), partitionSchema = new StructType()),
@@ -1628,11 +1627,11 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
     // Both schema log initialized
     def schemaLog1: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
-      spark, schemaLog1Location, log.unsafeVolatileTableId, log.dataPath.toString, log,
-      catalogTableOpt = None, parameters = Map.empty)
+      spark, schemaLog1Location, log.unsafeVolatileTableId, log.dataPath.toString,
+      parameters = Map.empty)
     def schemaLog2: DeltaSourceMetadataTrackingLog = DeltaSourceMetadataTrackingLog.create(
-      spark, schemaLog2Location, log.unsafeVolatileTableId, log.dataPath.toString, log,
-      catalogTableOpt = None, parameters = Map.empty)
+      spark, schemaLog2Location, log.unsafeVolatileTableId, log.dataPath.toString,
+      parameters = Map.empty)
 
     // The schema log initializes @ v5 with schema <a, b>
     testStream(df)(

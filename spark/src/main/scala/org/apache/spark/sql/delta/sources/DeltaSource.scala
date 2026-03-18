@@ -1521,6 +1521,64 @@ object DeltaSource extends DeltaLogging {
   }
 
   /**
+   * Speculate ahead and find the next merged consecutive metadata change if possible.
+   * Starting from the current metadata version, scan forward through commits. While a commit
+   * has metadata/protocol changes but NO file actions, keep going. Return the last such
+   * commit's metadata as an updated [[PersistedMetadata]].
+   *
+   * A metadata change is either:
+   * 1. A [[Metadata]] action change. OR
+   * 2. A [[Protocol]] change.
+   */
+  def getMergedConsecutiveMetadataChanges(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
+      currentMetadata: PersistedMetadata): Option[PersistedMetadata] = {
+    val currentMetadataVersion = currentMetadata.deltaCommitVersion
+    // We start from the currentSchemaVersion so that we can stop early in case the current
+    // version still has file actions that potentially needs to be processed.
+    val untilMetadataChange =
+      deltaLog.getChangeLogFiles(
+          currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
+        var metadataAction: Option[Metadata] = None
+        var protocolAction: Option[Protocol] = None
+        var hasFileAction = false
+        DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+          .processAndClose { actionsIter =>
+            actionsIter.foreach {
+              case m: Metadata => metadataAction = Some(m)
+              case p: Protocol => protocolAction = Some(p)
+              case _: FileAction => hasFileAction = true
+              case _ =>
+            }
+          }
+        (!hasFileAction && (metadataAction.isDefined || protocolAction.isDefined),
+          version, metadataAction, protocolAction)
+      }.takeWhile(_._1)
+    DeltaSource.iteratorLast(untilMetadataChange.toClosable)
+      .flatMap { case (_, version, metadataOpt, protocolOpt) =>
+      if (version == currentMetadataVersion) {
+        None
+      } else {
+        Some(
+          currentMetadata.copy(
+            deltaCommitVersion = version,
+            dataSchemaJson =
+              metadataOpt.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
+            partitionSchemaJson =
+              metadataOpt.map(_.partitionSchema.json)
+                .getOrElse(currentMetadata.partitionSchemaJson),
+            tableConfigurations = metadataOpt.map(_.configuration)
+              .orElse(currentMetadata.tableConfigurations),
+            protocolJson = protocolOpt.map(_.json).orElse(currentMetadata.protocolJson)
+          )
+        )
+      }
+    }
+  }
+
+  /**
    * Build the latest offset based on the last indexedFile. The function also checks if latest
    * version is valid by comparing with previous version.
    * Public for use by SparkMicroBatchStream.

@@ -509,10 +509,11 @@ object DeltaDataSource extends DatabricksLogging {
           schemaTrackingLocation,
           sourceSnapshot.deltaLog.unsafeVolatileTableId,
           sourceSnapshot.deltaLog.dataPath.toString,
-          sourceSnapshot.deltaLog,
-          catalogTableOpt,
           parameters,
           sourceMetadataPathOpt,
+          consecutiveMetadataMerger = currentMetadata =>
+            DeltaSource.getMergedConsecutiveMetadataChanges(
+              spark, sourceSnapshot.deltaLog, catalogTableOpt, currentMetadata),
           mergeConsecutiveSchemaChanges
         )
       }
