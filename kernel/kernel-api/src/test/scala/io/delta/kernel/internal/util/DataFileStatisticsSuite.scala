@@ -1027,4 +1027,197 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     assert(exception.getMessage === expectedMessage)
   }
 
+  test("serialization with geometry and geography types") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+      .add("geog", GeographyType.ofDefault())
+
+    val minValues = Map(
+      new Column("geom") -> Literal.ofGeospatialWKT(
+        "POINT (1 2)",
+        GeometryType.ofDefault()),
+      new Column("geog") -> Literal.ofGeospatialWKT(
+        "POINT (10 20)",
+        GeographyType.ofDefault())).asJava
+
+    val maxValues = Map(
+      new Column("geom") -> Literal.ofGeospatialWKT(
+        "POINT (3 4)",
+        GeometryType.ofDefault()),
+      new Column("geog") -> Literal.ofGeospatialWKT(
+        "POINT (30 40)",
+        GeographyType.ofDefault())).asJava
+
+    val nullCount = Map(
+      new Column("geom") -> java.lang.Long.valueOf(1L),
+      new Column("geog") -> java.lang.Long.valueOf(2L)).asJava
+
+    val stats = new DataFileStatistics(
+      100,
+      minValues,
+      maxValues,
+      nullCount,
+      Optional.of(true))
+
+    val json = stats.serializeAsJson(schema)
+    val expectedJson =
+      """{
+        |  "numRecords": 100,
+        |  "minValues": {
+        |    "geom": "POINT (1 2)",
+        |    "geog": "POINT (10 20)"
+        |  },
+        |  "maxValues": {
+        |    "geom": "POINT (3 4)",
+        |    "geog": "POINT (30 40)"
+        |  },
+        |  "nullCount": {
+        |    "geom": 1,
+        |    "geog": 2
+        |  },
+        |  "tightBounds": true
+        |}""".stripMargin
+
+    assert(areJsonNodesEqual(json, expectedJson))
+  }
+
+  test("deserialization with geometry and geography types") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+      .add("geog", GeographyType.ofDefault())
+
+    val json =
+      """{
+        |  "numRecords": 50,
+        |  "minValues": {
+        |    "geom": "POINT (1 2)",
+        |    "geog": "LINESTRING (0 0, 1 1)"
+        |  },
+        |  "maxValues": {
+        |    "geom": "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))",
+        |    "geog": "POINT (30 40)"
+        |  },
+        |  "nullCount": {
+        |    "geom": 3,
+        |    "geog": 0
+        |  },
+        |  "tightBounds": false
+        |}""".stripMargin
+
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
+    assert(result.isPresent)
+
+    val stats = result.get()
+    assert(stats.getNumRecords == 50)
+
+    val minValues = stats.getMinValues
+    assert(minValues.get(new Column("geom")).getValue == "POINT (1 2)")
+    assert(minValues.get(new Column("geom")).getDataType.isInstanceOf[GeometryType])
+    assert(minValues.get(new Column("geog")).getValue ==
+      "LINESTRING (0 0, 1 1)")
+    assert(minValues.get(new Column("geog")).getDataType.isInstanceOf[GeographyType])
+
+    val maxValues = stats.getMaxValues
+    assert(maxValues.get(new Column("geom")).getValue ==
+      "POLYGON ((0 0, 1 0, 1 1, 0 1, 0 0))")
+    assert(maxValues.get(new Column("geog")).getValue == "POINT (30 40)")
+
+    assert(stats.getNullCount.get(new Column("geom")) == 3L)
+    assert(stats.getNullCount.get(new Column("geog")) == 0L)
+    assert(stats.getTightBounds.isPresent && !stats.getTightBounds.get)
+  }
+
+  test("round-trip serialization for geometry and geography types") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+      .add("geog", GeographyType.ofDefault())
+
+    val minValues = Map(
+      new Column("geom") -> Literal.ofGeospatialWKT(
+        "POINT (1.5 2.5)",
+        GeometryType.ofDefault()),
+      new Column("geog") -> Literal.ofGeospatialWKT(
+        "POINT (10.5 20.5)",
+        GeographyType.ofDefault())).asJava
+
+    val maxValues = Map(
+      new Column("geom") -> Literal.ofGeospatialWKT(
+        "POINT (100 200)",
+        GeometryType.ofDefault()),
+      new Column("geog") -> Literal.ofGeospatialWKT(
+        "POINT (50 60)",
+        GeographyType.ofDefault())).asJava
+
+    val nullCount = Map(
+      new Column("geom") -> java.lang.Long.valueOf(0L),
+      new Column("geog") -> java.lang.Long.valueOf(5L)).asJava
+
+    val originalStats = new DataFileStatistics(
+      200,
+      minValues,
+      maxValues,
+      nullCount,
+      Optional.of(true))
+
+    val json = originalStats.serializeAsJson(schema)
+    val deserialized = DataFileStatistics.deserializeFromJson(json, schema)
+    assert(deserialized.isPresent)
+
+    val stats = deserialized.get()
+    assert(stats.getNumRecords == 200)
+    assert(stats.getMinValues.get(new Column("geom")).getValue ==
+      "POINT (1.5 2.5)")
+    assert(stats.getMinValues.get(new Column("geom"))
+      .getDataType.isInstanceOf[GeometryType])
+    assert(stats.getMinValues.get(new Column("geog")).getValue ==
+      "POINT (10.5 20.5)")
+    assert(stats.getMinValues.get(new Column("geog"))
+      .getDataType.isInstanceOf[GeographyType])
+    assert(stats.getMaxValues.get(new Column("geom")).getValue ==
+      "POINT (100 200)")
+    assert(stats.getMaxValues.get(new Column("geog")).getValue ==
+      "POINT (50 60)")
+    assert(stats.getNullCount.get(new Column("geom")) == 0L)
+    assert(stats.getNullCount.get(new Column("geog")) == 5L)
+  }
+
+  test("deserializing invalid geospatial stats throws KernelException") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+
+    val invalidJson =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": {
+         |    "geom": 1234
+         |  }
+         |}""".stripMargin
+
+    val exception = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(invalidJson, schema)
+    }
+    assert(exception.getMessage.contains("Expected geometry as WKT string"))
+  }
+
+  test("serialize throws when geospatial literal type mismatches schema") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+
+    val minValues = Map[Column, Literal](
+      new Column("geom") -> Literal.ofString("POINT (1 2)")).asJava
+
+    val stats = new DataFileStatistics(
+      10,
+      minValues,
+      Collections.emptyMap[Column, Literal](),
+      Collections.emptyMap[Column, java.lang.Long](),
+      Optional.empty())
+
+    val exception = intercept[KernelException] {
+      stats.serializeAsJson(schema)
+    }
+    assert(exception.getMessage.contains("Type mismatch"))
+    assert(exception.getMessage.contains("geom"))
+  }
+
 }

@@ -378,13 +378,6 @@ public class DataFileStatistics {
    */
   private void validateLiteralType(StructField field, Literal literal) {
     DataType fieldType = field.getDataType();
-    // Geometry/geography stats are stored as WKT string literals
-    if (fieldType instanceof GeometryType || fieldType instanceof GeographyType) {
-      if (!(literal.getDataType() instanceof StringType)) {
-        throw DeltaErrors.statsTypeMismatch(field.getName(), fieldType, literal.getDataType());
-      }
-      return;
-    }
     // Variant stats are Z85-encoded strings
     DataType expectedLiteralType = fieldType instanceof VariantType ? StringType.STRING : fieldType;
     if (literal.getDataType() == null
@@ -444,6 +437,8 @@ public class DataFileStatistics {
       LocalDateTime localDateTime = ChronoUnit.MICROS.addTo(EPOCH, epochMicros).toLocalDateTime();
       LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+    } else if (type instanceof GeometryType || type instanceof GeographyType) {
+      generator.writeString((String) value);
     } else {
       throw unsupportedStatsDataType(type);
     }

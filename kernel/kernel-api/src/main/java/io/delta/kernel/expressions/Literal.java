@@ -194,6 +194,21 @@ public final class Literal implements Expression {
   }
 
   /**
+   * Create a geospatial WKT literal with the given data type.
+   *
+   * @param wkt WKT string value
+   * @param dataType must be {@link GeometryType} or {@link GeographyType}
+   * @return a {@link Literal} with the given geospatial type and String value
+   */
+  public static Literal ofGeospatialWKT(String wkt, DataType dataType) {
+    checkArgument(
+        dataType instanceof GeometryType || dataType instanceof GeographyType,
+        "dataType must be GeometryType or GeographyType, got: %s",
+        dataType);
+    return new Literal(wkt, dataType);
+  }
+
+  /**
    * Create {@code null} value literal.
    *
    * @param dataType {@link DataType} of the null literal.
@@ -232,6 +247,8 @@ public final class Literal implements Expression {
    *   <li>TIMESTAMP: {@link Long} represents the microseconds since epoch in UTC
    *   <li>TIMESTAMP_NTZ: {@link Long} represents the microseconds since epoch with no timezone
    *   <li>DECIMAL: {@link BigDecimal}.Use {@link #getDataType()} to find the precision and scale
+   *   <li>GEOMETRY: {@link String} WKT representation
+   *   <li>GEOGRAPHY: {@link String} WKT representation
    * </ul>
    *
    * @return Literal value.
