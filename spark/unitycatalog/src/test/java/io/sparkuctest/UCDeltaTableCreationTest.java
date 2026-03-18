@@ -578,6 +578,38 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  /** Tests CREATE TABLE with DSv2 STRICT mode enabled for both managed and external UC tables. */
+  @TestAllTableTypes
+  public void testStrictModeCreateTable(TableType tableType) throws Exception {
+    String originalMode = spark().conf().get("spark.databricks.delta.v2.enableMode", "AUTO");
+    spark().conf().set("spark.databricks.delta.v2.enableMode", "STRICT");
+    try {
+      withNewTable(
+          "strict_create",
+          "id INT, name STRING",
+          tableType,
+          tableName -> {
+            UnityCatalogInfo uc = unityCatalogInfo();
+            TablesApi tablesApi = new TablesApi(uc.createApiClient());
+            TableInfo tableInfo = tablesApi.getTable(tableName, false, false);
+            assertThat(tableInfo.getDataSourceFormat().name())
+                .isEqualTo(DataSourceFormat.DELTA.name());
+            assertThat(tableInfo.getTableType().name()).isEqualTo(tableType.name());
+            assertThat(tableInfo.getStorageLocation()).isNotNull();
+
+            List<ColumnInfo> columns = tableInfo.getColumns();
+            assertThat(columns).hasSize(2);
+            Map<String, String> colTypes =
+                columns.stream()
+                    .collect(Collectors.toMap(ColumnInfo::getName, c -> c.getTypeName().name()));
+            assertThat(colTypes).containsEntry("id", "INT");
+            assertThat(colTypes).containsEntry("name", "STRING");
+          });
+    } finally {
+      spark().conf().set("spark.databricks.delta.v2.enableMode", originalMode);
+    }
+  }
+
   private void assertUCTableInfo(
       TableType tableType,
       String fullTableName,
