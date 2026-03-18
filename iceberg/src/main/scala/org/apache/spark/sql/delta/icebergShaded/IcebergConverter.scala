@@ -173,6 +173,64 @@ class IcebergConverter
     }
   }
 
+  /**
+   * Convert the specified txnInfo into Iceberg
+   * This is for the case where Iceberg conversion is needed when
+   *  a txn doesn't commit yet (for example, for atomic Delta UniForm)
+   * NOTE: 1. This operation is blocking
+   * @param txnInfo the txnInfo with the txn that needs to be converted to Iceberg
+   * @param deltaLog the associated deltaLog
+   * @param deltaAttemptVersion the attempt delta version txn targets at
+   * @param catalogTable the catalogTable this conversion targets
+   * @return (Iceberg metadata path, last converted Delta version)
+   */
+  def convertUncommitedTxn(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      deltaLog: DeltaLog,
+      catalogTable: CatalogTable): (String, Option[Long]) =
+    recordFrameProfile("Delta", "IcebergConverter.convertUncommitedTxn") {
+      val refreshedTable = refreshCatalogTableIfNeeded(txnInfo, deltaAttemptVersion, catalogTable)
+      val snapshotToConvert = getSnapshotForUncommitedTxn(
+        deltaLog, txnInfo, deltaAttemptVersion, catalogTable
+      )
+
+      val icebergTxn = convertSnapshotInternal(
+        snapshotToConvert,
+        readSnapshotOpt = Some(txnInfo.readSnapshot),
+        lastConvertedInfo = LastConvertedIcebergInfo(
+          None, None, None, None
+        ),
+        conversionContext = new ConversionContext(
+          conversionMode = UNIFORM_CC_MODE,
+          additionalDeltaActionsToCommit = Some(txnInfo.finalActionsToCommit),
+          opType = "delta.iceberg.conversion.convertUncommitedTxn"
+        ),
+        refreshedTable,
+      )
+
+      val (newMetadataPath, _) = icebergTxn.getConvertedIcebergMetadata
+      // Return lastDeltaVersionConverted to enable UC server-side validation.
+      // The validation ensures incoming conversions start from (lastDeltaConvertedVersion + 1),
+      // providing additional safety at the cost of potential conflicts in edge cases.
+      // This can be disabled via DELTA_UNIFORM_ATOMIC_CONVERSION_BASE_VERSION_VALIDATION_ENABLED.
+      val updatedLastDeltaVersionConverted =
+        if (spark.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_UNIFORM_ATOMIC_CONVERSION_BASE_VERSION_VALIDATION_ENABLED)
+        ) {
+          lastDeltaVersionConverted
+        } else {
+          None
+        }
+      (newMetadataPath, updatedLastDeltaVersionConverted)
+    }
+
+  private def refreshCatalogTableIfNeeded(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      catalogTable: CatalogTable): CatalogTable = {
+    catalogTable
+  }
 
   /**
    * The core implementation of convertSnapshot
@@ -335,6 +393,23 @@ class IcebergConverter
 
       icebergTxn
     }
+
+  private def getSnapshotForUncommitedTxn(
+      deltaLog: DeltaLog,
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      catalogTable: CatalogTable): Snapshot = {
+
+    new DummySnapshotWithAllFilesSupport(
+      deltaLog.logPath,
+      deltaLog,
+      txnInfo.metadata,
+      deltaAttemptVersion,
+      Some(txnInfo.protocol),
+      txnInfo,
+      catalogTable
+    )
+  }
 
   /**
    * Helper function to execute and commit Iceberg snapshot expiry
@@ -621,5 +696,45 @@ class IcebergConverter
         }
       }
     }
+  }
+}
+
+/**
+ * The dummy snapshot that could compute allFiles using state-reconstruction and log reply
+ * This is used for Delta UniForm only
+ */
+class DummySnapshotWithAllFilesSupport(
+    override val logPath: Path,
+    override val deltaLog: DeltaLog,
+    override val metadata: Metadata,
+    override val version: Long = -1,
+    val protocolOpt: Option[Protocol] = None,
+    val txnInfo: CurrentTransactionInfo,
+    val catalogTable: CatalogTable)
+  extends DummySnapshot(
+    logPath,
+    deltaLog,
+    metadata,
+    protocolOpt
+  ) {
+  override def allFiles: Dataset[AddFile] = {
+    SparkSession.getActiveSession.map { spark =>
+      import org.apache.spark.sql.delta.implicits._
+      val replay = new InMemoryLogReplay(None, None)
+      val baseVersion = version - 1
+      if (baseVersion < 0) { // No prior commit exists
+        replay.append(0, txnInfo.finalActionsToCommit.iterator)
+      } else { // construct allFiles from baseSnapshot
+        val baseSnapshot = baseVersion match {
+          case txnInfo.readSnapshot.version => txnInfo.readSnapshot
+          case _ => deltaLog.getSnapshotAt(baseVersion, catalogTableOpt = Some(catalogTable))
+        }
+        val existingFiles = baseSnapshot.allFiles.collect().toIterator
+        replay.append(0, existingFiles)
+        replay.append(1, txnInfo.finalActionsToCommit.iterator)
+      }
+      val allFiles: Seq[AddFile] = replay.allFiles
+      spark.createDataset(allFiles)
+    }.getOrElse(super.allFiles)
   }
 }
