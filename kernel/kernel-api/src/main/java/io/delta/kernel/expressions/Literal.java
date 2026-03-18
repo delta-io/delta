@@ -201,6 +201,7 @@ public final class Literal implements Expression {
    * @return a {@link Literal} with the given geospatial type and String value
    */
   public static Literal ofGeospatialWKT(String wkt, DataType dataType) {
+    checkArgument(wkt != null, "WKT string cannot be null; use Literal.ofNull() for null values");
     checkArgument(
         dataType instanceof GeometryType || dataType instanceof GeographyType,
         "dataType must be GeometryType or GeographyType, got: %s",

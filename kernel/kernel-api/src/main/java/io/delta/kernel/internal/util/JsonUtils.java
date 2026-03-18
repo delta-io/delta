@@ -260,8 +260,9 @@ public class JsonUtils {
         return Literal.ofString(textValue);
       } else if (dataType instanceof GeometryType || dataType instanceof GeographyType) {
         if (!valueNode.isTextual()) {
+          String typeName = dataType instanceof GeometryType ? "geometry" : "geography";
           throw new KernelException(
-              String.format("Expected geometry as WKT string but got: %s", valueNode));
+              String.format("Expected %s as WKT string but got: %s", typeName, valueNode));
         }
         String wkt = valueNode.asText();
         GeometryUtils.validatePointWKT(wkt);

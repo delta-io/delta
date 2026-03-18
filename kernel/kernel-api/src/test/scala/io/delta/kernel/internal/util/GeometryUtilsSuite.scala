@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -87,6 +87,14 @@ class GeometryUtilsSuite extends AnyFunSuite {
   test("non-numeric coordinate throws") {
     checkInvalid("POINT (1.0 foo)", "Invalid coordinate")
     checkInvalid("POINT ZM(1.0 2.0 3.0 bar)", "Invalid coordinate")
+  }
+
+  test("NaN and Infinity coordinates throw") {
+    checkInvalid("POINT (NaN 1.0)", "finite numbers")
+    checkInvalid("POINT (1.0 NaN)", "finite numbers")
+    checkInvalid("POINT (Infinity 1.0)", "finite numbers")
+    checkInvalid("POINT (1.0 -Infinity)", "finite numbers")
+    checkInvalid("POINT Z(1.0 2.0 NaN)", "finite numbers")
   }
 
   test("formatPointWKT - 2D") {

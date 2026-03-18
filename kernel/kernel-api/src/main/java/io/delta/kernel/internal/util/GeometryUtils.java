@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,9 +106,14 @@ public class GeometryUtils {
     try {
       double x = Double.parseDouble(parts[0]);
       double y = Double.parseDouble(parts[1]);
-      // validate remaining coordinates even though we only use x, y
+      if (!Double.isFinite(x) || !Double.isFinite(y)) {
+        throw new IllegalArgumentException("POINT coordinates must be finite numbers: " + wkt);
+      }
       for (int i = 2; i < parts.length; i++) {
-        Double.parseDouble(parts[i]);
+        double v = Double.parseDouble(parts[i]);
+        if (!Double.isFinite(v)) {
+          throw new IllegalArgumentException("POINT coordinates must be finite numbers: " + wkt);
+        }
       }
       return new double[] {x, y};
     } catch (NumberFormatException e) {
