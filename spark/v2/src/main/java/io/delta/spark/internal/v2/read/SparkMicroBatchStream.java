@@ -31,6 +31,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -97,7 +98,12 @@ public class SparkMicroBatchStream
 
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
-          new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
+          new HashSet<>(
+              Arrays.asList(
+                  DeltaAction.ADD,
+                  DeltaAction.REMOVE,
+                  DeltaAction.METADATA,
+                  DeltaAction.COMMITINFO)));
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -1034,6 +1040,7 @@ public class SparkMicroBatchStream
     boolean shouldSkipCommit = false;
     Metadata metadataAction = null;
     String removeFileActionPath = null;
+    String operation = null;
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
@@ -1076,6 +1083,17 @@ public class SparkMicroBatchStream
                   /* validatedDuringStreamStart */ false);
             }
           }
+
+          // Track CommitInfo for operation details in error messages.
+          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
+          if (commitInfoOpt.isPresent()) {
+            CommitInfo commitInfo = commitInfoOpt.get();
+            operation =
+                commitInfo
+                    .getOperation()
+                    .map(op -> String.format("%s (%s)", op, commitInfo.getOperationParameters()))
+                    .orElse(null);
+          }
         }
       }
     } catch (IOException e) {
@@ -1085,9 +1103,9 @@ public class SparkMicroBatchStream
     if (removeFileActionPath != null) {
       if (hasFileAdd && !shouldAllowChanges) {
         // Commit contains data changes (adds + removes) and changes are disallowed.
-        // TODO(#5319): log CommitInfo action's operation instead of path
+        String changeInfo = operation != null ? operation : removeFileActionPath;
         throw (RuntimeException)
-            DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
+            DeltaErrors.deltaSourceIgnoreChangesError(version, changeInfo, tablePath);
       } else if (!hasFileAdd && !shouldAllowDeletes) {
         // Commit contains only removes (deletes) and deletes are disallowed.
         throw (RuntimeException)

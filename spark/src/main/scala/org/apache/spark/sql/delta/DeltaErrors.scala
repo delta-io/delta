@@ -195,11 +195,11 @@ trait DeltaErrorsBase
 
   def deltaSourceIgnoreChangesError(
       version: Long,
-      removedFile: String,
+      changeInfo: String,
       dataPath: String): Throwable = {
     new DeltaUnsupportedOperationException(
       errorClass = "DELTA_SOURCE_TABLE_IGNORE_CHANGES",
-      messageParameters = Array(removedFile, version.toString, dataPath)
+      messageParameters = Array(changeInfo, version.toString, dataPath)
     )
   }
 
