@@ -3072,7 +3072,6 @@ class DeltaSuite extends QueryTest
           locationUri = Some(dir.toURI),
           inputFormat = None,
           outputFormat = None,
-          serdeName = None,
           serde = None,
           compressed = false,
           properties = allStorageProps
