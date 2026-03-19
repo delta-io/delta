@@ -20,9 +20,11 @@ import java.io.{BufferedReader, InputStreamReader, PrintWriter}
 import java.net.{ServerSocket, Socket}
 import java.util.concurrent.atomic.AtomicInteger
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.delta.util.JsonUtils
+import org.apache.spark.sql.delta.util.{CatalogTableUtils, JsonUtils}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.QueryTest
@@ -35,55 +37,79 @@ class UpdateMetricsHookSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
   private val TEST_CATALOG_NAME = "test_catalog"
+  private val TEST_UC_TABLE_ID = "uc-table-id-abc"
+
+  private def ucStorageFormat(ucTableId: String = TEST_UC_TABLE_ID): CatalogStorageFormat = {
+    CatalogStorageFormat(
+      locationUri = None,
+      inputFormat = None,
+      outputFormat = None,
+      serde = None,
+      compressed = false,
+      properties = Map(
+        UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> ucTableId,
+        "delta.feature.catalogManaged" -> "supported"
+      )
+    )
+  }
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "false")
   }
 
-  test("isUCManagedTable: requires MANAGED table and UC catalog connector") {
-    withTempDir { dir =>
-      spark.range(1).write.format("delta").save(dir.getCanonicalPath)
-      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
-      val hook = UpdateMetricsHook(None)
+  test("CatalogTableUtils.isUnityCatalogManagedTable: detection cases") {
+    val ucManaged = CatalogTable(
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
+      tableType = CatalogTableType.MANAGED,
+      storage = ucStorageFormat(),
+      schema = new StructType()
+    )
+    assert(CatalogTableUtils.isUnityCatalogManagedTable(ucManaged),
+      "UC-managed table with correct storage properties should be detected")
 
-      spark.conf.set("spark.sql.catalog.uc_catalog", "io.unitycatalog.spark.UCSingleCatalog")
-      spark.conf.set(
-        "spark.sql.catalog.non_uc_catalog",
-        "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+    val noUCTableId = CatalogTable(
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat(
+        locationUri = None,
+        inputFormat = None,
+        outputFormat = None,
+        serde = None,
+        compressed = false,
+        properties = Map("delta.feature.catalogManaged" -> "supported")
+      ),
+      schema = new StructType()
+    )
+    assert(!CatalogTableUtils.isUnityCatalogManagedTable(noUCTableId),
+      "table without UC table ID should not be detected")
 
-      val managedUCTable = CatalogTable(
-        identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
-        tableType = CatalogTableType.MANAGED,
-        storage = CatalogStorageFormat.empty,
-        schema = new StructType()
-      )
-      assert(hook.isUCManagedTable(spark, deltaLog, Some(managedUCTable)))
+    val noCatalogFeature = CatalogTable(
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat(
+        locationUri = None,
+        inputFormat = None,
+        outputFormat = None,
+        serde = None,
+        compressed = false,
+        properties = Map(
+          UCCommitCoordinatorClient.UC_TABLE_ID_KEY -> "some-id"
+        )
+      ),
+      schema = new StructType()
+    )
+    assert(!CatalogTableUtils.isUnityCatalogManagedTable(noCatalogFeature),
+      "table with UC ID but no catalog feature flag should not be detected")
 
-      val managedNonUCTable = CatalogTable(
-        identifier = TableIdentifier("t", Some("default"), Some("non_uc_catalog")),
-        tableType = CatalogTableType.MANAGED,
-        storage = CatalogStorageFormat.empty,
-        schema = new StructType()
-      )
-      assert(!hook.isUCManagedTable(spark, deltaLog, Some(managedNonUCTable)))
-
-      val externalUCTable = CatalogTable(
-        identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
-        tableType = CatalogTableType.EXTERNAL,
-        storage = CatalogStorageFormat.empty,
-        schema = new StructType()
-      )
-      assert(!hook.isUCManagedTable(spark, deltaLog, Some(externalUCTable)))
-
-      val noCatalogIdentifier = CatalogTable(
-        identifier = TableIdentifier("t", Some("default"), None),
-        tableType = CatalogTableType.MANAGED,
-        storage = CatalogStorageFormat.empty,
-        schema = new StructType()
-      )
-      assert(!hook.isUCManagedTable(spark, deltaLog, Some(noCatalogIdentifier)))
-    }
+    val emptyStorage = CatalogTable(
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
+      tableType = CatalogTableType.MANAGED,
+      storage = CatalogStorageFormat.empty,
+      schema = new StructType()
+    )
+    assert(!CatalogTableUtils.isUnityCatalogManagedTable(emptyStorage),
+      "table with empty storage properties should not be detected")
   }
 
   test("UCMetricsClient: sends minimal payload with Authorization header") {
@@ -98,32 +124,38 @@ class UpdateMetricsHookSuite extends QueryTest
       spark.conf.set(
         s"spark.sql.catalog.$TEST_CATALOG_NAME.uri",
         s"http://localhost:${mockServer.getPort()}")
-      spark.conf.set(s"spark.sql.catalog.$TEST_CATALOG_NAME.token", "test-token-123")
+      spark.conf.set(
+        s"spark.sql.catalog.$TEST_CATALOG_NAME.token",
+        "test-token-123")
 
       val request = ReportDeltaMetricsRequest(
         tableId = "abc-123",
         report = CommitReportEnvelope(CommitReport())
       )
-      UCMetricsClient.sendMetrics(spark, request, catalogName = Some(TEST_CATALOG_NAME))
+      UCMetricsClient.sendMetrics(
+        spark, request, catalogName = Some(TEST_CATALOG_NAME))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
 
       val authHeader = mockServer.getLastHeaders().get("Authorization")
       assert(authHeader.isDefined, "Authorization header should be present")
-      assert(authHeader.get == "Bearer test-token-123", "Auth token must match")
+      assert(authHeader.get == "Bearer test-token-123",
+        "Auth token must match")
 
       val body = mockServer.getLastRequestBody()
-      val actualPayload = JsonUtils.fromJson[Map[String, Any]](body)
-      val expectedPayload = JsonUtils.fromJson[Map[String, Any]](JsonUtils.toJson(request))
-      assert(actualPayload == expectedPayload, "request JSON should match expected payload")
+      val actualPayload =
+        JsonUtils.fromJson[Map[String, Any]](body)
+      val expectedPayload =
+        JsonUtils.fromJson[Map[String, Any]](JsonUtils.toJson(request))
+      assert(actualPayload == expectedPayload,
+        "request JSON should match expected payload")
     } finally {
       mockServer.stop()
     }
   }
 
   test("UCMetricsClient: auth.type=static with auth.token (new auth.* format)") {
-    val authStaticCatalog = "auth_static_catalog" // distinct from TEST_CATALOG_NAME to avoid
-    // config leakage between tests (SharedSparkSession reuses spark.conf)
+    val authStaticCatalog = "auth_static_catalog"
     val mockServer = new SimpleMockServer(0)
     try {
       mockServer.setResponseCode(200)
@@ -146,11 +178,13 @@ class UpdateMetricsHookSuite extends QueryTest
         tableId = "auth-test-id",
         report = CommitReportEnvelope(CommitReport())
       )
-      UCMetricsClient.sendMetrics(spark, request, catalogName = Some(authStaticCatalog))
+      UCMetricsClient.sendMetrics(
+        spark, request, catalogName = Some(authStaticCatalog))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
       val authHeader = mockServer.getLastHeaders().get("Authorization")
-      assert(authHeader.isDefined, "Authorization header should be present")
+      assert(authHeader.isDefined,
+        "Authorization header should be present")
       assert(authHeader.get == "Bearer auth-static-token-456",
         "Auth token from auth.token must match")
     } finally {
@@ -158,7 +192,7 @@ class UpdateMetricsHookSuite extends QueryTest
     }
   }
 
-  test("run(): fires HTTP POST for UC-managed table with skeleton payload") {
+  test("run(): fires HTTP POST for UC-managed table") {
     val mockServer = new SimpleMockServer(0)
     try {
       mockServer.setResponseCode(200)
@@ -175,12 +209,14 @@ class UpdateMetricsHookSuite extends QueryTest
         spark.conf.set(
           "spark.sql.catalog.spark_catalog.uri",
           s"http://localhost:${mockServer.getPort()}")
-        spark.conf.set("spark.sql.catalog.spark_catalog.token", "smoke-token")
+        spark.conf.set(
+          "spark.sql.catalog.spark_catalog.token", "smoke-token")
 
         val catalogTable = CatalogTable(
-          identifier = TableIdentifier("t", Some("default"), Some("spark_catalog")),
+          identifier = TableIdentifier(
+            "t", Some("default"), Some("spark_catalog")),
           tableType = CatalogTableType.MANAGED,
-          storage = CatalogStorageFormat.empty,
+          storage = ucStorageFormat(),
           schema = new StructType()
         )
 
@@ -201,17 +237,63 @@ class UpdateMetricsHookSuite extends QueryTest
 
         UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
 
-        assert(mockServer.getRequestCount() == 1, "Expected exactly 1 HTTP POST")
+        assert(mockServer.getRequestCount() == 1,
+          "Expected exactly 1 HTTP POST")
         val body = mockServer.getLastRequestBody()
         val expectedRequest = ReportDeltaMetrics.buildRequest(
-          deltaLog.tableId, Seq.empty, 0L)
-        val actualPayload = JsonUtils.fromJson[Map[String, Any]](body)
+          TEST_UC_TABLE_ID, Seq.empty, 0L)
+        val actualPayload =
+          JsonUtils.fromJson[Map[String, Any]](body)
         val expectedPayload =
-          JsonUtils.fromJson[Map[String, Any]](JsonUtils.toJson(expectedRequest))
-        assert(actualPayload == expectedPayload, "smoke test payload should match expected JSON")
+          JsonUtils.fromJson[Map[String, Any]](
+            JsonUtils.toJson(expectedRequest))
+        assert(actualPayload == expectedPayload,
+          "smoke test payload should match expected JSON")
       }
     } finally {
       mockServer.stop()
+    }
+  }
+
+  test("run(): skips metrics when table ID not in storage properties") {
+    withTempDir { dir =>
+      spark.range(1).write.format("delta").save(dir.getCanonicalPath)
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
+      val snapshot = deltaLog.snapshot
+
+      val catalogTable = CatalogTable(
+        identifier = TableIdentifier(
+          "t", Some("default"), Some("spark_catalog")),
+        tableType = CatalogTableType.MANAGED,
+        storage = CatalogStorageFormat(
+          locationUri = None,
+          inputFormat = None,
+          outputFormat = None,
+          serde = None,
+          compressed = false,
+          properties = Map(
+            "delta.feature.catalogManaged" -> "supported"
+          )
+        ),
+        schema = new StructType()
+      )
+
+      val txn = CommittedTransaction(
+        txnId = "skip-txn",
+        deltaLog = deltaLog,
+        catalogTable = Some(catalogTable),
+        readSnapshot = snapshot,
+        committedVersion = 0L,
+        committedActions = Seq.empty,
+        postCommitSnapshot = snapshot,
+        postCommitHooks = Seq.empty,
+        txnExecutionTimeMs = 0L,
+        needsCheckpoint = false,
+        partitionsAddedToOpt = None,
+        isBlindAppend = true
+      )
+
+      UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
     }
   }
 }
@@ -262,7 +344,8 @@ class SimpleMockServer(port: Int) {
 
   private def handleRequest(clientSocket: Socket): Unit = {
     try {
-      val in = new BufferedReader(new InputStreamReader(clientSocket.getInputStream))
+      val in = new BufferedReader(
+        new InputStreamReader(clientSocket.getInputStream))
       val out = new PrintWriter(clientSocket.getOutputStream, true)
 
       in.readLine()
@@ -276,7 +359,9 @@ class SimpleMockServer(port: Int) {
           val key = parts(0).trim
           val value = parts(1).trim
           headers(key) = value
-          if (key.equalsIgnoreCase("Content-Length")) contentLength = value.toInt
+          if (key.equalsIgnoreCase("Content-Length")) {
+            contentLength = value.toInt
+          }
         }
         line = in.readLine()
       }
@@ -288,7 +373,8 @@ class SimpleMockServer(port: Int) {
       lastRequestBody = new String(body)
       lastHeaders = headers.toMap
 
-      out.write(s"HTTP/1.1 $responseCode ${statusMessage(responseCode)}\r\n")
+      out.write(
+        s"HTTP/1.1 $responseCode ${statusMessage(responseCode)}\r\n")
       out.write("Content-Type: application/json\r\n")
       out.write("Content-Length: 2\r\n")
       out.write("\r\n")
@@ -297,7 +383,7 @@ class SimpleMockServer(port: Int) {
 
       clientSocket.close()
     } catch {
-      case _: java.io.IOException => // client disconnect, etc. - expected during test teardown
+      case _: java.io.IOException =>
     }
   }
 

@@ -17,14 +17,16 @@
 package org.apache.spark.sql.delta.hooks
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
-import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+
+import org.apache.spark.sql.delta.CommittedTransaction
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.util.CatalogTableUtils
 
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
 /**
  * Post-commit hook that sends commit metrics to Unity Catalog for UC-managed Delta tables.
@@ -39,18 +41,25 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
   override val name: String = "Update UC Metrics"
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
-    if (!isUCManagedTable(spark, txn.deltaLog, catalogTable)) return
+    val ct = catalogTable.orNull
+    if (ct == null || !CatalogTableUtils.isUnityCatalogManagedTable(ct)) return
+
+    val tableId = ct.storage.properties
+      .get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+      .filter(_.nonEmpty)
+    if (tableId.isEmpty) {
+      logWarning(
+        log"Skipping UC metrics: table ID not found in storage properties" +
+        log" for ${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)}")
+      return
+    }
 
     try {
-      val tableId = txn.deltaLog.tableId
-      if (tableId.isEmpty) {
-        throw new IllegalStateException("UC-managed table must have a table ID")
-      }
-
       val request = ReportDeltaMetrics.buildRequest(
-        tableId, txn.committedActions, txn.committedVersion)
-      val catalogName = catalogTable.flatMap(_.identifier.catalog)
-      UCMetricsClient.sendMetrics(spark, request, catalogName = catalogName)
+        tableId.get, txn.committedActions, txn.committedVersion)
+      val catalogName = ct.identifier.catalog
+      UCMetricsClient.sendMetrics(
+        spark, request, catalogName = catalogName)
 
       logInfo(
         log"Successfully sent UC metrics for table " +
@@ -71,22 +80,5 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     logWarning(
       log"UC metrics hook failed for version ${MDC(DeltaLogKeys.VERSION, version)}: " +
       log"${MDC(DeltaLogKeys.ERROR, error.getMessage)}", error)
-  }
-
-  private[hooks] def isUCManagedTable(
-      spark: SparkSession,
-      deltaLog: DeltaLog,
-      catalogTable: Option[CatalogTable]): Boolean = {
-    if (deltaLog.tableId.isEmpty) return false
-
-    catalogTable match {
-      case Some(ct) =>
-        ct.tableType == CatalogTableType.MANAGED &&
-        ct.identifier.catalog.exists { catalogName =>
-          spark.conf.getOption(s"spark.sql.catalog.$catalogName").contains(
-            UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS)
-        }
-      case None => false
-    }
   }
 }
