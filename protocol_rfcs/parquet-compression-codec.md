@@ -59,4 +59,4 @@ The following `metaData` action configures a table to use Zstandard compression 
 }
 ```
 
-A table with the above property may already contain `.snappy.parquet` files from previous writes. Both the `.snappy.parquet` and any new `.zstd.parquet` files coexist in the table and must be readable together.
+A table with the above property may already contain data files written with a different codec (e.g. snappy) from previous writes. Both old and new data files may coexist in the table and must be readable together.
