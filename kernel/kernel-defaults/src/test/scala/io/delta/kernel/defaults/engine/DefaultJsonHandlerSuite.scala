@@ -17,7 +17,7 @@ package io.delta.kernel.defaults.engine
 
 import java.math.{BigDecimal => JBigDecimal}
 import java.nio.file.FileAlreadyExistsException
-import java.util.Optional
+import java.util.{Collections, Optional}
 
 import scala.collection.JavaConverters._
 
@@ -553,5 +553,88 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     assert(commitInfo.getIsBlindAppend === Optional.empty())
     assert(commitInfo.getInCommitTimestamp === Optional.empty())
     assert(commitInfo.getTimestamp === 1740009523401L)
+    assert(commitInfo.getEngineInfo === Optional.of("myengine.com"))
+    assert(commitInfo.getOperation === Optional.of("WRITE"))
+    assert(commitInfo.getTxnId === Optional.of("test-txn-id"))
+  }
+
+  test("fromColumnVector handles null engineInfo, operation, and txnId without NPE") {
+    // Simulates a commit written by an external engine that omits these optional fields
+    val input =
+      """
+        |{
+        |   "timestamp":1740009523401,
+        |   "operationParameters":{},
+        |   "operationMetrics":{}
+        |}
+        |""".stripMargin
+
+    val readSchema = new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA)
+    val output = jsonHandler.parseJson(
+      stringVector(Seq(s"""{"commitInfo":${input.trim}}""")),
+      readSchema,
+      Optional.empty())
+    assert(output.getSize == 1)
+    val commitInfoVector = output.getColumnVector(0)
+    val commitInfo = CommitInfo.fromColumnVector(commitInfoVector, 0)
+
+    assert(commitInfo != null)
+    assert(commitInfo.getEngineInfo === Optional.empty())
+    assert(commitInfo.getOperation === Optional.empty())
+    assert(commitInfo.getTxnId === Optional.empty())
+    assert(commitInfo.getIsBlindAppend === Optional.empty())
+    assert(commitInfo.getInCommitTimestamp === Optional.empty())
+    assert(commitInfo.getTimestamp === 1740009523401L)
+    assert(commitInfo.getOperationParameters.isEmpty)
+    assert(commitInfo.getOperationMetrics.isEmpty)
+  }
+
+  test("fromColumnVector with only timestamp field does not NPE") {
+    // Minimal commit info - only the required timestamp field
+    val input =
+      """
+        |{
+        |   "timestamp":1000
+        |}
+        |""".stripMargin
+
+    val readSchema = new StructType().add("commitInfo", CommitInfo.FULL_SCHEMA)
+    val output = jsonHandler.parseJson(
+      stringVector(Seq(s"""{"commitInfo":${input.trim}}""")),
+      readSchema,
+      Optional.empty())
+    assert(output.getSize == 1)
+    val commitInfoVector = output.getColumnVector(0)
+    val commitInfo = CommitInfo.fromColumnVector(commitInfoVector, 0)
+
+    assert(commitInfo != null)
+    assert(commitInfo.getTimestamp === 1000L)
+    assert(commitInfo.getEngineInfo === Optional.empty())
+    assert(commitInfo.getOperation === Optional.empty())
+    assert(commitInfo.getTxnId === Optional.empty())
+    assert(commitInfo.getIsBlindAppend === Optional.empty())
+    assert(commitInfo.getInCommitTimestamp === Optional.empty())
+    assert(commitInfo.getOperationParameters.isEmpty)
+    assert(commitInfo.getOperationMetrics.isEmpty)
+  }
+
+  test("CommitInfo round-trips through toRow with nullable fields") {
+    val commitInfo = new CommitInfo(
+      Optional.of(100L),
+      200L,
+      Optional.empty(), // engineInfo
+      Optional.empty(), // operation
+      Collections.emptyMap(),
+      Optional.empty(), // isBlindAppend
+      Optional.empty(), // txnId
+      Collections.emptyMap())
+
+    val row = commitInfo.toRow()
+    assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("engineInfo")))
+    assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("operation")))
+    assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("txnId")))
+    assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("isBlindAppend")))
+    assert(row.getLong(CommitInfo.FULL_SCHEMA.indexOf("inCommitTimestamp")) === 100L)
+    assert(row.getLong(CommitInfo.FULL_SCHEMA.indexOf("timestamp")) === 200L)
   }
 }

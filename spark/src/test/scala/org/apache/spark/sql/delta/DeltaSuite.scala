@@ -46,7 +46,7 @@ import org.apache.spark.sql.functions.{asc, col, expr, lit, map_values, struct}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.streaming.StreamingQuery
 import org.apache.spark.sql.test.SharedSparkSession
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types._
 import org.apache.spark.util.Utils
 
 class DeltaSuite extends QueryTest
@@ -238,6 +238,36 @@ class DeltaSuite extends QueryTest
       // Confirm struct value stays as null (fields are not set to null).
       val rowWithNullStruct = spark.read.format("delta").table(tableName).filter($"`val``ue`" === 2)
       checkAnswer(rowWithNullStruct, Row(null, 2) :: Nil)
+    }
+  }
+
+  test("Cannot create table with NullType UDT column") {
+    val table_name = "test_table"
+    withTable(table_name) {
+      checkError(
+        intercept[DeltaAnalysisException] {
+          Seq((1, new NullData())).toDF("id", "value")
+            .write.format("delta").saveAsTable(table_name)
+        },
+        "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE",
+        sqlState = Some("22005"),
+        parameters = Map("columnName" -> "value", "userClass" -> classOf[NullData].getName)
+      )
+    }
+  }
+
+  test("Cannot create table with NullType in a complex UDT column") {
+    val table_name = "test_table"
+    withTable(table_name) {
+      checkError(
+        intercept[DeltaAnalysisException] {
+          Seq((1, new ComplexData())).toDF("id", "value")
+            .write.format("delta").saveAsTable(table_name)
+        },
+        "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE",
+        sqlState = Some("22005"),
+        parameters = Map("columnName" -> "value", "userClass" -> classOf[ComplexData].getName)
+      )
     }
   }
 
@@ -1725,9 +1755,8 @@ class DeltaSuite extends QueryTest
           Seq((2, 99), (5, 99)).toDF("key", "value")
         )
 
-        if (catalogOwnedDefaultCreationEnabledInTests) {
-          cancel("VACUUM is not supported on catalog owned managed tables")
-        }
+        assume(!catalogOwnedDefaultCreationEnabledInTests,
+          "VACUUM is blocked on catalog-managed tables")
 
         // VACUUM
         withSQLConf(DeltaSQLConf.DELTA_VACUUM_RETENTION_CHECK_ENABLED.key -> "false") {
@@ -3286,4 +3315,28 @@ class DeltaWithCatalogOwnedBatch2Suite extends DeltaSuite {
 
 class DeltaWithCatalogOwnedBatch100Suite extends DeltaSuite {
   override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
+}
+
+@SQLUserDefinedType(udt = classOf[NullUDT])
+class NullData extends Serializable
+
+class NullUDT extends UserDefinedType[NullData] {
+  override def sqlType: DataType = NullType
+  override def userClass: Class[NullData] = classOf[NullData]
+  override def serialize(obj: NullData): Any = null
+  override def deserialize(datum: Any): NullData = new NullData()
+}
+
+@SQLUserDefinedType(udt = classOf[ComplexUDT])
+class ComplexData extends Serializable
+
+class ComplexUDT extends UserDefinedType[ComplexData] {
+  override def sqlType: DataType = new MapType(
+    StringType,
+    new ArrayType(
+      new StructType().add("a", IntegerType).add("b", new NullUDT), containsNull = true),
+    valueContainsNull = true)
+  override def userClass: Class[ComplexData] = classOf[ComplexData]
+  override def serialize(obj: ComplexData): Any = null
+  override def deserialize(datum: Any): ComplexData = new ComplexData()
 }

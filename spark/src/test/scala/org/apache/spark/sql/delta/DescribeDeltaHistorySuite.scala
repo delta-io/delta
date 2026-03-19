@@ -1775,6 +1775,30 @@ trait DescribeDeltaHistorySuiteBase
       .getMap(0)
       .asInstanceOf[Map[String, String]]
   }
+
+  test("isV1SaveAsTableOverwrite logged only for v1 saveAsTable overwrite") {
+    withTable("tbl") {
+      // Initial create via saveAsTable - not an overwrite, flag should be absent
+      spark.range(5).write.format("delta").saveAsTable("tbl")
+      assert(!getTableCommitInfo("tbl").contains("isV1SaveAsTableOverwrite"))
+
+      // v1 saveAsTable overwrite -> ReplaceTable with isV1SaveAsTableOverwrite = true
+      spark.range(10).write.format("delta").mode("overwrite").saveAsTable("tbl")
+      assert(getTableCommitInfo("tbl").get("isV1SaveAsTableOverwrite").contains("true"))
+
+      // SQL REPLACE TABLE AS SELECT -> ReplaceTable but not v1 saveAsTable, flag should be absent
+      sql("CREATE OR REPLACE TABLE tbl USING delta AS SELECT id FROM range(3)")
+      assert(!getTableCommitInfo("tbl").contains("isV1SaveAsTableOverwrite"))
+
+      // V2 writeTo.createOrReplace -> ReplaceTable but not v1 saveAsTable, flag should be absent
+      spark.range(5).writeTo("tbl").using("delta").createOrReplace()
+      assert(!getTableCommitInfo("tbl").contains("isV1SaveAsTableOverwrite"))
+
+      // V2 writeTo.replace -> ReplaceTable but not v1 saveAsTable, flag should be absent
+      spark.range(5).writeTo("tbl").using("delta").replace()
+      assert(!getTableCommitInfo("tbl").contains("isV1SaveAsTableOverwrite"))
+    }
+  }
 }
 
 case class WriteOptionsAssertion(

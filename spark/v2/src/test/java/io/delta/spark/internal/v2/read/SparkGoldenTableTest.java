@@ -194,7 +194,7 @@ public class SparkGoldenTableTest {
         // input filters
         new Filter[] {
           new GreaterThan("cnt", 10), // supported data filter
-          new StringStartsWith("name", "foo"), // unsupported data filter
+          new StringStartsWith("name", "foo"), // supported data filter
           new EqualTo("date", "2025-09-01"), // supported partition filter
           new StringEndsWith("city", "York"), // unsupported partition filter
         },
@@ -205,10 +205,15 @@ public class SparkGoldenTableTest {
           new StringEndsWith("city", "York"),
         },
         // expected pushed filters
-        new Filter[] {new GreaterThan("cnt", 10), new EqualTo("date", "2025-09-01")},
+        new Filter[] {
+          new GreaterThan("cnt", 10),
+          new StringStartsWith("name", "foo"),
+          new EqualTo("date", "2025-09-01")
+        },
         // expected pushed kernel predicates
         new Predicate[] {
           new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+          new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo")),
           new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))
         },
         // expected data filters
@@ -217,7 +222,10 @@ public class SparkGoldenTableTest {
         Optional.of(
             new Predicate(
                 "AND",
-                new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                new Predicate(
+                    "AND",
+                    new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                    new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
                 new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))));
 
     // case 2: OR and NOT filters
@@ -240,11 +248,17 @@ public class SparkGoldenTableTest {
         },
         // expected pushed filters
         new Filter[] {
+          new Or(new GreaterThan("cnt", 10), new StringStartsWith("name", "foo")),
           new Or(new EqualTo("cnt", 50), new EqualTo("date", "2025-10-01")),
           new Not(new And(new GreaterThan("cnt", 100), new EqualTo("date", "2025-09-01"))),
+          new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected pushed kernel predicates
         new Predicate[] {
+          new Predicate(
+              "OR",
+              new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+              new Predicate("STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
           new Predicate(
               "OR",
               new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
@@ -254,7 +268,13 @@ public class SparkGoldenTableTest {
               new Predicate(
                   "AND",
                   new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
-                  new Predicate("=", new Column("date"), Literal.ofString("2025-09-01"))))
+                  new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))),
+          new Predicate(
+              "NOT",
+              new Predicate(
+                  "OR",
+                  new Predicate("=", new Column("name"), Literal.ofString("foo")),
+                  new Predicate("STARTS_WITH", new Column("city"), Literal.ofString("New"))))
         },
         // expected data filters
         new Filter[] {
@@ -264,19 +284,39 @@ public class SparkGoldenTableTest {
           new Not(new Or(new EqualTo("name", "foo"), new StringStartsWith("city", "New")))
         },
         // expected kernel scan builder predicate
+        // reduce(And::new) over 4 predicates gives left-associative nesting:
+        // AND(AND(AND(pred1, pred2), pred3), pred4)
         Optional.of(
             new Predicate(
                 "AND",
                 new Predicate(
-                    "OR",
-                    new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
-                    new Predicate("=", new Column("date"), Literal.ofString("2025-10-01"))),
+                    "AND",
+                    new Predicate(
+                        "AND",
+                        new Predicate(
+                            "OR",
+                            new Predicate(">", new Column("cnt"), Literal.ofInt(10)),
+                            new Predicate(
+                                "STARTS_WITH", new Column("name"), Literal.ofString("foo"))),
+                        new Predicate(
+                            "OR",
+                            new Predicate("=", new Column("cnt"), Literal.ofInt(50)),
+                            new Predicate(
+                                "=", new Column("date"), Literal.ofString("2025-10-01")))),
+                    new Predicate(
+                        "NOT",
+                        new Predicate(
+                            "AND",
+                            new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
+                            new Predicate(
+                                "=", new Column("date"), Literal.ofString("2025-09-01"))))),
                 new Predicate(
                     "NOT",
                     new Predicate(
-                        "AND",
-                        new Predicate(">", new Column("cnt"), Literal.ofInt(100)),
-                        new Predicate("=", new Column("date"), Literal.ofString("2025-09-01")))))));
+                        "OR",
+                        new Predicate("=", new Column("name"), Literal.ofString("foo")),
+                        new Predicate(
+                            "STARTS_WITH", new Column("city"), Literal.ofString("New")))))));
 
     // check SupportsRuntimeV2Filtering
     // city = 'hz' AND date = '20180520'
@@ -572,6 +612,76 @@ public class SparkGoldenTableTest {
     Dataset<Row> df = full.selectExpr(projectedCols.toArray(new String[0]));
 
     checkAnswer(df, expected);
+  }
+
+  @Test
+  public void testVariantTypeTable() {
+    String tablePath = goldenTablePath("spark-variant-checkpoint");
+    Dataset<Row> df = spark.sql("SELECT * FROM `dsv2`.`delta`.`" + tablePath + "`");
+
+    // Verify schema: id (long) + 6 variant/nested-variant columns
+    StructType schema = df.schema();
+    assertEquals(7, schema.fields().length);
+    assertEquals(DataTypes.LongType, schema.apply("id").dataType());
+    assertEquals(DataTypes.VariantType, schema.apply("v").dataType());
+    assertEquals(
+        DataTypes.createArrayType(DataTypes.VariantType, true),
+        schema.apply("array_of_variants").dataType());
+    assertEquals(
+        DataTypes.createStructType(
+            new StructField[] {
+              new StructField(
+                  "v", DataTypes.VariantType, true, org.apache.spark.sql.types.Metadata.empty())
+            }),
+        schema.apply("struct_of_variants").dataType());
+    assertEquals(
+        DataTypes.createMapType(DataTypes.StringType, DataTypes.VariantType, true),
+        schema.apply("map_of_variants").dataType());
+
+    // Verify row count: 100 base rows + 2 appended rows
+    assertEquals(102, df.count());
+
+    // Verify id values are readable (non-variant column)
+    List<Row> ids = df.select("id").orderBy("id").limit(3).collectAsList();
+    assertEquals(0L, ids.get(0).getLong(0));
+    assertEquals(0L, ids.get(1).getLong(0));
+    assertEquals(1L, ids.get(2).getLong(0));
+
+    // Verify all variant column values. Each variant value is parse_json('{"key": id}'),
+    // so variant_get(..., '$.key', 'long') must equal id for all rows.
+    // - v:                                  direct variant
+    // - array_of_variants[0]:               first element (indices 1, 3 are null)
+    // - struct_of_variants.v:               struct field
+    // - map_of_variants[CAST(id AS STRING)]: map value by string key
+    // - array_of_struct_of_variants[0].v:   first struct element's variant field
+    // - struct_of_array_of_variants.v[1]:   struct's array field at index 1 (index 0 is null)
+    long matchingRows =
+        df.where(
+                "variant_get(v, '$.key', 'long') = id"
+                    + " AND variant_get(array_of_variants[0], '$.key', 'long') = id"
+                    + " AND variant_get(struct_of_variants.v, '$.key', 'long') = id"
+                    + " AND variant_get(map_of_variants[CAST(id AS STRING)], '$.key', 'long') = id"
+                    + " AND variant_get(array_of_struct_of_variants[0].v, '$.key', 'long') = id"
+                    + " AND variant_get(struct_of_array_of_variants.v[1], '$.key', 'long') = id")
+            .count();
+    assertEquals(102, matchingRows);
+
+    // Verify known null values within variant columns:
+    // - array_of_variants[1] and [3]:          null array elements
+    // - map_of_variants['nullKey']:             null map value
+    // - array_of_struct_of_variants[1].v:       non-null struct but null variant field
+    // - array_of_struct_of_variants[2]:         null struct element
+    // - struct_of_array_of_variants.v[0]:       null first element of struct's array field
+    long nullMatchingRows =
+        df.where(
+                "array_of_variants[1] IS NULL"
+                    + " AND array_of_variants[3] IS NULL"
+                    + " AND map_of_variants['nullKey'] IS NULL"
+                    + " AND array_of_struct_of_variants[1].v IS NULL"
+                    + " AND array_of_struct_of_variants[2] IS NULL"
+                    + " AND struct_of_array_of_variants.v[0] IS NULL")
+            .count();
+    assertEquals(102, nullMatchingRows);
   }
 
   @Test

@@ -16,12 +16,15 @@
 package io.delta.spark.internal.v2.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
+import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.write.DeltaKernelWriteBuilder;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -39,10 +42,13 @@ import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -167,6 +173,8 @@ public class SparkTableTest extends DeltaV2TestBase {
 
     // ===== Test capabilities =====
     assertTrue(kernelTable.capabilities().contains(BATCH_READ));
+    assertTrue(kernelTable.capabilities().contains(BATCH_WRITE));
+    assertTrue(kernelTable instanceof SupportsWrite);
 
     // ===== Test getCatalogTable based on construction method =====
     Optional<CatalogTable> retrievedCatalogTable = kernelTable.getCatalogTable();
@@ -186,6 +194,10 @@ public class SparkTableTest extends DeltaV2TestBase {
             "Retrieved catalog table should match the original");
         break;
     }
+
+    // ===== Test getTablePath returns string path =====
+    String retrievedPath = kernelTable.getTablePath();
+    assertEquals(path, retrievedPath, "getTablePath should return the original table path");
   }
 
   /** Enum to represent different construction methods for SparkTable */
@@ -370,9 +382,9 @@ public class SparkTableTest extends DeltaV2TestBase {
     URI uri = new URI("file:///data/spark%25dir%25prefix/table");
     String result = (String) getDecodedPath.invoke(null, uri);
 
-    // Hadoop Path.toString() includes the scheme for file URIs
+    // For file URIs, getDecodedPath returns just the path without the scheme
     assertEquals(
-        "file:/data/spark%dir%prefix/table",
+        "/data/spark%dir%prefix/table",
         result, "URL-encoded characters should be properly decoded");
   }
 
@@ -475,5 +487,40 @@ public class SparkTableTest extends DeltaV2TestBase {
         table1.hashCode(),
         table2.hashCode(),
         "Hash codes should differ for different snapshot versions");
+  }
+
+  @Test
+  public void testNewWriteBuilderReturnsDeltaKernelWriteBuilder(@TempDir File tempDir)
+      throws Exception {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE test_write_builder_unsupported (id INT) USING delta LOCATION '%s'",
+            path));
+
+    SparkTable table =
+        new SparkTable(
+            Identifier.of(new String[] {"default"}, "test_write_builder_unsupported"), path);
+    LogicalWriteInfo writeInfo =
+        new LogicalWriteInfo() {
+          @Override
+          public String queryId() {
+            return "test-query-id";
+          }
+
+          @Override
+          public StructType schema() {
+            return new StructType().add("id", DataTypes.IntegerType);
+          }
+
+          @Override
+          public CaseInsensitiveStringMap options() {
+            return new CaseInsensitiveStringMap(Collections.emptyMap());
+          }
+        };
+
+    Object writeBuilder = table.newWriteBuilder(writeInfo);
+    assertNotNull(writeBuilder);
+    assertTrue(writeBuilder instanceof DeltaKernelWriteBuilder);
   }
 }
