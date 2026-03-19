@@ -34,24 +34,13 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.StructType
 
-/**
- * Test suite for UpdateMetricsHook functionality.
- *
- * Tests cover:
- * - UC-managed table detection via CatalogTableUtils
- * - buildRequest: file and row metric extraction without Delta infrastructure
- * - JSON payload structure matching the server contract (snake_case, nested)
- * - Error handling (commits succeed even when HTTP fails)
- * - Smoke test: run() fires HTTP POST with correct payload for UC-managed table
- */
 class UpdateMetricsHookSuite extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
   private val TEST_CATALOG_NAME = "test_catalog"
   private val TEST_UC_TABLE_ID = "uc-table-id-abc"
 
-  private def ucStorageFormat(
-      ucTableId: String = TEST_UC_TABLE_ID): CatalogStorageFormat = {
+  private def ucStorageFormat(ucTableId: String = TEST_UC_TABLE_ID): CatalogStorageFormat = {
     CatalogStorageFormat(
       locationUri = None,
       inputFormat = None,
@@ -67,18 +56,12 @@ class UpdateMetricsHookSuite extends QueryTest
 
   override protected def sparkConf: SparkConf = {
     super.sparkConf
-      .set("spark.databricks.delta.properties.defaults.enableChangeDataFeed",
-        "false")
+      .set("spark.databricks.delta.properties.defaults.enableChangeDataFeed", "false")
   }
-
-  // ---------------------------------------------------------------------------
-  // UC-managed table detection
-  // ---------------------------------------------------------------------------
 
   test("CatalogTableUtils.isUnityCatalogManagedTable: detection cases") {
     val ucManaged = CatalogTable(
-      identifier = TableIdentifier(
-        "t", Some("default"), Some("uc_catalog")),
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
       tableType = CatalogTableType.MANAGED,
       storage = ucStorageFormat(),
       schema = new StructType()
@@ -87,8 +70,7 @@ class UpdateMetricsHookSuite extends QueryTest
       "UC-managed table with correct storage properties should be detected")
 
     val noUCTableId = CatalogTable(
-      identifier = TableIdentifier(
-        "t", Some("default"), Some("uc_catalog")),
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
       tableType = CatalogTableType.MANAGED,
       storage = CatalogStorageFormat(
         locationUri = None,
@@ -104,8 +86,7 @@ class UpdateMetricsHookSuite extends QueryTest
       "table without UC table ID should not be detected")
 
     val noCatalogFeature = CatalogTable(
-      identifier = TableIdentifier(
-        "t", Some("default"), Some("uc_catalog")),
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
       tableType = CatalogTableType.MANAGED,
       storage = CatalogStorageFormat(
         locationUri = None,
@@ -123,8 +104,7 @@ class UpdateMetricsHookSuite extends QueryTest
       "table with UC ID but no catalog feature flag should not be detected")
 
     val emptyStorage = CatalogTable(
-      identifier = TableIdentifier(
-        "t", Some("default"), Some("uc_catalog")),
+      identifier = TableIdentifier("t", Some("default"), Some("uc_catalog")),
       tableType = CatalogTableType.MANAGED,
       storage = CatalogStorageFormat.empty,
       schema = new StructType()
@@ -132,10 +112,6 @@ class UpdateMetricsHookSuite extends QueryTest
     assert(!CatalogTableUtils.isUnityCatalogManagedTable(emptyStorage),
       "table with empty storage properties should not be detected")
   }
-
-  // ---------------------------------------------------------------------------
-  // buildRequest tests
-  // ---------------------------------------------------------------------------
 
   test("buildRequest: file metrics from synthetic AddFile/RemoveFile actions") {
     val add1 = AddFile("f1.parquet", Map.empty, 1024L,
@@ -154,23 +130,18 @@ class UpdateMetricsHookSuite extends QueryTest
     val report = request.report.commitReport
 
     assert(request.tableId == "tbl-123")
-    assert(report.numFilesAdded == Some(3L), "3 AddFiles")
-    assert(report.numFilesRemoved == Some(1L), "1 RemoveFile")
-    assert(report.numBytesAdded == Some(1024L + 2048L + 4096L),
+    assert(report.numFilesAdded == 3L, "3 AddFiles")
+    assert(report.numFilesRemoved == 1L, "1 RemoveFile")
+    assert(report.numBytesAdded == 1024L + 2048L + 4096L,
       "sum of add sizes")
-    assert(report.numBytesRemoved == Some(512L),
+    assert(report.numBytesRemoved == 512L,
       "sum of remove sizes")
 
-    val hist = report.fileSizeHistogram.getOrElse(
-      fail("histogram must be present"))
-    assert(hist.commitVersion == Some(7L),
-      "commit_version must be set")
-    assert(hist.sortedBinBoundaries.head == 0L,
-      "bins must start at 0")
-    assert(hist.fileCounts.sum == 3L,
-      "histogram covers all AddFiles")
-    assert(hist.totalBytes.sum == 1024L + 2048L + 4096L,
-      "histogram totalBytes")
+    val hist = report.fileSizeHistogram
+    assert(hist.commitVersion == 7L, "commit_version must be set")
+    assert(hist.sortedBinBoundaries.head == 0L, "bins must start at 0")
+    assert(hist.fileCounts.sum == 3L, "histogram covers all AddFiles")
+    assert(hist.totalBytes.sum == 1024L + 2048L + 4096L, "histogram totalBytes")
   }
 
   test("buildRequest: row metrics prefer operationMetrics over file stats") {
@@ -219,27 +190,70 @@ class UpdateMetricsHookSuite extends QueryTest
       "fallback works with no CommitInfo in actions")
   }
 
-  // ---------------------------------------------------------------------------
-  // JSON payload structure tests
-  // ---------------------------------------------------------------------------
+  test("buildRequest: row metrics for MERGE operation") {
+    val ci = CommitInfo(
+      version = Some(0L), inCommitTimestamp = None,
+      timestamp = new java.sql.Timestamp(System.currentTimeMillis()),
+      userId = None, userName = None, operation = "MERGE",
+      operationParameters = Map.empty, job = None, notebook = None,
+      clusterId = None, readVersion = None, isolationLevel = None,
+      isBlindAppend = Some(false),
+      operationMetrics = Some(Map(
+        "numTargetRowsInserted" -> "10",
+        "numTargetRowsDeleted" -> "5",
+        "numTargetRowsUpdated" -> "3")),
+      userMetadata = None, tags = None, engineInfo = None, txnId = None)
+    val req = UpdateMetricsHook.buildRequest("t", Seq(ci), 0L)
+    assert(req.report.commitReport.numRowsInserted == Some(10L))
+    assert(req.report.commitReport.numRowsRemoved == Some(5L))
+    assert(req.report.commitReport.numRowsUpdated == Some(3L))
+  }
+
+  test("buildRequest: row metrics for DELETE operation") {
+    val ci = CommitInfo(
+      version = Some(0L), inCommitTimestamp = None,
+      timestamp = new java.sql.Timestamp(System.currentTimeMillis()),
+      userId = None, userName = None, operation = "DELETE",
+      operationParameters = Map.empty, job = None, notebook = None,
+      clusterId = None, readVersion = None, isolationLevel = None,
+      isBlindAppend = Some(false),
+      operationMetrics = Some(Map("numDeletedRows" -> "42")),
+      userMetadata = None, tags = None, engineInfo = None, txnId = None)
+    val req = UpdateMetricsHook.buildRequest("t", Seq(ci), 0L)
+    assert(req.report.commitReport.numRowsRemoved == Some(42L))
+  }
+
+  test("buildRequest: row metrics for UPDATE operation") {
+    val ci = CommitInfo(
+      version = Some(0L), inCommitTimestamp = None,
+      timestamp = new java.sql.Timestamp(System.currentTimeMillis()),
+      userId = None, userName = None, operation = "UPDATE",
+      operationParameters = Map.empty, job = None, notebook = None,
+      clusterId = None, readVersion = None, isolationLevel = None,
+      isBlindAppend = Some(false),
+      operationMetrics = Some(Map("numUpdatedRows" -> "17")),
+      userMetadata = None, tags = None, engineInfo = None, txnId = None)
+    val req = UpdateMetricsHook.buildRequest("t", Seq(ci), 0L)
+    assert(req.report.commitReport.numRowsUpdated == Some(17L))
+  }
 
   test("JSON payload validation - matches server contract (snake_case, nested)") {
     val request = ReportDeltaMetricsRequest(
       tableId = "test-table-id-123",
       report = CommitReportEnvelope(CommitReport(
-        numFilesAdded = Some(10L),
-        numFilesRemoved = Some(2L),
-        numBytesAdded = Some(10000L),
-        numBytesRemoved = Some(2000L),
+        numFilesAdded = 10L,
+        numFilesRemoved = 2L,
+        numBytesAdded = 10000L,
+        numBytesRemoved = 2000L,
         numRowsInserted = Some(1000L),
         numRowsRemoved = Some(200L),
         numRowsUpdated = Some(50L),
-        fileSizeHistogram = Some(FileSizeHistogramPayload(
+        fileSizeHistogram = FileSizeHistogramPayload(
           sortedBinBoundaries = Seq(0L, 1024L),
           fileCounts = Seq(5L, 5L),
           totalBytes = Seq(2000L, 8000L),
-          commitVersion = Some(42L)
-        ))
+          commitVersion = 42L
+        )
       ))
     )
 
@@ -257,17 +271,21 @@ class UpdateMetricsHookSuite extends QueryTest
       "commit_version required for server staleness check")
 
     assert(!json.contains(""""tableId""""), "no camelCase tableId")
-    assert(!json.contains(""""numFilesAdded""""),
-      "no camelCase numFilesAdded")
-    assert(!json.contains(""""numRowsAdded""""),
-      "no old numRowsAdded field")
+    assert(!json.contains(""""numFilesAdded""""), "no camelCase numFilesAdded")
+    assert(!json.contains(""""numRowsAdded""""), "no old numRowsAdded field")
   }
 
   test("JSON payload: optional fields are omitted when None") {
     val request = ReportDeltaMetricsRequest(
       tableId = "some-id",
       report = CommitReportEnvelope(CommitReport(
-        numFilesAdded = Some(1L)
+        numFilesAdded = 1L,
+        numFilesRemoved = 0L,
+        numBytesAdded = 100L,
+        numBytesRemoved = 0L,
+        fileSizeHistogram = FileSizeHistogramPayload(
+          sortedBinBoundaries = Seq(0L), fileCounts = Seq(1L),
+          totalBytes = Seq(100L), commitVersion = 0L)
       ))
     )
 
@@ -278,16 +296,11 @@ class UpdateMetricsHookSuite extends QueryTest
       "None fields should be absent from JSON")
   }
 
-  // ---------------------------------------------------------------------------
-  // Hook lifecycle tests
-  // ---------------------------------------------------------------------------
-
   test("path-based table writes continue without UC metrics hook") {
     withTempDir { dir =>
       val tablePath = dir.getCanonicalPath
       spark.range(10).write.format("delta").save(tablePath)
-      spark.range(10, 20).write.format("delta").mode("append")
-        .save(tablePath)
+      spark.range(10, 20).write.format("delta").mode("append").save(tablePath)
 
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       assert(deltaLog.snapshot.version == 1, "Expected 2 commits")
@@ -311,8 +324,12 @@ class UpdateMetricsHookSuite extends QueryTest
 
       val request = ReportDeltaMetricsRequest(
         tableId = "test-id",
-        report = CommitReportEnvelope(
-          CommitReport(numFilesAdded = Some(1L))))
+        report = CommitReportEnvelope(CommitReport(
+          numFilesAdded = 1L, numFilesRemoved = 0L,
+          numBytesAdded = 100L, numBytesRemoved = 0L,
+          fileSizeHistogram = FileSizeHistogramPayload(
+            sortedBinBoundaries = Seq(0L), fileCounts = Seq(1L),
+            totalBytes = Seq(100L), commitVersion = 0L))))
       intercept[RuntimeException] {
         UpdateMetricsHook.sendMetrics(
           spark, request, catalogName = Some(TEST_CATALOG_NAME))
@@ -324,7 +341,7 @@ class UpdateMetricsHookSuite extends QueryTest
     }
   }
 
-  test("sendMetrics: Authorization header and JSON body") {
+  test("sendMetrics: sends payload with Authorization header") {
     val mockServer = new SimpleMockServer(0)
     try {
       mockServer.setResponseCode(200)
@@ -343,20 +360,20 @@ class UpdateMetricsHookSuite extends QueryTest
       val request = ReportDeltaMetricsRequest(
         tableId = "abc-123",
         report = CommitReportEnvelope(CommitReport(
-          numFilesAdded = Some(5L),
-          numBytesAdded = Some(5000L),
-          numRowsInserted = Some(100L)
-        ))
+          numFilesAdded = 5L, numFilesRemoved = 0L,
+          numBytesAdded = 5000L, numBytesRemoved = 0L,
+          numRowsInserted = Some(100L),
+          fileSizeHistogram = FileSizeHistogramPayload(
+            sortedBinBoundaries = Seq(0L), fileCounts = Seq(5L),
+            totalBytes = Seq(5000L), commitVersion = 0L)))
       )
       UpdateMetricsHook.sendMetrics(
         spark, request, catalogName = Some(TEST_CATALOG_NAME))
 
-      assert(mockServer.getRequestCount() == 1,
-        "Expected 1 HTTP request")
+      assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
 
       val authHeader = mockServer.getLastHeaders().get("Authorization")
-      assert(authHeader.isDefined,
-        "Authorization header should be present")
+      assert(authHeader.isDefined, "Authorization header should be present")
       assert(authHeader.get == "Bearer test-token-123",
         "Auth token must match")
 
@@ -394,13 +411,17 @@ class UpdateMetricsHookSuite extends QueryTest
 
       val request = ReportDeltaMetricsRequest(
         tableId = "auth-test-id",
-        report = CommitReportEnvelope(
-          CommitReport(numFilesAdded = Some(1L))))
+        report = CommitReportEnvelope(CommitReport(
+          numFilesAdded = 1L, numFilesRemoved = 0L,
+          numBytesAdded = 100L, numBytesRemoved = 0L,
+          fileSizeHistogram = FileSizeHistogramPayload(
+            sortedBinBoundaries = Seq(0L), fileCounts = Seq(1L),
+            totalBytes = Seq(100L), commitVersion = 0L)))
+      )
       UpdateMetricsHook.sendMetrics(
         spark, request, catalogName = Some(authStaticCatalog))
 
-      assert(mockServer.getRequestCount() == 1,
-        "Expected 1 HTTP request")
+      assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
       val authHeader = mockServer.getLastHeaders().get("Authorization")
       assert(authHeader.isDefined,
         "Authorization header should be present")
@@ -411,21 +432,15 @@ class UpdateMetricsHookSuite extends QueryTest
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Smoke test - run() end-to-end with real DeltaLog + mock server
-  // ---------------------------------------------------------------------------
-
-  test("run(): fires HTTP POST with correct payload for UC-managed table") {
+  test("run(): fires HTTP POST for UC-managed table") {
     val mockServer = new SimpleMockServer(0)
     try {
       mockServer.setResponseCode(200)
       mockServer.start()
 
       withTempDir { dir =>
-        spark.range(10).write.format("delta")
-          .save(dir.getCanonicalPath)
-        val deltaLog = DeltaLog.forTable(
-          spark, dir.getCanonicalPath)
+        spark.range(10).write.format("delta").save(dir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
         val snapshot = deltaLog.snapshot
 
         spark.conf.set(
@@ -445,25 +460,20 @@ class UpdateMetricsHookSuite extends QueryTest
           schema = new StructType()
         )
 
-        val addFile = AddFile(
-          "f1.parquet", Map.empty, 4096L, 0L,
-          dataChange = true,
-          stats = """{"numRecords":50}""")
+        val addFile = AddFile("f1.parquet", Map.empty, 4096L, 0L,
+          dataChange = true, stats = """{"numRecords":50}""")
         val commitInfo = CommitInfo(
           version = Some(0L),
           inCommitTimestamp = None,
-          timestamp = new java.sql.Timestamp(
-            System.currentTimeMillis()),
+          timestamp = new java.sql.Timestamp(System.currentTimeMillis()),
           userId = None, userName = None,
           operation = "WRITE",
           operationParameters = Map.empty,
           job = None, notebook = None, clusterId = None,
           readVersion = None, isolationLevel = None,
           isBlindAppend = Some(true),
-          operationMetrics = Some(
-            Map("numOutputRows" -> "50")),
-          userMetadata = None, tags = None,
-          engineInfo = None, txnId = None)
+          operationMetrics = Some(Map("numOutputRows" -> "50")),
+          userMetadata = None, tags = None, engineInfo = None, txnId = None)
 
         val txn = CommittedTransaction(
           txnId = "smoke-txn",
@@ -486,8 +496,7 @@ class UpdateMetricsHookSuite extends QueryTest
           "Expected exactly 1 HTTP POST")
         val body = mockServer.getLastRequestBody()
         val expectedRequest = UpdateMetricsHook.buildRequest(
-          TEST_UC_TABLE_ID,
-          Seq(commitInfo, addFile), 0L)
+          TEST_UC_TABLE_ID, Seq(commitInfo, addFile), 0L)
         val actualPayload =
           JsonUtils.fromJson[Map[String, Any]](body)
         val expectedPayload =
@@ -559,10 +568,8 @@ class UpdateMetricsHookSuite extends QueryTest
 
   test("run(): skips metrics when table ID not in storage properties") {
     withTempDir { dir =>
-      spark.range(1).write.format("delta")
-        .save(dir.getCanonicalPath)
-      val deltaLog = DeltaLog.forTable(
-        spark, dir.getCanonicalPath)
+      spark.range(1).write.format("delta").save(dir.getCanonicalPath)
+      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
       val snapshot = deltaLog.snapshot
 
       val catalogTable = CatalogTable(

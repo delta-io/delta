@@ -51,18 +51,11 @@ case class ReportDeltaMetricsRequest(
 case class CommitReportEnvelope(
     @JsonProperty("commit_report") commitReport: CommitReport)
 
-/**
- * Commit-level file and row metrics. All fields are optional.
- */
 case class CommitReport(
-    @JsonProperty("num_files_added")
-      numFilesAdded: Option[Long] = None,
-    @JsonProperty("num_files_removed")
-      numFilesRemoved: Option[Long] = None,
-    @JsonProperty("num_bytes_added")
-      numBytesAdded: Option[Long] = None,
-    @JsonProperty("num_bytes_removed")
-      numBytesRemoved: Option[Long] = None,
+    @JsonProperty("num_files_added") numFilesAdded: Long,
+    @JsonProperty("num_files_removed") numFilesRemoved: Long,
+    @JsonProperty("num_bytes_added") numBytesAdded: Long,
+    @JsonProperty("num_bytes_removed") numBytesRemoved: Long,
     @JsonProperty("num_rows_inserted")
       numRowsInserted: Option[Long] = None,
     @JsonProperty("num_rows_removed")
@@ -70,7 +63,7 @@ case class CommitReport(
     @JsonProperty("num_rows_updated")
       numRowsUpdated: Option[Long] = None,
     @JsonProperty("file_size_histogram")
-      fileSizeHistogram: Option[FileSizeHistogramPayload] = None)
+      fileSizeHistogram: FileSizeHistogramPayload)
 
 case class FileSizeHistogramPayload(
     @JsonProperty("sorted_bin_boundaries")
@@ -78,7 +71,7 @@ case class FileSizeHistogramPayload(
     @JsonProperty("file_counts") fileCounts: Seq[Long],
     @JsonProperty("total_bytes") totalBytes: Seq[Long],
     @JsonProperty("commit_version")
-      commitVersion: Option[Long] = None)
+      commitVersion: Long)
 
 /**
  * Post-commit hook that sends commit metrics to Unity Catalog
@@ -149,17 +142,17 @@ object UpdateMetricsHook {
       committedActions.collect { case r: RemoveFile => r }
 
     val commitReport = CommitReport(
-      numFilesAdded = Some(addFiles.size.toLong),
-      numFilesRemoved = Some(removeFiles.size.toLong),
-      numBytesAdded = Some(addFiles.map(_.size).sum),
-      numBytesRemoved = Some(removeFiles.flatMap(_.size).sum),
+      numFilesAdded = addFiles.size.toLong,
+      numFilesRemoved = removeFiles.size.toLong,
+      numBytesAdded = addFiles.map(_.size).sum,
+      numBytesRemoved = removeFiles.flatMap(_.size).sum,
       numRowsInserted =
         extractRowsInserted(opMetrics, addFiles),
       numRowsRemoved =
         extractRowsRemoved(opMetrics, removeFiles),
       numRowsUpdated = extractRowsUpdated(opMetrics),
-      fileSizeHistogram = Some(
-        buildFileSizeHistogram(addFiles, committedVersion))
+      fileSizeHistogram =
+        buildFileSizeHistogram(addFiles, committedVersion)
     )
 
     ReportDeltaMetricsRequest(
@@ -198,7 +191,8 @@ object UpdateMetricsHook {
   }
 
   // MERGE writes numTargetRowsUpdated, UPDATE writes
-  // numUpdatedRows.
+  // numUpdatedRows. No file-stats fallback: per-file stats cannot
+  // distinguish updated rows from inserted/removed rows.
   private def extractRowsUpdated(
       opMetrics: Map[String, String]): Option[Long] = {
     opMetrics.get("numTargetRowsUpdated")
@@ -219,7 +213,7 @@ object UpdateMetricsHook {
       sortedBinBoundaries = histogram.sortedBinBoundaries,
       fileCounts = histogram.fileCounts.toSeq,
       totalBytes = histogram.totalBytes.toSeq,
-      commitVersion = Some(committedVersion)
+      commitVersion = committedVersion
     )
   }
 
