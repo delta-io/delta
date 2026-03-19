@@ -84,8 +84,9 @@ public class SnapshotImpl implements Snapshot {
    * <ul>
    *   <li>Optional.empty(): if the ICT value is not yet known (i.e. has not yet been read from the
    *       CRC or CommitInfo)
-   *   <li>Optional.of(timestamp): if the ICT value has been read from the CRC or CommitInfo, or was
-   *       injected into this Snapshot at construction time (e.g. for a post-commit snapshot)
+   *   <li>Optional.of(timestamp): if the ICT value was pre-populated during snapshot construction
+   *       (e.g. captured during Protocol/Metadata log replay or injected for post-commit
+   *       snapshots), or has been lazily read from the CRC or CommitInfo
    * </ul>
    */
   private Optional<Long> inCommitTimestampOpt;
@@ -162,12 +163,17 @@ public class SnapshotImpl implements Snapshot {
    * Get the timestamp (in milliseconds since the Unix epoch) of the latest commit in this Snapshot.
    *
    * <p>When InCommitTimestampTableFeature is enabled, the timestamp is retrieved from the
-   * CommitInfo of the latest commit in this Snapshot, which can result in an IO operation.
+   * CommitInfo of the latest commit in this Snapshot. In the common case this value is already
+   * available (populated during snapshot construction) and no IO is needed. If it was not captured
+   * during construction (e.g. when a CRC file at the exact snapshot version was used), a single
+   * cloud read is performed and the result is cached.
    *
    * <p>For non-ICT tables, this is the same as the file modification time of the latest commit in
    * this Snapshot.
+   *
+   * <p>TODO: Populate ICT from the CRC file when available so the CRC path also avoids the extra
+   * cloud read.
    */
-  // TODO: Support reading from CRC file if available
   @Override
   public long getTimestamp(Engine engine) {
     if (IN_COMMIT_TIMESTAMPS_ENABLED.fromMetadata(metadata)) {
