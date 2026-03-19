@@ -48,6 +48,7 @@ trait ActionUtils extends VectorTestUtils {
       Optional.of("engineInfo"),
       Optional.of("operation"),
       Collections.emptyMap(), // operationParameters
+      Optional.of("Serializable"), // isolationLevel
       Optional.of(false), // isBlindAppend
       Optional.of("txnId"),
       Collections.emptyMap() // operationMetrics

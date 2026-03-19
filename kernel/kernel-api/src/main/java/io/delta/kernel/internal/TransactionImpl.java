@@ -598,6 +598,7 @@ public class TransactionImpl implements Transaction {
         Optional.of("Kernel-" + Meta.KERNEL_VERSION + "/" + engineInfo), /* engineInfo */
         Optional.of(operation.getDescription()), /* description */
         getOperationParameters(), /* operationParameters */
+        Optional.of("Serializable"), /* isolationLevel */
         isBlindAppend(), /* isBlindAppend */
         Optional.of(txnId.toString()), /* txnId */
         emptyMap() /* operationMetrics */);

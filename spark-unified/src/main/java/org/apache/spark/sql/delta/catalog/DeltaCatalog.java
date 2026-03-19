@@ -80,30 +80,40 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     boolean shouldUseKernelCreate =
         mode.shouldUseKernelMetadataOnlyCreate(properties)
             && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
-            && (isUnityCatalog() || isPathIdentifier(ident));
+            && (isUnityCatalog() || isPathIdentifier(ident))
+            && CreateTableCommitCoordinator.canRepresentWithKernel(partitions);
 
     if (!shouldUseKernelCreate) {
       return super.createTable(ident, schema, partitions, properties);
     }
 
     boolean isPathTable = isPathIdentifier(ident);
-    CreateTableCommitCoordinator.commitCreateTableVersion0(
-        ident,
-        schema,
-        partitions,
-        properties,
-        spark(),
-        name(),
-        ENGINE_INFO,
-        isPathTable,
-        CloseableIterable.emptyIterable());
+    final CreateTableCommitCoordinator.KernelCreateResult createResult;
+    try {
+      createResult =
+          CreateTableCommitCoordinator.commitCreateTableVersion0(
+              ident,
+              schema,
+              partitions,
+              properties,
+              spark(),
+              name(),
+              ENGINE_INFO,
+              isPathTable,
+              CloseableIterable.emptyIterable());
+    } catch (RuntimeException e) {
+      if (CreateTableCommitCoordinator.shouldFallbackToV1Create(e)) {
+        return super.createTable(ident, schema, partitions, properties);
+      }
+      throw e;
+    }
 
     if (!isPathTable) {
       createCatalogTable(
           ident,
-          schema,
-          partitions,
-          CreateTableCommitCoordinator.filterCredentialProperties(properties));
+          CreateTableCommitCoordinator.buildCatalogRegistrationColumns(createResult),
+          CreateTableCommitCoordinator.buildCatalogRegistrationPartitions(createResult),
+          CreateTableCommitCoordinator.buildCatalogRegistrationProperties(properties, createResult));
       return loadTable(ident);
     }
     return loadPathTable(ident);

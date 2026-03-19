@@ -58,11 +58,6 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   // Error produced by UCSingleCatalog.alterTable() for all ALTER TABLE variants.
   private static final String ALTER_TABLE_ERROR = "Altering a table is not supported yet";
 
-  // Error produced by OSS Delta when REPLACE TABLE AS SELECT (RTAS) is attempted.
-  // Triggered by CREATE OR REPLACE TABLE and DataFrame saveAsTable(overwrite+overwriteSchema)
-  // when the target catalog does not implement StagingTableCatalog.
-  private static final String RTAS_ERROR = "REPLACE TABLE AS SELECT (RTAS) is not supported";
-
   // ---------------------------------------------------------------------------
   // Kill-switch tests: operations blocked by OptimisticTransaction.updateMetadata()
   // ---------------------------------------------------------------------------
@@ -243,9 +238,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * INSERT OVERWRITE with {@code overwriteSchema=true} that would replace the schema of an existing
    * CatalogOwned table must be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * the overwrite-with-schema-change through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>The current managed replace path reaches Delta's metadata kill switch directly, so the
+   * observable error is the managed metadata-change rejection rather than the older RTAS message.
    */
   @Test
   public void testInsertOverwriteWithOverwriteSchemaIsBlocked() throws Exception {
@@ -262,7 +256,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_val')", sourceTable);
                 assertThrowsWithCauseContaining(
-                    RTAS_ERROR,
+                    KILL_SWITCH_ERROR,
                     () ->
                         spark()
                             .read()
@@ -280,9 +274,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * {@code CREATE OR REPLACE TABLE} with a different schema on an existing CatalogOwned table must
    * be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * {@code CREATE OR REPLACE TABLE} through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>The current managed replace path reaches Delta's metadata kill switch directly, so the
+   * observable error is the managed metadata-change rejection rather than the older RTAS message.
    */
   @Test
   public void testReplaceTableWithNewSchemaIsBlocked() throws Exception {
@@ -293,7 +286,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
           assertThrowsWithCauseContaining(
-              RTAS_ERROR,
+              KILL_SWITCH_ERROR,
               () ->
                   sql(
                       "CREATE OR REPLACE TABLE %s (id INT, name STRING, extra STRING) "

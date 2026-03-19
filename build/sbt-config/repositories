@@ -1,5 +1,4 @@
 [repositories]
-  maven-local
   local
   local-preloaded-ivy: file:///${sbt.preloaded-${sbt.global.base-${user.home}/.sbt}/preloaded/}, [organization]/[module]/[revision]/[type]s/[artifact](-[classifier]).[ext]
   local-preloaded: file:///${sbt.preloaded-${sbt.global.base-${user.home}/.sbt}/preloaded/}
@@ -14,4 +13,3 @@
   typesafe-releases: https://repo.typesafe.com/typesafe/releases/
   apache-snapshot: https://repository.apache.org/content/groups/snapshots/
   jitpack: https://jitpack.io
-  sonatype-central-snapshots: https://central.sonatype.com/repository/maven-snapshots/

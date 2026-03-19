@@ -207,6 +207,7 @@ class MockReadICTFileJsonHandler(
             stringVector(Seq("engine")), /* engineInfo */
             stringVector(Seq("operation")), /* operation */
             mapTypeVector(Seq(Map("operationParameter" -> ""))), /* operationParameters */
+            stringVector(Seq("Serializable")), /* isolationLevel */
             booleanVector(Seq(false)), /* isBlindAppend */
             stringVector(Seq("txnId")), /* txnId */
             mapTypeVector(Seq(Map("operationMetrics" -> ""))) /* operationMetrics */

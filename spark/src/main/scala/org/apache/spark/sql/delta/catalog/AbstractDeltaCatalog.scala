@@ -379,6 +379,15 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       super.createTable(ident, schema, partitions, properties)
   }
 
+  protected def createCatalogTable(
+      ident: Identifier,
+      columns: Array[org.apache.spark.sql.connector.catalog.Column],
+      partitions: Array[Transform],
+      properties: util.Map[String, String]
+  ): Table = {
+      super.createTable(ident, columns, partitions, properties)
+  }
+
 
   override def createTable(
       ident: Identifier,

@@ -34,21 +34,7 @@ limitations under the License.-->
     <repositories>
         <repository>
             <id>staging-repo</id>
-	    <url>${staging.repo.url}</url>
-	</repository>
-        <repository>
-            <id>sonatype-central-snapshots</id>
-            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
-        </repository>
-        <repository>
-            <id>sonatype-central-snapshots</id>
-            <url>https://central.sonatype.com/repository/maven-snapshots/</url>
-            <snapshots>
-                <enabled>true</enabled>
-            </snapshots>
+            <url>${staging.repo.url}</url>
         </repository>
     </repositories>
 

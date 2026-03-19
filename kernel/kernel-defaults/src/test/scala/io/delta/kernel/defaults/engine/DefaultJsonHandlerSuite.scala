@@ -484,6 +484,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       "myengine.com",
       "WRITE",
       Map("mode" -> "Append", "statsOnLoad" -> "false", "partitionBy" -> "[]"),
+      null, // isolationLevel is missing from JSON, should be null
       true,
       "cb009f42-5da1-4e7e-b4fa-09de3332f52a",
       Map("numFiles" -> "1", "serializedAsNumber" -> "2", "serializedAsBoolean" -> "true"))
@@ -520,6 +521,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       "myengine.com",
       "WRITE",
       Map("mode" -> "Append", "partitionBy" -> "[]"),
+      null, // isolationLevel is missing from JSON, should be null
       null, // isBlindAppend is missing from JSON, should be null
       "cb009f42-5da1-4e7e-b4fa-09de3332f52a",
       Map("numFiles" -> "1"))
@@ -612,6 +614,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     assert(commitInfo.getEngineInfo === Optional.empty())
     assert(commitInfo.getOperation === Optional.empty())
     assert(commitInfo.getTxnId === Optional.empty())
+    assert(commitInfo.getIsolationLevel === Optional.empty())
     assert(commitInfo.getIsBlindAppend === Optional.empty())
     assert(commitInfo.getInCommitTimestamp === Optional.empty())
     assert(commitInfo.getOperationParameters.isEmpty)
@@ -625,6 +628,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       Optional.empty(), // engineInfo
       Optional.empty(), // operation
       Collections.emptyMap(),
+      Optional.empty(), // isolationLevel
       Optional.empty(), // isBlindAppend
       Optional.empty(), // txnId
       Collections.emptyMap())
@@ -632,6 +636,7 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
     val row = commitInfo.toRow()
     assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("engineInfo")))
     assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("operation")))
+    assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("isolationLevel")))
     assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("txnId")))
     assert(row.isNullAt(CommitInfo.FULL_SCHEMA.indexOf("isBlindAppend")))
     assert(row.getLong(CommitInfo.FULL_SCHEMA.indexOf("inCommitTimestamp")) === 100L)

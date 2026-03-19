@@ -54,6 +54,7 @@ import org.slf4j.LoggerFactory;
  *   <li>operationParameters: Map(String, String) - each operation depending upon the type may add
  *       zero or more parameters about the operation. E.g. when creating a table `partitionBy` key
  *       with list of partition columns is added.
+ *   <li>isolationLevel: String - isolation level used by the transaction
  *   <li>isBlindAppend: Boolean - Is this commit a blind append?
  *   <li>txnId: String - a unique transaction id of this commit
  * </ul>
@@ -75,6 +76,7 @@ public class CommitInfo {
           .add(
               "operationParameters",
               new MapType(StringType.STRING, StringType.STRING, true /* nullable */))
+          .add("isolationLevel", StringType.STRING, true /* nullable */)
           .add("isBlindAppend", BooleanType.BOOLEAN, true /* nullable */)
           .add("txnId", StringType.STRING)
           .add(
@@ -96,7 +98,7 @@ public class CommitInfo {
       return null;
     }
 
-    ColumnVector[] children = new ColumnVector[8];
+    ColumnVector[] children = new ColumnVector[9];
     for (int i = 0; i < children.length; i++) {
       children[i] = vector.getChild(i);
     }
@@ -111,11 +113,12 @@ public class CommitInfo {
         children[4].isNullAt(rowId)
             ? Collections.emptyMap()
             : VectorUtils.toJavaMap(children[4].getMap(rowId)),
-        Optional.ofNullable(children[5].isNullAt(rowId) ? null : children[5].getBoolean(rowId)),
-        Optional.ofNullable(children[6].isNullAt(rowId) ? null : children[6].getString(rowId)),
-        children[7].isNullAt(rowId)
+        Optional.ofNullable(children[5].isNullAt(rowId) ? null : children[5].getString(rowId)),
+        Optional.ofNullable(children[6].isNullAt(rowId) ? null : children[6].getBoolean(rowId)),
+        Optional.ofNullable(children[7].isNullAt(rowId) ? null : children[7].getString(rowId)),
+        children[8].isNullAt(rowId)
             ? Collections.emptyMap()
-            : VectorUtils.toJavaMap(children[7].getMap(rowId)));
+            : VectorUtils.toJavaMap(children[8].getMap(rowId)));
   }
 
   /**
@@ -218,6 +221,7 @@ public class CommitInfo {
   private final Optional<String> engineInfo;
   private final Optional<String> operation;
   private final Map<String, String> operationParameters;
+  private final Optional<String> isolationLevel;
   private final Optional<Boolean> isBlindAppend;
   private final Optional<String> txnId;
   private Optional<Long> inCommitTimestamp;
@@ -229,6 +233,7 @@ public class CommitInfo {
       Optional<String> engineInfo,
       Optional<String> operation,
       Map<String, String> operationParameters,
+      Optional<String> isolationLevel,
       Optional<Boolean> isBlindAppend,
       Optional<String> txnId,
       Map<String, String> operationMetrics) {
@@ -237,6 +242,7 @@ public class CommitInfo {
     this.engineInfo = requireNonNull(engineInfo);
     this.operation = requireNonNull(operation);
     this.operationParameters = Collections.unmodifiableMap(requireNonNull(operationParameters));
+    this.isolationLevel = requireNonNull(isolationLevel);
     this.isBlindAppend = requireNonNull(isBlindAppend);
     this.txnId = requireNonNull(txnId);
     this.operationMetrics = Collections.unmodifiableMap(requireNonNull(operationMetrics));
@@ -256,6 +262,10 @@ public class CommitInfo {
 
   public Map<String, String> getOperationParameters() {
     return operationParameters;
+  }
+
+  public Optional<String> getIsolationLevel() {
+    return isolationLevel;
   }
 
   public Optional<Boolean> getIsBlindAppend() {
@@ -291,6 +301,7 @@ public class CommitInfo {
     commitInfo.put(COL_NAME_TO_ORDINAL.get("operation"), operation.orElse(null));
     commitInfo.put(
         COL_NAME_TO_ORDINAL.get("operationParameters"), stringStringMapValue(operationParameters));
+    commitInfo.put(COL_NAME_TO_ORDINAL.get("isolationLevel"), isolationLevel.orElse(null));
     commitInfo.put(COL_NAME_TO_ORDINAL.get("isBlindAppend"), isBlindAppend.orElse(null));
     commitInfo.put(COL_NAME_TO_ORDINAL.get("txnId"), txnId.orElse(null));
     commitInfo.put(
