@@ -73,13 +73,13 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
     Assertions.assertThat(prunedResults).isEqualTo(expected);
   }
 
-  @Test
-  public void testFsPropertiesHiddenFromTableProperties() throws Exception {
+  @TestAllTableTypes
+  public void testFsPropertiesHiddenFromTableProperties(TableType tableType) throws Exception {
     withNewTable(
         "fs_props_hidden",
         "id INT, name STRING",
         null, // no partition
-        TableType.MANAGED,
+        tableType,
         "'myCustomProp'='myCustomValue'",
         tableName -> {
           // SHOW TBLPROPERTIES returns one row per property (key, value).
@@ -108,9 +108,11 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
 
           // DESCRIBE EXTENDED returns a "Table Properties" row with all properties
           // in a single string like "[key1=val1,key2=val2,...]".
+          boolean foundTableProperties = false;
           List<List<String>> descRows = sql("DESCRIBE EXTENDED %s", tableName);
           for (List<String> row : descRows) {
             if (row.size() >= 2 && "Table Properties".equals(row.get(0))) {
+              foundTableProperties = true;
               Assertions.assertThat(row.get(1))
                   .as("DESCRIBE EXTENDED should not expose option.fs.* storage properties")
                   .doesNotContain("option.fs.");
@@ -119,6 +121,9 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
                   .contains("myCustomProp=myCustomValue");
             }
           }
+          Assertions.assertThat(foundTableProperties)
+              .as("DESCRIBE EXTENDED must include a 'Table Properties' row")
+              .isTrue();
 
           // Verify the data path still works — credentials still flow to the filesystem
           // via CatalogTable.storage.properties even though they are hidden from properties().

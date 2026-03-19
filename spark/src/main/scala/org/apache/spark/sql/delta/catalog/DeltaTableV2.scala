@@ -443,7 +443,7 @@ object DeltaTableV2 {
    * configuration options that may contain sensitive credentials (access keys, session
    * tokens, etc.) injected by catalogs at table-load time.
    */
-  val HIDDEN_STORAGE_PROPERTY_PREFIXES: Seq[String] = Seq("fs.")
+  private[delta] val HIDDEN_STORAGE_PROPERTY_PREFIXES: Seq[String] = Seq("fs.")
 
   def unapply(deltaTable: DeltaTableV2): Option[(
       SparkSession,
