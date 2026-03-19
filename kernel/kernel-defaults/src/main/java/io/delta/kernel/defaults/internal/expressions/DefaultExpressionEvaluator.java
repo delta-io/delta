@@ -370,23 +370,18 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           children.size() == 4,
           "ST_INTERSECTS_BOXES_ON_STATS expects 4 children but got %d",
           children.size());
-      // Children 0,1 are stats columns (GeometryType/GeographyType).
-      // Children 2,3 are WKT string literals from the query bounds.
-      for (int i = 0; i < 2; i++) {
-        DataType dt = children.get(i).outputType;
+      DataType child0Type = children.get(0).outputType;
+      checkArgument(
+          child0Type instanceof GeometryType || child0Type instanceof GeographyType,
+          "ST_INTERSECTS_BOXES_ON_STATS children must be " + "geometry/geography type, got %s",
+          child0Type);
+      for (int i = 1; i < 4; i++) {
         checkArgument(
-            dt instanceof GeometryType || dt instanceof GeographyType,
-            "ST_INTERSECTS_BOXES_ON_STATS child %d must be " + "geometry/geography type, got %s",
+            child0Type.equals(children.get(i).outputType),
+            "ST_INTERSECTS_BOXES_ON_STATS child %d type %s " + "doesn't match child 0 type %s",
             i,
-            dt);
-      }
-      for (int i = 2; i < 4; i++) {
-        DataType dt = children.get(i).outputType;
-        checkArgument(
-            dt instanceof StringType,
-            "ST_INTERSECTS_BOXES_ON_STATS child %d must be " + "string (WKT), got %s",
-            i,
-            dt);
+            children.get(i).outputType,
+            child0Type);
       }
       return new ExpressionTransformResult(
           new Predicate(
