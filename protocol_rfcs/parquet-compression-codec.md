@@ -1,5 +1,5 @@
 # Parquet Compression Codec
-**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/XXXX**
+**Associated Github issue for discussions: https://github.com/delta-io/delta/issues/6323
 
 Delta Lake tables store data in Parquet files, and Parquet supports multiple compression codecs. Currently, the Delta protocol does not formally document how compression is specified or which codecs are supported. This RFC introduces the `delta.parquet.compression.codec` table property to persistently configure the compression codec used for new data files, and defines the semantics of tables that contain data files with mixed compression codecs.
 
