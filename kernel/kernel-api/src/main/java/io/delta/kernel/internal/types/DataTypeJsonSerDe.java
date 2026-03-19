@@ -554,8 +554,6 @@ public class DataTypeJsonSerDe {
     } else if (dataType instanceof DecimalType) {
       DecimalType decimalType = (DecimalType) dataType;
       gen.writeString(format("decimal(%d,%d)", decimalType.getPrecision(), decimalType.getScale()));
-    } else if (dataType instanceof StringType) {
-      gen.writeString("string");
     } else if (dataType instanceof GeometryType) {
       GeometryType geometryType = (GeometryType) dataType;
       gen.writeString(geometryType.simpleString());
