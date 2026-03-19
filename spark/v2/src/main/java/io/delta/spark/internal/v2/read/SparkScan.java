@@ -264,15 +264,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     ensurePlanned();
     final long plannedBytes = estimatedSizeInBytes;
 
-    // When catalog stats with numRows are available and CBO is enabled, combine table-level
-    // stats (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // When catalog stats are available and CBO is enabled, combine table-level stats
+    // (for columnStats) with planned file stats (for sizeInBytes and numRows).
     // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
     // conf.cboEnabled || conf.planStatsEnabled.
-    // Catalog stats are typically all-or-nothing; having sizeInBytes without numRows is rare
-    // and not well-exercised in practice. For that case we fall through to the file-only path
-    // (planned file sizes), which aligns with V1's better-tested no-catalog-stats code path.
-    boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-    if (useCatalogStats && catalogStats.isPresent() && catalogStats.get().numRows().isPresent()) {
+    if (isRowStatsEnabled() && catalogStats.isPresent()) {
       final Statistics stats = catalogStats.get();
       return new Statistics() {
         @Override
@@ -283,9 +279,12 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
         @Override
         public OptionalLong numRows() {
-          // TODO: Use accurate row count from planned files (sum of AddFile.numRecords)
-          //  instead of catalog stats, which are stale (point-in-time from ANALYZE) and
-          //  not adjusted for partition pruning.
+          // Prefer per-file row count (sum of AddFile.numRecords) when available: it is
+          // partition-pruning-aware and always up-to-date. Fall back to catalog stats
+          // (from ANALYZE TABLE) only when per-file stats are unavailable.
+          if (rowCountKnown) {
+            return OptionalLong.of(totalRows);
+          }
           return stats.numRows();
         }
 
@@ -456,12 +455,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
           totalBytes += addFile.getSize();
           partitionedFiles.add(partitionedFile);
 
-          Optional<Long> numRecords = addFile.getNumRecords();
-          if (numRecords.isPresent()) {
-            totalRows += numRecords.get();
-            fileRowCounts.put(partitionedFile.filePath().toString(), numRecords.get());
-          } else {
-            rowCountKnown = false;
+          if (rowCountKnown) {
+            Optional<Long> numRecords = addFile.getNumRecords();
+            if (numRecords.isPresent()) {
+              totalRows += numRecords.get();
+              fileRowCounts.put(partitionedFile.filePath().toString(), numRecords.get());
+            } else {
+              // This file has no numRecords — row count is unknowable for the whole scan.
+              // Clear partial state and stop accumulating for all subsequent files.
+              rowCountKnown = false;
+              totalRows = 0;
+              fileRowCounts.clear();
+            }
           }
         }
       } catch (IOException e) {
@@ -525,6 +530,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             newTotalRows += count;
           }
           this.totalRows = newTotalRows;
+          // fileRowCounts is no longer needed: partitionedFiles has been replaced with the
+          // filtered subset, and totalRows has been recomputed from it. Runtime filtering
+          // is applied at most once (partitionedFiles is overwritten, not accumulated), so
+          // this map will not be consulted again.
+          fileRowCounts.clear();
         }
       }
     }
@@ -591,15 +601,12 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    * Returns whether row count statistics should be collected and reported.
    *
    * <p>Matches V1 behavior: {@code LogicalRelation.computeStats()} only reports numRows when {@code
-   * spark.sql.cbo.enabled} or {@code spark.sql.statistics.planStatsEnabled} is true. This gating
-   * avoids the cost of per-file stats JSON parsing on every scan when the optimizer would not use
-   * the statistics anyway.
+   * spark.sql.cbo.enabled} or {@code spark.sql.cbo.planStats.enabled} is true. This gating avoids
+   * the cost of per-file stats JSON parsing on every scan when the optimizer would not use the
+   * statistics anyway.
    */
   private boolean isRowStatsEnabled() {
-    return sqlConf.cboEnabled()
-        || "true"
-            .equalsIgnoreCase(
-                sqlConf.getConfString("spark.sql.statistics.planStatsEnabled", "false"));
+    return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
   }
 
   /**

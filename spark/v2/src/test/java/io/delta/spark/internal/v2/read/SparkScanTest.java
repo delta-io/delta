@@ -588,57 +588,58 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testNumRowsInStatistics() throws Exception {
     // Table has 5 rows inserted as 5 separate partitions (1 row each), all with stats.
-    spark.sql("SET spark.sql.statistics.planStatsEnabled=true");
-    try {
-      SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-      SparkScan scan = (SparkScan) builder.build();
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
 
-      assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
-      assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
-      assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
-      assertEquals(5L, scan.estimateStatistics().numRows().getAsLong());
-    } finally {
-      spark.sql("RESET spark.sql.statistics.planStatsEnabled");
-    }
+          assertTrue(isRowCountKnown(scan), "Row count should be known when all files have stats");
+          assertEquals(5L, getTotalRows(scan), "Total rows should match the 5 inserted rows");
+          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+          assertEquals(5L, scan.estimateStatistics().numRows().getAsLong());
+        });
   }
 
   @Test
   public void testNumRowsAfterRuntimeFiltering() throws Exception {
     // city=hz matches 2 partitions: (date=20180520, city=hz) and (date=20180718, city=hz)
-    spark.sql("SET spark.sql.statistics.planStatsEnabled=true");
-    try {
-      SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-      SparkScan scan = (SparkScan) builder.build();
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
 
-      assertEquals(5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
+          assertEquals(
+              5L, scan.estimateStatistics().numRows().getAsLong(), "5 rows before filtering");
 
-      scan.filter(new Predicate[] {cityPredicate}); // city=hz
+          scan.filter(new Predicate[] {cityPredicate}); // city=hz
 
-      assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
-      assertEquals(
-          2L, scan.estimateStatistics().numRows().getAsLong(), "2 rows after city=hz filter");
-    } finally {
-      spark.sql("RESET spark.sql.statistics.planStatsEnabled");
-    }
+          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+          assertEquals(
+              2L, scan.estimateStatistics().numRows().getAsLong(), "2 rows after city=hz filter");
+        });
   }
 
   @Test
   public void testNumRowsZeroAfterFilteringOutAllFiles() throws Exception {
-    spark.sql("SET spark.sql.statistics.planStatsEnabled=true");
-    try {
-      SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
-      SparkScan scan = (SparkScan) builder.build();
+    withSQLConf(
+        "spark.sql.cbo.planStats.enabled",
+        "true",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
 
-      scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
+          scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
 
-      assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
-      assertEquals(
-          0L,
-          scan.estimateStatistics().numRows().getAsLong(),
-          "0 rows after filtering out all files");
-    } finally {
-      spark.sql("RESET spark.sql.statistics.planStatsEnabled");
-    }
+          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
+          assertEquals(
+              0L,
+              scan.estimateStatistics().numRows().getAsLong(),
+              "0 rows after filtering out all files");
+        });
   }
 
   @Test
@@ -646,7 +647,6 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Older Delta tables or tables written with stats collection disabled will have AddFile entries
     // without numRecords. When even one file lacks stats, rowCountKnown must be false so that
     // numRows() returns OptionalLong.empty() rather than an incorrect partial count.
-    spark.sql("SET spark.sql.statistics.planStatsEnabled=true");
     String tblName = "test_mixed_stats_numrows";
     try {
       String path = testDir.getAbsolutePath();
@@ -663,16 +663,21 @@ public class SparkScanTest extends DeltaV2TestBase {
       SparkTable mixedStatsTable =
           new SparkTable(
               Identifier.of(new String[] {"spark_catalog", "default"}, tblName), path, options);
-      SparkScanBuilder builder = (SparkScanBuilder) mixedStatsTable.newScanBuilder(options);
-      SparkScan scan = (SparkScan) builder.build();
 
-      assertFalse(
-          isRowCountKnown(scan), "rowCountKnown should be false when some files lack stats");
-      assertFalse(
-          scan.estimateStatistics().numRows().isPresent(),
-          "numRows() should be OptionalLong.empty() when row count is unknown");
+      withSQLConf(
+          "spark.sql.cbo.planStats.enabled",
+          "true",
+          () -> {
+            SparkScanBuilder builder = (SparkScanBuilder) mixedStatsTable.newScanBuilder(options);
+            SparkScan scan = (SparkScan) builder.build();
+
+            assertFalse(
+                isRowCountKnown(scan), "rowCountKnown should be false when some files lack stats");
+            assertFalse(
+                scan.estimateStatistics().numRows().isPresent(),
+                "numRows() should be OptionalLong.empty() when row count is unknown");
+          });
     } finally {
-      spark.sql("RESET spark.sql.statistics.planStatsEnabled");
       spark.sql("RESET spark.databricks.delta.stats.collect");
       spark.sql("DROP TABLE IF EXISTS " + tblName);
     }
@@ -1150,7 +1155,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Should have numRows from catalog stats
+          // Should have numRows from per-file stats (not stale catalog stats)
           assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
           assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
 
@@ -1172,6 +1177,48 @@ public class SparkScanTest extends DeltaV2TestBase {
           assertTrue(idStats.max().isPresent(), "id max should be present");
           assertEquals(1, idStats.min().get(), "id min should be 1");
           assertEquals(2, idStats.max().get(), "id max should be 2");
+        });
+  }
+
+  @Test
+  public void testPerFileNumRowsPrefersOverStaleCatalogStats(@TempDir File tempDir)
+      throws Exception {
+    // Verifies that per-file numRows (from AddFile.numRecords) takes precedence over stale catalog
+    // stats (from ANALYZE TABLE). Catalog stats are a point-in-time snapshot and not adjusted for
+    // partition pruning; per-file stats are always up-to-date.
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_per_file_wins";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
+
+    // Inject stale catalog stats claiming 999 rows (simulating stats collected before a deletion)
+    CatalogStatistics staleCatalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(1024L),
+            scala.Option.apply(scala.math.BigInt.apply(999L)), // stale — actual count is 2
+            buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
+    CatalogTable catalogTable = injectCatalogStats(tblName, staleCatalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // Per-file stats show 2 rows; the stale catalog claim of 999 should be ignored.
+          assertTrue(stats.numRows().isPresent(), "numRows should be present");
+          assertEquals(
+              2L,
+              stats.numRows().getAsLong(),
+              "numRows should be 2 from per-file stats, not 999 from stale catalog");
         });
   }
 
@@ -1496,9 +1543,9 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testEstimateStatisticsWithCatalogStats_noNumRows(@TempDir File tempDir)
       throws Exception {
-    // Catalog stats with sizeInBytes but no numRows should be treated the same as no catalog
-    // stats: fall through to post-pruned/filtered file sizes instead of using the stale
-    // catalog sizeInBytes.
+    // Catalog stats with sizeInBytes but no numRows: when per-file stats are available,
+    // numRows should still be reported from per-file numRecords (not from catalog stats).
+    // sizeInBytes should come from planned files, not the stale catalog value.
     String path = tempDir.getAbsolutePath();
     String tblName = "stats_no_numrows";
     spark.sql(
@@ -1528,10 +1575,10 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Should behave like no catalog stats: numRows empty, sizeInBytes from planned files
-          assertFalse(
-              stats.numRows().isPresent(),
-              "numRows should be empty when catalog stats have no numRows");
+          // Per-file stats provide numRows even when catalog stats lack it
+          assertTrue(stats.numRows().isPresent(), "numRows should be present from per-file stats");
+          assertEquals(
+              2L, stats.numRows().getAsLong(), "numRows should reflect per-file row count");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
 
@@ -1541,10 +1588,10 @@ public class SparkScanTest extends DeltaV2TestBase {
               stats.sizeInBytes().getAsLong(),
               "sizeInBytes should come from planned files, not catalog stats");
 
-          // columnStats should be empty (not inheriting from catalog stats)
+          // columnStats should be empty (catalog stats had no column stats)
           assertTrue(
               stats.columnStats().isEmpty(),
-              "columnStats should be empty when catalog stats have no numRows");
+              "columnStats should be empty when catalog stats have no column stats");
         });
   }
 
