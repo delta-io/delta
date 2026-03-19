@@ -40,7 +40,7 @@ public class DeltaKernelWriteBuilder implements WriteBuilder {
   private final List<String> partitionColumnNames;
 
   public DeltaKernelWriteBuilder(SparkTable table, LogicalWriteInfo writeInfo) {
-    this.tablePath = table.getTablePath().toString();
+    this.tablePath = table.getTablePath();
     this.hadoopConf = table.getHadoopConf();
     this.initialSnapshot = table.getInitialSnapshot();
     this.writeSchema = writeInfo.schema();

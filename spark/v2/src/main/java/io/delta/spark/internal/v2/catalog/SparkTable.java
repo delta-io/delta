@@ -221,18 +221,14 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsR
     return schemaProvider.getPartitionSchema();
   }
 
+  /** Returns the full table schema used for filter classification and scan planning. */
+  public StructType getRawSchema() {
+    return schemaProvider.getRawSchema();
+  }
+
   /** Returns partition column names in table order. */
   public List<String> getPartitionColumnNames() {
     return schemaProvider.getPartitionColumnNames();
-  }
-
-  /**
-   * Returns the Path to the Delta table root.
-   *
-   * @return Path created from the table path
-   */
-  public Path getTablePath() {
-    return new Path(tablePath);
   }
 
   @Override
