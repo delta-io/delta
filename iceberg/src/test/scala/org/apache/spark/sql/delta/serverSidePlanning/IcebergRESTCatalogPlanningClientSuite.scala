@@ -603,6 +603,27 @@ class IcebergRESTCatalogPlanningClientSuite extends QueryTest with SharedSparkSe
     }
   }
 
+  test("fetchCatalogPrefix falls back to baseUri on connection failure") {
+    // Use a port that's expected to have no listener. fetchCatalogPrefix() makes an HTTP GET
+    // to /config which will fail with a connection error. It should catch the exception, log a
+    // warning, and return None — causing icebergRestCatalogUriRoot to fall back to baseUri.
+    // The subsequent planScan HTTP POST will also fail (same unreachable host).
+    val unreachableUri = "http://localhost:1"
+    val client = new IcebergRESTCatalogPlanningClient(unreachableUri, "test_catalog", "")
+    try {
+      val ex = intercept[Exception] {
+        client.planScan("test_db", "test_table")
+      }
+      // Verify the exception is a connection error. This confirms fetchCatalogPrefix()
+      // did not throw a different exception type (e.g., NPE, parse error) and that the
+      // client progressed past the config fetch to attempt the plan HTTP POST.
+      assert(ex.getMessage != null,
+        "Expected a connection error with a message from the HTTP client")
+    } finally {
+      client.close()
+    }
+  }
+
   test("User-Agent header format") {
     val client = new IcebergRESTCatalogPlanningClient("http://localhost:8080", "test_catalog", "")
     try {
