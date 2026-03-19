@@ -25,21 +25,21 @@ import java.util.Arrays;
  * bounding box.
  *
  * <p>This expression is not directly evaluatable. It is transformed to an internal
- * ST_INTERSECTS_BOXES_ON_STATS predicate during data-skipping filter construction, which evaluates
- * the intersection of the column's min/max bounding box against the query box.
+ * ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS predicate during data-skipping filter construction, which
+ * evaluates the intersection of the column's min/max bounding box against the query box.
  *
  * @since 4.0.0
  */
-public class StIntersectsBoxes extends Predicate {
+public class StGeometryBoxesIntersect extends Predicate {
 
-  public static final String NAME = "ST_INTERSECTS_BOXES";
+  public static final String NAME = "ST_GEOMETRY_BOXES_INTERSECT";
 
   /**
-   * @param column the geometry or geography column to test
+   * @param column the geometry column to test
    * @param queryMin lower-left corner of the query bounding box as a WKT POINT string literal
    * @param queryMax upper-right corner of the query bounding box as a WKT POINT string literal
    */
-  public StIntersectsBoxes(Column column, Literal queryMin, Literal queryMax) {
+  public StGeometryBoxesIntersect(Column column, Literal queryMin, Literal queryMax) {
     super(NAME, Arrays.asList(column, queryMin, queryMax));
     checkArgument(
         queryMin.getDataType() instanceof StringType,

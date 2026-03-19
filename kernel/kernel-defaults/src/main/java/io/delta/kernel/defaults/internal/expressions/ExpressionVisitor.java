@@ -74,7 +74,7 @@ abstract class ExpressionVisitor<R> {
 
   abstract R visitIn(In in);
 
-  abstract R visitStIntersectsBoxesOnStats(Predicate predicate);
+  abstract R visitStGeometryBoxesIntersectsOnStats(Predicate predicate);
 
   final R visit(Expression expression) {
     if (expression instanceof PartitionValueExpression) {
@@ -146,8 +146,9 @@ abstract class ExpressionVisitor<R> {
         } else {
           return visitIn(new In(children.get(0), children.subList(1, children.size())));
         }
-      case "ST_INTERSECTS_BOXES_ON_STATS":
-        return visitStIntersectsBoxesOnStats(createPredicate(name, children, collationIdentifier));
+      case "ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS":
+        return visitStGeometryBoxesIntersectsOnStats(
+            createPredicate(name, children, collationIdentifier));
       default:
         throw new UnsupportedOperationException(
             String.format("Scalar expression `%s` is not supported.", name));
