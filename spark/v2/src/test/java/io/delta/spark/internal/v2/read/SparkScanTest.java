@@ -14,7 +14,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogColumnStat;
 import org.apache.spark.sql.catalyst.catalog.CatalogStatistics;
@@ -25,11 +27,18 @@ import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.LiteralValue;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.expressions.filter.Predicate;
+import org.apache.spark.sql.connector.read.Batch;
+import org.apache.spark.sql.connector.read.HasPartitionKey;
+import org.apache.spark.sql.connector.read.InputPartition;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.connector.read.partitioning.KeyGroupedPartitioning;
+import org.apache.spark.sql.connector.read.partitioning.Partitioning;
+import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -453,7 +462,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
         "The following streaming options are not supported: [readchangefeed]. "
-            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, excludeRegex].",
+            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
+            + "maxBytesPerTrigger, ignoreDeletes, skipChangeCommits, excludeRegex].",
         exception.getMessage());
   }
 
@@ -817,6 +827,234 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  // ================================================================================================
+  // Tests for output partitioning (SupportsReportPartitioning)
+  // ================================================================================================
+
+  @Test
+  public void testOutputPartitioningForPartitionedTable() {
+    // Partitioned table should return KeyGroupedPartitioning
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    Partitioning partitioning = scan.outputPartitioning();
+
+    assertTrue(
+        partitioning instanceof KeyGroupedPartitioning,
+        "Partitioned table should return KeyGroupedPartitioning");
+
+    KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
+
+    // The partitioned table has 3 partition columns: date, city, part
+    Expression[] keys = kgp.keys();
+    assertEquals(3, keys.length, "Should have 3 partition key expressions");
+
+    // Verify partition key names match partition schema
+    Set<String> keyNames = new HashSet<>();
+    for (Expression key : keys) {
+      assertTrue(key instanceof FieldReference, "Key should be a FieldReference");
+      keyNames.add(((FieldReference) key).fieldNames()[0]);
+    }
+    assertTrue(keyNames.containsAll(Arrays.asList("date", "city", "part")));
+
+    // numPartitions returns partitionedFiles.size() (file count, not unique partition count).
+    // In this test data, each partition has one file, so file count equals partition count.
+    assertEquals(5, kgp.numPartitions(), "Should have 5 files (one per partition)");
+  }
+
+  /** Creates a non-partitioned table with sample data and returns a SparkScan for it. */
+  private SparkScan createNonPartitionedScan(File tempDir, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE `%s` (id INT, name STRING) USING delta LOCATION '%s'",
+            tableName, tempDir.getAbsolutePath()));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'Alice'), (2, 'Bob')", tableName));
+
+    SparkTable nonPartTable =
+        new SparkTable(
+            Identifier.of(new String[] {"spark_catalog", "default"}, tableName),
+            tempDir.getAbsolutePath(),
+            options);
+
+    SparkScanBuilder builder = (SparkScanBuilder) nonPartTable.newScanBuilder(options);
+    return (SparkScan) builder.build();
+  }
+
+  @Test
+  public void testOutputPartitioningForNonPartitionedTable(@TempDir File tempDir) {
+    // Non-partitioned table should return UnknownPartitioning
+    SparkScan scan = createNonPartitionedScan(tempDir, "deltatbl_nonpartitioned");
+
+    Partitioning partitioning = scan.outputPartitioning();
+
+    assertTrue(
+        partitioning instanceof UnknownPartitioning,
+        "Non-partitioned table should return UnknownPartitioning");
+  }
+
+  @Test
+  public void testOutputPartitioningAfterRuntimeFilter() {
+    // Output partitioning should reflect filtered partition count
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Apply filter to only keep city=hz (2 rows: part=1/date=20180520 and part=1/date=20180718)
+    scan.filter(new Predicate[] {cityPredicate});
+
+    Partitioning partitioning = scan.outputPartitioning();
+    assertTrue(partitioning instanceof KeyGroupedPartitioning);
+
+    KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
+    // numPartitions returns partitionedFiles.size() (file count); here each partition has one file.
+    assertEquals(
+        2,
+        kgp.numPartitions(),
+        "After filtering to city=hz, should have 2 files (one per partition)");
+  }
+
+  // ================================================================================================
+  // Tests for DeltaInputPartition in planInputPartitions
+  // ================================================================================================
+
+  @Test
+  public void testPlanInputPartitionsReturnsHasPartitionKeyForPartitionedTable() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+    Batch batch = scan.toBatch();
+
+    InputPartition[] partitions = batch.planInputPartitions();
+
+    assertTrue(partitions.length > 0, "Should have at least one partition");
+    for (InputPartition partition : partitions) {
+      assertTrue(
+          partition instanceof DeltaInputPartition,
+          "Partitioned table should return DeltaInputPartition instances");
+      assertTrue(
+          partition instanceof HasPartitionKey,
+          "DeltaInputPartition should implement HasPartitionKey");
+
+      DeltaInputPartition deltaPartition = (DeltaInputPartition) partition;
+      assertNotNull(deltaPartition.partitionKey(), "Partition key should not be null");
+      assertNotNull(deltaPartition.getFilePartition(), "FilePartition should not be null");
+    }
+  }
+
+  @Test
+  public void testPlanInputPartitionsGroupsFilesByPartition(@TempDir File tempDir) {
+    // Create a table with multiple files per partition to actually exercise the grouping logic
+    // in planPartitionedInputPartitions (the default test table has 1 file per partition,
+    // which would pass even without grouping).
+    String multiFileTableName = "deltatbl_multifile_partitioned";
+    spark.sql(
+        String.format(
+            "CREATE TABLE `%s` (id INT, data STRING, part INT) USING delta "
+                + "LOCATION '%s' PARTITIONED BY (part)",
+            multiFileTableName, tempDir.getAbsolutePath()));
+    // Insert in separate statements to create multiple files per partition
+    spark.sql(
+        String.format("INSERT INTO `%s` VALUES (1, 'a', 1), (2, 'b', 2)", multiFileTableName));
+    spark.sql(
+        String.format("INSERT INTO `%s` VALUES (3, 'c', 1), (4, 'd', 2)", multiFileTableName));
+    spark.sql(String.format("INSERT INTO `%s` VALUES (5, 'e', 1)", multiFileTableName));
+    // Now part=1 has 3 files, part=2 has 2 files
+
+    SparkTable multiFileTable =
+        new SparkTable(
+            Identifier.of(new String[] {"spark_catalog", "default"}, multiFileTableName),
+            tempDir.getAbsolutePath(),
+            options);
+
+    SparkScanBuilder builder = (SparkScanBuilder) multiFileTable.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+    Batch batch = scan.toBatch();
+
+    InputPartition[] partitions = batch.planInputPartitions();
+
+    // Verify all partitions are DeltaInputPartition with partition keys
+    Map<InternalRow, List<DeltaInputPartition>> partitionsByKey = new HashMap<>();
+    for (InputPartition p : partitions) {
+      assertTrue(p instanceof DeltaInputPartition);
+      DeltaInputPartition dp = (DeltaInputPartition) p;
+      partitionsByKey.computeIfAbsent(dp.partitionKey(), k -> new ArrayList<>()).add(dp);
+    }
+
+    // Should have exactly 2 unique partition keys (part=1 and part=2)
+    assertEquals(2, partitionsByKey.size(), "Should have 2 unique partition keys");
+
+    // Verify that the grouping actually produced multiple DeltaInputPartitions for a single
+    // partition key (since multiple files exist per partition and each gets its own
+    // FilePartition at default maxSplitBytes)
+    int totalPartitions = partitions.length;
+    assertTrue(
+        totalPartitions > 2,
+        "With 5 files across 2 partitions, should have more than 2 input partitions, "
+            + "got "
+            + totalPartitions);
+
+    // Verify all DeltaInputPartitions with the same key share the same partition key instance
+    for (Map.Entry<InternalRow, List<DeltaInputPartition>> entry : partitionsByKey.entrySet()) {
+      List<DeltaInputPartition> group = entry.getValue();
+      InternalRow expectedKey = group.get(0).partitionKey();
+      for (DeltaInputPartition dp : group) {
+        assertEquals(
+            expectedKey,
+            dp.partitionKey(),
+            "All partitions in the same group should have equal partition keys");
+      }
+    }
+  }
+
+  @Test
+  public void testPlanInputPartitionsReturnsFilePartitionForNonPartitionedTable(
+      @TempDir File tempDir) {
+    SparkScan scan = createNonPartitionedScan(tempDir, "deltatbl_nonpartitioned_batch");
+    Batch batch = scan.toBatch();
+
+    InputPartition[] partitions = batch.planInputPartitions();
+
+    assertTrue(partitions.length > 0, "Should have at least one partition");
+    for (InputPartition partition : partitions) {
+      assertTrue(
+          partition instanceof FilePartition,
+          "Non-partitioned table should return FilePartition instances, not DeltaInputPartition");
+      assertFalse(
+          partition instanceof DeltaInputPartition,
+          "Non-partitioned table should NOT return DeltaInputPartition");
+    }
+  }
+
+  @Test
+  public void testOutputPartitioningForEmptyPartitionedTable(@TempDir File tempDir) {
+    // Empty partitioned table should return KeyGroupedPartitioning with 0 partitions
+    String emptyTableName = "deltatbl_empty_partitioned";
+    spark.sql(
+        String.format(
+            "CREATE TABLE `%s` (id INT, name STRING, part INT) USING delta "
+                + "LOCATION '%s' PARTITIONED BY (part)",
+            emptyTableName, tempDir.getAbsolutePath()));
+
+    SparkTable emptyTable =
+        new SparkTable(
+            Identifier.of(new String[] {"spark_catalog", "default"}, emptyTableName),
+            tempDir.getAbsolutePath(),
+            options);
+
+    SparkScanBuilder builder = (SparkScanBuilder) emptyTable.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    Partitioning partitioning = scan.outputPartitioning();
+    assertTrue(
+        partitioning instanceof KeyGroupedPartitioning,
+        "Empty partitioned table should still return KeyGroupedPartitioning");
+
+    KeyGroupedPartitioning kgp = (KeyGroupedPartitioning) partitioning;
+    assertEquals(0, kgp.numPartitions(), "Empty table should have 0 partitions");
+
+    Batch batch = scan.toBatch();
+    InputPartition[] partitions = batch.planInputPartitions();
+    assertEquals(0, partitions.length, "Empty table should return 0 input partitions");
   }
 
   // ================================================================================================
