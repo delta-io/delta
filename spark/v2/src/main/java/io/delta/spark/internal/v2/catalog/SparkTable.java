@@ -186,6 +186,11 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsR
     return catalogTable;
   }
 
+  /** Returns the filesystem path to the Delta table. */
+  public String getTablePath() {
+    return tablePath;
+  }
+
   /** Returns the Hadoop configuration used for table I/O. */
   public Configuration getHadoopConf() {
     return hadoopConf;
