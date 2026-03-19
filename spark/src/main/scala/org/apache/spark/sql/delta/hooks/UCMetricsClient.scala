@@ -37,8 +37,7 @@ object UCMetricsClient {
   private val CATALOG_CONF_PREFIX = "spark.sql.catalog"
   private val CATALOG_URI_CONF_SUFFIX = "uri"
   private val METRICS_ENDPOINT_PATH = "/api/2.1/unity-catalog/delta/preview/metrics"
-  // Short timeout for best-effort delivery; hook must not block commits
-  private val HTTP_TIMEOUT_MS = 5000L
+  private val HTTP_TIMEOUT_MS = 10000L
 
   /**
    * Sends commit metrics to the UC metrics endpoint synchronously.

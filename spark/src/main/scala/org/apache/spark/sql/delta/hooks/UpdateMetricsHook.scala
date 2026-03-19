@@ -38,7 +38,7 @@ import org.apache.spark.sql.catalyst.catalog.CatalogTable
 case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     extends PostCommitHook with DeltaLogging {
 
-  override val name: String = "Update UC Metrics"
+  override val name: String = "Update catalog metrics"
 
   override def run(spark: SparkSession, txn: CommittedTransaction): Unit = {
     val ct = catalogTable.orNull
