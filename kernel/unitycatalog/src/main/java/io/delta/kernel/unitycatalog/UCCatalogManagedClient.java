@@ -456,6 +456,9 @@ public class UCCatalogManagedClient {
     requiredProperties.put(
         TableFeatures.CATALOG_MANAGED_RW_FEATURE.getTableFeatureSupportKey(),
         TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
+    requiredProperties.put(
+        TableFeatures.VACUUM_PROTOCOL_CHECK_RW_FEATURE.getTableFeatureSupportKey(),
+        TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE);
     requiredProperties.put(UC_TABLE_ID_KEY, ucTableId);
 
     return requiredProperties;

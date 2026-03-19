@@ -1413,9 +1413,14 @@ class DeltaColumnMappingSuite extends QueryTest
       // case 1: currentSchema compared with itself
       var currentMetadata = getMetadata()
       var newMetadata = getMetadata()
+      def isBothCMEnabled: Boolean =
+        newMetadata.columnMappingMode != NoMapping &&
+          currentMetadata.columnMappingMode != NoMapping
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 2: add a top-level column
@@ -1423,8 +1428,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 3: add a nested column
@@ -1432,8 +1439,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 4: drop a top-level column
@@ -1441,8 +1450,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 5: drop a nested column
@@ -1450,8 +1461,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        isDropColumnOperation(newMetadata, currentMetadata) &&
-          !isRenameColumnOperation(newMetadata, currentMetadata)
+        isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          !isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 6: rename a top-level column
@@ -1459,8 +1472,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
 
       // case 7: rename a nested column
@@ -1468,8 +1483,10 @@ class DeltaColumnMappingSuite extends QueryTest
       currentMetadata = newMetadata
       newMetadata = getMetadata()
       assert(
-        !isDropColumnOperation(newMetadata, currentMetadata) &&
-          isRenameColumnOperation(newMetadata, currentMetadata)
+        !isDropColumnOperation(
+          newMetadata.schema, currentMetadata.schema, isBothCMEnabled) &&
+          isRenameColumnOperation(
+            newMetadata.schema, currentMetadata.schema, isBothCMEnabled)
       )
     }
   }

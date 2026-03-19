@@ -55,9 +55,23 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "Delta sources don't write offsets with null json",
 
     // === Schema Evolution ===
-    "restarting a query should pick up latest table schema and recover",
+    "add column: restarting with new DataFrame should recover",
+    "add column: restarting with stale DataFrame should fail",
+    "relax nullability: restarting with new DataFrame should recover",
+    "type widening: restarting with new DataFrame should recover",
     "disallow to change schema after starting a streaming query",
     "allow to change schema before starting a streaming query",
+    "drop column: should fail with non-additive schema change error",
+    "drop column: should succeed with unsafe column mapping schema change flag enabled",
+    "rename column: should fail with non-additive schema change error",
+    "rename column: should throw schema change error with unsafe flag enabled",
+    "type widening: should fail with non-additive schema change error when enable schema tracking",
+
+    // === Read options ===
+    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+    "streaming with ignoreDeletes = true skips delete-only commits",
+    "streaming with ignoreDeletes = true still fails on change commits",
+    "streaming with skipChangeCommits = true skips both delete and change commits",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -70,6 +84,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = true",
     "startingVersion should be ignored when restarting from a checkpoint, withRowTracking = false",
     "startingVersion and startingTimestamp are both set",
+    "startingTimestamp",
 
     // ========== Rate limiting tests ==========
     "maxFilesPerTrigger",
@@ -91,12 +106,16 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // ========== Error handling tests ==========
     "streaming query should fail when table is deleted and recreated with new id",
-    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
     // ========== Misc tests ==========
     "a fast writer should not starve a Delta source",
-    "should not attempt to read a non exist version"
+    "should not attempt to read a non exist version",
+    "can delete old files of a snapshot without update",
+    "Delta source advances with non-data inserts and generates empty dataframe for " +
+      "non-data operations"
   )
 
   private lazy val shouldFailTests = Set(
@@ -104,10 +123,12 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
 
-    // === read options ===
-    "skip change commits",
-    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "startingTimestamp",
+    // === Schema Evolution ===
+    // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
+    //  for datasource v2 such that we can adopt the two schema changes without refreshing the
+    //  dataframe
+    "relax nullability: restarting with stale DataFrame should recover",
+    "type widening: restarting with stale DataFrame should recover",
 
     // === Data Loss Detection ===
     "fail on data loss - starting from missing files",
@@ -116,13 +137,11 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files with option off",
 
     // === Misc ===
+    // TODO(#5900): fix exception mismatch
     "no schema should throw an exception",
-    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+    // TODO(#5900): fix exception mismatch
     "Delta sources should verify the protocol reader version",
-    "can delete old files of a snapshot without update",
-    "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations",
-    "Delta source advances with non-data inserts and generates empty dataframe for addl files",
+    // TODO(#5895): gracefully handle corrupt checkpoint
     "start from corrupt checkpoint",
 
     // === Tests that bypass V2 by not using loadStreamWithOptions ===
@@ -132,20 +151,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "handling nullability schema changes", // Uses .table() directly
     "allow user specified schema if consistent: v1 source", // Uses DataSource directly
     // Calls deltaSource.createSource() directly
-    "createSource should create source with empty or matching table schema provided",
-    // Unit test for internal API
-    "DeltaLog.createDataFrame should drop null columns with feature flag",
-    // Unit test for internal API
-    "DeltaLog.createDataFrame should not drop null columns without feature flag",
-    "unknown sourceVersion value", // Unit test for DeltaSourceOffset
-    "invalid sourceVersion value", // Unit test for DeltaSourceOffset
-    "missing sourceVersion", // Unit test for DeltaSourceOffset
-    "unmatched reservoir id", // Unit test for DeltaSourceOffset
-    "isInitialSnapshot serializes as isStartingVersion", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset deserialization", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset deserialization error", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset serialization", // Unit test for DeltaSourceOffset
-    "DeltaSourceOffset.validateOffsets" // Unit test for DeltaSourceOffset
+    "createSource should create source with empty or matching table schema provided"
   )
 
   override protected def shouldFail(testName: String): Boolean = {

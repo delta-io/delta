@@ -71,7 +71,7 @@ trait PartitionLikeDataSkippingSuiteBase
         minNumFilesToApply.toString) {
       // Execute the query with partition-like filters and validate that the result matches.
       val res = sql(query).collect()
-      assert(res.sameElements(baseResult))
+      assert(res.sortBy(_.toString).sameElements(baseResult.sortBy(_.toString)))
 
       val predicates = sql(query).queryExecution.optimizedPlan.collect {
         case Filter(condition, _) => condition

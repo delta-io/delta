@@ -15,11 +15,16 @@
  */
 package io.delta.spark.internal.v2.write;
 
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
+import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
+
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.read.SparkScan;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
+import java.util.Optional;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.RowLevelOperation;
 import org.apache.spark.sql.connector.write.RowLevelOperationInfo;
@@ -52,13 +57,22 @@ public class DeltaCopyOnWriteOperation implements RowLevelOperation {
 
   @Override
   public ScanBuilder newScanBuilder(CaseInsensitiveStringMap options) {
+    CaseInsensitiveStringMap mergedOptions = mergeOptionsWithTable(options);
+    Optional<Statistics> catalogStats =
+        table
+            .getCatalogTable()
+            .flatMap(ct -> toJavaOptional(ct.stats()))
+            .map(stats -> toV2Statistics(stats, table.getDataSchema(), table.getPartitionSchema()));
+
     return new SparkScanBuilder(
         table.name(),
         table.getInitialSnapshot(),
         table.getSnapshotManager(),
         table.getDataSchema(),
         table.getPartitionSchema(),
-        mergeOptionsWithTable(options)) {
+        table.getRawSchema(),
+        catalogStats,
+        mergedOptions) {
       @Override
       public Scan build() {
         Scan scan = super.build();

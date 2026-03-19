@@ -232,6 +232,27 @@ private[delta] object DataSkippingReader {
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()))
+
+  /**
+   * For timestamps, JSON serialization will truncate to milliseconds. This means
+   * that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
+   * records that differ only in microsecond precision. (For example, a file containing only
+   * 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
+   * to contain the range from 01:02:03.456 to 01:02:03.457.)
+   *
+   * To avoid overflow when the timestamp is near Long.MAX_VALUE, we check if adding 1
+   * millisecond would overflow. If so, we saturate to Long.MAX_VALUE to ensure the max stat
+   * is >= all actual values in the file while avoiding arithmetic overflow.
+   */
+  def getAdjustedTimestamp(col: Column, tsType: DataType): Column = {
+    val maxTimestampLiteral = Literal(Long.MaxValue, tsType)
+    val overflowThresholdLiteral = Literal(Long.MaxValue - 1000, tsType)
+    val adjustedExpr = If(
+      GreaterThan(col.expr, overflowThresholdLiteral),
+      maxTimestampLiteral,
+      TimestampAdd("MILLISECOND", Literal(1L, LongType), col.expr))
+    Column(Cast(adjustedExpr, tsType))
+  }
 }
 
 /**
@@ -1087,27 +1108,9 @@ trait DataSkippingReaderBase
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
         case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
-          // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
-          // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
-          // records that differ only in microsecond precision. (For example, a file containing only
-          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
-          // to contain the range from 01:02:03.456 to 01:02:03.457.)
-          //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
-          Column(Cast(TimestampAdd(
-            "MILLISECOND",
-            new Literal(1L, LongType),
-            statCol.expr), TimestampType))
+          getAdjustedTimestamp(statCol, TimestampType)
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
-          // We also apply the same adjustment of max stats that was applied to Timestamp
-          // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
-          Column(Cast(TimestampAdd(
-            "MILLISECOND",
-            new Literal(1L, LongType),
-            statCol.expr), TimestampNTZType))
+          getAdjustedTimestamp(statCol, TimestampNTZType)
         case (statCol, _, _) =>
           statCol
       }
@@ -1263,7 +1266,10 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val df = if (keepNumRecords) {
+    val forceCollectRowCount =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+    val shouldCollectStats = keepNumRecords || forceCollectRowCount
+    val df = if (shouldCollectStats) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
@@ -1278,7 +1284,36 @@ trait DataSkippingReaderBase
     }
     val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
-    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
+    // Compute row count if we have stats available and forceCollectRowCount is enabled
+    val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+      sumRowCounts(files)
+    } else {
+      (None, None)
+    }
+    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), rowCount, Some(files.size),
+      logicalRowCount)
+  }
+
+  /**
+   * Sums up the numPhysicalRecords and numLogicalRecords from the given AddFile objects.
+   * Returns (None, None) if any file is missing physical record stats.
+   * Returns (Some(physical), None) if any file is missing logical record stats.
+   */
+  private def sumRowCounts(files: Seq[AddFile]): (Option[Long], Option[Long]) = {
+    var physicalRows = 0L
+    var logicalRows = 0L
+    var physicalMissing = false
+    var logicalMissing = false
+    files.foreach { file =>
+      physicalMissing = physicalMissing || file.numPhysicalRecords.isEmpty
+      logicalMissing = logicalMissing || file.numLogicalRecords.isEmpty
+      physicalRows += file.numPhysicalRecords.getOrElse(0L)
+      logicalRows += file.numLogicalRecords.getOrElse(0L)
+    }
+    (
+      if (physicalMissing) None else Some(physicalRows),
+      if (logicalMissing) None else Some(logicalRows)
+    )
   }
 
   /**
@@ -1335,13 +1370,24 @@ trait DataSkippingReaderBase
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
+        val forceCollectRowCount =
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+        val shouldCollectStats = keepNumRecords || forceCollectRowCount
+        lazy val files = getAllFiles(shouldCollectStats)
+        // Compute row count if forceCollectRowCount is enabled
+        val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+          sumRowCounts(files)
+        } else {
+          (None, None)
+        }
         val dataSize = DataSize(
           bytesCompressed = sizeInBytesIfKnown,
-          rows = None,
-          files = numOfFilesIfKnown)
+          rows = rowCount,
+          files = numOfFilesIfKnown,
+          logicalRows = logicalRowCount)
         return DeltaScan(
           version = version,
-          files = getAllFiles(keepNumRecords),
+          files = files,
           total = dataSize,
           partition = dataSize,
           scanned = dataSize)(
