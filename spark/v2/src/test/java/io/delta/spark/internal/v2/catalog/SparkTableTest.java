@@ -194,9 +194,9 @@ public class SparkTableTest extends DeltaV2TestBase {
         break;
     }
 
-    // ===== Test getTablePath returns Path from tablePath =====
-    Path retrievedPath = kernelTable.getTablePath();
-    assertEquals(new Path(path), retrievedPath, "getTablePath should return Path from tablePath");
+    // ===== Test getTablePath returns string path =====
+    String retrievedPath = kernelTable.getTablePath();
+    assertEquals(path, retrievedPath, "getTablePath should return the original table path");
   }
 
   /** Enum to represent different construction methods for SparkTable */
