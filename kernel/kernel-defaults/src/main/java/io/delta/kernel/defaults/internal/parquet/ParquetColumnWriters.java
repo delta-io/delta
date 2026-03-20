@@ -111,7 +111,9 @@ class ParquetColumnWriters {
       return new DoubleWriter(colName, fieldIndex, columnVector);
     } else if (dataType instanceof StringType) {
       return new StringWriter(colName, fieldIndex, columnVector);
-    } else if (dataType instanceof BinaryType) {
+    } else if (dataType instanceof BinaryType
+        || dataType instanceof GeometryType
+        || dataType instanceof GeographyType) {
       return new BinaryWriter(colName, fieldIndex, columnVector);
     } else if (dataType instanceof DecimalType) {
       int precision = ((DecimalType) dataType).getPrecision();

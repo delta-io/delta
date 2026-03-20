@@ -286,6 +286,31 @@ public class DataSkippingUtils {
         return constructNotDataSkippingFilters(
             asPredicate(getUnaryChild(dataFilters)), schemaHelper);
 
+      case StIntersectsBoxes.NAME:
+        if (dataFilters instanceof StIntersectsBoxes) {
+          StIntersectsBoxes stExpr = (StIntersectsBoxes) dataFilters;
+          Column col = stExpr.getColumn();
+          if (schemaHelper.isSkippingEligibleMinMaxColumn(col)) {
+            Column minCol = schemaHelper.getMinColumn(col, Optional.empty())._1;
+            Column maxCol = schemaHelper.getMaxColumn(col, Optional.empty())._1;
+            Literal queryMin = stExpr.getQueryMin();
+            Literal queryMax = stExpr.getQueryMax();
+            Set<Column> refCols =
+                new HashSet<Column>() {
+                  {
+                    add(minCol);
+                    add(maxCol);
+                  }
+                };
+            return Optional.of(
+                new DataSkippingPredicate(
+                    "ST_INTERSECTS_BOXES_ON_STATS",
+                    Arrays.asList(minCol, maxCol, queryMin, queryMax),
+                    refCols));
+          }
+        }
+        break;
+
         // TODO more expressions
     }
     return Optional.empty();

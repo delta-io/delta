@@ -34,18 +34,9 @@ public final class GeometryType extends DataType {
 
   private final String srid;
 
-  /** Returns a GeometryType with the default SRID. */
-  public static GeometryType ofDefault() {
-    return new GeometryType(DEFAULT_SRID);
-  }
-
-  /**
-   * Returns a GeometryType with the specified SRID.
-   *
-   * @param srid the Spatial Reference System Identifier (any non-null, non-empty string)
-   */
-  public static GeometryType ofSRID(String srid) {
-    return new GeometryType(srid);
+  /** Create a GeometryType with the default SRID. */
+  public GeometryType() {
+    this(DEFAULT_SRID);
   }
 
   /**
