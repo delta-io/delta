@@ -137,6 +137,108 @@ public class ExpressionUtilsTest {
     assertFalse(result.isPresent(), "StringStartsWith with null value should not be converted");
   }
 
+  @Test
+  public void testInFilter_BasicConversion() {
+    In filter = new In("city", new Object[] {"hz", "sh", "bj"});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "In filter should be converted");
+    assertFalse(result.isPartial(), "In filter should be fully converted");
+    assertEquals("IN", result.get().getName());
+    // Children: column + 3 literals
+    assertEquals(4, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testInFilter_SingleValue() {
+    In filter = new In("id", new Object[] {42});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "In filter with single value should be converted");
+    assertFalse(result.isPartial(), "In filter should be fully converted");
+    assertEquals("IN", result.get().getName());
+    // Children: column + 1 literal
+    assertEquals(2, result.get().getChildren().size());
+  }
+
+  @Test
+  public void testInFilter_EmptyValues() {
+    In filter = new In("city", new Object[] {});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    // Empty IN list always evaluates to FALSE; push ALWAYS_FALSE so the kernel skips all files.
+    assertTrue(result.isPresent(), "In filter with empty values should push ALWAYS_FALSE");
+    assertEquals("ALWAYS_FALSE", result.get().getName());
+  }
+
+  @Test
+  public void testInFilter_WithNullValue() {
+    // null in the values array makes the IN expression unsafe to push down (SQL null semantics)
+    In filter = new In("city", new Object[] {"hz", null, "bj"});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with null value should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_WithUnsupportedType() {
+    In filter = new In("col", new Object[] {42, new Object()});
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertFalse(result.isPresent(), "In filter with unconvertible value should not be pushed down");
+  }
+
+  @Test
+  public void testInFilter_InAndFilter() {
+    // AND(In(...), EqualTo(...)) — both convertible, should be fully pushed down
+    In inFilter = new In("city", new Object[] {"hz", "sh"});
+    EqualTo eqFilter = new EqualTo("part", 1);
+    org.apache.spark.sql.sources.And andFilter =
+        new org.apache.spark.sql.sources.And(inFilter, eqFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter);
+
+    assertTrue(result.isPresent(), "AND(In, EqualTo) should be converted");
+    assertFalse(result.isPartial(), "AND(In, EqualTo) should be fully converted");
+    assertTrue(
+        result.get() instanceof io.delta.kernel.expressions.And,
+        "Result should be an AND predicate");
+  }
+
+  @Test
+  public void testInFilter_NotInWithNullValue() {
+    // NOT(IN(col, 1, null)): null in the IN list causes IN to bail → NOT also bails
+    In inFilter = new In("city", new Object[] {"hz", null});
+    Not notFilter = new Not(inFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter);
+
+    assertFalse(
+        result.isPresent(), "NOT(IN(..., null)) should not be pushed down due to null in IN list");
+  }
+
+  @Test
+  public void testInFilter_ORWithUnsupportedFilter() {
+    // OR(In(...), StringEndsWith(...)) — one branch unsupported, whole OR cannot be pushed
+    In inFilter = new In("city", new Object[] {"hz", "sh"});
+    StringEndsWith endsWithFilter = new StringEndsWith("name", "foo");
+    Or orFilter = new Or(inFilter, endsWithFilter);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter);
+
+    assertFalse(
+        result.isPresent(),
+        "OR(In, unsupported) should not be pushed down when one branch is unsupported");
+  }
+
   // Test data provider for parameterized literal conversion tests
   static Stream<Arguments> valueTypesProvider() {
     return Stream.of(
@@ -627,6 +729,216 @@ public class ExpressionUtilsTest {
         ExpressionUtils.dsv2PredicateToCatalystExpression(unsupportedPredicate, testSchema);
 
     assertFalse(result.isPresent(), "Unsupported predicates should return empty Optional");
+  }
+
+  // ===== Tests for decimal type alignment with table schema =====
+
+  private final org.apache.spark.sql.types.StructType decimalSchema =
+      new org.apache.spark.sql.types.StructType()
+          .add("price", new org.apache.spark.sql.types.DecimalType(7, 2), true)
+          .add("quantity", org.apache.spark.sql.types.DataTypes.IntegerType, true);
+
+  @Test
+  public void testDecimalLiteralWidenedToColumnType() {
+    // Literal 100.00 has Decimal(5,2), column is Decimal(7,2) → should widen to Decimal(7,2)
+    EqualTo filter = new EqualTo("price", new BigDecimal("100.00"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "Decimal filter should be converted with widened type");
+    assertFalse(result.isPartial());
+    Predicate pred = result.get();
+    assertEquals("=", pred.getName());
+    Literal literal = (Literal) pred.getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralScaleWidened() {
+    // Literal 100 has Decimal(3,0), column is Decimal(7,2) → should widen to Decimal(7,2)
+    EqualTo filter = new EqualTo("price", new BigDecimal("100"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "Decimal filter with lower scale should be widened");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+    assertEquals(new BigDecimal("100.00"), literal.getValue());
+  }
+
+  @Test
+  public void testDecimalLiteralHigherScaleThanColumn() {
+    // Literal 99.999 has scale=3, column is Decimal(7,2) → scale exceeds column, skip pushdown
+    GreaterThan filter = new GreaterThan("price", new BigDecimal("99.999"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertFalse(
+        result.isPresent(),
+        "Decimal literal with higher scale than column should not be pushed down");
+  }
+
+  @Test
+  public void testDecimalLiteralExceedsColumnPrecision() {
+    // Literal 123456.00 has 6 integral digits + 2 scale = precision 8,
+    // column is Decimal(7,2) which holds max 99999.99 → skip pushdown
+    LessThan filter = new LessThan("price", new BigDecimal("123456.00"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertFalse(
+        result.isPresent(), "Decimal literal exceeding column precision should not be pushed down");
+  }
+
+  @Test
+  public void testDecimalLiteralMatchingType() {
+    // Literal already matches column type Decimal(7,2) → no widening needed
+    EqualTo filter = new EqualTo("price", new BigDecimal("12345.67"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "Decimal filter with matching type should be converted");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralWithoutSchema() {
+    // Without schema, decimal literal retains its intrinsic type
+    EqualTo filter = new EqualTo("price", new BigDecimal("100.00"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "Decimal filter without schema should still be converted");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    // 100.00 has precision=5, scale=2
+    assertEquals(new DecimalType(5, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralNonDecimalColumn() {
+    // Column "quantity" is IntegerType, not DecimalType → use default conversion
+    EqualTo filter = new EqualTo("quantity", new BigDecimal("42"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "BigDecimal for non-decimal column should use default type");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    // Default BigDecimal conversion: precision=2, scale=0
+    assertEquals(new DecimalType(2, 0), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralCaseInsensitiveColumnLookup() {
+    // Filter uses "PRICE" but schema has "price" → should still widen
+    EqualTo filter = new EqualTo("PRICE", new BigDecimal("100.00"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "Case-insensitive column lookup should match");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralColumnNotInSchema() {
+    // Column "unknown" not in schema → use default conversion
+    EqualTo filter = new EqualTo("unknown", new BigDecimal("100.00"));
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "Unknown column should fall back to default conversion");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    assertEquals(new DecimalType(5, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralInCompoundFilter() {
+    // AND(price >= 100.00, price <= 200.00) with Decimal(7,2) column
+    GreaterThanOrEqual left = new GreaterThanOrEqual("price", new BigDecimal("100.00"));
+    LessThanOrEqual right = new LessThanOrEqual("price", new BigDecimal("200.00"));
+    org.apache.spark.sql.sources.And andFilter = new org.apache.spark.sql.sources.And(left, right);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, decimalSchema);
+
+    assertTrue(result.isPresent(), "AND filter with decimal operands should be converted");
+    assertFalse(result.isPartial());
+    // Verify both literals are widened to Decimal(7,2)
+    io.delta.kernel.expressions.And andPred = (io.delta.kernel.expressions.And) result.get();
+    Predicate leftPred = (Predicate) andPred.getChildren().get(0);
+    Predicate rightPred = (Predicate) andPred.getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), ((Literal) leftPred.getChildren().get(1)).getDataType());
+    assertEquals(new DecimalType(7, 2), ((Literal) rightPred.getChildren().get(1)).getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralInOrFilter() {
+    // OR(price >= 100.00, price >= 200.00) with Decimal(7,2) column
+    GreaterThanOrEqual left = new GreaterThanOrEqual("price", new BigDecimal("100.00"));
+    GreaterThanOrEqual right = new GreaterThanOrEqual("price", new BigDecimal("200.00"));
+    org.apache.spark.sql.sources.Or orFilter = new org.apache.spark.sql.sources.Or(left, right);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(orFilter, decimalSchema);
+
+    assertTrue(result.isPresent(), "OR filter with decimal operands should be converted");
+  }
+
+  @Test
+  public void testDecimalLiteralInNotFilter() {
+    // NOT(price = 100.00) with Decimal(7,2) column
+    EqualTo eq = new EqualTo("price", new BigDecimal("100.00"));
+    Not notFilter = new Not(eq);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(notFilter, decimalSchema);
+
+    assertTrue(result.isPresent(), "NOT filter with decimal operand should be converted");
+    Predicate notPred = result.get();
+    assertEquals("NOT", notPred.getName());
+    Predicate innerPred = (Predicate) notPred.getChildren().get(0);
+    Literal literal = (Literal) innerPred.getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralWithEqualNullSafe() {
+    // EqualNullSafe(price, 100.00) with Decimal(7,2) column
+    EqualNullSafe filter = new EqualNullSafe("price", new BigDecimal("100.00"));
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, decimalSchema);
+
+    assertTrue(result.isPresent(), "EqualNullSafe with decimal should be converted");
+    Literal literal = (Literal) result.get().getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+  }
+
+  @Test
+  public void testDecimalLiteralAllComparisonOperators() {
+    // Test all comparison operators widen decimals correctly
+    BigDecimal value = new BigDecimal("50.00"); // Decimal(4,2) → should widen to Decimal(7,2)
+    Filter[] filters =
+        new Filter[] {
+          new EqualTo("price", value),
+          new GreaterThan("price", value),
+          new GreaterThanOrEqual("price", value),
+          new LessThan("price", value),
+          new LessThanOrEqual("price", value),
+        };
+    String[] expectedOps = new String[] {"=", ">", ">=", "<", "<="};
+
+    for (int i = 0; i < filters.length; i++) {
+      ExpressionUtils.ConvertedPredicate result =
+          ExpressionUtils.convertSparkFilterToKernelPredicate(filters[i], decimalSchema);
+      assertTrue(result.isPresent(), expectedOps[i] + " filter should be converted");
+      Literal literal = (Literal) result.get().getChildren().get(1);
+      assertEquals(
+          new DecimalType(7, 2),
+          literal.getDataType(),
+          expectedOps[i] + " should widen decimal to column type");
+    }
   }
 
   @Test

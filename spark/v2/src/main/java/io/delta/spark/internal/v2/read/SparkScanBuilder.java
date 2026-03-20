@@ -45,6 +45,7 @@ public class SparkScanBuilder
   private final DeltaSnapshotManager snapshotManager;
   private final StructType dataSchema;
   private final StructType partitionSchema;
+  private final StructType tableSchema;
   private final Optional<Statistics> catalogStats;
   private final CaseInsensitiveStringMap options;
   private final Set<String> partitionColumnSet;
@@ -65,6 +66,7 @@ public class SparkScanBuilder
    * @param snapshotManager the snapshot manager for this table
    * @param dataSchema the data schema (non-partition columns)
    * @param partitionSchema the partition schema
+   * @param tableSchema the full table schema (all columns) for filter type alignment
    * @param catalogStats optional V2 Statistics converted from catalog stats
    * @param options scan options
    */
@@ -74,6 +76,7 @@ public class SparkScanBuilder
       DeltaSnapshotManager snapshotManager,
       StructType dataSchema,
       StructType partitionSchema,
+      StructType tableSchema,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
     this.initialSnapshot = requireNonNull(initialSnapshot, "initialSnapshot is null");
@@ -81,6 +84,7 @@ public class SparkScanBuilder
     this.snapshotManager = requireNonNull(snapshotManager, "snapshotManager is null");
     this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
     this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
+    this.tableSchema = requireNonNull(tableSchema, "tableSchema is null");
     this.catalogStats = requireNonNull(catalogStats, "catalogStats is null");
     this.options = requireNonNull(options, "options is null");
     this.requiredDataSchema = this.dataSchema;
@@ -111,7 +115,7 @@ public class SparkScanBuilder
 
     for (Filter filter : filters) {
       ExpressionUtils.FilterClassificationResult classification =
-          ExpressionUtils.classifyFilter(filter, partitionColumnSet);
+          ExpressionUtils.classifyFilter(filter, partitionColumnSet, tableSchema);
       // Collect kernel predicates if supported
       if (classification.isKernelSupported) {
         convertedKernelPredicates.add(classification.kernelPredicate.get());

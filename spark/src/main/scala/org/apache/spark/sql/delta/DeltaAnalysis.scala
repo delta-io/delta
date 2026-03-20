@@ -251,7 +251,10 @@ class DeltaAnalysis(session: SparkSession)
           protocol
       }
       val newDeltaCatalog = new DeltaCatalogV1()
-      val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(catalogTableTarget.identifier)
+      val existingTableOpt = newDeltaCatalog.getExistingTableIfExists(
+        catalogTableTarget.identifier,
+        identOpt = None,
+        operation = TableCreationModes.Create)
       val newTable = newDeltaCatalog
         .verifyTableAndSolidify(
           catalogTableTarget,
@@ -1583,4 +1586,3 @@ case class DeltaDynamicPartitionOverwriteCommand(
     ).run(sparkSession)
   }
 }
-

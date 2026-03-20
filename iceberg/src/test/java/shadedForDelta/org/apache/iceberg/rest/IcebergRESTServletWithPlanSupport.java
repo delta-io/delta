@@ -121,6 +121,23 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
 
   private void handlePlanRequest(HttpServletRequest req, HttpServletResponse resp)
       throws IOException {
+    // Track plan request count for testing retry behavior
+    IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanRequestCount();
+
+    // Check if we should inject a failure for testing HTTP retry logic
+    int remainingFailures = IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFailCount();
+    if (remainingFailures > 0) {
+      int failStatusCode = IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestFailStatusCode();
+      LOG.info("Injecting test failure: returning HTTP {} ({} failures remaining)",
+          failStatusCode, remainingFailures - 1);
+      resp.setStatus(failStatusCode);
+      resp.setContentType("application/json");
+      resp.getWriter().write(
+          "{\"error\": {\"message\": \"Injected test failure\", \"type\": \"TestError\", \"code\": "
+          + failStatusCode + "}}");
+      return;
+    }
+
     try {
       // Extract request components
       String path = req.getPathInfo();
