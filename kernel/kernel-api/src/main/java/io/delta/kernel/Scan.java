@@ -107,6 +107,28 @@ public interface Scan {
   CloseableIterator<FilteredColumnarBatch> getScanFiles(Engine engine);
 
   /**
+   * Get an iterator of data files to scan, optionally including file-level statistics (such as row
+   * counts) in the returned rows.
+   *
+   * <p>When {@code includeStats=true}, the JSON file statistics are always read from the log and
+   * included in the returned columnar batches. This is useful for connectors that need per-file
+   * metadata (e.g., {@code numRecords}) to implement optimizations such as limit pushdown.
+   *
+   * <p>When {@code includeStats=false}, this method behaves identically to {@link
+   * #getScanFiles(Engine)}.
+   *
+   * @param engine {@link Engine} instance to use in Delta Kernel.
+   * @param includeStats whether to read and include the JSON file statistics in the returned rows.
+   * @return iterator of {@link FilteredColumnarBatch}s where each selected row corresponds to one
+   *     scan file.
+   * @since 3.3.0
+   */
+  default CloseableIterator<FilteredColumnarBatch> getScanFiles(
+      Engine engine, boolean includeStats) {
+    return getScanFiles(engine);
+  }
+
+  /**
    * Get the remaining filter that is not guaranteed to be satisfied for the data Delta Kernel
    * returns. This filter is used by Delta Kernel to do data skipping when possible.
    *
