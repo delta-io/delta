@@ -1297,8 +1297,8 @@ class CheckpointsSuite
             // Perform DML operation that uses DVs
             dmlOp match {
               case "UPDATE" =>
-                spark.sql(s"""UPDATE delta.`$tablePath` SET v = parse_json('{"updated":true}') " +
-                  "WHERE i = 100""")
+                spark.sql(s"""UPDATE delta.`$tablePath` SET v = parse_json('{"updated":true}') """ +
+                  """WHERE i = 100""")
               case "DELETE" =>
                 spark.sql(s"""DELETE FROM delta.`$tablePath` WHERE i = 100""")
               case "MERGE" =>
