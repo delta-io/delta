@@ -21,11 +21,18 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.internal.data.TransactionStateRow;
+import io.delta.kernel.types.IntegerType;
+import io.delta.kernel.types.StringType;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import java.io.File;
 import java.sql.Timestamp;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 import org.apache.hadoop.fs.Path;
 import org.apache.spark.sql.delta.DeltaLog;
@@ -137,6 +144,30 @@ public class PathBasedSnapshotManagerTest extends DeltaV2TestBase {
     assertEquals(3L, snapshot3.getVersion());
 
     // Note: loadSnapshotAt does not update the cached snapshot
+  }
+
+  @Test
+  public void testBuildCreateTableTransaction(@TempDir File tempDir) {
+    String testTablePath = tempDir.getAbsolutePath();
+    snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+
+    StructType kernelSchema =
+        new StructType().add("id", IntegerType.INTEGER).add("name", StringType.STRING);
+
+    Transaction txn =
+        snapshotManager.buildCreateTableTransaction(
+            kernelSchema, Map.of("demo.flag", "on"), Optional.empty(), "test-engine");
+
+    assertEquals(-1L, txn.getReadTableVersion());
+    assertEquals(
+        testTablePath, TransactionStateRow.getTablePath(txn.getTransactionState(defaultEngine)));
+    assertEquals(
+        kernelSchema.toJson(),
+        TransactionStateRow.getLogicalSchema(txn.getTransactionState(defaultEngine)).toJson());
+
+    txn.commit(defaultEngine, io.delta.kernel.utils.CloseableIterable.emptyIterable());
+    assertEquals(0L, snapshotManager.loadLatestSnapshot().getVersion());
   }
 
   private void setupTableWithDeletedVersions(String testTablePath, String testTableName) {

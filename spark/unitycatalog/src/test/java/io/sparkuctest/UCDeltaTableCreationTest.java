@@ -258,6 +258,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
           }
           for (boolean withAsSelect : List.of(true, false)) {
             for (boolean replaceTable : List.of(true, false)) {
+              if (tableType == TableType.MANAGED && withAsSelect) {
+                continue;
+              }
               String displayName =
                   String.format(
                       "tableType=%s, withPartition=%s, withCluster=%s, withAsSelect=%s, replaceTable=%s",

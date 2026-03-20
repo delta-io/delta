@@ -55,6 +55,19 @@ public final class SnapshotManagerFactory {
    */
   public static DeltaSnapshotManager create(
       String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
+    return forExistingTable(tablePath, kernelEngine, catalogTable);
+  }
+
+  /**
+   * Creates a snapshot manager for an already-registered table.
+   *
+   * @param tablePath the filesystem path to the Delta table
+   * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
+   * @param catalogTable optional Spark catalog table metadata
+   * @return a {@link DeltaSnapshotManager} appropriate for the table type
+   */
+  public static DeltaSnapshotManager forExistingTable(
+      String tablePath, Engine kernelEngine, Optional<CatalogTable> catalogTable) {
 
     if (catalogTable.isPresent()) {
       Optional<UCTableInfo> ucTableInfo =
@@ -66,6 +79,22 @@ public final class SnapshotManagerFactory {
     }
 
     // Default: path-based snapshot manager for non-UC tables
+    return new PathBasedSnapshotManager(tablePath, kernelEngine);
+  }
+
+  /**
+   * Creates a snapshot manager for a table that is about to be created.
+   *
+   * @param tablePath the filesystem path to the Delta table
+   * @param kernelEngine the pre-configured Kernel {@link Engine} to use for table operations
+   * @param ucTableInfo optional Unity Catalog metadata for managed tables
+   * @return a {@link DeltaSnapshotManager} appropriate for the table type
+   */
+  public static DeltaSnapshotManager forCreateTable(
+      String tablePath, Engine kernelEngine, Optional<UCTableInfo> ucTableInfo) {
+    if (ucTableInfo.isPresent()) {
+      return createUCManagedSnapshotManager(ucTableInfo.get(), kernelEngine);
+    }
     return new PathBasedSnapshotManager(tablePath, kernelEngine);
   }
 

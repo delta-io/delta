@@ -19,7 +19,10 @@ import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
+import io.delta.kernel.commit.CatalogCommitter
 import io.delta.kernel.exceptions.KernelException
+import io.delta.kernel.internal.data.TransactionStateRow
+import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.unitycatalog.{InMemoryUCClient, UCCatalogManagedClient, UCCatalogManagedTestUtils}
 import io.delta.spark.internal.v2.exception.VersionNotFoundException
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -276,6 +279,37 @@ class UCManagedTableSnapshotManagerSuite
         manager.getTableChanges(defaultEngine, maxRatifiedVersion + 5, Optional.empty())
       }
     }
+  }
+
+  test("buildCreateTableTransaction returns a UC-managed create txn with expected metadata") {
+    val tablePath = "/tmp/uc-managed-create-txn"
+    val ucClient = new InMemoryUCClient("testMetastore")
+    val client = new UCCatalogManagedClient(ucClient)
+    val tableInfo = new UCTableInfo(testUcTableId, tablePath, testUcUri, testUcAuthConfig)
+    val manager = new UCManagedTableSnapshotManager(client, tableInfo, defaultEngine)
+
+    val kernelSchema =
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("name", StringType.STRING)
+
+    val txn =
+      manager
+        .buildCreateTableTransaction(
+          kernelSchema,
+          Map("demo.flag" -> "on").asJava,
+          Optional.empty(),
+          "test-engine")
+
+    assert(txn.getReadTableVersion == -1L)
+    val txnState = txn.getTransactionState(defaultEngine)
+    assert(TransactionStateRow.getTablePath(txnState) == tablePath)
+    assert(TransactionStateRow.getLogicalSchema(txnState).toJson == kernelSchema.toJson)
+    val configuration = TransactionStateRow.getConfiguration(txnState)
+    assert(configuration.get("io.unitycatalog.tableId") == testUcTableId)
+    assert(configuration.get("demo.flag") == "on")
+    assert(configuration.get("delta.feature.catalogManaged") == "supported")
+    assert(txn.getCommitter.isInstanceOf[CatalogCommitter])
   }
 
   // ==================== Exception Propagation ====================

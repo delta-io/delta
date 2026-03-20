@@ -19,14 +19,18 @@ import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -176,5 +180,21 @@ public class UCManagedTableSnapshotManager implements DeltaSnapshotManager {
         Optional.empty() /* startTimestampOpt */,
         endVersion /* endVersionOpt */,
         Optional.empty() /* endTimestampOpt */);
+  }
+
+  @Override
+  public Transaction buildCreateTableTransaction(
+      StructType kernelSchema,
+      Map<String, String> tableProperties,
+      Optional<DataLayoutSpec> dataLayoutSpec,
+      String engineInfo) {
+    io.delta.kernel.transaction.CreateTableTransactionBuilder builder =
+        ucCatalogManagedClient
+            .buildCreateTableTransaction(tableId, tablePath, kernelSchema, engineInfo)
+            .withTableProperties(tableProperties);
+    if (dataLayoutSpec.isPresent()) {
+      builder = builder.withDataLayoutSpec(dataLayoutSpec.get());
+    }
+    return builder.build(engine);
   }
 }

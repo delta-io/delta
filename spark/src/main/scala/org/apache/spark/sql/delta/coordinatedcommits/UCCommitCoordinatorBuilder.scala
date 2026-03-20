@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.coordinatedcommits
 
 import java.net.{URI, URISyntaxException}
+import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -74,23 +75,31 @@ object UCCommitCoordinatorBuilder
       UCCommitCoordinatorClient.UC_METASTORE_ID_KEY,
       throw new IllegalArgumentException(
         s"UC metastore ID not found in the provided coordinator conf: $conf"))
+    val matchingConfig = getMatchingCatalogConfig(spark, metastoreId)
 
     commitCoordinatorClientCache.computeIfAbsent(
       metastoreId,
-      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId)))
+      _ => new UCCommitCoordinatorClient(
+        conf.asJava,
+        ucClientFactory.createUCClient(matchingConfig.uri, matchingConfig.authConfig),
+        Optional.of(matchingConfig.uri),
+        matchingConfig.authConfig.asJava))
   }
 
   override def buildForCatalog(
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+    getCatalogConfigs(spark).find(_._1 == catalogName) match {
+      case Some((_, uri, authConfig)) =>
+        new UCCommitCoordinatorClient(
+          Map.empty[String, String].asJava,
+          ucClientFactory.createUCClient(uri, authConfig),
+          Optional.of(uri),
+          authConfig.asJava)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
     }
-    val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
   }
 
   /**
@@ -102,6 +111,13 @@ object UCCommitCoordinatorBuilder
    * appropriate exception.
    */
   private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
+    val matchingConfig = getMatchingCatalogConfig(spark, metastoreId)
+    ucClientFactory.createUCClient(matchingConfig.uri, matchingConfig.authConfig)
+  }
+
+  private def getMatchingCatalogConfig(
+      spark: SparkSession,
+      metastoreId: String): UCCatalogConfig = {
     val matchingClients: List[(String, Map[String, String])] = getCatalogConfigs(spark)
       .map { case (name, uri, authConfig) => (uri, authConfig) }
       .distinct // Remove duplicates since multiple catalogs can have the same uri and config
@@ -109,7 +125,7 @@ object UCCommitCoordinatorBuilder
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, authConfig) :: Nil => ucClientFactory.createUCClient(uri, authConfig)
+      case (uri, authConfig) :: Nil => UCCatalogConfig("", uri, authConfig)
       case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
     }
   }

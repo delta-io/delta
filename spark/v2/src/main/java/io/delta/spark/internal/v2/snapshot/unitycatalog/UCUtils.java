@@ -90,17 +90,70 @@ public final class UCUtils {
     return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
   }
 
+  /**
+   * Extracts Unity Catalog table information from CREATE TABLE properties.
+   *
+   * <p>This is used for managed-table create routing before a CatalogTable exists. If the
+   * properties do not identify a Unity Catalog managed table, the method returns empty.
+   */
+  public static Optional<UCTableInfo> extractTableInfoForCreate(
+      String tablePath, Map<String, String> properties, String catalogName, SparkSession spark) {
+    requireNonNull(tablePath, "tablePath is null");
+    requireNonNull(properties, "properties is null");
+    requireNonNull(catalogName, "catalogName is null");
+    requireNonNull(spark, "spark is null");
+
+    if (!isUnityCatalogManagedCreate(properties)) {
+      return Optional.empty();
+    }
+
+    String tableId = extractUCTableId(properties);
+
+    scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+    scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
+    if (configOpt.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Cannot create UC client for table at "
+              + tablePath
+              + ": Unity Catalog configuration not found for catalog '"
+              + catalogName
+              + "'.");
+    }
+
+    UCCatalogConfig config = configOpt.get();
+    return Optional.of(
+        new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig())));
+  }
+
   private static String extractUCTableId(CatalogTable catalogTable) {
     Map<String, String> storageProperties =
         scala.jdk.javaapi.CollectionConverters.asJava(catalogTable.storage().properties());
 
-    // TODO: UC constants should be consolidated in a shared location (future PR)
+    String ucTableId = extractUCTableId(storageProperties);
+    return ucTableId;
+  }
+
+  private static String extractUCTableId(Map<String, String> storageProperties) {
     String ucTableId = storageProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
     if (ucTableId == null || ucTableId.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Cannot extract ucTableId from table " + catalogTable.identifier());
+      ucTableId = storageProperties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    }
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      throw new IllegalArgumentException("Cannot extract ucTableId from create properties");
     }
     return ucTableId;
+  }
+
+  private static boolean isUnityCatalogManagedCreate(Map<String, String> properties) {
+    return isCatalogManagedFeatureEnabled(properties, "delta.feature.catalogManaged")
+        || isCatalogManagedFeatureEnabled(properties, "delta.feature.catalogOwned-preview");
+  }
+
+  private static boolean isCatalogManagedFeatureEnabled(
+      Map<String, String> tableProperties, String featureKey) {
+    String featureValue = tableProperties.get(featureKey);
+    return featureValue != null && featureValue.equalsIgnoreCase("supported");
   }
 
   private static String extractTablePath(CatalogTable catalogTable) {

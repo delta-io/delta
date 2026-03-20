@@ -16,15 +16,18 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.spark.internal.v2.catalog.CreateTableCommitCoordinator;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -63,6 +66,26 @@ import org.apache.spark.sql.connector.catalog.Table;
  * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
+  static final String ENGINE_INFO = "kernel-spark-dsv2";
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    if (mode.shouldUseKernelMetadataOnlyCreate(properties)
+        && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+        && isUnityCatalog()) {
+      CreateTableCommitCoordinator.commitCreateTableVersion0(
+          ident, schema, partitions, properties, spark(), name(), ENGINE_INFO);
+      createCatalogTable(
+          ident, schema, partitions, CreateTableCommitCoordinator.filterCredentialProperties(properties));
+      return loadTable(ident);
+    }
+    return super.createTable(ident, schema, partitions, properties);
+  }
 
   /**
    * Loads a Delta table that is registered in the catalog.
