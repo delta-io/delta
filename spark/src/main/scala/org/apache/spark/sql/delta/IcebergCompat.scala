@@ -383,6 +383,13 @@ class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
 
 object RequireColumnMapping extends RequireColumnMapping(Seq(NameMapping, IdMapping))
 
+object OptionalAtomicEligible extends OptionalDeltaTableProperty(
+  deltaConfig = DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED,
+  autoEnableOnExistingTables = false,
+  autoSetValue = "true",
+  shouldExistingValuesBeingPreserved = true
+)
+
 
 case class IcebergCompatContext(
     spark: SparkSession,
