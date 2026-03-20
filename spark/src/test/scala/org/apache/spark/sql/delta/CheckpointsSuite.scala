@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.storage.LocalLogStore
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.shims.VariantStatsShims
+import org.apache.spark.sql.delta.test.shims.VariantShreddingTestShims
 import org.apache.spark.sql.delta.util.{Codec, DeltaCommitFileProvider, DeltaStatsJsonUtils, JsonUtils}
 import org.apache.spark.sql.delta.util.FileNames
 import org.apache.commons.io.FileUtils
@@ -1256,6 +1257,10 @@ class CheckpointsSuite
   }
 
   test("DML with DVs corrupts variant stats when collectVariantDataSkippingStats is disabled") {
+    // This test uses parse_json which requires Spark 4.1+
+    assume(VariantShreddingTestShims.variantInferShreddingSchemaSupported,
+      "parse_json requires Spark 4.1+")
+
     // This test verifies that when:
     // 1. A table has variant stats (written by Databricks)
     // 2. collectVariantDataSkippingStats is disabled in OSS
