@@ -31,6 +31,7 @@ import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
@@ -871,6 +872,51 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
         tableSchema,
         Optional.empty(),
         CaseInsensitiveStringMap.empty());
+  }
+
+  // ==========================================================================
+  // Tests for SupportsPushDownLimit
+  // ==========================================================================
+
+  @Test
+  public void testPushLimit_accepted(@TempDir File tempDir) {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    boolean accepted = builder.pushLimit(10);
+    assertTrue(accepted, "pushLimit should always return true");
+  }
+
+  @Test
+  public void testPushLimit_isPartiallyPushed(@TempDir File tempDir) {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    builder.pushLimit(10);
+    // isPartiallyPushed() defaults to true -- limit is a hint, Spark must re-apply LIMIT
+    assertTrue(builder.isPartiallyPushed(), "isPartiallyPushed should return true");
+  }
+
+  @Test
+  public void testPushLimit_passedToScan(@TempDir File tempDir) {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    builder.pushLimit(42);
+    SparkScan scan = (SparkScan) builder.build();
+    assertEquals(OptionalInt.of(42), scan.getPushedLimit());
+  }
+
+  @Test
+  public void testPushLimit_noLimit(@TempDir File tempDir) {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    SparkScan scan = (SparkScan) builder.build();
+    assertEquals(OptionalInt.empty(), scan.getPushedLimit());
+  }
+
+  @Test
+  public void testPushLimit_idempotent(@TempDir File tempDir) {
+    SparkScanBuilder builder = createTestScanBuilder(tempDir);
+    builder.pushLimit(10);
+    builder.pushLimit(20);
+    // Last value wins
+    assertEquals(OptionalInt.of(20), builder.getPushedLimit());
+    SparkScan scan = (SparkScan) builder.build();
+    assertEquals(OptionalInt.of(20), scan.getPushedLimit());
   }
 
   private Predicate[] getPushedKernelPredicates(SparkScanBuilder builder) throws Exception {

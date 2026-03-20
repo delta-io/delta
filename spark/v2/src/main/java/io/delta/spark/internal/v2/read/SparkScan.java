@@ -24,6 +24,7 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
@@ -115,6 +116,9 @@ public class SparkScan
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
 
+  // Pushed limit from SupportsPushDownLimit (set via setter, not constructor)
+  private OptionalInt pushedLimit = OptionalInt.empty();
+
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
@@ -154,6 +158,14 @@ public class SparkScan
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
+  }
+
+  /**
+   * Sets the pushed limit for this scan. Called by {@link SparkScanBuilder#build()} after
+   * construction to avoid adding another constructor parameter.
+   */
+  void setPushedLimit(OptionalInt limit) {
+    this.pushedLimit = Objects.requireNonNull(limit, "limit is null");
   }
 
   /**
@@ -249,7 +261,11 @@ public class SparkScan
             .collect(Collectors.joining(", "));
     final String data =
         Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", "));
-    return String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data);
+    StringBuilder sb = new StringBuilder();
+    sb.append(String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data));
+    pushedLimit.ifPresent(
+        limit -> sb.append(String.format(Locale.ROOT, ", PushedLimit: %d", limit)));
+    return sb.toString();
   }
 
   @Override
@@ -407,31 +423,82 @@ public class SparkScan
 
   /**
    * Plan the files to scan by materializing {@link PartitionedFile}s and aggregating size stats.
-   * Ensures all iterators are closed to avoid resource leaks.
+   * When a limit is pushed, uses per-file {@code numRecords} stats (minus DV cardinality) to stop
+   * adding files once enough rows are accumulated. Files without stats are included but not counted
+   * toward the limit (conservative). Ensures all iterators are closed to avoid resource leaks.
    */
   private void planScanFiles() {
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
-    final Iterator<FilteredColumnarBatch> scanFileBatches = kernelScan.getScanFiles(tableEngine);
 
-    final String[] locations = new String[0];
-    final scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.empty();
+    // Short-circuit: LIMIT 0 means no files needed
+    if (pushedLimit.isPresent() && pushedLimit.getAsInt() == 0) {
+      estimatedSizeInBytes = 0;
+      return;
+    }
 
-    while (scanFileBatches.hasNext()) {
-      final FilteredColumnarBatch batch = scanFileBatches.next();
+    // When a limit is pushed, request stats so we can read numRecords per file.
+    // Without a limit, use the default path (stats only read if there is a data skipping filter).
+    final boolean requestStats = pushedLimit.isPresent();
+    final CloseableIterator<FilteredColumnarBatch> scanFileBatches =
+        requestStats
+            ? kernelScan.getScanFiles(tableEngine, true /* includeStats */)
+            : kernelScan.getScanFiles(tableEngine);
 
-      try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
-        while (addFileRowIter.hasNext()) {
-          final Row row = addFileRowIter.next();
-          final AddFile addFile = new AddFile(row.getStruct(0));
+    long accumulatedRecords = 0;
+    boolean limitReached = false;
 
-          final PartitionedFile partitionedFile =
-              PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+    try {
+      outer:
+      while (scanFileBatches.hasNext()) {
+        final FilteredColumnarBatch batch = scanFileBatches.next();
 
-          totalBytes += addFile.getSize();
-          partitionedFiles.add(partitionedFile);
+        try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
+          while (addFileRowIter.hasNext()) {
+            final Row row = addFileRowIter.next();
+            final AddFile addFile = new AddFile(row.getStruct(0));
+
+            final PartitionedFile partitionedFile =
+                PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
+
+            totalBytes += addFile.getSize();
+            partitionedFiles.add(partitionedFile);
+
+            // Track accumulated rows for limit pushdown
+            if (pushedLimit.isPresent() && !limitReached) {
+              Optional<Long> numRecords = addFile.getNumRecords();
+              if (numRecords.isPresent()) {
+                long physicalRows = numRecords.get();
+                // Subtract DV cardinality to get logical (surviving) row count.
+                // Without this, tables with heavy DVs could cause under-reading:
+                // e.g., 100 physical rows with 90 deleted would count as 100 toward the
+                // limit, but only 10 rows would actually be returned.
+                long dvCardinality =
+                    addFile
+                        .getDeletionVector()
+                        .map(DeletionVectorDescriptor::getCardinality)
+                        .orElse(0L);
+                long logicalRows = Math.max(0, physicalRows - dvCardinality);
+                accumulatedRecords += logicalRows;
+                if (accumulatedRecords >= pushedLimit.getAsInt()) {
+                  limitReached = true;
+                  break outer;
+                }
+              }
+              // Files without stats: included but not counted (conservative).
+              // This ensures correctness when stats are missing -- we may read
+              // more files than necessary, but never fewer.
+            }
+          }
+        } catch (IOException e) {
+          throw new RuntimeException(e);
         }
+      }
+    } finally {
+      // Close the scan file iterator on early break or normal completion to prevent
+      // file handle leaks. The iterator from getScanFiles() implements CloseableIterator.
+      try {
+        scanFileBatches.close();
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
@@ -505,6 +572,10 @@ public class SparkScan
 
   public Configuration getConfiguration() {
     return hadoopConf;
+  }
+
+  OptionalInt getPushedLimit() {
+    return pushedLimit;
   }
 
   @Override
@@ -625,6 +696,7 @@ public class SparkScan
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
+        && Objects.equals(pushedLimit, that.pushedLimit)
         && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
         && Objects.equals(catalogStats, that.catalogStats);
   }
@@ -640,6 +712,7 @@ public class SparkScan
             partitionSchema,
             readDataSchema,
             options,
+            pushedLimit,
             appliedRuntimePredicates);
     result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
     result = 31 * result + Arrays.hashCode(dataFilters);
