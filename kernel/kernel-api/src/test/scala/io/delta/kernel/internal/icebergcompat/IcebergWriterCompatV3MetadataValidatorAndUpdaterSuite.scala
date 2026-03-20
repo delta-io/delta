@@ -76,6 +76,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
         ICEBERG_COMPAT_V3_W_FEATURE,
         DELETION_VECTORS_RW_FEATURE,
         VARIANT_RW_FEATURE,
+        VARIANT_SHREDDING_RW_FEATURE,
         VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
         VARIANT_RW_PREVIEW_FEATURE,
         ROW_TRACKING_W_FEATURE,
@@ -100,6 +101,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
         "rowTracking",
         "variantType",
         "variantType-preview",
+        "variantShredding",
         "variantShredding-preview",
         tableFeature).asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
@@ -382,6 +384,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "rowTracking",
       "variantType",
       "variantType-preview",
+      "variantShredding",
       "variantShredding-preview",
       "icebergCompatV2",
       "icebergWriterCompatV1",
