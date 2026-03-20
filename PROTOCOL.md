@@ -893,7 +893,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `protocol` action
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
- - A collection of `domainMetadata` actions with unique `domain`s.
+ - A collection of `domainMetadata` actions with unique `domain`s, excluding tombstones (i.e. actions with `removed=true`).
  - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
@@ -2090,7 +2090,7 @@ Each row in the checkpoint corresponds to a single action. The checkpoint **must
  * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
  * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
- * [Domain Metadata](#Domain-Metadata)
+ * [Domain Metadata](#Domain-Metadata) that have not been removed (i.e. excluding tombstones with `removed=true`)
  * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
  * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 
