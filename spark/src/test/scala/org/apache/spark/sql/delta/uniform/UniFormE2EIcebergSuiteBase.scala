@@ -105,6 +105,7 @@ abstract class UniFormE2EIcebergSuiteBase extends UniFormE2ETest {
     }
   }
 
+
   compatVersions.foreach { compatVersion =>
     test(s"Table with partition - compatV$compatVersion") {
       withTable(testTableName) {

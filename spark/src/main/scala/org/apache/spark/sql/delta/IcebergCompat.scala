@@ -46,7 +46,7 @@ object IcebergCompatV1 extends IcebergCompatBase(
   icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V1_ENABLED,
   tableFeature = IcebergCompatV1TableFeature,
-  requiredTableProperties = Seq(RequireColumnMapping),
+  relatedTableProperties = Seq(RequireColumnMapping, OptionalAtomicEligible),
   incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
     CheckOnlySingleVersionEnabled,
@@ -63,7 +63,7 @@ object IcebergCompatV2 extends IcebergCompatBase(
   icebergFormatVersion = 2,
   config = DeltaConfigs.ICEBERG_COMPAT_V2_ENABLED,
   tableFeature = IcebergCompatV2TableFeature,
-  requiredTableProperties = Seq(RequireColumnMapping),
+  relatedTableProperties = Seq(RequireColumnMapping, OptionalAtomicEligible),
   incompatibleTableFeatures = Set(DeletionVectorsTableFeature),
   checks = Seq(
     CheckOnlySingleVersionEnabled,
@@ -95,7 +95,7 @@ case class IcebergCompatBase(
     icebergFormatVersion: Int,
     config: DeltaConfig[Option[Boolean]],
     tableFeature: TableFeature,
-    requiredTableProperties: Seq[RequiredDeltaTableProperty[_<:Any]],
+    relatedTableProperties: Seq[DeltaTableProperty],
     incompatibleTableFeatures: Set[TableFeature] = Set.empty,
     checks: Seq[IcebergCompatCheck]) extends DeltaLogging {
   def isEnabled(metadata: Metadata): Boolean = config.fromMetaData(metadata).getOrElse(false)
@@ -156,8 +156,10 @@ case class IcebergCompatBase(
           }
         }
 
-        // Check we have all required delta table properties
-        requiredTableProperties.foreach {
+        // Go through all relatedProperties:
+        // 1. Check we have all required delta table properties
+        // 2. Enable related non-required delta properties if needed
+        relatedTableProperties.foreach {
           case RequiredDeltaTableProperty(
               deltaConfig, validator, autoSetValue, autoEnableOnExistingTable) =>
             val newestValue = deltaConfig.fromMetaData(newestMetadata)
@@ -179,6 +181,24 @@ case class IcebergCompatBase(
                   deltaConfig.key, newestValue.toString, autoSetValue)
               }
             }
+          case OptionalDeltaTableProperty(
+            deltaConfig,
+            autoEnableOnExistingTables,
+            autoSetValue,
+            shouldExistingValuesBeingPreserved
+          ) =>
+            val newestValueExplicitlySet = newestMetadata.configuration.contains(deltaConfig.key)
+            if (!newestValueExplicitlySet &&
+              (autoEnableOnExistingTables || isCreatingOrReorgTable)
+            ) {
+              val oldValueExplicitlySet = prevMetadata.configuration.contains(deltaConfig.key)
+              val setValue = if (shouldExistingValuesBeingPreserved && oldValueExplicitlySet) {
+                prevMetadata.configuration(deltaConfig.key)
+              } else {
+                autoSetValue
+              }
+              tblPropertyUpdates += deltaConfig.key -> setValue
+            }
         }
 
         // Update Protocol and Metadata if necessary
@@ -196,7 +216,7 @@ case class IcebergCompatBase(
           val newConfiguration = newestMetadata.configuration ++ tblPropertyUpdates.toMap
           var tmpNewMetadata = newestMetadata.copy(configuration = newConfiguration)
 
-          requiredTableProperties.foreach { tp =>
+          relatedTableProperties.foreach { tp =>
             tmpNewMetadata = tp.postProcess(prevMetadata, tmpNewMetadata, isCreatingOrReorgTable)
           }
 
@@ -302,6 +322,16 @@ object IcebergCompat extends IcebergCompatVersionBase(
   ) with DeltaLogging
 
 
+trait DeltaTableProperty {
+  /**
+   * A callback after all properties are added to the new metadata.
+   * @return Updated metadata. None if no change
+   */
+  def postProcess(
+      prevMetadata: Metadata,
+      newMetadata: Metadata,
+      isCreatingNewTable: Boolean) : Metadata = newMetadata
+}
 
 /**
  * Wrapper class for table property validation
@@ -316,16 +346,14 @@ case class RequiredDeltaTableProperty[T](
       deltaConfig: DeltaConfig[T],
       validator: T => Boolean,
       autoSetValue: String,
-      autoEnableOnExistingTable: Boolean = false) {
-  /**
-   * A callback after all required properties are added to the new metadata.
-   * @return Updated metadata. None if no change
-   */
-  def postProcess(
-      prevMetadata: Metadata,
-      newMetadata: Metadata,
-      isCreatingNewTable: Boolean) : Metadata = newMetadata
-}
+      autoEnableOnExistingTable: Boolean = false) extends DeltaTableProperty
+
+case class OptionalDeltaTableProperty[T](
+      deltaConfig: DeltaConfig[T],
+      autoEnableOnExistingTables: Boolean,
+      autoSetValue: String,
+      shouldExistingValuesBeingPreserved: Boolean) extends DeltaTableProperty
+
 
 class RequireColumnMapping(allowedModes: Seq[DeltaColumnMappingMode])
   extends RequiredDeltaTableProperty(

@@ -423,7 +423,8 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
 
       def getUpdatedConfiguration(conf: Map[String, String]): Map[String, String] =
         UniversalFormat.enforceDependenciesInConfiguration(spark,
-            catalogTable = catalogTable, conf, snapshot)
+            catalogTable = catalogTable, conf, snapshot
+        )
 
       var updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
       assert(configurationUnderTest == configurationUnderTest)
@@ -445,12 +446,14 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
         )
         updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
 
-        assert(updatedConfiguration.size == 5)
+        assert(updatedConfiguration.size == 6)
         assert(updatedConfiguration("dummykey") == "dummyvalue")
         assert(updatedConfiguration("delta.universalFormat.enabledFormats") == "iceberg")
         assert(updatedConfiguration("delta.columnMapping.mode") == "name")
         assert(updatedConfiguration(s"delta.enableIcebergCompatV$icv") == "true")
         assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "1")
+        assert(updatedConfiguration(
+          DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key) == "true")
 
         configurationUnderTest = Map(
           s"delta.enableIcebergCompatV$icv" -> "true",
@@ -459,7 +462,10 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
           "delta.columnMapping.mode" -> "id"
         )
         updatedConfiguration = getUpdatedConfiguration(configurationUnderTest)
-        assert(updatedConfiguration.size == 4)
+          assert(updatedConfiguration.size == 6)
+          assert(updatedConfiguration("delta.columnMapping.maxColumnId") == "1")
+        assert(updatedConfiguration(
+          DeltaConfigs.ICEBERG_ATOMIC_CONVERSION_SUPPORTED.key) == "true")
         assert(updatedConfiguration("dummykey") == "dummyvalue")
         assert(updatedConfiguration("delta.columnMapping.mode") == "id")
         assert(updatedConfiguration("delta.universalFormat.enabledFormats") == "iceberg")
@@ -467,6 +473,7 @@ trait UniversalFormatMiscSuiteBase extends IcebergCompatUtilsBase with Universal
       }
     }
   }
+
 
   test("UniForm config validation") {
     Seq("ICEBERG", "iceberg,iceberg", "iceber", "paimon").foreach { invalidConf =>
