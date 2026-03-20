@@ -96,6 +96,8 @@ class CheckpointsSuite
     // `FakeGCSFileSystemValidatingCheckpoint`.
     // The default one is `HDFSLogStore` which requires a `FileContext` but we don't have one.
     super.sparkConf.set("spark.delta.logStore.gs.impl", classOf[LocalLogStore].getName)
+    super.sparkConf.set(
+      "spark.databricks.delta.variantShredding.collectVariantDataSkippingStats", true)
   }
 
   test("checkpoint metadata - checkpoint schema above the configured threshold are not" +

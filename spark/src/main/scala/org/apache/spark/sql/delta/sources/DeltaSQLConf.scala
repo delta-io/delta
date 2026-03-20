@@ -3055,7 +3055,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | Variant stats."""
         .stripMargin)
     .booleanConf
-    .createWithDefault(true)
+    .createWithDefault(false)
 
   ///////////
   // TESTING
