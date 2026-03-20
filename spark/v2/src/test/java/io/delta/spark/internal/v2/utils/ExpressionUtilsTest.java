@@ -22,7 +22,9 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -853,6 +855,31 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testDecimalPartialPushDownInAndFilter() {
+    // AND(price > 99.999, price < 200.00) where left has scale=3 exceeding column's scale=2.
+    // Only the right side should be pushed down (partial pushdown).
+    GreaterThan left = new GreaterThan("price", new BigDecimal("99.999"));
+    LessThan right = new LessThan("price", new BigDecimal("200.00"));
+    org.apache.spark.sql.sources.And andFilter = new org.apache.spark.sql.sources.And(left, right);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, decimalSchema);
+
+    assertTrue(result.isPresent(), "AND filter should partially push down the valid side");
+    assertTrue(result.isPartial(), "Result should be marked as partial conversion");
+    // Only the right side (price < 200.00) should be pushed, not a compound AND
+    Predicate pred = result.get();
+    assertNotEquals(
+        "AND",
+        pred.getName(),
+        "Left side (price > 99.999) should be dropped, not pushed as compound AND");
+    assertEquals("<", pred.getName());
+    Literal literal = (Literal) pred.getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+    assertEquals(new BigDecimal("200.00"), literal.getValue());
+  }
+
+  @Test
   public void testDecimalLiteralInCompoundFilter() {
     // AND(price >= 100.00, price <= 200.00) with Decimal(7,2) column
     GreaterThanOrEqual left = new GreaterThanOrEqual("price", new BigDecimal("100.00"));
@@ -939,6 +966,26 @@ public class ExpressionUtilsTest {
           literal.getDataType(),
           expectedOps[i] + " should widen decimal to column type");
     }
+  }
+
+  @Test
+  public void testClassifyFilterWithNullSchemaMatchesTwoArgOverload() {
+    // Directly validates that classifyFilter(filter, partitionColumns, null) produces
+    // the same result as the 2-arg classifyFilter(filter, partitionColumns).
+    Set<String> partitionColumns = new HashSet<>();
+    partitionColumns.add("dep_id");
+
+    EqualTo filter = new EqualTo("price", new BigDecimal("100.00"));
+
+    ExpressionUtils.FilterClassificationResult resultTwoArg =
+        ExpressionUtils.classifyFilter(filter, partitionColumns);
+    ExpressionUtils.FilterClassificationResult resultThreeArg =
+        ExpressionUtils.classifyFilter(filter, partitionColumns, null);
+
+    assertEquals(resultTwoArg.isKernelSupported, resultThreeArg.isKernelSupported);
+    assertEquals(resultTwoArg.isPartialConversion, resultThreeArg.isPartialConversion);
+    assertEquals(resultTwoArg.isDataFilter, resultThreeArg.isDataFilter);
+    assertEquals(resultTwoArg.kernelPredicate, resultThreeArg.kernelPredicate);
   }
 
   @Test
