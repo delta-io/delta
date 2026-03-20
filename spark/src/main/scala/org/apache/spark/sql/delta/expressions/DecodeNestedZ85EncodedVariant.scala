@@ -20,7 +20,9 @@ import org.apache.spark.sql.catalyst.InternalRow
 import org.apache.spark.sql.catalyst.analysis.TypeCheckResult
 import org.apache.spark.sql.catalyst.expressions.{Expression, UnaryExpression}
 import org.apache.spark.sql.catalyst.expressions.codegen.CodegenFallback
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaStatsJsonUtils
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
 import org.apache.spark.types.variant.{Variant, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
@@ -33,10 +35,19 @@ import org.apache.spark.unsafe.types.VariantVal
  * contain the Z85 string representation. This expression walks through the result and decodes
  * any Z85-encoded variants to their proper binary representation.
  *
+ * Error handling behavior is controlled by the config
+ * `spark.databricks.delta.variantShredding.failOnZ85DecodeError`. When disabled (default),
+ * invalid variant stats are silently replaced with null, similar to from_json behavior
+ * in permissive mode.
+ *
  * @param child The expression producing the row with Z85-encoded variants.
  */
 case class DecodeNestedZ85EncodedVariant(child: Expression)
   extends UnaryExpression with CodegenFallback {
+
+  // Capture the config value at expression creation time for consistent behavior
+  @transient private lazy val failOnError: Boolean =
+    SQLConf.get.getConf(DeltaSQLConf.FAIL_ON_VARIANT_STATS_Z85_DECODE_ERROR)
 
   override def dataType: DataType = child.dataType
 
@@ -78,15 +89,26 @@ case class DecodeNestedZ85EncodedVariant(child: Expression)
 
     dataType match {
       case VariantType =>
-        val variantVal = value.asInstanceOf[VariantVal]
-        val variant = new Variant(variantVal.getValue, variantVal.getMetadata)
-        if (VariantUtil.getType(variant.getValue, 0) == VariantUtil.Type.STRING) {
-          val z85String = variant.getString()
-          DeltaStatsJsonUtils.decodeVariantFromZ85(z85String)
-        } else {
-          throw new IllegalStateException(
-            s"Expected Z85-encoded variant string but got type " +
-              s"${VariantUtil.getType(variant.getValue, 0)}")
+        try {
+          val variantVal = value.asInstanceOf[VariantVal]
+          val variant = new Variant(variantVal.getValue, variantVal.getMetadata)
+          if (VariantUtil.getType(variant.getValue, 0) == VariantUtil.Type.STRING) {
+            val z85String = variant.getString()
+            DeltaStatsJsonUtils.decodeVariantFromZ85(z85String)
+          } else {
+            if (failOnError) {
+              throw new IllegalStateException(
+                s"Expected Z85-encoded variant string but got type " +
+                  s"${VariantUtil.getType(variant.getValue, 0)}")
+            } else {
+              null
+            }
+          }
+        } catch {
+          case e: Exception if !failOnError =>
+            // When failOnError is false, return null for any decoding errors
+            // This matches the behavior of from_json in permissive mode
+            null
         }
 
       case st: StructType =>
