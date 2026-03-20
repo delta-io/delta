@@ -135,6 +135,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files",
     "fail on data loss - starting from missing files with option off",
     "fail on data loss - gaps of files with option off",
+    "streaming processes 100 sequential single-value commits and contains all values 0 to 99",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch

@@ -2948,6 +2948,47 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
     }
   }
+
+  test("streaming processes 100 sequential single-value commits and contains all values 0 to 99") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // TODO(#6339): enable batch size 2 after fix PR merged
+      assume(!catalogOwnedCoordinatorBackfillBatchSize.contains(2),
+        "Test cannot pass with batch size 2 due to issue #6339")
+      // Write the first value to initialize the Delta table
+      Seq(0).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty[String, String])
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+
+      try {
+        // Process the initial commit (value 0)
+        q.processAllAvailable()
+
+        // Append values 1 through 99, one commit each
+        (1 until 100).foreach { i =>
+          Seq(i).toDF("x")
+            .write
+            .format("delta")
+            .mode("append")
+            .save(inputDir.toString)
+        }
+
+        q.processAllAvailable()
+
+        // Verify the output contains exactly all values from 0 to 99
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          (0 until 100).map(Row(_))
+        )
+      } finally {
+        q.stop()
+      }
+    }
+  }
 }
 
 /**
