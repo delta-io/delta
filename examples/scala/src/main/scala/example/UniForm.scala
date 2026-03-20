@@ -92,7 +92,7 @@ object UniForm {
          |)""".stripMargin)
     deltaSpark.sql(s"INSERT INTO $testTableName VALUES (${getRowToInsertStr(1)})")
 
-    // Wait for the conversion to be done
+    // Wait for the async UniForm Iceberg metadata conversion to complete.
     Thread.sleep(10000)
 
     val icebergSpark = SparkSession.builder()
