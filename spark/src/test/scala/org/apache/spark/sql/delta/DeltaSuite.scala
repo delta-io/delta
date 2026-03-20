@@ -3087,6 +3087,10 @@ class DeltaSuite extends QueryTest
         assert(!v2Props.containsKey(TableCatalog.OPTION_PREFIX + fsKey),
           s"DeltaTableV2.properties() should hide '${TableCatalog.OPTION_PREFIX}$fsKey'")
       }
+      injectedFsProps.keys.foreach { fsKey =>
+        assert(!v2Props.containsKey(fsKey),
+          s"DeltaTableV2.properties() should also hide '$fsKey'")
+      }
       assert(v2Props.get(TableCatalog.OPTION_PREFIX + "nonFsProp") === "visible_value",
         "Non-fs storage properties should remain visible in DeltaTableV2.properties()")
     }

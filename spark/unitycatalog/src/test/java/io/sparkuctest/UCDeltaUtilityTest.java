@@ -117,6 +117,9 @@ public class UCDeltaUtilityTest extends UCDeltaTableIntegrationBaseTest {
                   .as("DESCRIBE EXTENDED should not expose option.fs.* storage properties")
                   .doesNotContain("option.fs.");
               Assertions.assertThat(row.get(1))
+                  .as("DESCRIBE EXTENDED should not expose fs.* storage properties either")
+                  .doesNotContain("fs.");
+              Assertions.assertThat(row.get(1))
                   .as("DESCRIBE EXTENDED should still show user-set properties")
                   .contains("myCustomProp=myCustomValue");
             }
