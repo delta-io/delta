@@ -18,6 +18,8 @@ package io.delta.spark.internal.v2.read;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.CommitActions;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
@@ -33,6 +35,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -1265,6 +1268,20 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableDeletionVectors' = true)",
+                      tableName);
+                  sql(
+                      "INSERT INTO %s SELECT /*+ COALESCE(1) */ * FROM VALUES "
+                          + "(1, 'User1'), (2, 'User2'), (3, 'User3') AS t(id, name)",
+                      tableName);
+                  sql("DELETE FROM %s WHERE id >= 1", tableName);
+                },
+            false,
+            "Full DELETE with DV: full file delete via WHERE clause"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
                   sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
                   sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
                   sql("DELETE FROM %s", tableName);
@@ -1309,6 +1326,21 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                 },
             false,
             "MERGE: AddFile + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableDeletionVectors' = true)",
+                      tableName);
+                  // Coalesce to to ensure DV is partial delete
+                  sql(
+                      "INSERT INTO %s SELECT /*+ COALESCE(1) */ * FROM VALUES "
+                          + "(1, 'User1'), (2, 'User2'), (3, 'User3') AS t(id, name)",
+                      tableName);
+                  sql("DELETE FROM %s WHERE id = 1", tableName);
+                },
+            false,
+            "Partial DELETE with DV: AddFile(with DV) + RemoveFile"),
         Arguments.of(
             (ScenarioSetup)
                 (tableName, tempDir) -> {
@@ -3639,5 +3671,140 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
                 new io.delta.kernel.exceptions.KernelEngineException(
                     "readJsonFile", new java.io.FileNotFoundException("missing"))))
         .isEmpty();
+  }
+
+  /** Regression test: closing the wrapped iterator must also close CommitActions. */
+  @Test
+  public void testWrapIteratorWithCommitClose_closesCommitOnIteratorClose() throws Exception {
+    AtomicBoolean commitClosed = new AtomicBoolean(false);
+    AtomicBoolean innerClosed = new AtomicBoolean(false);
+
+    CloseableIterator<IndexedFile> inner =
+        new CloseableIterator<IndexedFile>() {
+          private boolean consumed = false;
+
+          @Override
+          public boolean hasNext() {
+            return !consumed;
+          }
+
+          @Override
+          public IndexedFile next() {
+            consumed = true;
+            return new IndexedFile(/* version= */ 1L, /* index= */ 0L, /* addFile= */ null);
+          }
+
+          @Override
+          public void close() {
+            innerClosed.set(true);
+          }
+        };
+
+    try (CloseableIterator<IndexedFile> wrapped =
+        SparkMicroBatchStream.wrapIteratorWithCommitClose(
+            inner, newTrackingCommitActions(commitClosed))) {
+      while (wrapped.hasNext()) {
+        wrapped.next();
+      }
+    }
+
+    assertTrue(innerClosed.get(), "Inner iterator should be closed");
+    assertTrue(commitClosed.get(), "CommitActions should be closed");
+  }
+
+  /** Closing the wrapped iterator before full consumption must still close CommitActions. */
+  @Test
+  public void testWrapIteratorWithCommitClose_closesCommitOnEarlyClose() throws Exception {
+    AtomicBoolean commitClosed = new AtomicBoolean(false);
+
+    CloseableIterator<IndexedFile> inner =
+        new CloseableIterator<IndexedFile>() {
+          private int remaining = 10;
+
+          @Override
+          public boolean hasNext() {
+            return remaining > 0;
+          }
+
+          @Override
+          public IndexedFile next() {
+            remaining--;
+            return new IndexedFile(/* version= */ 1L, /* index= */ remaining, /* addFile= */ null);
+          }
+
+          @Override
+          public void close() {}
+        };
+
+    try (CloseableIterator<IndexedFile> wrapped =
+        SparkMicroBatchStream.wrapIteratorWithCommitClose(
+            inner, newTrackingCommitActions(commitClosed))) {
+      assertTrue(wrapped.hasNext());
+      wrapped.next();
+      // Intentionally don't consume the rest
+    }
+
+    assertTrue(commitClosed.get(), "CommitActions should be closed on early termination");
+  }
+
+  /** If inner.close() throws, CommitActions must still be closed. */
+  @Test
+  public void testWrapIteratorWithCommitClose_closesCommitEvenWhenInnerCloseThrows()
+      throws Exception {
+    AtomicBoolean commitClosed = new AtomicBoolean(false);
+
+    CloseableIterator<IndexedFile> inner =
+        new CloseableIterator<IndexedFile>() {
+          @Override
+          public boolean hasNext() {
+            return false;
+          }
+
+          @Override
+          public IndexedFile next() {
+            throw new java.util.NoSuchElementException();
+          }
+
+          @Override
+          public void close() {
+            throw new RuntimeException("inner close failed");
+          }
+        };
+
+    CloseableIterator<IndexedFile> wrapped =
+        SparkMicroBatchStream.wrapIteratorWithCommitClose(
+            inner, newTrackingCommitActions(commitClosed));
+    try {
+      wrapped.close();
+    } catch (RuntimeException e) {
+      // Expected — inner.close() threw
+    }
+
+    assertTrue(commitClosed.get(), "CommitActions should be closed even when inner.close() throws");
+  }
+
+  /** Creates a CommitActions stub that sets {@code closedFlag} to true on close. */
+  private static CommitActions newTrackingCommitActions(AtomicBoolean closedFlag) {
+    return new CommitActions() {
+      @Override
+      public long getVersion() {
+        return 1L;
+      }
+
+      @Override
+      public long getTimestamp() {
+        return 0L;
+      }
+
+      @Override
+      public CloseableIterator<ColumnarBatch> getActions() {
+        throw new UnsupportedOperationException("not needed for this test");
+      }
+
+      @Override
+      public void close() {
+        closedFlag.set(true);
+      }
+    };
   }
 }

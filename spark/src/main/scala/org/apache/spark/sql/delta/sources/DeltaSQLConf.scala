@@ -752,7 +752,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |and streaming inserts with struct type cast.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
 
   val DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR =
     buildConf("merge.preserveNullSourceStructs.updateStar")
@@ -775,7 +775,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |type cast during INSERT operations.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
 
   val DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED =
     buildConf("insert.byName.schemaEvolution.enabled")

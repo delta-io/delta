@@ -18,8 +18,10 @@ package io.delta.spark.internal.v2.utils;
 import static org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseColumnPath;
 
 import com.google.common.annotations.VisibleForTesting;
+import io.delta.kernel.expressions.AlwaysFalse;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.In;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Or;
 import io.delta.kernel.expressions.Predicate;
@@ -59,8 +61,9 @@ public final class ExpressionUtils {
    *   <li>Comparison: EqualTo, GreaterThan, LessThan, etc.
    *   <li>Null tests: IsNull, IsNotNull
    *   <li>Null-safe comparison: EqualNullSafe
-   *   <li>Logical operators: And, Or, Not
    *   <li>String prefix: StringStartsWith
+   *   <li>Set membership: In
+   *   <li>Logical operators: And, Or, Not
    * </ul>
    *
    * @param filter the Spark SQL filter to convert
@@ -170,6 +173,25 @@ public final class ExpressionUtils {
       return new ConvertedPredicate(
           convertValueToKernelLiteral(f.value())
               .map(l -> new Predicate("STARTS_WITH", kernelColumn(f.attribute()), l)));
+    }
+    if (filter instanceof org.apache.spark.sql.sources.In) {
+      org.apache.spark.sql.sources.In f = (org.apache.spark.sql.sources.In) filter;
+      // An empty IN list can never match any row. Push ALWAYS_FALSE so the kernel skips
+      // all files entirely, rather than scanning every file only to discard every row.
+      if (f.values().length == 0) {
+        return new ConvertedPredicate(Optional.of(AlwaysFalse.ALWAYS_FALSE));
+      }
+      List<io.delta.kernel.expressions.Expression> literals = new ArrayList<>();
+      for (Object value : f.values()) {
+        Optional<Literal> lit = convertValueToKernelLiteral(value);
+        if (!lit.isPresent()) {
+          // A value that can't be converted (e.g. null, unsupported type) makes the whole
+          // IN expression unsafe to push down; return empty to keep it for post-scan evaluation.
+          return new ConvertedPredicate(Optional.empty());
+        }
+        literals.add(lit.get());
+      }
+      return new ConvertedPredicate(Optional.of(new In(kernelColumn(f.attribute()), literals)));
     }
     if (filter instanceof org.apache.spark.sql.sources.And) {
       org.apache.spark.sql.sources.And f = (org.apache.spark.sql.sources.And) filter;

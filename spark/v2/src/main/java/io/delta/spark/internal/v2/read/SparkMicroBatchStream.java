@@ -845,17 +845,49 @@ public class SparkMicroBatchStream
           shouldSkipCommit
               ? Utils.toCloseableIterator(Collections.emptyIterator())
               : getFilesFromCommit(commit, version);
-      return Utils.singletonCloseableIterator(
-              new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
-          .combine(fileActions)
-          .combine(
-              Utils.singletonCloseableIterator(
-                  new IndexedFile(version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
+      CloseableIterator<IndexedFile> inner =
+          Utils.singletonCloseableIterator(
+                  new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
+              .combine(fileActions)
+              .combine(
+                  Utils.singletonCloseableIterator(
+                      new IndexedFile(
+                          version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
+
+      // Wrap the iterator so that closing it also closes the CommitActions, releasing its
+      // internal ActionsIterator and any associated file handles / parsed data.
+      return wrapIteratorWithCommitClose(inner, commit);
     } catch (Exception e) {
       // commit is not a CloseableIterator, we need to close it manually.
       Utils.closeCloseables(commit);
       throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException(e);
     }
+  }
+
+  /**
+   * Wraps an iterator so that closing it also closes the given {@link CommitActions}, releasing its
+   * internal resources. This is necessary because {@link CommitActions} is an {@link AutoCloseable}
+   * but not a {@link CloseableIterator}, so closing the iterator chain alone does not close the
+   * {@link CommitActions} that produced it. Package-private for testing.
+   */
+  static CloseableIterator<IndexedFile> wrapIteratorWithCommitClose(
+      CloseableIterator<IndexedFile> inner, CommitActions commit) {
+    return new CloseableIterator<IndexedFile>() {
+      @Override
+      public boolean hasNext() {
+        return inner.hasNext();
+      }
+
+      @Override
+      public IndexedFile next() {
+        return inner.next();
+      }
+
+      @Override
+      public void close() throws IOException {
+        Utils.closeCloseables(inner, commit);
+      }
+    };
   }
 
   private CloseableIterator<IndexedFile> getFilesFromCommit(CommitActions commit, long version) {
