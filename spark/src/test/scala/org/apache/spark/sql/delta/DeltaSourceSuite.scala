@@ -2019,7 +2019,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("multiple versions with deletes are batched together with ignoreChanges") {
+  test("no rate limit: multiple versions per batch") {
     withTempDir { inputDir =>
       val path = inputDir.getCanonicalPath
 
