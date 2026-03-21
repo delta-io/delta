@@ -77,20 +77,44 @@ object UCCommitCoordinatorBuilder
 
     commitCoordinatorClientCache.computeIfAbsent(
       metastoreId,
-      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId)))
+      _ => {
+        val (uri, authConfig) = getMatchingUriAndAuthConfig(spark, metastoreId)
+        val ucClient = ucClientFactory.createUCClient(uri, authConfig)
+        val tokenProvider = TokenProvider.create(authConfig.asJava)
+        new UCCommitCoordinatorClient(conf.asJava, ucClient, uri, tokenProvider)
+      })
   }
 
   override def buildForCatalog(
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+    val (uri, authConfig) = getCatalogConfigs(spark).find(_._1 == catalogName) match {
+      case Some((_, uri, authConfig)) => (uri, authConfig)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
     }
+    val client = ucClientFactory.createUCClient(uri, authConfig)
+    val tokenProvider = TokenProvider.create(authConfig.asJava)
     val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
+    new UCCommitCoordinatorClient(conf.asJava, client, uri, tokenProvider)
+  }
+
+  /**
+   * Finds and returns the URI and auth config that matches the given metastore ID.
+   */
+  private def getMatchingUriAndAuthConfig(spark: SparkSession, metastoreId: String)
+    : (String, Map[String, String]) = {
+    val matchingClients: List[(String, Map[String, String])] = getCatalogConfigs(spark)
+      .map { case (name, uri, authConfig) => (uri, authConfig) }
+      .distinct
+      .filter { case (uri, authConfig) => getMetastoreId(uri, authConfig).contains(metastoreId) }
+
+    matchingClients match {
+      case Nil => throw noMatchingCatalogException(metastoreId)
+      case (uri, authConfig) :: Nil => (uri, authConfig)
+      case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
+    }
   }
 
   /**
