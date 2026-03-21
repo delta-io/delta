@@ -57,6 +57,8 @@ import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
 public class SparkScan
@@ -64,6 +66,8 @@ public class SparkScan
         SupportsReportStatistics,
         SupportsRuntimeV2Filtering,
         SupportsReportPartitioning {
+
+  private static final Logger logger = LoggerFactory.getLogger(SparkScan.class);
 
   /** Supported streaming options for the V2 connector. */
   private static final List<String> SUPPORTED_STREAMING_OPTIONS =
@@ -439,11 +443,8 @@ public class SparkScan
 
     // When a limit is pushed, request stats so we can read numRecords per file.
     // Without a limit, use the default path (stats only read if there is a data skipping filter).
-    final boolean requestStats = pushedLimit.isPresent();
     final CloseableIterator<FilteredColumnarBatch> scanFileBatches =
-        requestStats
-            ? kernelScan.getScanFiles(tableEngine, true /* includeStats */)
-            : kernelScan.getScanFiles(tableEngine);
+        kernelScan.getScanFiles(tableEngine, pushedLimit.isPresent());
 
     long accumulatedRecords = 0;
     boolean limitReached = false;
@@ -482,6 +483,13 @@ public class SparkScan
                 accumulatedRecords += logicalRows;
                 if (accumulatedRecords >= pushedLimit.getAsInt()) {
                   limitReached = true;
+                  logger.info(
+                      "Limit pushdown: stopping file scan after {} files, {} logical rows "
+                          + "(limit: {}, total bytes: {})",
+                      partitionedFiles.size(),
+                      accumulatedRecords,
+                      pushedLimit.getAsInt(),
+                      totalBytes);
                   break outer;
                 }
               }
@@ -502,6 +510,14 @@ public class SparkScan
       } catch (IOException e) {
         throw new RuntimeException(e);
       }
+    }
+
+    if (pushedLimit.isPresent() && !limitReached) {
+      logger.debug(
+          "Limit pushdown: all {} files included ({} logical rows, limit: {})",
+          partitionedFiles.size(),
+          accumulatedRecords,
+          pushedLimit.getAsInt());
     }
 
     // Pre-compute estimated size accounting for column projection
