@@ -538,6 +538,34 @@ public class TableFeatures {
     }
   }
 
+  /** This feature was replaced with its stable version, `collations`. */
+  public static final TableFeature COLLATIONS_PREVIEW_W_FEATURE = new CollationsPreview();
+
+  private static class CollationsPreview extends TableFeature.WriterFeature {
+    CollationsPreview() {
+      super("collations-preview", /* minWriterVersion = */ 7);
+    }
+  }
+
+  /** The stable collation feature. */
+  public static final TableFeature COLLATIONS_W_FEATURE = new Collations();
+
+  private static class Collations extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    Collations() {
+      super("collations", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasCollatedColumn(metadata.getSchema())
+          &&
+          // Don't automatically enable the stable feature if the preview feature is already
+          // supported, to avoid breaking old clients that only support the preview feature.
+          !protocol.supportsFeature(COLLATIONS_PREVIEW_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -582,7 +610,9 @@ public class TableFeatures {
               VARIANT_SHREDDING_RW_FEATURE,
               VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
               ICEBERG_WRITER_COMPAT_V1,
-              ICEBERG_WRITER_COMPAT_V3));
+              ICEBERG_WRITER_COMPAT_V3,
+              COLLATIONS_PREVIEW_W_FEATURE,
+              COLLATIONS_W_FEATURE));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
@@ -886,5 +916,19 @@ public class TableFeatures {
   private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
     return new SchemaIterable(tableSchema)
         .stream().anyMatch(element -> element.getField().getDataType().equals(type));
+  }
+
+  /**
+   * Check if the table schema has any string column with a non-default (non-UTF8_BINARY) collation.
+   */
+  static boolean hasCollatedColumn(StructType tableSchema) {
+    return new SchemaIterable(tableSchema)
+        .stream()
+            .anyMatch(
+                element -> {
+                  DataType dataType = element.getField().getDataType();
+                  return dataType instanceof StringType
+                      && !((StringType) dataType).isUTF8BinaryCollated();
+                });
   }
 }
