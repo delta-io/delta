@@ -2019,6 +2019,49 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("multiple versions with deletes are batched together with ignoreChanges") {
+    withTempDir { inputDir =>
+      val path = inputDir.getCanonicalPath
+
+      // Write 8 versions: a mix of appends, overwrites, and deletes.
+      // v0: initial write
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(path)
+      // v1: append
+      Seq(4, 5).toDF("x").write.mode("append").format("delta").save(path)
+      // v2: overwrite (adds + removes)
+      Seq(10, 20, 30).toDF("x").write.mode("overwrite").format("delta").save(path)
+      // v3: append
+      Seq(40).toDF("x").write.mode("append").format("delta").save(path)
+      // v4: delete (removes only)
+      io.delta.tables.DeltaTable.forPath(spark, path).delete("x = 10")
+      // v5: overwrite (adds + removes)
+      Seq(100, 200).toDF("x").write.mode("overwrite").format("delta").save(path)
+      // v6: append
+      Seq(300).toDF("x").write.mode("append").format("delta").save(path)
+      // v7: append
+      Seq(400).toDF("x").write.mode("append").format("delta").save(path)
+
+      val q = loadStreamWithOptions(path, Map(
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true"
+      ))
+        .writeStream
+        .format("memory")
+        .queryName("multiVersionBatchTest")
+        .start()
+      try {
+        q.processAllAvailable()
+        val progress = q.recentProgress.filter(_.numInputRows != 0)
+        // All 8 versions should be consumed in a single batch since the total number of files
+        // is well under the default maxFilesPerTrigger (1000).
+        assert(progress.length === 1,
+          s"Expected 1 batch but got ${progress.length}. " +
+            s"Batches: ${progress.map(_.numInputRows).mkString(", ")} rows each")
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("fail on data loss - starting from missing files") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
