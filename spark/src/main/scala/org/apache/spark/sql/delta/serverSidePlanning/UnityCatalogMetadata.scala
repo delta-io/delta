@@ -21,18 +21,18 @@ import org.apache.spark.sql.connector.catalog.{Identifier, Table}
 
 /**
  * Metadata for Unity Catalog tables.
- * Provides base Iceberg REST endpoint for server-side planning.
+ * Provides base Iceberg REST endpoint, authentication, and credential refresh
+ * metadata for server-side planning.
  */
 case class UnityCatalogMetadata(
     catalogName: String,
-    ucUri: String,
+    override val ucUri: String,
     ucToken: String,
+    override val tableId: Option[String],
+    override val authConfig: Map[String, String],
     tableProps: Map[String, String]) extends ServerSidePlanningMetadata {
 
   override def planningEndpointUri: String = {
-    // Return base Iceberg REST path up to /v1/
-    // The IcebergRESTCatalogPlanningClient will call /v1/config to get the prefix
-    // and construct the full URL according to the Iceberg REST catalog spec
     val base = if (ucUri.endsWith("/")) ucUri.dropRight(1) else ucUri
     s"$base/api/2.1/unity-catalog/iceberg-rest/v1"
   }
@@ -43,6 +43,10 @@ case class UnityCatalogMetadata(
 }
 
 object UnityCatalogMetadata {
+
+  // UC table property key for table UUID
+  private val UC_TABLE_ID_KEY = "io.unitycatalog.tableId"
+
   def fromTable(
       table: Table,
       spark: SparkSession,
@@ -51,18 +55,64 @@ object UnityCatalogMetadata {
     val catalogName = if (ident.namespace().length > 1) {
       ident.namespace().head
     } else {
-      // Use current catalog from session
-      // This allows queries with 2-part names (schema.table) to work with Unity Catalog
       spark.sessionState.catalogManager.currentCatalog.name()
     }
 
-    // Read UC configuration from Spark conf
     val ucUri = spark.conf.get(s"spark.sql.catalog.$catalogName.uri", "")
-    val ucToken = spark.conf.get(s"spark.sql.catalog.$catalogName.token", "")
+    val ucToken = spark.conf.get(
+      s"spark.sql.catalog.$catalogName.token", "")
 
-    // Table properties currently unused, may be needed in future
+    // Extract table UUID from table properties (set by UC's loadTable)
+    val tableId = if (table != null && table.properties() != null) {
+      Option(table.properties().get(UC_TABLE_ID_KEY))
+    } else {
+      None
+    }
+
+    // Extract auth config for UC credential providers.
+    // These are set as fs.unitycatalog.auth.* in Hadoop config so that
+    // GenericCredentialProvider can reconstruct a TokenProvider for refresh.
+    val authCfg = extractAuthConfig(spark, catalogName)
+
     val tableProps = Map.empty[String, String]
 
-    UnityCatalogMetadata(catalogName, ucUri, ucToken, tableProps)
+    UnityCatalogMetadata(
+      catalogName, ucUri, ucToken, tableId, authCfg, tableProps)
+  }
+
+  /**
+   * Extract authentication config for UC credential providers.
+   * Reads spark.sql.catalog.<name>.auth.* configs. Falls back to
+   * legacy .token config converted to static type.
+   *
+   * The returned map keys are stripped of prefix (e.g., "type",
+   * "token", "oauth.uri"). These are set as fs.unitycatalog.auth.*
+   * in Hadoop config for GenericCredentialProvider to read.
+   */
+  private[serverSidePlanning] def extractAuthConfig(
+      spark: SparkSession,
+      catalogName: String): Map[String, String] = {
+    val catalogPrefix = s"spark.sql.catalog.$catalogName."
+    val authPrefix = s"${catalogPrefix}auth."
+
+    val newFormatConfig = spark.conf.getAll
+      .filterKeys(_.startsWith(authPrefix))
+      .map { case (fullKey, value) =>
+        (fullKey.stripPrefix(authPrefix), value)
+      }
+      .toMap
+
+    if (newFormatConfig.nonEmpty) {
+      newFormatConfig
+    } else {
+      // Legacy fallback: spark.sql.catalog.<name>.token -> static
+      val legacyToken = spark.conf.get(
+        s"${catalogPrefix}token", "")
+      if (legacyToken.nonEmpty) {
+        Map("type" -> "static", "token" -> legacyToken)
+      } else {
+        Map.empty
+      }
+    }
   }
 }

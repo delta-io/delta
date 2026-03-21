@@ -275,6 +275,8 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       catalogName = "test_catalog",
       ucUri = ucUri,
       ucToken = "test-token",
+      tableId = None,
+      authConfig = Map.empty,
       tableProps = Map.empty
     )
 
@@ -285,6 +287,61 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
       "https://unity-catalog-server.example.com/api/2.1/unity-catalog/" +
       "iceberg-rest/v1"
     assert(metadata.planningEndpointUri == expectedEndpoint)
+  }
+
+  test("extractAuthConfig returns new auth.* format config") {
+    val catalogName = "authTestCat"
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName.auth.type" -> "oauth",
+      s"spark.sql.catalog.$catalogName.auth.oauth.uri" ->
+        "https://oauth.example.com/token",
+      s"spark.sql.catalog.$catalogName.auth.oauth.clientId" ->
+        "client123",
+      s"spark.sql.catalog.$catalogName.auth.oauth.clientSecret" ->
+        "secret456"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, catalogName)
+      assert(config("type") == "oauth")
+      assert(config("oauth.uri") ==
+        "https://oauth.example.com/token")
+      assert(config("oauth.clientId") == "client123")
+      assert(config("oauth.clientSecret") == "secret456")
+      assert(config.size == 4)
+    }
+  }
+
+  test("extractAuthConfig returns legacy token as static") {
+    val catalogName = "legacyTokenCat"
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName.token" -> "dapi-token"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, catalogName)
+      assert(config("type") == "static")
+      assert(config("token") == "dapi-token")
+      assert(config.size == 2)
+    }
+  }
+
+  test("extractAuthConfig prefers new format over legacy") {
+    val catalogName = "precedenceCat"
+    withSQLConf(
+      s"spark.sql.catalog.$catalogName.auth.type" -> "static",
+      s"spark.sql.catalog.$catalogName.auth.token" ->
+        "new-token",
+      s"spark.sql.catalog.$catalogName.token" -> "old-token"
+    ) {
+      val config = UnityCatalogMetadata
+        .extractAuthConfig(spark, catalogName)
+      assert(config("token") == "new-token")
+    }
+  }
+
+  test("extractAuthConfig returns empty map when no auth") {
+    val config = UnityCatalogMetadata
+      .extractAuthConfig(spark, "nonExistentCatalog")
+    assert(config.isEmpty)
   }
 
   test("simple EqualTo filter pushed to planning client") {
@@ -500,7 +557,9 @@ class ServerSidePlannedTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
 
     val table = new ServerSidePlannedTable(
-      spark, "test_db", "test_table", new org.apache.spark.sql.types.StructType(), trackingClient)
+      spark, "test_db", "test_table",
+      new org.apache.spark.sql.types.StructType(),
+      trackingClient, DefaultMetadata("test_catalog"))
     assert(!clientClosed, "Client should not be closed before table.close()")
     table.close()
     assert(clientClosed, "Client should be closed after table.close()")

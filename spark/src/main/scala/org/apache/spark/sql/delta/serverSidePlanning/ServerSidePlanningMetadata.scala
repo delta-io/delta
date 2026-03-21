@@ -42,6 +42,25 @@ private[serverSidePlanning] trait ServerSidePlanningMetadata {
   def catalogName: String
 
   /**
+   * Unity Catalog server URI for credential refresh API calls.
+   * Used by UC credential providers to call /temporary-table-credentials.
+   */
+  def ucUri: String
+
+  /**
+   * Table UUID from Unity Catalog, needed for credential refresh.
+   * The UC /temporary-table-credentials endpoint requires the table ID.
+   */
+  def tableId: Option[String]
+
+  /**
+   * Authentication config for UC credential providers (fs.unitycatalog.auth.* keys).
+   * Maps auth config keys (e.g., "type", "token", "oauth.uri") to values.
+   * Used by GenericCredentialProvider to reconstruct a TokenProvider for refresh calls.
+   */
+  def authConfig: Map[String, String]
+
+  /**
    * Additional table properties that may be needed.
    * For example, table UUID, credential hints, etc.
    */
@@ -57,6 +76,9 @@ private[serverSidePlanning] case class DefaultMetadata(
     tableProps: Map[String, String] = Map.empty) extends ServerSidePlanningMetadata {
   override def planningEndpointUri: String = ""
   override def authToken: Option[String] = None
+  override def ucUri: String = ""
+  override def tableId: Option[String] = None
+  override def authConfig: Map[String, String] = Map.empty
   override def tableProperties: Map[String, String] = tableProps
 }
 

@@ -139,7 +139,8 @@ object ServerSidePlannedTable extends DeltaLogging {
       metadata: ServerSidePlanningMetadata): Option[ServerSidePlannedTable] = {
     try {
       val client = ServerSidePlanningClientFactory.buildClient(spark, metadata)
-      Some(new ServerSidePlannedTable(spark, databaseName, tableName, tableSchema, client))
+      Some(new ServerSidePlannedTable(
+        spark, databaseName, tableName, tableSchema, client, metadata))
     } catch {
       case _: IllegalStateException =>
         // Factory not registered - this shouldn't happen in production but could during testing
@@ -178,7 +179,8 @@ class ServerSidePlannedTable(
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient)
+    planningClient: ServerSidePlanningClient,
+    metadata: ServerSidePlanningMetadata)
     extends Table with SupportsRead with AutoCloseable with DeltaLogging {
 
   // Returns fully qualified name (e.g., "catalog.database.table").
@@ -193,7 +195,8 @@ class ServerSidePlannedTable(
   }
 
   override def newScanBuilder(options: CaseInsensitiveStringMap): ScanBuilder = {
-    new ServerSidePlannedScanBuilder(spark, databaseName, tableName, tableSchema, planningClient)
+    new ServerSidePlannedScanBuilder(
+      spark, databaseName, tableName, tableSchema, planningClient, metadata)
   }
 
   override def close(): Unit = {
@@ -212,7 +215,8 @@ class ServerSidePlannedScanBuilder(
     databaseName: String,
     tableName: String,
     tableSchema: StructType,
-    planningClient: ServerSidePlanningClient)
+    planningClient: ServerSidePlanningClient,
+    metadata: ServerSidePlanningMetadata)
   extends ScanBuilder
   with SupportsPushDownFilters
   with SupportsPushDownRequiredColumns
@@ -291,8 +295,9 @@ class ServerSidePlannedScanBuilder(
 
   override def build(): Scan = {
     new ServerSidePlannedScan(
-      spark, databaseName, tableName, tableSchema, planningClient, _pushedFilters, _requiredSchema,
-      _limit)
+      spark, databaseName, tableName, tableSchema,
+      planningClient, metadata, _pushedFilters,
+      _requiredSchema, _limit)
   }
 }
 
@@ -305,6 +310,7 @@ class ServerSidePlannedScan(
     tableName: String,
     tableSchema: StructType,
     planningClient: ServerSidePlanningClient,
+    metadata: ServerSidePlanningMetadata,
     pushedFilters: Array[Filter],
     requiredSchema: StructType,
     limit: Option[Int]) extends Scan with Batch {
@@ -372,7 +378,9 @@ class ServerSidePlannedScan(
 
   override def createReaderFactory(): PartitionReaderFactory = {
     new ServerSidePlannedFilePartitionReaderFactory(
-      spark, tableSchema, requiredSchema, scanPlan.credentials)
+      spark, tableSchema, requiredSchema,
+      scanPlan.credentials, metadata,
+      scanPlan.planId)
   }
 }
 
@@ -388,39 +396,87 @@ case class ServerSidePlannedFileInputPartition(
  * Factory for creating PartitionReaders that read server-side planned files.
  * Builds reader functions on the driver for Parquet files.
  *
+ * Configures Hadoop with UC credential providers (AwsVendedTokenProvider,
+ * AbfsVendedTokenProvider, GcsVendedTokenProvider) that auto-refresh
+ * storage credentials by calling UC's /temporary-table-credentials endpoint.
+ * Initial credentials from the IRC /plan response are used as seeds.
+ *
  * @param tableSchema The full table schema (all columns in the file)
  * @param requiredSchema The required schema (columns to read after projection pushdown)
- * @param credentials Optional storage credentials from server-side planning response
+ * @param credentials Optional storage credentials from IRC /plan response (used as seeds)
+ * @param metadata SSP metadata with UC URI, table ID, and auth config for credential refresh
  */
 class ServerSidePlannedFilePartitionReaderFactory(
     spark: SparkSession,
     tableSchema: StructType,
     requiredSchema: StructType,
-    credentials: Option[ScanPlanStorageCredentials])
+    credentials: Option[ScanPlanStorageCredentials],
+    metadata: ServerSidePlanningMetadata,
+    planId: Option[String])
     extends PartitionReaderFactory {
 
   import org.apache.spark.util.SerializableConfiguration
 
   // scalastyle:off deltahadoopconfiguration
-  // We use sessionState.newHadoopConf() here instead of deltaLog.newDeltaHadoopConf().
-  // This means DataFrame options (like custom S3 credentials) passed by users will NOT be
-  // included in the Hadoop configuration. This is intentional:
-  // - Server-side planning uses server-provided credentials, not user-specified credentials
-  // - ServerSidePlannedTable is NOT a Delta table, so we don't want Delta-specific options
-  //   from deltaLog.newDeltaHadoopConf()
-  // - General Spark options from spark.hadoop.* are included and work for all tables
   private val hadoopConf = {
     val conf = spark.sessionState.newHadoopConf()
 
-    // Inject temporary credentials from IRC server response.
-    // Disable FileSystem cache for S3, Azure, and GCS so each scan uses fresh credentials
-    // (avoids AccessDenied when temp creds expire and a cached FS is reused).
-    // Aligns with CredPropsUtil in the Unity Catalog connector.
-    credentials.foreach(_.configure(conf))
+    // Set up UC credential providers for auto-refreshing storage credentials.
+    // The providers read fs.unitycatalog.* config keys from Hadoop Configuration
+    // and call UC's /temporary-table-credentials to refresh when creds near expiry.
+    // Initial credentials from the IRC /plan response are used as seeds.
+    configureCredentialRefresh(conf)
 
     new SerializableConfiguration(conf)
   }
   // scalastyle:on deltahadoopconfiguration
+
+  /**
+   * Configure Hadoop with UC credential providers for auto-refresh.
+   *
+   * Sets three categories of config keys:
+   * 1. UC connection: URI + auth config so providers can call UC for refresh
+   * 2. Credential metadata: table ID + operation so UC knows what to refresh
+   * 3. Cloud provider + seeds: provider class name + initial IRC credentials
+   *
+   * If metadata lacks table ID or auth config (e.g., non-UC catalogs or tests),
+   * falls back to static credential injection without refresh.
+   */
+  private def configureCredentialRefresh(
+      conf: org.apache.hadoop.conf.Configuration): Unit = {
+    // Use table ID from metadata, or plan-id from /plan response
+    val effectiveTableId =
+      metadata.tableId.orElse(planId)
+
+    val hasCredentialRefreshMetadata =
+      effectiveTableId.isDefined &&
+      metadata.authConfig.nonEmpty &&
+      metadata.ucUri.nonEmpty
+
+    if (hasCredentialRefreshMetadata) {
+      // 1. UC connection for credential refresh API calls
+      conf.set("fs.unitycatalog.uri", metadata.ucUri)
+      metadata.authConfig.foreach { case (key, value) =>
+        conf.set(s"fs.unitycatalog.auth.$key", value)
+      }
+
+      // 2. Credential metadata
+      conf.set("fs.unitycatalog.credentials.uid",
+        java.util.UUID.randomUUID().toString)
+      conf.set("fs.unitycatalog.credentials.type",
+        "table")
+      conf.set("fs.unitycatalog.table.id",
+        effectiveTableId.get)
+      conf.set("fs.unitycatalog.table.operation",
+        "READ")
+
+      // 3. Cloud provider + initial seeds
+      credentials.foreach(_.configureWithRefresh(conf))
+    } else {
+      // Fallback: static credentials without refresh
+      credentials.foreach(_.configure(conf))
+    }
+  }
 
   // Pre-build reader function for Parquet on the driver
   // This function will be serialized and sent to executors

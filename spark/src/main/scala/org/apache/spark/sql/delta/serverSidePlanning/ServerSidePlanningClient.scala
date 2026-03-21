@@ -185,7 +185,22 @@ private[serverSidePlanning] object ServerSidePlanningClientFactory {
  * for their respective cloud provider.
  */
 trait ScanPlanStorageCredentials {
+  /**
+   * Apply static credentials to Hadoop config (no refresh).
+   * Used as fallback when credential refresh metadata is unavailable.
+   */
   def configure(conf: org.apache.hadoop.conf.Configuration): Unit
+
+  /**
+   * Apply credentials with UC credential provider for auto-refresh.
+   * Sets the provider class name, initial seed credentials, and expiration time.
+   * The provider class (e.g., AwsVendedTokenProvider) is loaded by Hadoop at runtime
+   * from the unitycatalog-spark JAR on the classpath.
+   *
+   * Assumes UC connection keys (fs.unitycatalog.uri, fs.unitycatalog.auth.*,
+   * fs.unitycatalog.table.id, etc.) are already set in the Configuration.
+   */
+  def configureWithRefresh(conf: org.apache.hadoop.conf.Configuration): Unit
 }
 
 /**
@@ -193,4 +208,5 @@ trait ScanPlanStorageCredentials {
  */
 case class ScanPlan(
     files: Seq[ScanFile],
-    credentials: Option[ScanPlanStorageCredentials] = None)
+    credentials: Option[ScanPlanStorageCredentials] = None,
+    planId: Option[String] = None)
