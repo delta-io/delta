@@ -63,6 +63,20 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   // when the target catalog does not implement StagingTableCatalog.
   private static final String RTAS_ERROR = "REPLACE TABLE AS SELECT (RTAS) is not supported";
 
+  private static boolean supportsManagedReplaceViaUC() {
+    return isUnityCatalogSparkAtLeast(0, 4, 1);
+  }
+
+  private static String expectedManagedReplaceFailure() {
+    return supportsManagedReplaceViaUC() ? KILL_SWITCH_ERROR : RTAS_ERROR;
+  }
+
+  private static List<String> expectedAlterMetadataFailure() {
+    return supportsManagedReplaceViaUC()
+        ? List.of(ALTER_TABLE_ERROR, KILL_SWITCH_ERROR, CLUSTERING_KILL_SWITCH_ERROR)
+        : List.of(ALTER_TABLE_ERROR);
+  }
+
   // ---------------------------------------------------------------------------
   // Kill-switch tests: operations blocked by OptimisticTransaction.updateMetadata()
   // ---------------------------------------------------------------------------
@@ -120,9 +134,9 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * UCSingleCatalog.alterTable()}, which throws {@code UnsupportedOperationException} for every
    * table change regardless of the specific operation.
    *
-   * <p>Covered operations: SET TBLPROPERTIES (configuration change), ADD COLUMNS (schema change),
-   * and CLUSTER BY (clustering change). All share the same managed table and each throws before
-   * modifying anything.
+   * <p>SET TBLPROPERTIES and ADD COLUMNS remain blocked across UC versions, but the blocking layer
+   * changes as more ALTER paths are delegated to Delta. Starting in UC Spark 0.4.1, ALTER TABLE
+   * CLUSTER BY is supported for managed tables.
    */
   @Test
   public void testAlterTableOperationsAreBlocked() throws Exception {
@@ -134,17 +148,23 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
 
           // ALTER TABLE SET TBLPROPERTIES would change configuration.
-          assertThrowsWithCauseContaining(
-              ALTER_TABLE_ERROR,
+          assertThrowsWithCauseContainingAny(
+              expectedAlterMetadataFailure(),
               () -> sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName));
 
           // ALTER TABLE ADD COLUMNS would change the schema.
-          assertThrowsWithCauseContaining(
-              ALTER_TABLE_ERROR, () -> sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName));
+          assertThrowsWithCauseContainingAny(
+              expectedAlterMetadataFailure(),
+              () -> sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName));
 
-          // ALTER TABLE CLUSTER BY would change clustering columns.
-          assertThrowsWithCauseContaining(
-              ALTER_TABLE_ERROR, () -> sql("ALTER TABLE %s CLUSTER BY (id)", tableName));
+          if (supportsManagedReplaceViaUC()) {
+            sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
+          } else {
+            // ALTER TABLE CLUSTER BY would change clustering columns.
+            assertThrowsWithCauseContainingAny(
+                expectedAlterMetadataFailure(),
+                () -> sql("ALTER TABLE %s CLUSTER BY (id)", tableName));
+          }
         });
   }
 
@@ -243,9 +263,9 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * INSERT OVERWRITE with {@code overwriteSchema=true} that would replace the schema of an existing
    * CatalogOwned table must be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * the overwrite-with-schema-change through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>Before UC Spark 0.4.1 this routes through RTAS and fails in OSS Delta. Starting with UC
+   * Spark 0.4.1, the replace path is supported and the Delta metadata kill switch blocks the schema
+   * change instead.
    */
   @Test
   public void testInsertOverwriteWithOverwriteSchemaIsBlocked() throws Exception {
@@ -262,7 +282,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_val')", sourceTable);
                 assertThrowsWithCauseContaining(
-                    RTAS_ERROR,
+                    expectedManagedReplaceFailure(),
                     () ->
                         spark()
                             .read()
@@ -280,9 +300,9 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * {@code CREATE OR REPLACE TABLE} with a different schema on an existing CatalogOwned table must
    * be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * {@code CREATE OR REPLACE TABLE} through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>Before UC Spark 0.4.1 this routes through RTAS and fails in OSS Delta. Starting with UC
+   * Spark 0.4.1, the replace path is supported and the Delta metadata kill switch blocks the schema
+   * change instead.
    */
   @Test
   public void testReplaceTableWithNewSchemaIsBlocked() throws Exception {
@@ -293,7 +313,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
           assertThrowsWithCauseContaining(
-              RTAS_ERROR,
+              expectedManagedReplaceFailure(),
               () ->
                   sql(
                       "CREATE OR REPLACE TABLE %s (id INT, name STRING, extra STRING) "
