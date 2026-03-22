@@ -446,8 +446,11 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
 
   test("variantShredding-preview in existing table is respected") {
     withTempDirAndEngine { (tablePath, engine) =>
-      spark.sql(s"CREATE TABLE delta.`$tablePath`(id INT) USING delta " +
-        s"TBLPROPERTIES ('delta.feature.variantShredding-preview' = 'supported')")
+      createEmptyTable(
+        engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.feature.variantShredding-preview" -> "supported"))
 
       val protocolV0 = getProtocol(engine, tablePath)
       require(protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
