@@ -70,7 +70,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
     "clustering",
-    "materializePartitionColumns")
+    "materializePartitionColumns",
+    "collations",
+    "collations-preview")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -150,6 +152,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       false),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = true), true),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = false), false),
+    ("collations", testMetadata(includeCollatedStringTypeCol = true), true),
+    ("collations", testMetadata(includeCollatedStringTypeCol = false), false),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "v2")), true),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "classic")), false),
     (
@@ -207,7 +211,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     "clustering",
     "catalogManaged",
     "allowColumnDefaults",
-    "variantShredding-preview").foreach {
+    "variantShredding-preview",
+    "collations-preview").foreach {
     feature =>
       test(s"doesn't support auto enable by metadata: $feature") {
         val tableFeature = TableFeatures.getTableFeature(feature)
@@ -220,7 +225,8 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true"))),
     (
       "variantShredding",
-      testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")))).foreach {
+      testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true"))),
+    ("collations", testMetadata(includeCollatedStringTypeCol = true))).foreach {
     case (feature, metadataEnablingFeature) =>
       test("special handling of tables containing preview features: " + feature) {
         val protocolWithPreviewFeature = new Protocol(3, 7)
@@ -295,7 +301,9 @@ class TableFeaturesSuite extends AnyFunSuite {
       "variantType",
       "variantShredding",
       "variantShredding-preview",
-      "materializePartitionColumns")
+      "materializePartitionColumns",
+      "collations",
+      "collations-preview")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -1256,13 +1264,15 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
       includeIdentityColumn: Boolean = false,
+      includeCollatedStringTypeCol: Boolean = false,
       tblProps: Map[String, String] = Map.empty): Metadata = {
     val testSchema = createTestSchema(
       includeInvariant,
       includeTimestampNtzTypeCol,
       includeVariantTypeCol,
       includeGeneratedColumn,
-      includeIdentityColumn)
+      includeIdentityColumn,
+      includeCollatedStringTypeCol)
     new Metadata(
       "id",
       Optional.of("name"),
@@ -1290,7 +1300,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeTimestampNtzTypeCol: Boolean = false,
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
-      includeIdentityColumn: Boolean = false): StructType = {
+      includeIdentityColumn: Boolean = false,
+      includeCollatedStringTypeCol: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)
@@ -1325,6 +1336,9 @@ class TableFeaturesSuite extends AnyFunSuite {
           .putLong("delta.identity.step", 2L)
           .putBoolean("delta.identity.allowExplicitInsert", true)
           .build())
+    }
+    if (includeCollatedStringTypeCol) {
+      structType = structType.add("c8", new StringType("ICU.UNICODE.75"))
     }
 
     structType
