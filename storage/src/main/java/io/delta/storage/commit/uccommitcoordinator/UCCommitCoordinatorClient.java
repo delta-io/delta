@@ -29,6 +29,8 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
@@ -73,6 +75,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * Logger for UCCommitCoordinatorClient class operations and diagnostics.
    */
   private static final Logger LOG = LoggerFactory.getLogger(UCCommitCoordinatorClient.class);
+  private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
   // UC Protocol Version Control Constants
   /** Supported version for read operations in the Unity Catalog protocol. */
@@ -463,6 +466,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
+        boolean shouldPassMetadata = shouldUseDeltaRestApi(tableDesc) || SHOULD_PASS_METADATA_TO_UC;
         commitToUC(
           tableDesc,
           logPath,
@@ -472,7 +476,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(lastKnownBackfilledVersion.get()),
           catalogTrackedInfo,
           disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
+          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !shouldPassMetadata ?
             Optional.empty() :
             Optional.of(updatedActions.getNewMetadata()),
           updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
@@ -730,7 +734,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         tablePath[0], tablePath[1], tablePath[2]);
       commitViaDeltaRestApi(
         tablePath[0], tablePath[1], tablePath[2],
-        commit, lastKnownBackfilledVersion
+        commit, lastKnownBackfilledVersion, newMetadata, newProtocol
       );
     } else {
       // Fall back to old UC API
@@ -756,7 +760,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       String schema,
       String table,
       Optional<Commit> commit,
-      Optional<Long> lastKnownBackfilledVersion
+      Optional<Long> lastKnownBackfilledVersion,
+      Optional<AbstractMetadata> newMetadata,
+      Optional<AbstractProtocol> newProtocol
   ) throws IOException, CommitFailedException {
     try {
       io.unitycatalog.client.deltarest.ApiClient apiClient =
@@ -771,11 +777,40 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       io.unitycatalog.client.deltarest.api.TablesApi tablesApi =
           new io.unitycatalog.client.deltarest.api.TablesApi(apiClient);
 
+      io.unitycatalog.client.deltarest.model.LoadTableResponse currentTable =
+          tablesApi.loadTable(catalog, schema, table, false);
+      io.unitycatalog.client.deltarest.model.TableMetadata currentMetadata =
+          currentTable.getMetadata();
+
       // Build UpdateTableRequest with updates
       io.unitycatalog.client.deltarest.model.UpdateTableRequest updateRequest =
           new io.unitycatalog.client.deltarest.model.UpdateTableRequest();
-      updateRequest.setRequirements(new ArrayList<>());
+      List<io.unitycatalog.client.deltarest.model.TableRequirement> requirements =
+          new ArrayList<>();
+      if (currentMetadata.getTableUuid() != null) {
+        io.unitycatalog.client.deltarest.model.AssertTableUUID assertTableUUID =
+            new io.unitycatalog.client.deltarest.model.AssertTableUUID();
+        assertTableUUID.setType(
+            io.unitycatalog.client.deltarest.model.AssertTableUUID.TypeEnum.ASSERT_TABLE_UUID);
+        assertTableUUID.setUuid(currentMetadata.getTableUuid());
+        requirements.add(new io.unitycatalog.client.deltarest.model.TableRequirement(assertTableUUID));
+      }
+      if (currentMetadata.getEtag() != null) {
+        io.unitycatalog.client.deltarest.model.AssertEtag assertEtag =
+            new io.unitycatalog.client.deltarest.model.AssertEtag();
+        assertEtag.setType(io.unitycatalog.client.deltarest.model.AssertEtag.TypeEnum.ASSERT_ETAG);
+        assertEtag.setEtag(currentMetadata.getEtag());
+        requirements.add(new io.unitycatalog.client.deltarest.model.TableRequirement(assertEtag));
+      }
+      updateRequest.setRequirements(requirements);
       List<io.unitycatalog.client.deltarest.model.TableUpdate> updates = new ArrayList<>();
+
+      if (newMetadata.isPresent()) {
+        addMetadataUpdates(updates, currentMetadata, newMetadata.get());
+      }
+      if (newProtocol.isPresent()) {
+        addProtocolUpdate(updates, currentMetadata, newProtocol.get());
+      }
 
       // Add commit update if present
       if (commit.isPresent()) {
@@ -831,6 +866,145 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           e);
       }
     }
+  }
+
+  private void addMetadataUpdates(
+      List<io.unitycatalog.client.deltarest.model.TableUpdate> updates,
+      io.unitycatalog.client.deltarest.model.TableMetadata currentMetadata,
+      AbstractMetadata newMetadata) throws IOException {
+    if (!Objects.equals(currentMetadata.getComment(), newMetadata.getDescription()) &&
+        newMetadata.getDescription() != null) {
+      io.unitycatalog.client.deltarest.model.SetTableCommentUpdate commentUpdate =
+          new io.unitycatalog.client.deltarest.model.SetTableCommentUpdate();
+      commentUpdate.setAction(
+          io.unitycatalog.client.deltarest.model.SetTableCommentUpdate.ActionEnum.SET_TABLE_COMMENT);
+      commentUpdate.setComment(newMetadata.getDescription());
+      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(commentUpdate));
+    }
+
+    List<String> newPartitionColumns =
+        newMetadata.getPartitionColumns() == null ?
+            Collections.emptyList() :
+            new ArrayList<>(newMetadata.getPartitionColumns());
+    List<String> currentPartitionColumns =
+        currentMetadata.getPartitionColumns() == null ?
+            Collections.emptyList() :
+            currentMetadata.getPartitionColumns();
+    if (!currentPartitionColumns.equals(newPartitionColumns)) {
+      io.unitycatalog.client.deltarest.model.SetPartitionColumnsUpdate partitionUpdate =
+          new io.unitycatalog.client.deltarest.model.SetPartitionColumnsUpdate();
+      partitionUpdate.setAction(
+          io.unitycatalog.client.deltarest.model.SetPartitionColumnsUpdate.ActionEnum
+              .SET_PARTITION_COLUMNS);
+      partitionUpdate.setPartitionColumns(newPartitionColumns);
+      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(partitionUpdate));
+    }
+
+    List<io.unitycatalog.client.deltarest.model.DeltaColumn> newColumns =
+        toDeltaColumns(newMetadata.getSchemaString());
+    List<io.unitycatalog.client.deltarest.model.DeltaColumn> currentColumns =
+        currentMetadata.getColumns() == null ?
+            Collections.emptyList() :
+            currentMetadata.getColumns();
+    if (!currentColumns.equals(newColumns)) {
+      io.unitycatalog.client.deltarest.model.SetColumnsUpdate columnsUpdate =
+          new io.unitycatalog.client.deltarest.model.SetColumnsUpdate();
+      columnsUpdate.setAction(
+          io.unitycatalog.client.deltarest.model.SetColumnsUpdate.ActionEnum.SET_COLUMNS);
+      columnsUpdate.setColumns(newColumns);
+      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(columnsUpdate));
+    }
+
+    Map<String, String> currentProperties =
+        currentMetadata.getProperties() == null ?
+            Collections.emptyMap() :
+            currentMetadata.getProperties();
+    Map<String, String> desiredProperties =
+        newMetadata.getConfiguration() == null ?
+            Collections.emptyMap() :
+            newMetadata.getConfiguration();
+    Map<String, String> changedProperties = new LinkedHashMap<>();
+    for (Map.Entry<String, String> entry : desiredProperties.entrySet()) {
+      if (!Objects.equals(currentProperties.get(entry.getKey()), entry.getValue())) {
+        changedProperties.put(entry.getKey(), entry.getValue());
+      }
+    }
+    if (!changedProperties.isEmpty()) {
+      io.unitycatalog.client.deltarest.model.SetPropertiesUpdate propertiesUpdate =
+          new io.unitycatalog.client.deltarest.model.SetPropertiesUpdate();
+      propertiesUpdate.setAction(
+          io.unitycatalog.client.deltarest.model.SetPropertiesUpdate.ActionEnum.SET_PROPERTIES);
+      propertiesUpdate.setUpdates(changedProperties);
+      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(propertiesUpdate));
+    }
+  }
+
+  private void addProtocolUpdate(
+      List<io.unitycatalog.client.deltarest.model.TableUpdate> updates,
+      io.unitycatalog.client.deltarest.model.TableMetadata currentMetadata,
+      AbstractProtocol newProtocol) {
+    io.unitycatalog.client.deltarest.model.DeltaProtocol desiredProtocol =
+        toDeltaProtocol(newProtocol);
+    if (!desiredProtocol.equals(currentMetadata.getProtocol())) {
+      io.unitycatalog.client.deltarest.model.SetProtocolUpdate protocolUpdate =
+          new io.unitycatalog.client.deltarest.model.SetProtocolUpdate();
+      protocolUpdate.setAction(
+          io.unitycatalog.client.deltarest.model.SetProtocolUpdate.ActionEnum.SET_PROTOCOL);
+      protocolUpdate.setProtocol(desiredProtocol);
+      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(protocolUpdate));
+    }
+  }
+
+  private io.unitycatalog.client.deltarest.model.DeltaProtocol toDeltaProtocol(
+      AbstractProtocol protocol) {
+    io.unitycatalog.client.deltarest.model.DeltaProtocol deltaProtocol =
+        new io.unitycatalog.client.deltarest.model.DeltaProtocol();
+    deltaProtocol.setMinReaderVersion(protocol.getMinReaderVersion());
+    deltaProtocol.setMinWriterVersion(protocol.getMinWriterVersion());
+    if (protocol.getReaderFeatures() != null && !protocol.getReaderFeatures().isEmpty()) {
+      List<String> readerFeatures = new ArrayList<>(protocol.getReaderFeatures());
+      Collections.sort(readerFeatures);
+      deltaProtocol.setReaderFeatures(readerFeatures);
+    }
+    if (protocol.getWriterFeatures() != null && !protocol.getWriterFeatures().isEmpty()) {
+      List<String> writerFeatures = new ArrayList<>(protocol.getWriterFeatures());
+      Collections.sort(writerFeatures);
+      deltaProtocol.setWriterFeatures(writerFeatures);
+    }
+    return deltaProtocol;
+  }
+
+  private List<io.unitycatalog.client.deltarest.model.DeltaColumn> toDeltaColumns(
+      String schemaString) throws IOException {
+    if (schemaString == null || schemaString.isEmpty()) {
+      return Collections.emptyList();
+    }
+    JsonNode schemaNode = JSON_MAPPER.readTree(schemaString);
+    JsonNode fieldsNode = schemaNode.get("fields");
+    if (fieldsNode == null || !fieldsNode.isArray()) {
+      throw new IOException("Invalid Delta schema JSON: missing top-level fields array");
+    }
+
+    List<io.unitycatalog.client.deltarest.model.DeltaColumn> columns = new ArrayList<>();
+    for (JsonNode fieldNode : fieldsNode) {
+      io.unitycatalog.client.deltarest.model.DeltaColumn column =
+          new io.unitycatalog.client.deltarest.model.DeltaColumn();
+      column.setName(fieldNode.get("name").asText());
+      JsonNode typeNode = fieldNode.get("type");
+      if (typeNode != null && !typeNode.isNull()) {
+        column.setType(JSON_MAPPER.convertValue(typeNode, Object.class));
+      }
+      JsonNode nullableNode = fieldNode.get("nullable");
+      column.setNullable(nullableNode == null || nullableNode.asBoolean());
+      JsonNode metadataNode = fieldNode.get("metadata");
+      Map<String, Object> metadata =
+          metadataNode == null || metadataNode.isNull() ?
+              new LinkedHashMap<>() :
+              JSON_MAPPER.convertValue(metadataNode, LinkedHashMap.class);
+      column.setMetadata(metadata);
+      columns.add(column);
+    }
+    return columns;
   }
 
   /**

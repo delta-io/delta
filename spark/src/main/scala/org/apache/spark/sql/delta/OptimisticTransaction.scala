@@ -582,18 +582,6 @@ trait OptimisticTransactionImpl extends TransactionHelper
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
-    // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
-    // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
-    // "spark_catalog" registration). New table creation is naturally excluded because
-    // isCatalogOwned is false until the first commit. REPLACE TABLE is currently also blocked
-    // here and will need to be explicitly allowed once UC supports metadata propagation.
-    // Intentionally conservative: configuration is compared as a whole map, which also
-    // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
-    // a temporary kill switch - once Delta supports propagating metadata updates to UC,
-    // this check will be removed entirely.
-    if (!isCreatingNewTable) {
-      throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
-    }
   }
 
   /**

@@ -82,42 +82,30 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   // ---------------------------------------------------------------------------
 
   /**
-   * INSERT with {@code autoMerge=true} and MERGE INTO with schema evolution must be blocked by the
-   * kill switch in {@code updateMetadata()} on CatalogOwned tables. The kill switch covers all
-   * metadata fields (schema, partitions, description, properties); schema evolution via autoMerge
-   * is the primary user-facing path that reaches it without going through ALTER TABLE.
+   * INSERT with {@code autoMerge=true} must propagate the evolved schema to UC for CatalogOwned
+   * tables. This exercises the coordinated-commit path that now carries metadata updates through
+   * the Delta REST update-table API together with the commit.
    */
   @Test
-  public void testMetadataChangesViaWritesAreBlocked() throws Exception {
+  public void testMetadataChangesViaWritesAreSupported() throws Exception {
     withNewTable(
-        "block_schema_evolution_target",
+        "schema_evolution_target",
         "id INT, name STRING",
         TableType.MANAGED,
         targetTable -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", targetTable);
           withNewTable(
-              "block_schema_evolution_source",
+              "schema_evolution_source",
               "id INT, name STRING, extra STRING",
               TableType.EXTERNAL,
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_value')", sourceTable);
                 sql("SET spark.databricks.delta.schema.autoMerge.enabled = true");
                 try {
-                  // INSERT with autoMerge introduces a new column.
-                  assertThrowsWithCauseContaining(
-                      KILL_SWITCH_ERROR,
-                      () -> sql("INSERT INTO %s SELECT * FROM %s", targetTable, sourceTable));
-
-                  // MERGE INTO with autoMerge introduces a new column from the source.
-                  assertThrowsWithCauseContaining(
-                      KILL_SWITCH_ERROR,
-                      () ->
-                          sql(
-                              "MERGE INTO %s AS target "
-                                  + "USING %s AS source "
-                                  + "ON target.id = source.id "
-                                  + "WHEN NOT MATCHED THEN INSERT *",
-                              targetTable, sourceTable));
+                  sql("INSERT INTO %s SELECT * FROM %s", targetTable, sourceTable);
+                  check(
+                      targetTable,
+                      List.of(List.of("1", "initial", "null"), List.of("2", "new", "extra_value")));
                 } finally {
                   sql("SET spark.databricks.delta.schema.autoMerge.enabled = false");
                 }
