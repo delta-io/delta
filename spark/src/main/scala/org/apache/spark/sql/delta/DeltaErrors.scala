@@ -3543,8 +3543,7 @@ trait DeltaErrorsBase
         UniversalFormat.ICEBERG_FORMAT,
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
         "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
-        "IcebergCompatV2. To enable IcebergCompatV2 (recommended), set the table property " +
-        "'delta.enableIcebergCompatV2' = 'true'."
+        "IcebergCompatV2."
       )
     )
   }
