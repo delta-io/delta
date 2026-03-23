@@ -655,6 +655,31 @@ class DeltaSinkSuite
         "deltaLog should not be initialized after constructor")
     }
   }
+
+  test("DeltaSink rejects DataFrame with UDT containing NullType") {
+    failAfter(streamingTimeout) {
+      withTempDirs { (outputDir, checkpointDir) =>
+        val inputData = MemoryStream[Int]
+        val ds = inputData.toDS()
+        val dsWriter =
+          ds.map(i => (i, new NullData()))
+            .toDF("id", "value")
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = dsWriter.start(outputDir.getCanonicalPath)
+          inputData.addData(42)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE")
+      }
+    }
+  }
 }
 
 // Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.

@@ -1820,7 +1820,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
+  testQuietly("deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = loadStreamWithOptions(inputDir.toString, Map.empty)
@@ -1862,7 +1862,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath") {
+  testQuietly("deltaSourceIgnoreDeleteError contains removeFile, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = loadStreamWithOptions(inputDir.toString, Map.empty)
@@ -1896,6 +1896,126 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       assert(e.getCause.getMessage.contains("for example"))
       assert(e.getCause.getMessage.contains("version"))
       assert(e.getCause.getMessage.matches(s".*$inputDir.*"))
+    }
+  }
+
+  test("streaming with ignoreDeletes = true skips delete-only commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // Write initial data
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+          "startingVersion" -> "0"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3).map(Row(_)))
+
+        // Delete all rows: produces only RemoveFile actions
+        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+        // Append new data after the delete
+        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        q.processAllAvailable()
+
+        // The delete commit should be silently skipped; only inserts are processed
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5).map(Row(_)))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
+  testQuietly("streaming with ignoreDeletes = true still fails on change commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true"))
+      df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+        .processAllAvailable()
+
+      // Overwrite produces both AddFile and RemoveFile actions (a change commit)
+      Seq(4, 5, 6).toDF("x")
+        .write
+        .mode("overwrite")
+        .format("delta")
+        .save(inputDir.toString)
+
+      val e = intercept[StreamingQueryException] {
+        val q = df.writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.toString)
+          .start(outputDir.toString)
+
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+      }
+
+      assert(e.getCause.isInstanceOf[UnsupportedOperationException])
+      assert(e.getCause.getMessage.contains(
+        "This is currently not supported. If this is going to happen regularly and you are okay" +
+          " to skip changes, set the option 'skipChangeCommits' to 'true'."
+      ))
+    }
+  }
+
+  test("streaming with skipChangeCommits = true skips both delete and change commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3).map(Row(_)))
+
+        // Delete all rows: produces only RemoveFile actions (delete-only commit)
+        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        // Overwrite produces both AddFile and RemoveFile actions (change commit)
+        Seq(6, 7, 8).toDF("x")
+          .write
+          .mode("overwrite")
+          .format("delta")
+          .save(inputDir.toString)
+
+        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        q.processAllAvailable()
+
+        // Both the delete and overwrite commits are silently skipped; only inserts are processed
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5, 9, 10).map(Row(_)))
+      } finally {
+        q.stop()
+      }
     }
   }
 
@@ -2826,50 +2946,6 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
                 _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))))
         )
       }
-    }
-  }
-
-  test("skip change commits") {
-    withTempDir { inputDir =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(inputDir.toURI))
-      withMetadata(deltaLog, StructType.fromDDL("value STRING"))
-
-      val df = loadStreamWithOptions(
-        inputDir.getCanonicalPath,
-        Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"))
-
-      testStream(df)(
-        // Add data to source table
-        AddToReservoir(inputDir, Seq("keep1", "update1", "drop1").toDF()),
-        AssertOnQuery { q => q.processAllAvailable(); true },
-        CheckAnswer("keep1", "update1", "drop1"),
-
-        // Update and delete rows
-        UpdateReservoir(
-          inputDir,
-          Map("value" ->  when($"value" === "update1", "updated1").otherwise($"value"))
-        ),
-        DeleteFromReservoir(inputDir, $"value" === "drop1"),
-        CheckAnswer("keep1", "update1", "drop1"),
-
-        // Merge data into source table
-        MergeIntoReservoir(
-          inputDir,
-          dfToMerge = Seq("keep1", "keep2", "keep3").toDF().as("merge1"),
-          mergeCondition = $"table.value" === $"merge1.value",
-          Map.empty
-        ),
-        MergeIntoReservoir(
-          inputDir,
-          dfToMerge = Seq("updated1", "keep4", "keep5").toDF().as("merge2"),
-          mergeCondition = $"table.value" === $"merge2.value",
-          Map("table.value" ->  when($"table.value" === "updated1", "newlyUpdated1")
-            .otherwise($"table.value"))
-        ),
-        CheckAnswer(
-          "keep1", "update1", "drop1", "keep2", "keep3"
-        )
-      )
     }
   }
 }

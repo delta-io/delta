@@ -367,7 +367,7 @@ public class TableConfig<T> {
 
   /**
    * Table property that enables modifying the table in accordance with the Delta-Variant Shredding
-   * Preview protocol.
+   * protocol.
    *
    * @see <a
    *     href="https://github.com/delta-io/delta/blob/master/protocol_rfcs/variant-shredding.md">
