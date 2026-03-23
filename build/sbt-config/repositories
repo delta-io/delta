@@ -13,3 +13,4 @@
   typesafe-releases: https://repo.typesafe.com/typesafe/releases/
   apache-snapshot: https://repository.apache.org/content/groups/snapshots/
   jitpack: https://jitpack.io
+  sonatype-central-snapshots: https://central.sonatype.com/repository/maven-snapshots/
