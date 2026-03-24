@@ -17,7 +17,6 @@ package io.delta.kernel.expressions;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 
-import io.delta.kernel.types.GeographyType;
 import io.delta.kernel.types.GeometryType;
 import java.util.Arrays;
 
@@ -26,31 +25,30 @@ import java.util.Arrays;
  * bounding box.
  *
  * <p>This expression is not directly evaluatable. It is transformed to an internal
- * ST_BOXES_INTERSECT_ON_STATS predicate during data-skipping filter construction, which evaluates
- * the intersection of the column's min/max bounding box against the query box.
+ * ST_GEOMETRY_BOXES_INTERSECT_ON_STATS predicate during data-skipping filter construction, which
+ * evaluates the intersection of the column's min/max bounding box against the query box.
  *
  * @since 4.0.0
  */
-public class StBoxesIntersect extends Predicate {
+public class StGeometryBoxesIntersect extends Predicate {
 
-  public static final String NAME = "ST_BOXES_INTERSECT";
+  public static final String NAME = "ST_GEOMETRY_BOXES_INTERSECT";
 
   /**
    * @param column the geometry column to test
-   * @param queryMin lower-left corner of the query bounding box as a geospatial WKT POINT literal
-   * @param queryMax upper-right corner of the query bounding box as a geospatial WKT POINT literal
+   * @param queryMin lower-left corner of the query bounding box as a GeometryType WKT POINT literal
+   * @param queryMax upper-right corner of the query bounding box as a GeometryType WKT POINT
+   *     literal
    */
-  public StBoxesIntersect(Column column, Literal queryMin, Literal queryMax) {
+  public StGeometryBoxesIntersect(Column column, Literal queryMin, Literal queryMax) {
     super(NAME, Arrays.asList(column, queryMin, queryMax));
     checkArgument(
-        queryMin.getDataType() instanceof GeometryType
-            || queryMin.getDataType() instanceof GeographyType,
-        "queryMin must be a GeometryType or GeographyType WKT literal, got: %s",
+        queryMin.getDataType() instanceof GeometryType,
+        "queryMin must be a GeometryType WKT literal, got: %s",
         queryMin.getDataType());
     checkArgument(
-        queryMax.getDataType() instanceof GeometryType
-            || queryMax.getDataType() instanceof GeographyType,
-        "queryMax must be a GeometryType or GeographyType WKT literal, got: %s",
+        queryMax.getDataType() instanceof GeometryType,
+        "queryMax must be a GeometryType WKT literal, got: %s",
         queryMax.getDataType());
   }
 

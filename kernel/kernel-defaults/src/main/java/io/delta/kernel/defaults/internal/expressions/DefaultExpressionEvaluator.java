@@ -363,31 +363,32 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ExpressionTransformResult visitStBoxesIntersectOnStats(Predicate predicate) {
+    ExpressionTransformResult visitStGeometryBoxesIntersectOnStats(Predicate predicate) {
       List<ExpressionTransformResult> children =
           predicate.getChildren().stream().map(this::visit).collect(Collectors.toList());
       checkArgument(
           children.size() == 4,
-          "ST_BOXES_INTERSECT_ON_STATS expects 4 children but got %d",
+          "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS expects 4 children but got %d",
           children.size());
-      // All 4 children must be geometry/geography type.
+      // All 4 children must be GeometryType.
       // Children 0,1 are stats columns, children 2,3 are query literals.
       DataType child0Type = children.get(0).outputType;
       checkArgument(
-          child0Type instanceof GeometryType || child0Type instanceof GeographyType,
-          "ST_BOXES_INTERSECT_ON_STATS child 0 must be " + "geometry/geography type, got %s",
+          child0Type instanceof GeometryType,
+          "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS child 0 must be " + "geometry type, got %s",
           child0Type);
       for (int i = 1; i < 4; i++) {
         checkArgument(
             child0Type.equals(children.get(i).outputType),
-            "ST_BOXES_INTERSECT_ON_STATS child %d type %s " + "doesn't match child 0 type %s",
+            "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS child %d type %s "
+                + "doesn't match child 0 type %s",
             i,
             children.get(i).outputType,
             child0Type);
       }
       return new ExpressionTransformResult(
           new Predicate(
-              "ST_BOXES_INTERSECT_ON_STATS",
+              "ST_GEOMETRY_BOXES_INTERSECT_ON_STATS",
               children.stream().map(c -> c.expression).collect(Collectors.toList())),
           BooleanType.BOOLEAN);
     }
@@ -781,7 +782,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ColumnVector visitStBoxesIntersectOnStats(Predicate predicate) {
+    ColumnVector visitStGeometryBoxesIntersectOnStats(Predicate predicate) {
       List<Expression> children = predicate.getChildren();
       ColumnVector leftMin = visit(children.get(0));
       ColumnVector leftMax = visit(children.get(1));
