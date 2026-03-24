@@ -168,7 +168,8 @@ class DeltaInsertIntoSQLSuite
     // true (due to case sensitivity) so that we call resolveQueryColumnsByName and hit the right
     // code path.
 
-    // when the number of columns does not match, throw an arity mismatch error.
+    // when the number of columns does not match and schema evolution is disabled, throw
+    // an arity mismatch error.
     testInsertByNameError(
       targetSchema = "(A int)",
       expectedErrorClass = "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS")
