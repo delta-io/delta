@@ -24,7 +24,7 @@ import scala.Option;
  * V2 implementation of DeltaParquetFileFormat using Kernel's Protocol and Metadata.
  *
  * <p>This class enables the V2 connector to reuse delta-spark-v1's DeltaParquetFileFormatBase for
- * reading Parquet files with Delta-specific features like column mapping.
+ * reading and writing Parquet files with Delta-specific features like column mapping.
  */
 public class DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase {
 
