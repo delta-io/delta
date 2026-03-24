@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
+import org.apache.spark.sql.delta.shims.VariantTypeShims
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
@@ -411,8 +412,17 @@ class DeltaLog private(
         Seq.empty
       }
 
+    val unsupportedVariantFeatures =
+      if (!VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION &&
+          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
+        Seq(VariantTypeTableFeature, VariantTypePreviewTableFeature)
+      } else {
+        Seq.empty
+      }
+
     val clientSupportedProtocol =
-      Action.supportedProtocolVersion(featuresToExclude = unsupportedTestFeatures)
+      Action.supportedProtocolVersion(
+        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {

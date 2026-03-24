@@ -23,6 +23,7 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
+import org.apache.spark.sql.delta.shims.VariantTypeShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 
@@ -723,6 +724,110 @@ class DeltaVariantSuite
         checkAnswer(sql("select to_json(s) from t2"), Seq(Row("""{"v":{"a":2}}""")))
         checkAnswer(sql("select to_json(s.v) from t2"), Seq(Row("""{"a":2}""")))
         checkAnswer(sql("select variant_get(s.v, '$.a', 'int') from t2"), Seq(Row(2)))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - config disabled does not block") {
+    withSQLConf(
+      DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "false"
+    ) {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+        sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks reads on Spark 4.0") {
+    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    // Create a table with variant while the config is off.
+    withTable("tbl") {
+      sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+      sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+      // Clear the DeltaLog cache so the protocol check runs again with the new config.
+      DeltaLog.clearCache()
+      // Now enable the config and verify reads are blocked.
+      withSQLConf(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+      ) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          spark.table("tbl").collect()
+        }
+        assert(e.getMessage.contains("variantType"))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks writes on Spark 4.0") {
+    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    withTable("tbl") {
+      // Create with config off.
+      sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+      // Enable config and verify writes are blocked.
+      withSQLConf(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+      ) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+        }
+        assert(e.getMessage.contains("variantType"))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks with preview feature on Spark 4.0") {
+    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    withTable("tbl") {
+      sql(
+        """CREATE TABLE tbl(v VARIANT) USING DELTA
+          |TBLPROPERTIES('delta.feature.variantType-preview' = 'supported')""".stripMargin)
+      DeltaLog.clearCache()
+      withSQLConf(
+        DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+      ) {
+        val e = intercept[DeltaUnsupportedTableFeatureException] {
+          spark.table("tbl").collect()
+        }
+        assert(e.getMessage.contains("variantType"))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - does not block non-variant tables") {
+    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+      cancel("This test only applies to Spark 4.0")
+    }
+    withSQLConf(
+      DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+    ) {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(s STRING, i INT) USING DELTA")
+        sql("INSERT INTO tbl VALUES ('foo', 1)")
+        checkAnswer(spark.table("tbl"), Seq(Row("foo", 1)))
+      }
+    }
+  }
+
+  test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - no-op on Spark 4.1+") {
+    if (!VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+      cancel("This test only applies to Spark 4.1+")
+    }
+    // On Spark 4.1+, the config should have no effect since the shim returns true.
+    withSQLConf(
+      DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
+    ) {
+      withTable("tbl") {
+        sql("CREATE TABLE tbl(v VARIANT) USING DELTA")
+        sql("INSERT INTO tbl (SELECT parse_json(cast(id + 99 as string)) FROM range(1))")
+        assert(spark.table("tbl").selectExpr("v::int").head == Row(99))
       }
     }
   }
