@@ -121,10 +121,14 @@ public interface Scan {
    * @param includeStats whether to read and include the JSON file statistics in the returned rows.
    * @return iterator of {@link FilteredColumnarBatch}s where each selected row corresponds to one
    *     scan file.
-   * @since 3.3.0
+   * @since 4.3.0
    */
   default CloseableIterator<FilteredColumnarBatch> getScanFiles(
       Engine engine, boolean includeStats) {
+    if (includeStats) {
+      throw new UnsupportedOperationException(
+          "This Scan implementation does not support includeStats=true.");
+    }
     return getScanFiles(engine);
   }
 
