@@ -57,9 +57,7 @@ public class SparkScanBuilder
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
-  // pushedPartitionFilters: Filters that are fully pushed and do not need post-scan evaluation.
-  // These are filters that are kernel-supported, fully converted (not partial), and not data
-  // filters. They are used for filter deduplication in physical planning.
+  // Partition filters fully handled by the kernel scan (not partial, not data filters).
   private Filter[] pushedPartitionFilters;
 
   /**
@@ -155,8 +153,7 @@ public class SparkScanBuilder
         postScanFilters.add(filter);
       }
 
-      // Collect fully pushed partition filters that don't need post-scan evaluation.
-      // These are filters that are kernel-supported, fully converted, and not data filters.
+      // Partition filters fully handled by the kernel scan.
       if (classification.isKernelSupported
           && !classification.isPartialConversion
           && !classification.isDataFilter) {

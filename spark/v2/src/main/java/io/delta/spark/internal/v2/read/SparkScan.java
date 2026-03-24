@@ -107,7 +107,7 @@ public class SparkScan
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
-  // Filters that are fully pushed and don't need post-scan evaluation
+  // Partition filters fully handled by the kernel scan
   private final Filter[] pushedPartitionFilters;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
