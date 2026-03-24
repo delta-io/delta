@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta.hooks
+package org.apache.spark.sql.delta.hooks.metrics
 
 import java.io.{BufferedReader, InputStreamReader, PrintWriter}
 import java.net.{ServerSocket, Socket}
@@ -112,7 +112,7 @@ class UpdateMetricsHookSuite extends QueryTest
       "table with empty storage properties should not be detected")
   }
 
-  test("UCMetricsClient: sends minimal payload with Authorization header") {
+  test("sendMetrics: sends payload with Authorization header") {
     val mockServer = new SimpleMockServer(0)
     try {
       mockServer.setResponseCode(200)
@@ -132,7 +132,7 @@ class UpdateMetricsHookSuite extends QueryTest
         tableId = "abc-123",
         report = CommitReportEnvelope(CommitReport())
       )
-      UCMetricsClient.sendMetrics(
+      UpdateMetricsHook.sendMetrics(
         spark, request, catalogName = Some(TEST_CATALOG_NAME))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
@@ -154,7 +154,7 @@ class UpdateMetricsHookSuite extends QueryTest
     }
   }
 
-  test("UCMetricsClient: auth.type=static with auth.token (new auth.* format)") {
+  test("sendMetrics: auth.type=static with auth.token") {
     val authStaticCatalog = "auth_static_catalog"
     val mockServer = new SimpleMockServer(0)
     try {
@@ -178,7 +178,7 @@ class UpdateMetricsHookSuite extends QueryTest
         tableId = "auth-test-id",
         report = CommitReportEnvelope(CommitReport())
       )
-      UCMetricsClient.sendMetrics(
+      UpdateMetricsHook.sendMetrics(
         spark, request, catalogName = Some(authStaticCatalog))
 
       assert(mockServer.getRequestCount() == 1, "Expected 1 HTTP request")
@@ -240,7 +240,7 @@ class UpdateMetricsHookSuite extends QueryTest
         assert(mockServer.getRequestCount() == 1,
           "Expected exactly 1 HTTP POST")
         val body = mockServer.getLastRequestBody()
-        val expectedRequest = ReportDeltaMetrics.buildRequest(
+        val expectedRequest = UpdateMetricsHook.buildRequest(
           TEST_UC_TABLE_ID, Seq.empty, 0L)
         val actualPayload =
           JsonUtils.fromJson[Map[String, Any]](body)
@@ -249,6 +249,62 @@ class UpdateMetricsHookSuite extends QueryTest
             JsonUtils.toJson(expectedRequest))
         assert(actualPayload == expectedPayload,
           "smoke test payload should match expected JSON")
+      }
+    } finally {
+      mockServer.stop()
+    }
+  }
+
+  test("run(): hook does not crash on HTTP 5xx (best-effort)") {
+    val mockServer = new SimpleMockServer(0)
+    try {
+      mockServer.setResponseCode(500)
+      mockServer.start()
+
+      withTempDir { dir =>
+        spark.range(10).write.format("delta")
+          .save(dir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(
+          spark, dir.getCanonicalPath)
+        val snapshot = deltaLog.snapshot
+
+        spark.conf.set(
+          "spark.sql.catalog.spark_catalog",
+          "io.unitycatalog.spark.UCSingleCatalog")
+        spark.conf.set(
+          "spark.sql.catalog.spark_catalog.uri",
+          s"http://localhost:${mockServer.getPort()}")
+        spark.conf.set(
+          "spark.sql.catalog.spark_catalog.token",
+          "error-token")
+
+        val catalogTable = CatalogTable(
+          identifier = TableIdentifier(
+            "t", Some("default"), Some("spark_catalog")),
+          tableType = CatalogTableType.MANAGED,
+          storage = ucStorageFormat(),
+          schema = new StructType()
+        )
+
+        val txn = CommittedTransaction(
+          txnId = "error-txn",
+          deltaLog = deltaLog,
+          catalogTable = Some(catalogTable),
+          readSnapshot = snapshot,
+          committedVersion = 0L,
+          committedActions = Seq.empty,
+          postCommitSnapshot = snapshot,
+          postCommitHooks = Seq.empty,
+          txnExecutionTimeMs = 0L,
+          needsCheckpoint = false,
+          partitionsAddedToOpt = None,
+          isBlindAppend = true
+        )
+
+        UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
+
+        assert(mockServer.getRequestCount() == 1,
+          "request should still be sent on 5xx")
       }
     } finally {
       mockServer.stop()
@@ -304,8 +360,8 @@ class SimpleMockServer(port: Int) {
   @volatile private var running = false
   private var responseCode = 200
   private val requestCount = new AtomicInteger(0)
-  private var lastRequestBody = ""
-  private var lastHeaders = Map[String, String]()
+  @volatile private var lastRequestBody = ""
+  @volatile private var lastHeaders = Map[String, String]()
   private var actualPort = port
 
   def setResponseCode(code: Int): Unit = { responseCode = code }
@@ -338,8 +394,6 @@ class SimpleMockServer(port: Int) {
     })
     serverThread.setDaemon(true)
     serverThread.start()
-
-    Thread.sleep(100)
   }
 
   private def handleRequest(clientSocket: Socket): Unit = {
