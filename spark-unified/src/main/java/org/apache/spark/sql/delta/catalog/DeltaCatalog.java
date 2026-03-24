@@ -17,66 +17,25 @@
 package org.apache.spark.sql.delta.catalog;
 
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
+import io.delta.spark.internal.v2.ddl.*;
 import java.util.HashMap;
+import java.util.Map;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.*;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
  *
- * To use this catalog, configure it in your Spark session:
- * <pre>{@code
- * // Scala example
- * val spark = SparkSession
- *   .builder()
- *   .appName("...")
- *   .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
- *   .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
- *   .getOrCreate()
- *
- *
- * // Python example
- * spark = SparkSession \
- *   .builder \
- *   .appName("...") \
- *   .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
- *   .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
- *   .getOrCreate()
- * }</pre>
- *
- * <h2>Architecture and Delegation Logic</h2>
- *
- * This class sits in the delta-spark (unified) module and provides a single entry point for
- * Delta Lake catalog operations.
- *
- * <p>The unified module can access both implementations:</p>
- * <ul>
- *   <li>V1 connector: {@link DeltaTableV2} - Legacy connector using DeltaLog, full read/write support</li>
- *   <li>V2 connector: {@link SparkTable} - sparkV2 connector, read-only support</li>
- * </ul>
- *
- * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
+ * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
 
-  /**
-   * Loads a Delta table that is registered in the catalog.
-   *
-   * <p>Routing logic based on {@link DeltaV2Mode}:
-   * <ul>
-   *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
-   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
-   * </ul>
-   *
-   * @param ident The identifier of the table in the catalog.
-   * @param catalogTable The catalog table metadata containing table properties and location.
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
-   */
+  // ── table loading (V1/V2 routing) ──────────────────────────────────
+
   @Override
   public Table loadCatalogTable(Identifier ident, CatalogTable catalogTable) {
     return loadTableInternal(
@@ -84,50 +43,71 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         () -> super.loadCatalogTable(ident, catalogTable));
   }
 
-  /**
-   * Loads a Delta table directly from a path.
-   * This is used for path-based table access where the identifier name is the table path.
-   *
-   * <p>Routing logic based on {@link DeltaV2Mode}:
-   * <ul>
-   *   <li>STRICT: Returns sparkV2 {@link SparkTable} (V2 connector)</li>
-   *   <li>NONE (default): Returns {@link DeltaTableV2} (V1 connector)</li>
-   * </ul>
-   *
-   * @param ident The identifier whose name contains the path to the Delta table.
-   * @return Table instance (SparkTable for V2, DeltaTableV2 for V1).
-   */
   @Override
   public Table loadPathTable(Identifier ident) {
     return loadTableInternal(
-        // delta.`/path/to/table`, where ident.name() is `/path/to/table`
         () -> new SparkTable(ident, ident.name()),
         () -> super.loadPathTable(ident));
   }
 
-  /**
-   * Loads a table based on the {@link DeltaV2Mode} SQL configuration.
-   *
-   * <p>This method checks the configuration and delegates to the appropriate supplier:
-   * <ul>
-   *   <li>STRICT mode: Uses V2 connector (sparkV2 SparkTable) - for testing V2 capabilities</li>
-   *   <li>NONE mode (default): Uses V1 connector (DeltaTableV2) - production default with full features</li>
-   * </ul>
-   *
-   * <p>See {@link DeltaV2Mode} for detailed V1 vs V2 connector definitions.
-   *
-   * @param v2ConnectorSupplier Supplier for V2 connector (sparkV2 SparkTable) - used in STRICT mode
-   * @param v1ConnectorSupplier Supplier for V1 connector (DeltaTableV2) - used in NONE mode (default)
-   * @return Table instance from the selected supplier
-   */
   private Table loadTableInternal(
-      Supplier<Table> v2ConnectorSupplier,
-      Supplier<Table> v1ConnectorSupplier) {
-    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
-    if (connectorMode.shouldCatalogReturnV2Tables()) {
-      return v2ConnectorSupplier.get();
-    } else {
-      return v1ConnectorSupplier.get();
+      Supplier<Table> v2ConnectorSupplier, Supplier<Table> v1ConnectorSupplier) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    return mode.shouldCatalogReturnV2Tables()
+        ? v2ConnectorSupplier.get()
+        : v1ConnectorSupplier.get();
+  }
+
+  // ── CREATE TABLE (DSv2 + Kernel + CCv2 path) ──────────────────────
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!mode.shouldUseKernelForCreateTable(isUnityCatalog(), properties)) {
+      return super.createTable(ident, schema, partitions, properties);
     }
+
+    CreateTableContext ctx =
+        new CreateTableContext(
+            ident,
+            schema,
+            partitions,
+            properties,
+            spark().sessionState().newHadoopConf(),
+            isUnityCatalog());
+
+    // build
+    PreparedCreateTableTxn prepared =
+        new CreateTableTxnBuilder(ctx, this::preRegisterInCatalog).build();
+
+    // commit
+    CommittedTableTxn committed = TableCommitter.commit(prepared);
+
+    // publish
+    new CreateTablePublisher(ctx, this::updateCatalogProperties).publish(committed);
+
+    // load
+    return loadTable(ident);
+  }
+
+  // ── catalog callbacks (passed into builder / publisher) ────────────
+
+  private CatalogTable preRegisterInCatalog(CreateTableContext ctx) {
+    Table t =
+        super.createTable(
+            ctx.ident, CatalogV2Util.structTypeToV2Columns(ctx.schema), ctx.partitions,
+            ctx.properties);
+    if (t instanceof V1Table) return ((V1Table) t).catalogTable();
+    throw new IllegalStateException(
+        "Expected V1Table from delegate catalog, got: " + t.getClass().getName());
+  }
+
+  private void updateCatalogProperties(Identifier ident, TableChange[] changes) {
+    super.alterTable(ident, changes);
   }
 }

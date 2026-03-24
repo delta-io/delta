@@ -101,6 +101,24 @@ public final class CatalogTableUtils {
   }
 
   /**
+   * Checks whether the catalog-managed feature flag is enabled in the given properties map,
+   * without requiring the UC table ID to be present.
+   *
+   * <p>This is useful at CREATE TABLE time when the UC table ID has not yet been assigned, but
+   * the user has specified the catalog-managed feature in TBLPROPERTIES.
+   *
+   * @param properties table properties map
+   * @return {@code true} when either catalog-managed feature flag is set to {@code supported}
+   */
+  public static boolean isCatalogManagedFromProperties(Map<String, String> properties) {
+    if (properties == null || properties.isEmpty()) {
+      return false;
+    }
+    return isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_MANAGED)
+        || isCatalogManagedFeatureEnabled(properties, FEATURE_CATALOG_OWNED_PREVIEW);
+  }
+
+  /**
    * Checks whether the given feature key is enabled in the table properties.
    *
    * @param tableProperties The table properties
