@@ -20,13 +20,14 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import java.util.HashMap;
 import java.util.Map;
+import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.junit.jupiter.api.Test;
 
-/** Unit tests for {@link CreateTableTxnBuilder} helper methods. */
-public class CreateTableTxnBuilderTest {
+/** Unit tests for {@link CreateTableBuilder} helper methods. */
+public class CreateTableBuilderTest {
 
   @Test
   public void testFilterProperties_removesDsv2InternalKeys() {
@@ -42,16 +43,13 @@ public class CreateTableTxnBuilderTest {
     props.put("delta.feature.catalogManaged", "supported");
     props.put("Foo", "Bar");
 
-    Map<String, String> filtered = CreateTableTxnBuilder.filterProperties(props);
+    Map<String, String> filtered = CreateTableBuilder.filterProperties(props);
 
-    // DSv2 internal keys should be gone
     assertFalse(filtered.containsKey(TableCatalog.PROP_LOCATION));
     assertFalse(filtered.containsKey(TableCatalog.PROP_PROVIDER));
     assertFalse(filtered.containsKey(TableCatalog.PROP_COMMENT));
     assertFalse(filtered.containsKey("path"));
     assertFalse(filtered.containsKey("option.path"));
-
-    // User properties should be preserved
     assertEquals("supported", filtered.get("delta.feature.catalogManaged"));
     assertEquals("Bar", filtered.get("Foo"));
     assertEquals(2, filtered.size());
@@ -59,19 +57,18 @@ public class CreateTableTxnBuilderTest {
 
   @Test
   public void testFilterProperties_emptyInput() {
-    Map<String, String> filtered = CreateTableTxnBuilder.filterProperties(Map.of());
-    assertTrue(filtered.isEmpty());
+    assertTrue(CreateTableBuilder.filterProperties(Map.of()).isEmpty());
   }
 
   @Test
   public void testBuildDataLayoutSpec_noPartitions() {
-    DataLayoutSpec spec = CreateTableTxnBuilder.buildDataLayoutSpec(new Transform[0]);
+    DataLayoutSpec spec = CreateTableBuilder.buildDataLayoutSpec(new Transform[0]);
     assertTrue(spec.hasNoDataLayoutSpec());
   }
 
   @Test
   public void testBuildDataLayoutSpec_nullPartitions() {
-    DataLayoutSpec spec = CreateTableTxnBuilder.buildDataLayoutSpec(null);
+    DataLayoutSpec spec = CreateTableBuilder.buildDataLayoutSpec(null);
     assertTrue(spec.hasNoDataLayoutSpec());
   }
 
@@ -80,12 +77,25 @@ public class CreateTableTxnBuilderTest {
     Transform[] partitions =
         new Transform[] {Expressions.identity("year"), Expressions.identity("month")};
 
-    DataLayoutSpec spec = CreateTableTxnBuilder.buildDataLayoutSpec(partitions);
+    DataLayoutSpec spec = CreateTableBuilder.buildDataLayoutSpec(partitions);
 
     assertTrue(spec.hasPartitioning());
     assertFalse(spec.hasClustering());
     assertEquals(2, spec.getPartitionColumns().size());
     assertEquals("year", spec.getPartitionColumnsAsStrings().get(0));
     assertEquals("month", spec.getPartitionColumnsAsStrings().get(1));
+  }
+
+  @Test
+  public void testResolveTablePath_fromLocation() {
+    Map<String, String> props = Map.of(TableCatalog.PROP_LOCATION, "/my/path");
+    Identifier ident = Identifier.of(new String[] {"db"}, "tbl");
+    assertEquals("/my/path", CreateTableBuilder.resolveTablePath(props, ident));
+  }
+
+  @Test
+  public void testResolveTablePath_fallsBackToIdentName() {
+    Identifier ident = Identifier.of(new String[] {"db"}, "fallback_table");
+    assertEquals("fallback_table", CreateTableBuilder.resolveTablePath(Map.of(), ident));
   }
 }
