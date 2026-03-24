@@ -634,8 +634,12 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
       // Sentinel files have null AddFile and null RemoveFile.
       String deltaPath = deltaFile.add() != null ? deltaFile.add().path() : null;
-      String kernelPath =
-          kernelFile.getAddFile() != null ? kernelFile.getAddFile().getPath() : null;
+      String kernelPath = null;
+      if (kernelFile.getAddFile() != null) {
+        kernelPath = kernelFile.getAddFile().getPath();
+      } else if (kernelFile.getCDCFile() != null && kernelFile.getCDCFile().getAddFile() != null) {
+        kernelPath = kernelFile.getCDCFile().getAddFile().getPath();
+      }
 
       if (deltaPath != null || kernelPath != null) {
         assertEquals(
@@ -3691,7 +3695,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
           @Override
           public IndexedFile next() {
             consumed = true;
-            return new IndexedFile(/* version= */ 1L, /* index= */ 0L, /* addFile= */ null);
+            return IndexedFile.sentinel(/* version= */ 1L, /* index= */ 0L);
           }
 
           @Override
@@ -3729,7 +3733,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
           @Override
           public IndexedFile next() {
             remaining--;
-            return new IndexedFile(/* version= */ 1L, /* index= */ remaining, /* addFile= */ null);
+            return IndexedFile.sentinel(/* version= */ 1L, /* index= */ remaining);
           }
 
           @Override
