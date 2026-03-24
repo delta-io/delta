@@ -22,7 +22,7 @@ import scala.collection.immutable.Seq
 
 import io.delta.kernel._
 import io.delta.kernel.defaults.utils.WriteUtils
-import io.delta.kernel.expressions.{Column, Literal, StGeometryBoxesIntersect}
+import io.delta.kernel.expressions.{Column, Literal, StBoxesIntersect}
 import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.statistics.DataFileStatistics
 import io.delta.kernel.types.{GeometryType, StructType}
@@ -33,7 +33,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 /**
  * End-to-end tests for data skipping with geometry column types using
- * the StGeometryBoxesIntersect predicate.
+ * the StBoxesIntersect predicate.
  *
  * Tests bypass the Parquet writer by injecting DataFileStatistics with
  * geometry min/max literals directly into the Delta log.
@@ -58,7 +58,7 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
 
   private val colType = new GeometryType("OGC:CRS84")
 
-  test("StGeometryBoxesIntersect data skipping on GeometryType column") {
+  test("StBoxesIntersect data skipping on GeometryType column") {
     withTempDirAndEngine { (tablePath, engine) =>
       val schema = new StructType().add("geom", colType)
       writeFilesWithGeometryStats(
@@ -74,10 +74,10 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
           qMinY: Double,
           qMaxX: Double,
           qMaxY: Double): Int = {
-        val pred = new StGeometryBoxesIntersect(
+        val pred = new StBoxesIntersect(
           new Column("geom"),
-          Literal.ofString(s"POINT ($qMinX $qMinY)"),
-          Literal.ofString(s"POINT ($qMaxX $qMaxY)"))
+          Literal.ofGeospatialWKT(s"POINT ($qMinX $qMinY)", colType),
+          Literal.ofGeospatialWKT(s"POINT ($qMaxX $qMaxY)", colType))
         collectScanFileRows(
           snapshot.getScanBuilder().withFilter(pred).build()).size
       }
@@ -97,7 +97,7 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
     }
   }
 
-  test("StGeometryBoxesIntersect: file with null geometry stats is never skipped") {
+  test("StBoxesIntersect: file with null geometry stats is never skipped") {
     withTempDirAndEngine { (tablePath, engine) =>
       val schema = new StructType().add("geom", colType)
       val geomCol = new Column("geom")
@@ -124,10 +124,12 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
             case Some((minX, minY, maxX, maxY)) =>
               new DataFileStatistics(
                 10,
-                Map(geomCol -> Literal.ofString(
-                  s"POINT ($minX $minY)")).asJava,
-                Map(geomCol -> Literal.ofString(
-                  s"POINT ($maxX $maxY)")).asJava,
+                Map(geomCol -> Literal.ofGeospatialWKT(
+                  s"POINT ($minX $minY)",
+                  colType)).asJava,
+                Map(geomCol -> Literal.ofGeospatialWKT(
+                  s"POINT ($maxX $maxY)",
+                  colType)).asJava,
                 Map(geomCol -> (0L: java.lang.Long)).asJava,
                 Optional.empty())
             case None =>
@@ -166,10 +168,10 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
           qMinY: Double,
           qMaxX: Double,
           qMaxY: Double): Int = {
-        val pred = new StGeometryBoxesIntersect(
+        val pred = new StBoxesIntersect(
           geomCol,
-          Literal.ofString(s"POINT ($qMinX $qMinY)"),
-          Literal.ofString(s"POINT ($qMaxX $qMaxY)"))
+          Literal.ofGeospatialWKT(s"POINT ($qMinX $qMinY)", colType),
+          Literal.ofGeospatialWKT(s"POINT ($qMaxX $qMaxY)", colType))
         collectScanFileRows(
           snapshot.getScanBuilder().withFilter(pred).build()).size
       }
@@ -182,7 +184,7 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
     }
   }
 
-  test("StGeometryBoxesIntersect combined with AND predicate on second column") {
+  test("StBoxesIntersect combined with AND predicate on second column") {
     withTempDirAndEngine { (tablePath, engine) =>
       val schema = new StructType()
         .add("id", io.delta.kernel.types.IntegerType.INTEGER)
@@ -214,12 +216,14 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
             10,
             Map(
               idCol -> Literal.ofInt(idMin),
-              geomCol -> Literal.ofString(
-                s"POINT ($gMinX $gMinY)")).asJava,
+              geomCol -> Literal.ofGeospatialWKT(
+                s"POINT ($gMinX $gMinY)",
+                colType)).asJava,
             Map(
               idCol -> Literal.ofInt(idMax),
-              geomCol -> Literal.ofString(
-                s"POINT ($gMaxX $gMaxY)")).asJava,
+              geomCol -> Literal.ofGeospatialWKT(
+                s"POINT ($gMaxX $gMaxY)",
+                colType)).asJava,
             Map(
               idCol -> (0L: java.lang.Long),
               geomCol -> (0L: java.lang.Long)).asJava,
@@ -249,10 +253,10 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
 
       // SW geometry + id <= 5: only File 0 survives both filters
       val geoAndId = new io.delta.kernel.expressions.And(
-        new StGeometryBoxesIntersect(
+        new StBoxesIntersect(
           geomCol,
-          Literal.ofString("POINT (1.0 1.0)"),
-          Literal.ofString("POINT (4.0 4.0)")),
+          Literal.ofGeospatialWKT("POINT (1.0 1.0)", colType),
+          Literal.ofGeospatialWKT("POINT (4.0 4.0)", colType)),
         new io.delta.kernel.expressions.Predicate(
           "<=",
           idCol,
@@ -264,10 +268,10 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
 
       // NE geometry + id >= 15: only File 1 survives both filters
       val geoAndId2 = new io.delta.kernel.expressions.And(
-        new StGeometryBoxesIntersect(
+        new StBoxesIntersect(
           geomCol,
-          Literal.ofString("POINT (8.0 8.0)"),
-          Literal.ofString("POINT (11.0 11.0)")),
+          Literal.ofGeospatialWKT("POINT (8.0 8.0)", colType),
+          Literal.ofGeospatialWKT("POINT (11.0 11.0)", colType)),
         new io.delta.kernel.expressions.Predicate(
           ">=",
           idCol,
@@ -278,10 +282,10 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
       assert(files2.size == 1)
 
       // Center geometry + any id: geometry miss skips both files
-      val geoCenterAny = new StGeometryBoxesIntersect(
+      val geoCenterAny = new StBoxesIntersect(
         geomCol,
-        Literal.ofString("POINT (4.0 4.0)"),
-        Literal.ofString("POINT (6.0 6.0)"))
+        Literal.ofGeospatialWKT("POINT (4.0 4.0)", colType),
+        Literal.ofGeospatialWKT("POINT (6.0 6.0)", colType))
 
       val files3 = collectScanFileRows(
         snapshot.getScanBuilder().withFilter(geoCenterAny).build())
@@ -310,10 +314,12 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
 
         val stats = new DataFileStatistics(
           10,
-          Map(geomCol -> Literal.ofString(
-            s"POINT ($minX $minY)")).asJava,
-          Map(geomCol -> Literal.ofString(
-            s"POINT ($maxX $maxY)")).asJava,
+          Map(geomCol -> Literal.ofGeospatialWKT(
+            s"POINT ($minX $minY)",
+            colType)).asJava,
+          Map(geomCol -> Literal.ofGeospatialWKT(
+            s"POINT ($maxX $maxY)",
+            colType)).asJava,
           Map(geomCol -> (0L: java.lang.Long)).asJava,
           Optional.empty())
 

@@ -363,36 +363,31 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ExpressionTransformResult visitStGeometryBoxesIntersectsOnStats(Predicate predicate) {
+    ExpressionTransformResult visitStBoxesIntersectOnStats(Predicate predicate) {
       List<ExpressionTransformResult> children =
           predicate.getChildren().stream().map(this::visit).collect(Collectors.toList());
       checkArgument(
           children.size() == 4,
-          "ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS expects 4 children but got %d",
+          "ST_BOXES_INTERSECT_ON_STATS expects 4 children but got %d",
           children.size());
-      // Children 0,1 are stats columns (must be GeometryType).
-      // Children 2,3 are WKT query literals (must be StringType).
+      // All 4 children must be geometry/geography type.
+      // Children 0,1 are stats columns, children 2,3 are query literals.
       DataType child0Type = children.get(0).outputType;
       checkArgument(
-          child0Type instanceof GeometryType,
-          "ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS child 0 must be " + "geometry type, got %s",
+          child0Type instanceof GeometryType || child0Type instanceof GeographyType,
+          "ST_BOXES_INTERSECT_ON_STATS child 0 must be " + "geometry/geography type, got %s",
           child0Type);
-      checkArgument(
-          child0Type.equals(children.get(1).outputType),
-          "ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS child 1 type %s "
-              + "doesn't match child 0 type %s",
-          children.get(1).outputType,
-          child0Type);
-      for (int i = 2; i < 4; i++) {
+      for (int i = 1; i < 4; i++) {
         checkArgument(
-            children.get(i).outputType instanceof StringType,
-            "ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS child %d must be " + "string (WKT), got %s",
+            child0Type.equals(children.get(i).outputType),
+            "ST_BOXES_INTERSECT_ON_STATS child %d type %s " + "doesn't match child 0 type %s",
             i,
-            children.get(i).outputType);
+            children.get(i).outputType,
+            child0Type);
       }
       return new ExpressionTransformResult(
           new Predicate(
-              "ST_GEOMETRY_BOXES_INTERSECTS_ON_STATS",
+              "ST_BOXES_INTERSECT_ON_STATS",
               children.stream().map(c -> c.expression).collect(Collectors.toList())),
           BooleanType.BOOLEAN);
     }
@@ -590,7 +585,9 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
           || dataType instanceof DecimalType
           || dataType instanceof DateType
           || dataType instanceof TimestampType
-          || dataType instanceof TimestampNTZType) {
+          || dataType instanceof TimestampNTZType
+          || dataType instanceof GeometryType
+          || dataType instanceof GeographyType) {
         return new DefaultConstantVector(dataType, input.getSize(), literal.getValue());
       }
 
@@ -784,7 +781,7 @@ public class DefaultExpressionEvaluator implements ExpressionEvaluator {
     }
 
     @Override
-    ColumnVector visitStGeometryBoxesIntersectsOnStats(Predicate predicate) {
+    ColumnVector visitStBoxesIntersectOnStats(Predicate predicate) {
       List<Expression> children = predicate.getChildren();
       ColumnVector leftMin = visit(children.get(0));
       ColumnVector leftMax = visit(children.get(1));
