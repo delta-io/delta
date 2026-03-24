@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.UUID;
 import org.apache.spark.SparkConf;
 import org.apache.spark.sql.*;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
@@ -70,7 +71,13 @@ public abstract class V2TestBase {
   @AfterAll
   public void tearDown() {
     if (spark != null) {
+      // Clear the static DeltaLog cache before stopping Spark. Cached DeltaLog instances hold
+      // references to snapshot files in @TempDir directories; releasing them here ensures file
+      // handles are closed so JUnit's @TempDir cleanup can delete the directory without racing
+      // against lingering handles.
+      DeltaLog.clearCache();
       spark.stop();
+      spark = null;
     }
   }
 
@@ -143,6 +150,10 @@ public abstract class V2TestBase {
     } finally {
       if (query != null) {
         query.stop();
+        // Release cached DeltaLog instances that may hold file handles on the @TempDir. Without
+        // this, JUnit's @TempDir cleanup can fail to delete the directory due to open handles,
+        // exceeding the extension context close timeout under CI resource pressure.
+        DeltaLog.clearCache();
       }
     }
   }
