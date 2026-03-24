@@ -17,7 +17,7 @@ package org.apache.spark.sql.delta
 
 import io.delta.kernel.internal.actions.{Format, Metadata, Protocol}
 import io.delta.kernel.internal.util.VectorUtils
-import io.delta.spark.internal.v2.format.ProtocolMetadataAdapterV2
+import io.delta.spark.internal.v2.parquet.ProtocolMetadataAdapterV2
 import io.delta.spark.internal.v2.utils.SchemaUtils
 import io.delta.kernel.types.{ArrayType, StringType => KernelStringType}
 

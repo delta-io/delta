@@ -23,7 +23,7 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
-import io.delta.spark.internal.v2.format.DeltaParquetFileFormatV2;
+import io.delta.spark.internal.v2.parquet.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
