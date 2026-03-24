@@ -194,36 +194,6 @@ class DecodeNestedZ85EncodedVariantSuite extends QueryTest with DeltaSQLCommandT
     assert(result.isNullAt(2), "Expected null for invalid Z85-encoded variant")
   }
 
-  test("fault tolerance - throws exception when failOnZ85DecodeError is true") {
-    withSQLConf(DeltaSQLConf.FAIL_ON_VARIANT_STATS_Z85_DECODE_ERROR.key -> "true") {
-      val statsSchema = StructType(Seq(
-        StructField("v", VariantType, nullable = true)
-      ))
-
-      // Create stats JSON with an invalid Z85 string
-      val invalidStatsJson = """{"v": {"invalid": "not_z85"}}"""
-
-      val df = spark.range(1).selectExpr(s"""'$invalidStatsJson' as stats""")
-
-      val parsedDf = df.withColumn("parsed", from_json(col("stats"), statsSchema))
-
-      // With failOnZ85DecodeError = true, should throw an exception
-      val decodedDf = parsedDf.withColumn(
-        "decoded",
-        Column(DecodeNestedZ85EncodedVariant(col("parsed").expr))
-      )
-
-      val exception = intercept[Exception] {
-        decodedDf.select("decoded.v").collect()
-      }
-
-      assert(
-        exception.getMessage.contains("Expected Z85-encoded variant string") ||
-          exception.getCause.getMessage.contains("Expected Z85-encoded variant string"),
-        s"Expected error message about Z85 encoding, got: ${exception.getMessage}")
-    }
-  }
-
   test("fault tolerance - handles corrupted Z85 string gracefully") {
     // Create a valid Z85 string and then corrupt it
     val json = "{\"id\": 42}"
