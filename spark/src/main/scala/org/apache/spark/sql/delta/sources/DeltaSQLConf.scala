@@ -3057,19 +3057,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .booleanConf
     .createWithDefault(true)
 
-  val FAIL_ON_VARIANT_STATS_Z85_DECODE_ERROR =
-    buildConf("variantShredding.failOnZ85DecodeError")
-    .internal()
-    .doc(
-      """
-        | If enabled, Delta will throw an exception when encountering invalid or corrupted
-        | Z85-encoded variant stats during state reconstruction. When disabled (default),
-        | invalid variant stats are silently replaced with null, similar to from_json behavior
-        | in permissive mode."""
-        .stripMargin)
-    .booleanConf
-    .createWithDefault(false)
-
   ///////////
   // TESTING
   ///////////
