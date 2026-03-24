@@ -1417,7 +1417,7 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
   }
 
   test("constructing geospatial literal with null WKT throws") {
-    intercept[IllegalArgumentException] {
+    intercept[NullPointerException] {
       Literal.ofGeospatialWKT(null, GeometryType.ofDefault())
     }
   }

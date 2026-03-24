@@ -15,6 +15,7 @@
  */
 package io.delta.kernel.internal.util;
 
+import java.util.Objects;
 import java.util.OptionalDouble;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -69,9 +70,7 @@ public class GeometryUtils {
    * @throws IllegalArgumentException if the input is null or not a valid POINT WKT
    */
   public static double[] parsePointXY(String wkt) {
-    if (wkt == null) {
-      throw new IllegalArgumentException("WKT POINT string cannot be null");
-    }
+    Objects.requireNonNull(wkt, "WKT POINT string cannot be null");
     Matcher matcher = POINT_WKT_PATTERN.matcher(wkt.trim());
     if (!matcher.matches()) {
       throw new IllegalArgumentException("Invalid WKT POINT string: " + wkt);

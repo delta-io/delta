@@ -70,7 +70,8 @@ class GeometryUtilsSuite extends AnyFunSuite {
   }
 
   test("null input throws") {
-    checkInvalid(null, "cannot be null")
+    val e = intercept[NullPointerException](parsePointXY(null))
+    assert(e.getMessage.contains("cannot be null"))
   }
 
   test("missing parens throws") {
