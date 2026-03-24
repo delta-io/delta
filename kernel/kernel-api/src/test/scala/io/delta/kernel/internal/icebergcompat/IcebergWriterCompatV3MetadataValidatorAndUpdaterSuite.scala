@@ -76,6 +76,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
         ICEBERG_COMPAT_V3_W_FEATURE,
         DELETION_VECTORS_RW_FEATURE,
         VARIANT_RW_FEATURE,
+        VARIANT_SHREDDING_RW_FEATURE,
         VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
         VARIANT_RW_PREVIEW_FEATURE,
         ROW_TRACKING_W_FEATURE,
@@ -100,6 +101,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
         "rowTracking",
         "variantType",
         "variantType-preview",
+        "variantShredding",
         "variantShredding-preview",
         tableFeature).asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
@@ -425,6 +427,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "rowTracking",
       "variantType",
       "variantType-preview",
+      "variantShredding",
       "variantShredding-preview",
       "icebergCompatV2",
       "icebergWriterCompatV1",
@@ -435,7 +438,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
     validateAndUpdateIcebergWriterCompatV3Metadata(false, metadata, protocol, Optional.empty())
   }
 
-  Seq("collations", "defaultColumns").foreach { unsupportedIncompatibleFeature =>
+  Seq("defaultColumns").foreach { unsupportedIncompatibleFeature =>
     test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
       // We add this test here so that it will fail when we add Kernel support for these features
       // When this happens -> add the feature to the test above
