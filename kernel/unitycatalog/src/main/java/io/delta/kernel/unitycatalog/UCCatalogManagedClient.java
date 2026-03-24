@@ -126,7 +126,9 @@ public class UCCatalogManagedClient {
 
                 metricsCollector.setNumCatalogCommits(response.getCommits().size());
 
-                final long maxUcTableVersion = response.getLatestTableVersion();
+                final long maxUcTableVersion =
+                    normalizeLatestTableVersion(
+                        response.getLatestTableVersion(), response.getCommits());
 
                 versionOpt.ifPresent(
                     version ->
@@ -162,12 +164,12 @@ public class UCCatalogManagedClient {
                             snapshotBuilder.atTimestamp(timestampOpt.get(), latestSnapshot);
                       }
 
-                      Snapshot snapshot =
+                      snapshotBuilder =
                           snapshotBuilder
                               .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
                               .withLogData(logData)
-                              .withMaxCatalogVersion(maxUcTableVersion)
-                              .build(engine);
+                              .withMaxCatalogVersion(maxUcTableVersion);
+                      Snapshot snapshot = snapshotBuilder.build(engine);
                       metricsCollector.setResolvedSnapshotVersion(snapshot.getVersion());
                       return snapshot;
                     });
@@ -282,7 +284,8 @@ public class UCCatalogManagedClient {
         endVersionOpt.filter(v -> !startTimestampOpt.isPresent());
     final GetCommitsResponse response =
         getRatifiedCommitsFromUC(ucTableId, tablePath, endVersionOptForCommitQuery);
-    final long ucTableVersion = response.getLatestTableVersion();
+    final long ucTableVersion =
+        normalizeLatestTableVersion(response.getLatestTableVersion(), response.getCommits());
     validateVersionBoundariesExist(ucTableId, startVersionOpt, endVersionOpt, ucTableVersion);
     final List<ParsedLogData> logData =
         getSortedKernelParsedDeltaDataFromRatifiedCommits(ucTableId, response.getCommits());
@@ -513,11 +516,24 @@ public class UCCatalogManagedClient {
         logger,
         "TableManager.loadSnapshot at latest for time-travel query",
         ucTableId,
-        () ->
-            TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
-                .withLogData(logData)
-                .withMaxCatalogVersion(ucTableVersion)
-                .build(engine));
+        () -> {
+          SnapshotBuilder snapshotBuilder =
+              TableManager.loadSnapshot(tablePath)
+                  .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                  .withLogData(logData)
+                  .withMaxCatalogVersion(ucTableVersion);
+          return snapshotBuilder.build(engine);
+        });
+  }
+
+  /**
+   * Older UC implementations can return -1 for a brand-new managed table even though version 0 has
+   * already been committed to the Delta log and there are no ratified commits yet.
+   */
+  private long normalizeLatestTableVersion(long latestTableVersion, List<Commit> commits) {
+    if (latestTableVersion == -1 && commits.isEmpty()) {
+      return 0L;
+    }
+    return latestTableVersion;
   }
 }
