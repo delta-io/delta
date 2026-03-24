@@ -333,11 +333,33 @@ case class WriteIntoDelta(
           txn, data, options
         )
         val addFiles = newFiles.collect { case a: AddFile => a }
+
+        if (!useDynamicPartitionOverwriteMode &&
+            options.useNullIntolerantEqualityWithDPO.isDefined) {
+          throw DeltaErrors.illegalDeltaOptionException(
+            name = DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
+            input = options.useNullIntolerantEqualityWithDPO.get.toString,
+            explain = "This option should be specified only in Dynamic Partition Overwrite mode.")
+        }
+
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
           // with dynamic partition overwrite for any partition that is being written to all
           // existing data in that partition will be deleted.
-          // the selection what to delete is on the next two lines
-          val updatePartitions = addFiles.map(_.partitionValues).toSet
+          // the selection what to delete is determined by `updatePartitions`.
+
+          // Dynamic Partition Overwrite (DPO) uses null-tolerant equality, meaning NULL partitions
+          // in the table will be overwritten if there are matching NULL values in the query.
+          // This option simulates null-intolerant equality by not including partitions with
+          // NULL values in the set of partitions to be overwritten.
+          val updatePartitions =
+            if (options.useNullIntolerantEqualityWithDPO.contains(true)) {
+              addFiles.collect { case addFile
+                if addFile.partitionValues.forall { case (_, value) => value != null }
+                  => addFile.partitionValues
+              }.toSet
+            } else {
+              addFiles.map(_.partitionValues).toSet
+            }
           txn.filterFiles(updatePartitions).map(_.remove)
         } else {
           txn.filterFiles().map(_.remove)
