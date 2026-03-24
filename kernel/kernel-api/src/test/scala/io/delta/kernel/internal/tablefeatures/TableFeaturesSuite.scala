@@ -50,6 +50,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "vacuumProtocolCheck",
     "variantType",
     "variantType-preview",
+    "variantShredding",
     "variantShredding-preview")
 
   val writerOnlyFeatures = Seq(
@@ -69,7 +70,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "icebergWriterCompatV1",
     "icebergWriterCompatV3",
     "clustering",
-    "materializePartitionColumns")
+    "materializePartitionColumns",
+    "collations",
+    "collations-preview")
 
   val legacyFeatures = Seq(
     "appendOnly",
@@ -132,11 +135,11 @@ class TableFeaturesSuite extends AnyFunSuite {
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "true")), true),
     ("rowTracking", testMetadata(tblProps = Map("delta.enableRowTracking" -> "false")), false),
     (
-      "variantShredding-preview",
+      "variantShredding",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true")),
       true),
     (
-      "variantShredding-preview",
+      "variantShredding",
       testMetadata(tblProps = Map("delta.enableVariantShredding" -> "false")),
       false),
     (
@@ -149,6 +152,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       false),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = true), true),
     ("timestampNtz", testMetadata(includeTimestampNtzTypeCol = false), false),
+    ("collations", testMetadata(includeCollatedStringTypeCol = true), true),
+    ("collations", testMetadata(includeCollatedStringTypeCol = false), false),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "v2")), true),
     ("v2Checkpoint", testMetadata(tblProps = Map("delta.checkpointPolicy" -> "classic")), false),
     (
@@ -205,7 +210,9 @@ class TableFeaturesSuite extends AnyFunSuite {
     "vacuumProtocolCheck",
     "clustering",
     "catalogManaged",
-    "allowColumnDefaults").foreach {
+    "allowColumnDefaults",
+    "variantShredding-preview",
+    "collations-preview").foreach {
     feature =>
       test(s"doesn't support auto enable by metadata: $feature") {
         val tableFeature = TableFeatures.getTableFeature(feature)
@@ -215,7 +222,11 @@ class TableFeaturesSuite extends AnyFunSuite {
 
   Seq(
     ("variantType", testMetadata(includeVariantTypeCol = true)),
-    ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))).foreach {
+    ("typeWidening", testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true"))),
+    (
+      "variantShredding",
+      testMetadata(tblProps = Map("delta.enableVariantShredding" -> "true"))),
+    ("collations", testMetadata(includeCollatedStringTypeCol = true))).foreach {
     case (feature, metadataEnablingFeature) =>
       test("special handling of tables containing preview features: " + feature) {
         val protocolWithPreviewFeature = new Protocol(3, 7)
@@ -242,6 +253,7 @@ class TableFeaturesSuite extends AnyFunSuite {
       "v2Checkpoint",
       "variantType",
       "variantType-preview",
+      "variantShredding",
       "variantShredding-preview",
       "typeWidening",
       "typeWidening-preview",
@@ -287,8 +299,11 @@ class TableFeaturesSuite extends AnyFunSuite {
       "clustering",
       "variantType-preview",
       "variantType",
+      "variantShredding",
       "variantShredding-preview",
-      "materializePartitionColumns")
+      "materializePartitionColumns",
+      "collations",
+      "collations-preview")
 
     assert(results.map(_.featureName()).toSet == expected.toSet)
   }
@@ -331,6 +346,7 @@ class TableFeaturesSuite extends AnyFunSuite {
     "catalogManaged",
     "variantType",
     "variantType-preview",
+    "variantShredding",
     "variantShredding-preview",
     "deletionVectors",
     "typeWidening",
@@ -583,19 +599,20 @@ class TableFeaturesSuite extends AnyFunSuite {
       testMetadata(tblProps = Map("delta.enableTypeWidening" -> "true")))
   }
 
-  Seq("variantType", "variantType-preview", "variantShredding-preview").foreach { feature =>
-    checkWriteSupported(
-      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
-        s"metadata doesn't contains $feature",
-      new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata())
+  Seq("variantType", "variantType-preview", "variantShredding", "variantShredding-preview")
+    .foreach { feature =>
+      checkWriteSupported(
+        s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+          s"metadata doesn't contains $feature",
+        new Protocol(3, 7, singleton(feature), singleton(feature)),
+        testMetadata())
 
-    checkWriteSupported(
-      s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
-        s"metadata contains $feature",
-      new Protocol(3, 7, singleton(feature), singleton(feature)),
-      testMetadata(includeVariantTypeCol = true))
-  }
+      checkWriteSupported(
+        s"validateKernelCanWriteToTable: protocol 7 with $feature, " +
+          s"metadata contains $feature",
+        new Protocol(3, 7, singleton(feature), singleton(feature)),
+        testMetadata(includeVariantTypeCol = true))
+    }
 
   checkWriteSupported(
     "validateKernelCanWriteToTable: protocol 7 with vacuumProtocolCheck, " +
@@ -1045,9 +1062,9 @@ class TableFeaturesSuite extends AnyFunSuite {
         set(
           "columnMapping",
           "deletionVectors",
-          "variantShredding-preview",
+          "variantShredding",
           "variantType")),
-      set("variantType", "variantShredding-preview"))).foreach {
+      set("variantType", "variantShredding"))).foreach {
     case (newMetadata, currentProtocol, expectedProtocol, expectedNewFeatures) =>
       test(s"autoUpgradeProtocolBasedOnMetadata:" +
         s"$currentProtocol -> $expectedProtocol, $expectedNewFeatures") {
@@ -1147,7 +1164,18 @@ class TableFeaturesSuite extends AnyFunSuite {
         3,
         7,
         set("columnMapping", "deletionVectors"),
-        set("columnMapping", "deletionVectors", "icebergCompatV2")))).foreach {
+        set("columnMapping", "deletionVectors", "icebergCompatV2"))),
+    (
+      // Enable the variantShredding GA feature when the preview feature is already enabled.
+      // The GA feature should not be auto-enabled.
+      testMetadata(
+        tblProps = Map("delta.enableVariantShredding" -> "true"),
+        includeVariantTypeCol = true),
+      new Protocol(
+        3,
+        7,
+        set("variantType", "variantShredding-preview"),
+        set("variantType", "variantShredding-preview")))).foreach {
     case (newMetadata, currentProtocol) =>
       test(s"autoUpgradeProtocolBasedOnMetadata: no-op upgrade: $currentProtocol") {
         val newProtocolAndNewFeaturesEnabled =
@@ -1238,13 +1266,15 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
       includeIdentityColumn: Boolean = false,
+      includeCollatedStringTypeCol: Boolean = false,
       tblProps: Map[String, String] = Map.empty): Metadata = {
     val testSchema = createTestSchema(
       includeInvariant,
       includeTimestampNtzTypeCol,
       includeVariantTypeCol,
       includeGeneratedColumn,
-      includeIdentityColumn)
+      includeIdentityColumn,
+      includeCollatedStringTypeCol)
     new Metadata(
       "id",
       Optional.of("name"),
@@ -1272,7 +1302,8 @@ class TableFeaturesSuite extends AnyFunSuite {
       includeTimestampNtzTypeCol: Boolean = false,
       includeVariantTypeCol: Boolean = false,
       includeGeneratedColumn: Boolean = false,
-      includeIdentityColumn: Boolean = false): StructType = {
+      includeIdentityColumn: Boolean = false,
+      includeCollatedStringTypeCol: Boolean = false): StructType = {
     var structType = new StructType()
       .add("c1", IntegerType.INTEGER)
       .add("c2", StringType.STRING)
@@ -1307,6 +1338,9 @@ class TableFeaturesSuite extends AnyFunSuite {
           .putLong("delta.identity.step", 2L)
           .putBoolean("delta.identity.allowExplicitInsert", true)
           .build())
+    }
+    if (includeCollatedStringTypeCol) {
+      structType = structType.add("c8", new StringType("ICU.UNICODE.75"))
     }
 
     structType

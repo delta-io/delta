@@ -1033,6 +1033,132 @@ abstract class AbstractDeltaTableWritesSuite extends AnyFunSuite with AbstractWr
     }
   }
 
+  test("create table with collated columns - collations writer feature in protocol") {
+    Seq(
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("val", new StringType("ICU.UNICODE")),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("val", new StringType("ICU.SR_CYRL_SRB")),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add(
+          "info",
+          new StructType()
+            .add("name", new StringType("ICU.UNICODE.74.1"))),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("tags", new ArrayType(new StringType("SPARK.UTF8_LCASE"), true)),
+      new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add(
+          "props",
+          new MapType(StringType.STRING, new StringType("ICU.UNICODE"), true))).foreach { schema =>
+      withTempDirAndEngine { (tblPath, engine) =>
+        appendData(
+          engine,
+          tblPath,
+          isNewTable = true,
+          schema,
+          data = Seq.empty)
+
+        val protocol = getProtocol(engine, tblPath)
+        assert(protocol.getWriterFeatures.contains("collations"))
+      }
+    }
+  }
+
+  test("create table without collated columns - collations feature NOT in protocol") {
+    withTempDirAndEngine { (tblPath, engine) =>
+      val schema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add("name", StringType.STRING) // default UTF8_BINARY collation
+
+      appendData(
+        engine,
+        tblPath,
+        isNewTable = true,
+        schema,
+        data = Seq.empty)
+
+      val protocol = getProtocol(engine, tblPath)
+      assert(
+        !protocol.getWriterFeatures.contains("collations"),
+        "Should NOT have 'collations' writer feature when schema has no custom collations")
+    }
+  }
+
+  test("write to golden table with collated columns (utf8_binary, utf8_lcase, unicode)") {
+    Seq(
+      ("collations-table", "collations"),
+      ("collations-preview-table", "collations-preview")).foreach {
+      case (collationTable, feature) =>
+        withTempDirAndEngine { (tblPath, engine) =>
+          copyTable(collationTable, tblPath)
+
+          val utf8Lcase = new StringType("SPARK.UTF8_LCASE")
+          val unicode = new StringType("ICU.UNICODE")
+
+          val schema = new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("utf8_binary_col", StringType.STRING)
+            .add("utf8_lcase_col", utf8Lcase)
+            .add("unicode_col", unicode)
+
+          // Verify golden table schema has expected collations
+          val goldenMetadata = getMetadata(engine, tblPath)
+          val goldenSchema =
+            DataTypeJsonSerDe.deserializeStructType(goldenMetadata.getSchemaString())
+          assert(goldenSchema === schema)
+
+          // Verify protocol has the expected collations writer feature
+          val protocol = getProtocol(engine, tblPath)
+          assert(protocol.getWriterFeatures.contains(feature))
+
+          // First append: data batch uses matching collations
+          val data1 = generateData(schema, Seq.empty, Map.empty, batchSize = 10, numBatches = 1)
+
+          val commitResult1 = appendData(
+            engine,
+            tblPath,
+            data = Seq(Map.empty[String, Literal] -> data1))
+
+          verifyCommitResult(commitResult1, expVersion = 1, expIsReadyForCheckpoint = false)
+          verifyCommitInfo(tblPath, version = 1, partitionCols = null)
+          verifyWrittenContent(tblPath, schema, data1.flatMap(_.toTestRows))
+
+          // Second append: data batch uses different collations than the table schema
+          val diffCollationSchema = new StructType()
+            .add("id", IntegerType.INTEGER)
+            .add("utf8_binary_col", new StringType("ICU.UNICODE.75.1"))
+            .add("utf8_lcase_col", new StringType("SPARK.UTF8_BINARY"))
+            .add("unicode_col", utf8Lcase)
+
+          val data2 =
+            generateData(diffCollationSchema, Seq.empty, Map.empty, batchSize = 5, numBatches = 1)
+
+          val commitResult2 = appendData(
+            engine,
+            tblPath,
+            data = Seq(Map.empty[String, Literal] -> data2))
+
+          verifyCommitResult(commitResult2, expVersion = 2, expIsReadyForCheckpoint = false)
+          verifyCommitInfo(tblPath, version = 2, partitionCols = null)
+          verifyWrittenContent(tblPath, schema, (data1 ++ data2).flatMap(_.toTestRows))
+
+          // Verify the schema is preserved with collations after writes
+          val metadata = getMetadata(engine, tblPath)
+          val parsedSchema = DataTypeJsonSerDe.deserializeStructType(metadata.getSchemaString())
+          assert(parsedSchema === schema)
+
+          // After writes, the feature flags must not have changed
+          val protocolAfterWrite = getProtocol(engine, tblPath)
+          assert(protocolAfterWrite.getWriterFeatures.contains(feature))
+        }
+    }
+  }
+
   ///////////////////////////////////////////////////////////////////////////
   // Create table and insert data tests (CTAS & INSERT)
   ///////////////////////////////////////////////////////////////////////////

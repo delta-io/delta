@@ -198,7 +198,9 @@ class S3SingleDriverLogStore(
     } catch {
       // Convert Hadoop's FileAlreadyExistsException to Java's FileAlreadyExistsException
       case e: org.apache.hadoop.fs.FileAlreadyExistsException =>
-          throw new java.nio.file.FileAlreadyExistsException(e.getMessage)
+          val converted = new java.nio.file.FileAlreadyExistsException(e.getMessage)
+          converted.initCause(e)
+          throw converted
     } finally {
       releasePathLock(lockedPath)
     }

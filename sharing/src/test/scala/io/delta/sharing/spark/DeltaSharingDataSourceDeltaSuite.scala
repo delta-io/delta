@@ -121,11 +121,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
       TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tableName)).map(_._2))
   }
 
-  def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
-    assert(expectedFormat ==
-      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
-  }
-
   def assertJsonPredicateHints(tableName: String, expectedHints: Seq[String]): Unit = {
     assert(expectedHints ==
       TestClientForDeltaFormatSharing.jsonPredicateHints.filter(_._1.contains(tableName)).map(_._2)
@@ -1697,6 +1692,53 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             )
             checkAnswer(df, expected)
           }
+        }
+      }
+    }
+  }
+  test("callerOrg option is passed to DeltaSharingRestClient") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_caller_org"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+
+        val sharedTableName = "shared_table_caller_org"
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName)
+        DeltaSharingUtils.overrideSingleBlock[Long](
+          blockId = TestClientForDeltaFormatSharing.getBlockId(
+            sharedTableName, "getTableVersion"),
+          value = 1
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath =
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(DeltaSharingOptions.CALLER_ORG_OPTION, "test-org")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "test-org",
+            "callerOrg should be passed through to the client"
+          )
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "",
+            "callerOrg should be empty when not set"
+          )
         }
       }
     }

@@ -893,7 +893,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `protocol` action
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
- - A collection of `domainMetadata` actions with unique `domain`s.
+ - A collection of `domainMetadata` actions with unique `domain`s, excluding tombstones (i.e. actions with `removed=true`).
  - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
@@ -983,7 +983,7 @@ In order to support column mapping, writers must:
      - write a `metaData` action to add the `delta.columnMapping.mode` table property.
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
- - Track partition values and column level statistics with the physical name of the column in the transaction log.
+ - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
  - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
@@ -2090,7 +2090,7 @@ Each row in the checkpoint corresponds to a single action. The checkpoint **must
  * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
  * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
- * [Domain Metadata](#Domain-Metadata)
+ * [Domain Metadata](#Domain-Metadata) that have not been removed (i.e. excluding tombstones with `removed=true`)
  * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
  * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 

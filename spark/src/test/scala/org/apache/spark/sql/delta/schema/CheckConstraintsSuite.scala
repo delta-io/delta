@@ -29,6 +29,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.parser.ParseException
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types.{ArrayType, BooleanType, IntegerType, MapType, MetadataBuilder, StringType, StructField, StructType}
 
@@ -534,7 +535,8 @@ class CheckConstraintsSuite extends QueryTest
 
   test("validate check constraints on table with char/varchar columns") {
     withSQLConf(DeltaSQLConf.VALIDATE_CHECK_CONSTRAINTS.key ->
-        ValidateCheckConstraintsMode.ASSERT.toString) {
+        ValidateCheckConstraintsMode.ASSERT.toString,
+      SQLConf.READ_SIDE_CHAR_PADDING.key -> "true") {
       withTable("charVarcharConstraintTest") {
         sql(
           """CREATE TABLE charVarcharConstraintTest (

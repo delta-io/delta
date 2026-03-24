@@ -94,6 +94,10 @@ class TestServerSidePlanningClient(spark: SparkSession) extends ServerSidePlanni
     TestServerSidePlanningClient.filtersConvertible
   }
 
+  override def close(): Unit = {
+    TestServerSidePlanningClient.clientClosed = true
+  }
+
   private def getFileFormat(path: Path): String = "parquet"
 }
 
@@ -106,10 +110,12 @@ object TestServerSidePlanningClient {
   private var capturedProjection: Option[Seq[String]] = None
   private var capturedLimit: Option[Int] = None
   private var filtersConvertible: Boolean = true  // Default: all filters convertible
+  private[serverSidePlanning] var clientClosed: Boolean = false
 
   def getCapturedFilter: Option[Filter] = capturedFilter
   def getCapturedProjection: Option[Seq[String]] = capturedProjection
   def getCapturedLimit: Option[Int] = capturedLimit
+  def isClientClosed: Boolean = clientClosed
 
   /**
    * Configure whether filters should be treated as convertible.
@@ -124,6 +130,7 @@ object TestServerSidePlanningClient {
     capturedProjection = None
     capturedLimit = None
     filtersConvertible = true  // Reset to default
+    clientClosed = false
   }
 }
 

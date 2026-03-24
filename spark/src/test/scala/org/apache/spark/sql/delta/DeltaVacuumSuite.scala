@@ -23,9 +23,9 @@ import java.util.concurrent.TimeUnit
 import scala.collection.mutable.ArrayBuffer
 import scala.language.implicitConversions
 
-import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.DeltaOperations.{Delete, Write}
 import org.apache.spark.sql.delta.DeltaTestUtils.createTestAddFile
+import org.apache.spark.sql.delta.DeltaUnsupportedOperationException
 import org.apache.spark.sql.delta.actions.{AddCDCFile, AddFile, Metadata, RemoveFile}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.VacuumCommand
@@ -1538,7 +1538,7 @@ class DeltaVacuumSuite extends DeltaVacuumSuiteBase with DeltaSQLCommandTest {
     }
   }
 
-  test("running vacuum on a catalog owned managed table should fail") {
+  test("running vacuum on a catalog managed table should fail") {
     withCatalogManagedTable() { tableName =>
       checkError(
         intercept[DeltaUnsupportedOperationException] {
