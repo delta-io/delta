@@ -74,6 +74,9 @@ trait DeltaInsertIntoTest
     /** SQL keyword for this type of insert.  */
     def intoOrOverwrite: String = if (mode == SaveMode.Append) "INTO" else "OVERWRITE"
 
+    def schemaEvolutionClause(enabled: Boolean): String =
+      if (enabled) "WITH SCHEMA EVOLUTION " else ""
+
     /** The expected content of the table after the insert. */
     def expectedResult(initialDF: DataFrame, insertedDF: DataFrame): DataFrame = {
       // Always union with the initial data even if we're overwriting it to ensure the resulting
@@ -93,10 +96,8 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT $intoOrOverwrite target SELECT * FROM source")
-      }
+      sql(s"INSERT ${schemaEvolutionClause(withSchemaEvolution)}" +
+        s"$intoOrOverwrite target SELECT * FROM source")
     }
   }
 
@@ -111,10 +112,8 @@ trait DeltaInsertIntoTest
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
       val colList = columns.mkString(", ")
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT $intoOrOverwrite target ($colList) SELECT $colList FROM source")
-      }
+      sql(s"INSERT ${schemaEvolutionClause(withSchemaEvolution)}" +
+        s"$intoOrOverwrite target ($colList) SELECT $colList FROM source")
     }
   }
 
@@ -128,11 +127,8 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT $intoOrOverwrite target BY NAME " +
-          s"SELECT ${columns.mkString(", ")} FROM source")
-      }
+      sql(s"INSERT ${schemaEvolutionClause(withSchemaEvolution)}" +
+        s"$intoOrOverwrite target BY NAME SELECT ${columns.mkString(", ")} FROM source")
     }
   }
 
@@ -147,11 +143,9 @@ trait DeltaInsertIntoTest
         whereCol: String,
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT INTO target REPLACE WHERE $whereCol = $whereValue " +
-          s"SELECT ${columns.mkString(", ")} FROM source")
-      }
+      sql(s"INSERT ${schemaEvolutionClause(withSchemaEvolution)}INTO target " +
+        s"REPLACE WHERE $whereCol = $whereValue " +
+        s"SELECT ${columns.mkString(", ")} FROM source")
     }
   }
 
@@ -167,11 +161,9 @@ trait DeltaInsertIntoTest
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
       val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT OVERWRITE target PARTITION ($whereCol = $whereValue) " +
-          s"SELECT $assignments FROM source")
-      }
+      sql(s"INSERT ${schemaEvolutionClause(withSchemaEvolution)}OVERWRITE target " +
+        s"PARTITION ($whereCol = $whereValue) " +
+        s"SELECT $assignments FROM source")
     }
   }
 
@@ -187,12 +179,9 @@ trait DeltaInsertIntoTest
         whereValue: Int,
         withSchemaEvolution: Boolean): Unit = {
       val assignments = columns.filterNot(_ == whereCol).mkString(", ")
-      withSQLConf(DeltaSQLConf.
-          DELTA_SCHEMA_AUTO_MIGRATE.key -> withSchemaEvolution.toString) {
-        sql(s"INSERT OVERWRITE target " +
-          s"PARTITION ($whereCol = $whereValue) ($assignments) " +
-          s"SELECT $assignments FROM source")
-      }
+      sql(s"INSERT ${schemaEvolutionClause(withSchemaEvolution)}OVERWRITE target " +
+        s"PARTITION ($whereCol = $whereValue) ($assignments) " +
+        s"SELECT $assignments FROM source")
     }
   }
 
