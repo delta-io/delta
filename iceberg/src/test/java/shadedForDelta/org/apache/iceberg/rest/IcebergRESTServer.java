@@ -216,6 +216,26 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Configure the server to fail the next N /plan requests with the specified HTTP status code.
+   * After N failures, subsequent requests proceed normally.
+   * Used for testing HTTP retry logic in the client.
+   *
+   * @param count Number of /plan requests to fail
+   * @param statusCode HTTP status code to return for injected failures (e.g., 503, 404)
+   */
+  public void setFailNextPlanRequests(int count, int statusCode) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setFailNextPlanRequests(count, statusCode);
+  }
+
+  /**
+   * Get the total number of /plan requests received since last clearCaptured().
+   * Used for verifying retry behavior in tests.
+   */
+  public int getPlanRequestCount() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestCount();
+  }
+
+  /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {

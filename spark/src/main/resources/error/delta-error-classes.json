@@ -2563,6 +2563,15 @@
     ],
     "sqlState" : "42KD4"
   },
+  "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2" : {
+    "message" : [
+      "Streaming read is not supported on tables with read-incompatible schema changes (e.g. rename or drop or datatype changes).",
+      "Non-additive schema change handling is not supported in Delta source v2 yet.",
+      "For further information and possible next steps to resolve this issue, please review the documentation at <docLink>",
+      "Read schema: <readSchema>. Incompatible data schema: <incompatibleSchema>."
+    ],
+    "sqlState" : "42KD4"
+  },
   "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE" : {
     "message" : [
       "Initial snapshot for Delta streaming at table '<tablePath>' (version <snapshotVersion>) contains <numFiles> files, which exceeds the maximum allowed <maxFiles> files.",
@@ -3143,9 +3152,7 @@
   },
   "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE" : {
     "message" : [
-      "Cannot change partition columns during <operation> operation.",
-      "- Old partition columns: <oldPartitionColumns>.",
-      "- New partition columns: <newPartitionColumns>."
+      "Cannot change partition columns during <operation> operation (old: <oldPartitionColumns>, new: <newPartitionColumns>)."
     ],
     "sqlState" : "42P10"
   },
@@ -3252,6 +3259,12 @@
       "Cannot cast <fromCatalog> to <toCatalog>. All nested columns must match."
     ],
     "sqlState" : "42846"
+  },
+  "DELTA_USER_DEFINED_TYPE_COLUMN_CONTAINS_NULL_TYPE" : {
+    "message" : [
+      "Found NullType in column <columnName> which is of <userClass> user-defined type. Delta doesn't support writing NullType in user-defined types."
+    ],
+    "sqlState" : "22005"
   },
   "DELTA_VACUUM_RETENTION_PERIOD_NEGATIVE" : {
     "message" : [

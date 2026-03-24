@@ -35,8 +35,6 @@ import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.delta.stats.StatisticsCollection;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.StreamingQueryException;
-import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
 import scala.Option;
@@ -315,22 +313,9 @@ public class V2StreamingReadTest extends V2TestBase {
     String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
 
     // Create table with struct column: data STRUCT<x: INT>
-    StructType initialSchema =
-        DataTypes.createStructType(
-            Arrays.asList(
-                DataTypes.createStructField("id", DataTypes.StringType, true),
-                DataTypes.createStructField(
-                    "data",
-                    DataTypes.createStructType(
-                        Arrays.asList(
-                            DataTypes.createStructField("x", DataTypes.IntegerType, true))),
-                    true)));
-
-    spark
-        .createDataFrame(Arrays.asList(RowFactory.create("0", RowFactory.create(1))), initialSchema)
-        .write()
-        .format("delta")
-        .save(tablePath);
+    spark.sql(
+        str("CREATE TABLE delta.`%s` (id STRING, data STRUCT<x: INT>) USING delta", tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES ('0', named_struct('x', 1))", tablePath));
 
     // Start streaming and process initial data
     File checkpointDir = new File(deltaTablePath, "_checkpoint");
@@ -344,26 +329,123 @@ public class V2StreamingReadTest extends V2TestBase {
     query.processAllAvailable();
     query.stop();
 
-    // Evolve struct: add nested field y -> data STRUCT<x: INT, y: INT>
-    StructType evolvedSchema =
-        DataTypes.createStructType(
-            Arrays.asList(
-                DataTypes.createStructField("id", DataTypes.StringType, true),
-                DataTypes.createStructField(
-                    "data",
-                    DataTypes.createStructType(
-                        Arrays.asList(
-                            DataTypes.createStructField("x", DataTypes.IntegerType, true),
-                            DataTypes.createStructField("y", DataTypes.IntegerType, true))),
-                    true)));
-    spark
-        .createDataFrame(
-            Arrays.asList(RowFactory.create("1", RowFactory.create(2, 3))), evolvedSchema)
-        .write()
-        .format("delta")
-        .mode("overwrite")
-        .option("overwriteSchema", "true")
-        .save(tablePath);
+    // Evolve struct via ALTER TABLE (metadata-only, no file deletion):
+    // add nested field y -> data STRUCT<x: INT, y: INT>
+    spark.sql(str("ALTER TABLE delta.`%s` ADD COLUMNS (data.y INT)", tablePath));
+
+    // Restart with stale DataFrame — should fail with schema mismatch
+    StreamingQueryException ex =
+        assertThrows(
+            StreamingQueryException.class,
+            () -> {
+              StreamingQuery q =
+                  streamingDF
+                      .writeStream()
+                      .format("noop")
+                      .option("checkpointLocation", checkpointDir.getAbsolutePath())
+                      .start();
+              try {
+                q.processAllAvailable();
+              } finally {
+                q.stop();
+              }
+            });
+    assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
+    assertTrue(
+        ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
+        "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
+  }
+
+  // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the
+  //  dataframe due to the lack of support in spark stream engine. Throw an error at stream
+  //  start time to instruct user.
+  @Test
+  public void testNestedTypeWideningDetectedOnRestart(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    // Create table with struct column: data STRUCT<x: INT>
+    spark.sql(
+        str("CREATE TABLE delta.`%s` (id STRING, data STRUCT<x: INT>) USING delta", tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES ('0', named_struct('x', 1))", tablePath));
+
+    // Start streaming and process initial data
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+    StreamingQuery query =
+        streamingDF
+            .writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    query.processAllAvailable();
+    query.stop();
+
+    // Widen nested field type via ALTER TABLE (metadata-only, no file deletion):
+    // data.x INT -> data.x BIGINT
+    spark.sql(
+        str(
+            "ALTER TABLE delta.`%s` SET TBLPROPERTIES ('delta.enableTypeWidening' = 'true')",
+            tablePath));
+    spark.sql(str("ALTER TABLE delta.`%s` ALTER COLUMN data.x TYPE BIGINT", tablePath));
+
+    // Restart with stale DataFrame — should fail with schema mismatch
+    StreamingQueryException ex =
+        assertThrows(
+            StreamingQueryException.class,
+            () -> {
+              StreamingQuery q =
+                  streamingDF
+                      .writeStream()
+                      .format("noop")
+                      .option("checkpointLocation", checkpointDir.getAbsolutePath())
+                      .start();
+              try {
+                q.processAllAvailable();
+              } finally {
+                q.stop();
+              }
+            });
+    assertInstanceOf(DeltaIllegalStateException.class, ex.cause());
+    assertTrue(
+        ex.getMessage().contains("DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART"),
+        "Expected DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART but got: " + ex.getMessage());
+  }
+
+  // TODO(#6232): v2 source cannot adopt type widening schema change without refreshing the
+  //  dataframe due to the lack of support in spark stream engine. Throw an error at stream
+  //  start time to instruct user.
+  @Test
+  public void testNestedNullabilityRelaxDetectedOnRestart(@TempDir File deltaTablePath)
+      throws Exception {
+    String tablePath = deltaTablePath.getAbsolutePath();
+    String dsv2TableRef = str("dsv2.delta.`%s`", tablePath);
+
+    // Create table via SQL DDL to preserve the NOT NULL constraint on the nested field.
+    // DataFrame writes go through ImplicitMetadataOperation which calls schema.asNullable,
+    // forcing all fields (including nested ones) to nullable — losing the NOT NULL.
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id STRING, data STRUCT<x: INT NOT NULL>) USING delta",
+            tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES ('0', named_struct('x', 1))", tablePath));
+
+    // Start streaming and process initial data
+    File checkpointDir = new File(deltaTablePath, "_checkpoint");
+    Dataset<Row> streamingDF = spark.readStream().table(dsv2TableRef);
+    StreamingQuery query =
+        streamingDF
+            .writeStream()
+            .format("noop")
+            .option("checkpointLocation", checkpointDir.getAbsolutePath())
+            .start();
+    query.processAllAvailable();
+    query.stop();
+
+    // Relax nullability via ALTER TABLE (metadata-only, no file deletion):
+    // data.x NOT NULL -> data.x nullable
+    spark.sql(str("ALTER TABLE delta.`%s` ALTER COLUMN data.x DROP NOT NULL", tablePath));
 
     // Restart with stale DataFrame — should fail with schema mismatch
     StreamingQueryException ex =

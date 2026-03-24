@@ -65,16 +65,67 @@ public abstract class DeltaV2TestBase {
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tableName, path));
   }
 
+  protected void createEmptyPartitionedTestTable(String path, String tableName) {
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta PARTITIONED BY (name) LOCATION '%s'",
+            tableName, path));
+  }
+
   protected void createSchemaEvolutionTestTable(String path, String tableName) {
     spark.sql(
         String.format(
-            "CREATE TABLE %s (id INT NOT NULL, name String, value FLOAT) USING delta LOCATION '%s'"
+            "CREATE TABLE %s (id INT NOT NULL, "
+                + "name String, value FLOAT, "
+                + "info STRUCT<col1: INT, col2: STRING>) USING delta LOCATION '%s'"
                 + "TBLPROPERTIES ("
                 + "'delta.columnMapping.mode' = 'name', "
                 + "'delta.enableTypeWidening' = 'true')",
             tableName, path));
     spark.sql(
-        String.format("INSERT INTO %s VALUES (1, 'Alice', 10.5), (2,'Bob', NULL)", tableName));
+        String.format(
+            "INSERT INTO %s VALUES "
+                + "(1, 'Alice', 10.5, named_struct('col1', 27, 'col2', 'LA')), "
+                + "(2,'Bob', NULL, named_struct('col1', 30, 'col2', 'NYC'))",
+            tableName));
+  }
+
+  /** A runnable that can throw checked exceptions, for use with {@link #withSQLConf}. */
+  @FunctionalInterface
+  protected interface ThrowingRunnable {
+    void run() throws Exception;
+  }
+
+  /**
+   * Runs the given action with a Spark SQL configuration temporarily set, then restores the
+   * original value afterwards (similar to Scala's {@code withSQLConf}).
+   */
+  protected void withSQLConf(String key, String value, ThrowingRunnable action) throws Exception {
+    scala.Option<String> original = spark.conf().getOption(key);
+    spark.conf().set(key, value);
+    try {
+      action.run();
+    } finally {
+      if (original.isDefined()) {
+        spark.conf().set(key, original.get());
+      } else {
+        spark.conf().unset(key);
+      }
+    }
+  }
+
+  /**
+   * Runs the given action and drops the specified tables afterwards, similar to Scala's {@code
+   * withTable}.
+   */
+  protected void withTable(String[] tableNames, ThrowingRunnable action) throws Exception {
+    try {
+      action.run();
+    } finally {
+      for (String tableName : tableNames) {
+        spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
+      }
+    }
   }
 
   protected static void createPartitionedTable(String tableName, String path) {

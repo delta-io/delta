@@ -20,6 +20,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
+import io.unitycatalog.client.VersionUtils;
 import io.unitycatalog.client.api.CatalogsApi;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.auth.TokenProvider;
@@ -336,5 +337,15 @@ public abstract class UnityCatalogSupport {
   /** Recursively deletes a directory and all its contents. */
   private void deleteRecursively(File file) {
     FileUtils.deleteQuietly(file);
+  }
+
+  /** Returns Unity Catalog Spark version, like [0, 4, 0]. */
+  protected static int[] getUnityCatalogSparkVersion() {
+    String version = Preconditions.checkNotNull(VersionUtils.VERSION);
+    String[] parts = version.split("[.\\-]", 4);
+    int major = Integer.parseInt(parts[0]);
+    int minor = Integer.parseInt(parts[1]);
+    int patch = Integer.parseInt(parts[2]);
+    return new int[] {major, minor, patch};
   }
 }
