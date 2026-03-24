@@ -1549,7 +1549,9 @@ case class DeltaDynamicPartitionOverwriteCommand(
     isByName: Boolean,
     analyzedQuery: Option[LogicalPlan] = None) extends RunnableCommand with V2WriteCommand {
 
-  val withSchemaEvolution: Boolean = false
+  val withSchemaEvolution: Boolean =
+    new DeltaOptions(deltaTable.options ++ writeOptions, conf).canMergeSchema
+
   val writePrivileges: Set[TableWritePrivilege] =
     Set(TableWritePrivilege.INSERT, TableWritePrivilege.DELETE)
 
