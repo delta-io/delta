@@ -107,6 +107,8 @@ public class SparkScan
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  // Filters that are fully pushed and don't need post-scan evaluation
+  private final Filter[] pushedPartitionFilters;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
@@ -135,6 +137,7 @@ public class SparkScan
       StructType readDataSchema,
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
+      Filter[] pushedPartitionFilters,
       io.delta.kernel.Scan kernelScan,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
@@ -147,6 +150,8 @@ public class SparkScan
     this.pushedToKernelFilters =
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedPartitionFilters =
+        pushedPartitionFilters == null ? new Filter[0] : pushedPartitionFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");

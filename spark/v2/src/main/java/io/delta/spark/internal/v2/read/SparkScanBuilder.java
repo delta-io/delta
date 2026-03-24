@@ -57,6 +57,10 @@ public class SparkScanBuilder
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
+  // pushedPartitionFilters: Filters that are fully pushed and do not need post-scan evaluation.
+  // These are filters that are kernel-supported, fully converted (not partial), and not data
+  // filters. They are used for filter deduplication in physical planning.
+  private Filter[] pushedPartitionFilters;
 
   /**
    * Creates a SparkScanBuilder with the given snapshot and configuration.
@@ -94,6 +98,7 @@ public class SparkScanBuilder
             .collect(Collectors.toSet());
     this.pushedKernelPredicates = new Predicate[0];
     this.dataFilters = new Filter[0];
+    this.pushedPartitionFilters = new Filter[0];
   }
 
   @Override
@@ -112,6 +117,7 @@ public class SparkScanBuilder
     List<Predicate> convertedKernelPredicates = new ArrayList<>();
     List<Filter> dataFilterList = new ArrayList<>();
     List<Filter> postScanFilters = new ArrayList<>();
+    List<Filter> pushedPartitionFilterList = new ArrayList<>();
 
     for (Filter filter : filters) {
       ExpressionUtils.FilterClassificationResult classification =
@@ -148,6 +154,14 @@ public class SparkScanBuilder
           || classification.isDataFilter) {
         postScanFilters.add(filter);
       }
+
+      // Collect fully pushed partition filters that don't need post-scan evaluation.
+      // These are filters that are kernel-supported, fully converted, and not data filters.
+      if (classification.isKernelSupported
+          && !classification.isPartialConversion
+          && !classification.isDataFilter) {
+        pushedPartitionFilterList.add(filter);
+      }
     }
 
     this.pushedSparkFilters = kernelSupportedFilters.toArray(new Filter[0]);
@@ -157,6 +171,7 @@ public class SparkScanBuilder
       this.kernelScanBuilder = this.kernelScanBuilder.withFilter(kernelAnd.get());
     }
     this.dataFilters = dataFilterList.toArray(new Filter[0]);
+    this.pushedPartitionFilters = pushedPartitionFilterList.toArray(new Filter[0]);
     return postScanFilters.toArray(new Filter[0]);
   }
 
@@ -175,6 +190,7 @@ public class SparkScanBuilder
         requiredDataSchema,
         pushedKernelPredicates,
         dataFilters,
+        pushedPartitionFilters,
         kernelScanBuilder.build(),
         catalogStats,
         options);
