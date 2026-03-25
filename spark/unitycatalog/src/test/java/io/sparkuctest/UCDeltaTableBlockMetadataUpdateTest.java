@@ -24,26 +24,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests that schema-changing and property-changing operations are blocked on Unity Catalog managed
- * (CatalogOwned) tables — regardless of which layer does the blocking.
- *
- * <p>There are two distinct layers of protection:
- *
- * <ol>
- *   <li><strong>Kill switch</strong> in {@code OptimisticTransaction.updateMetadata()}: blocks any
- *       commit that would change schema, partitions, description, or configuration on an existing
- *       CatalogOwned table. A second guard in {@code prepareCommit()} and {@code commitLarge()}
- *       blocks {@code delta.clustering} {@code DomainMetadata} changes (e.g. via RESTORE TABLE to a
- *       version written by an older client that had different clustering columns).
- *   <li><strong>UC catalog layer</strong> in {@code UCSingleCatalog}: {@code alterTable()} throws
- *       {@code UnsupportedOperationException} for all ALTER TABLE variants. INSERT OVERWRITE with
- *       {@code overwriteSchema=true} and {@code CREATE OR REPLACE TABLE} both route through REPLACE
- *       TABLE AS SELECT (RTAS) because {@code UCSingleCatalog} does not implement {@code
- *       StagingTableCatalog}; RTAS is not supported in OSS Delta.
- * </ol>
- *
- * <p>EXTERNAL tables are not CatalogOwned and are NOT affected by the kill switch; they continue to
- * allow schema evolution as before.
+ * Tests the remaining managed-table metadata restrictions together with the schema/property
+ * operations that are now supported for Unity Catalog managed Delta tables.
  */
 public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegrationBaseTest {
 
@@ -56,8 +38,6 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
       "Clustering column changes on Unity Catalog managed tables";
 
   // Error produced by UCSingleCatalog.alterTable() for all ALTER TABLE variants.
-  private static final String ALTER_TABLE_ERROR = "Altering a table is not supported yet";
-
   // Error produced by OSS Delta when REPLACE TABLE AS SELECT (RTAS) is attempted.
   // Triggered by CREATE OR REPLACE TABLE and DataFrame saveAsTable(overwrite+overwriteSchema)
   // when the target catalog does not implement StagingTableCatalog.
@@ -127,7 +107,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * CLUSTER BY is supported for managed tables.
    */
   @Test
-  public void testAlterTableOperationsAreBlocked() throws Exception {
+  public void testAlterTablePropertiesAndAddColumnsAreSupported() throws Exception {
     withNewTable(
         "block_alter_table_test",
         "id INT, name STRING",
@@ -252,7 +232,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * change instead.
    */
   @Test
-  public void testInsertOverwriteWithOverwriteSchemaIsBlocked() throws Exception {
+  public void testInsertOverwriteWithOverwriteSchemaSucceeds() throws Exception {
     withNewTable(
         "block_overwrite_schema_target",
         "id INT, name STRING",
@@ -268,14 +248,15 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
                 assertThrowsWithCauseContaining(
                     expectedManagedReplaceFailure(),
                     () ->
-                        spark()
-                            .read()
-                            .table(sourceTable)
-                            .write()
-                            .format("delta")
-                            .mode("overwrite")
-                            .option("overwriteSchema", "true")
-                            .saveAsTable(targetTable));
+                spark()
+                    .read()
+                    .table(sourceTable)
+                    .write()
+                    .format("delta")
+                    .mode("overwrite")
+                    .option("overwriteSchema", "true")
+                    .saveAsTable(targetTable);
+                check(targetTable, List.of(List.of("2", "new", "extra_val")));
               });
         });
   }

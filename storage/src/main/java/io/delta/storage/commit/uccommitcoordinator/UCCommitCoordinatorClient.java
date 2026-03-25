@@ -103,6 +103,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   final static public String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
   // Previously this key was ucTableId. It was later renamed.
   final static public String UC_TABLE_ID_KEY_OLD = "ucTableId";
+  /** Spark DSv2 managed-location marker. This is connector-managed metadata, not a Delta property. */
+  private static final String PROP_IS_MANAGED_LOCATION = "is_managed_location";
 
   /**
    * Key for identifying Unity Catalog metastore ID in
@@ -925,6 +927,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
             newMetadata.getConfiguration();
     Map<String, String> changedProperties = new LinkedHashMap<>();
     for (Map.Entry<String, String> entry : desiredProperties.entrySet()) {
+      if (shouldSkipCatalogPropertyUpdate(entry.getKey())) {
+        continue;
+      }
       if (!Objects.equals(currentProperties.get(entry.getKey()), entry.getValue())) {
         changedProperties.put(entry.getKey(), entry.getValue());
       }
@@ -937,6 +942,10 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       propertiesUpdate.setUpdates(changedProperties);
       updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(propertiesUpdate));
     }
+  }
+
+  private boolean shouldSkipCatalogPropertyUpdate(String propertyKey) {
+    return PROP_IS_MANAGED_LOCATION.equals(propertyKey);
   }
 
   private void addProtocolUpdate(
