@@ -67,6 +67,7 @@ import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -754,6 +755,9 @@ public class SparkMicroBatchStream
                           file.getIndex(),
                           CDCDataFile.fromAddFile(file.getAddFile(), commitTimestamp))
                       : file);
+      // Filter already-processed files BEFORE admission so they don't consume the budget.
+      // Matches DSv1's filter-then-admit order in IndexedChangeFileSeq.filterFiles.
+      snapshotFiles = applyStartBoundaryFiltering(snapshotFiles, fromVersion, fromIndex);
       if (limits.isPresent()) {
         snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
       }
@@ -764,7 +768,8 @@ public class SparkMicroBatchStream
       result = Utils.toCloseableIterator(Collections.emptyIterator());
     }
 
-    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+    // Start boundary already applied above (before admission). Only apply end boundary here.
+    return applyEndBoundaryFiltering(result, endOffset);
   }
 
   /**
@@ -781,13 +786,29 @@ public class SparkMicroBatchStream
       long fromVersion,
       long fromIndex,
       Optional<DeltaSourceOffset> endOffset) {
-    // Check start boundary (exclusive)
-    result =
-        result.filter(
-            file ->
-                file.getVersion() > fromVersion
-                    || (file.getVersion() == fromVersion && file.getIndex() > fromIndex));
+    result = applyStartBoundaryFiltering(result, fromVersion, fromIndex);
+    return applyEndBoundaryFiltering(result, endOffset);
+  }
 
+  /**
+   * Filters out files at or before the resume point (fromVersion, fromIndex). Used by CDC paths
+   * where start boundary filtering is applied before admission to avoid wasting budget on
+   * already-processed files.
+   */
+  private static CloseableIterator<IndexedFile> applyStartBoundaryFiltering(
+      CloseableIterator<IndexedFile> result, long fromVersion, long fromIndex) {
+    return result.filter(
+        file ->
+            file.getVersion() > fromVersion
+                || (file.getVersion() == fromVersion && file.getIndex() > fromIndex));
+  }
+
+  /**
+   * Applies end boundary filtering only. Used by CDC paths where start boundary filtering is
+   * applied before admission to avoid wasting budget on already-processed files.
+   */
+  private CloseableIterator<IndexedFile> applyEndBoundaryFiltering(
+      CloseableIterator<IndexedFile> result, Optional<DeltaSourceOffset> endOffset) {
     // If endOffset is provided, we are getting a batch on a constructed range so we should use
     // the endOffset as the limit.
     // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
@@ -1459,13 +1480,19 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Process a CDC commit into IndexedFiles. Validates metadata, collects CDC actions, and builds
-   * IndexedFiles.
+   * Process a CDC commit into IndexedFiles. Validates metadata, collects CDC actions, builds
+   * IndexedFiles, and applies admission limits. Delegates to {@link #applyPerCommitCDCAdmission}
+   * for rate limiting when admission limits are present.
    *
    * <p>Package-private for testing.
    */
   CloseableIterator<IndexedFile> processCommitToIndexedFilesForCDC(
-      CommitActions commit, long startVersion, Optional<DeltaSourceOffset> endOffsetOpt) {
+      CommitActions commit,
+      long startVersion,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffsetOpt,
+      long fromVersion,
+      long fromIndex) {
     try {
       long version = commit.getVersion();
       long timestamp = commit.getTimestamp();
@@ -1482,7 +1509,26 @@ public class SparkMicroBatchStream
       List<IndexedFile> result =
           collectAndBuildCDCIndexedFiles(commit, version, timestamp, startVersion, endOffsetOpt);
 
-      result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+      // Pre-filter already-processed files from the resume commit. This is correctness, not
+      // admission: planInputPartitions (no limits) also needs this to avoid re-reading files.
+      // Only filter data files — sentinels must be preserved for offset tracking.
+      if (version == fromVersion) {
+        result.removeIf(
+            f ->
+                f.hasFileAction()
+                    && (f.getVersion() < fromVersion
+                        || (f.getVersion() == fromVersion && f.getIndex() <= fromIndex)));
+      }
+
+      if (limits.isPresent()) {
+        result = applyPerCommitCDCAdmission(result, limits.get(), version);
+        if (result.isEmpty()) {
+          Utils.closeCloseables(commit);
+          return Utils.toCloseableIterator(Collections.emptyIterator());
+        }
+      } else {
+        result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+      }
       Utils.closeCloseables(commit);
       return Utils.toCloseableIterator(result.iterator());
     } catch (Exception e) {
@@ -1613,6 +1659,77 @@ public class SparkMicroBatchStream
     return "0".equals(metrics.get("numTargetRowsInserted"))
         && "0".equals(metrics.get("numTargetRowsUpdated"))
         && "0".equals(metrics.get("numTargetRowsDeleted"));
+  }
+
+  /**
+   * Per-commit CDC admission control. Mirrors DSv1's IndexedChangeFileSeq.filterFiles.
+   *
+   * <p>Input is [BASE sentinel, data files...] (no END sentinel) from {@link
+   * #collectAndBuildCDCIndexedFiles}. Returns the admitted files with an END sentinel appended when
+   * all data files fit the budget, or an empty list on batch-reject so the offset doesn't advance.
+   */
+  private List<IndexedFile> applyPerCommitCDCAdmission(
+      List<IndexedFile> commitFiles,
+      DeltaSource.AdmissionLimits admissionLimits,
+      long commitVersion) {
+    List<IndexedFile> sentinels = new ArrayList<>();
+    List<IndexedFile> dataFiles = new ArrayList<>();
+    for (IndexedFile file : commitFiles) {
+      if (file.hasFileAction()) {
+        dataFiles.add(file);
+      } else {
+        sentinels.add(file);
+      }
+    }
+
+    if (dataFiles.isEmpty()) {
+      sentinels.add(IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX()));
+      return sentinels;
+    }
+
+    // Batch-admit all or nothing when we can't split the commit:
+    //   - Explicit CDC files: can't separate update_preimage/postimage
+    //   - Inferred CDC with DVs: can't split add/remove pairs
+    boolean hasExplicitCDC = dataFiles.stream().anyMatch(IndexedFile::isExplicitCDCFile);
+    boolean hasDeletionVectors =
+        !hasExplicitCDC
+            && dataFiles.stream()
+                .anyMatch(f -> f.getCDCFile() != null && f.getCDCFile().hasDeletionVector());
+
+    if (hasExplicitCDC || hasDeletionVectors) {
+      if (!admissionLimits.admit(toScalaAdmittableSeq(dataFiles))) {
+        return Collections.emptyList();
+      }
+      List<IndexedFile> result = new ArrayList<>(sentinels);
+      result.addAll(dataFiles);
+      result.add(IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX()));
+      return result;
+    }
+
+    // Per-file admission for inferred CDC without DVs.
+    List<IndexedFile> result = new ArrayList<>(sentinels);
+    boolean allAdmitted = true;
+    for (IndexedFile file : dataFiles) {
+      if (admissionLimits.admit(file)) {
+        result.add(file);
+      } else {
+        allAdmitted = false;
+        break;
+      }
+    }
+    // Append END sentinel only if all data files were admitted. If partial, the offset lands
+    // on the last admitted file so the next batch picks up the rest.
+    if (allAdmitted) {
+      result.add(IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX()));
+    }
+    return result;
+  }
+
+  /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
+  private static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
+    return JavaConverters.asScalaBuffer(
+            files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
+        .toSeq();
   }
 
   private static boolean isCDFEnabled(Metadata metadata) {

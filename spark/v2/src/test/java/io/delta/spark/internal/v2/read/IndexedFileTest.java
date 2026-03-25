@@ -69,7 +69,7 @@ public class IndexedFileTest {
     assertFalse(sentinel.hasFileAction());
     assertNull(sentinel.getAddFile());
     assertNull(sentinel.getCDCFile());
-    assertFalse(sentinel.isCDCFile());
+    assertFalse(sentinel.isExplicitCDCFile());
     assertThrows(IllegalStateException.class, sentinel::getFileSize);
     assertEquals("IndexedFile{version=5, index=-1}", sentinel.toString());
   }
@@ -84,7 +84,7 @@ public class IndexedFileTest {
     assertTrue(indexed.hasFileAction());
     assertSame(addFile, indexed.getAddFile());
     assertNull(indexed.getCDCFile());
-    assertFalse(indexed.isCDCFile());
+    assertFalse(indexed.isExplicitCDCFile());
     assertEquals(4096, indexed.getFileSize());
 
     String str = indexed.toString();
@@ -101,7 +101,7 @@ public class IndexedFileTest {
     assertTrue(inferred.hasFileAction());
     assertNull(inferred.getAddFile());
     assertSame(inferredCdc, inferred.getCDCFile());
-    assertFalse(inferred.isCDCFile());
+    assertFalse(inferred.isExplicitCDCFile());
     assertEquals(3072, inferred.getFileSize());
 
     String str = inferred.toString();
@@ -111,7 +111,7 @@ public class IndexedFileTest {
     Row cdcRow = createCDCRow(/* size= */ 5000);
     CDCDataFile explicitCdc = CDCDataFile.fromExplicitCDC(cdcRow, /* commitTimestamp= */ 888L);
     IndexedFile explicit = IndexedFile.cdc(/* version= */ 4L, /* index= */ 1L, explicitCdc);
-    assertTrue(explicit.isCDCFile());
+    assertTrue(explicit.isExplicitCDCFile());
     assertEquals(5000, explicit.getFileSize());
   }
 }

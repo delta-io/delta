@@ -202,7 +202,12 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, /* endOffsetOpt= */ Optional.empty())) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* fromVersion= */ commitVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
@@ -247,7 +252,12 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, /* endOffsetOpt= */ Optional.empty())) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* fromVersion= */ commitVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
@@ -260,7 +270,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertFalse(dataFiles.isEmpty(), "Expected at least one data file from DELETE");
 
     for (IndexedFile f : dataFiles) {
-      assertTrue(f.isCDCFile(), "Data file should be a CDC file");
+      assertTrue(f.isExplicitCDCFile(), "Data file should be an explicit CDC file");
       assertNotNull(f.getCDCFile(), "CDCDataFile should be present");
       assertTrue(f.getCDCFile().isExplicit(), "Should be an explicit CDC file");
       assertEquals(commitVersion, f.getVersion());
@@ -303,7 +313,12 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, /* endOffsetOpt= */ Optional.empty())) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* fromVersion= */ commitVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
@@ -335,7 +350,12 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     List<IndexedFile> files;
     try (CloseableIterator<IndexedFile> iter =
         stream.processCommitToIndexedFilesForCDC(
-            commit, /* startVersion= */ commitVersion, Optional.of(endOffset))) {
+            commit,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            Optional.of(endOffset),
+            /* fromVersion= */ commitVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX())) {
       files = collectAll(iter);
     }
 
@@ -344,6 +364,155 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
     assertEquals(DeltaSourceOffset.END_INDEX(), files.get(1).getIndex());
     assertNull(files.get(0).getCDCFile());
     assertNull(files.get(1).getCDCFile());
+  }
+
+  @Test
+  public void testProcessCommit_admissionLimitsFiles(@TempDir File tempDir) throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_admission_" + System.nanoTime();
+    // Partition by id so each distinct value produces a separate AddFile in one commit.
+    sql(
+        "CREATE TABLE %s (id INT, name STRING) USING delta PARTITIONED BY (id)"
+            + " LOCATION '%s' TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')",
+        tableName, tablePath);
+    sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+
+    long commitVersion = 1;
+    SparkMicroBatchStream stream = createStream(tablePath);
+
+    CommitActions commitUnlimited = getCommitActions(tablePath, commitVersion);
+    List<IndexedFile> unlimitedFiles;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commitUnlimited,
+            /* startVersion= */ commitVersion,
+            /* limits= */ Optional.empty(),
+            /* endOffsetOpt= */ Optional.empty(),
+            /* fromVersion= */ commitVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      unlimitedFiles = collectAll(iter);
+    }
+    long unlimitedDataCount = unlimitedFiles.stream().filter(IndexedFile::hasFileAction).count();
+    assertTrue(unlimitedDataCount > 1, "Need multiple data files to test per-file admission");
+
+    CommitActions commitLimited = getCommitActions(tablePath, commitVersion);
+    Optional<DeltaSource.AdmissionLimits> limits =
+        createAdmissionLimits(/* maxFiles= */ Optional.of(1), /* maxBytes= */ Optional.empty());
+
+    List<IndexedFile> limitedFiles;
+    try (CloseableIterator<IndexedFile> iter =
+        stream.processCommitToIndexedFilesForCDC(
+            commitLimited,
+            /* startVersion= */ commitVersion,
+            limits,
+            /* endOffsetOpt= */ Optional.empty(),
+            /* fromVersion= */ commitVersion,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX())) {
+      limitedFiles = collectAll(iter);
+    }
+
+    long limitedDataCount = limitedFiles.stream().filter(IndexedFile::hasFileAction).count();
+    assertEquals(1, limitedDataCount, "With maxFiles=1, should admit exactly 1 data file");
+    assertTrue(limitedFiles.size() > limitedDataCount, "Should include sentinels");
+  }
+
+  /**
+   * Tests that resuming a rate-limited initial snapshot CDC read makes progress. Without the
+   * boundary pre-filter fix, already-processed files would consume the admission budget on the
+   * second call, causing the stream to stall.
+   */
+  @Test
+  public void testGetFileChangesForCDC_snapshotResumeWithRateLimit(@TempDir File tempDir)
+      throws Exception {
+    String tablePath = tempDir.getAbsolutePath();
+    String tableName = "test_cdc_snapshot_resume_" + System.nanoTime();
+    createCDFEnabledTable(tablePath, tableName);
+    // Insert multiple rows so the snapshot has multiple files
+    sql("INSERT INTO %s VALUES (1, 'A')", tableName);
+    sql("INSERT INTO %s VALUES (2, 'B')", tableName);
+    sql("INSERT INTO %s VALUES (3, 'C')", tableName);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(tablePath));
+    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+    Optional<Integer> maxFiles = Optional.of(1);
+
+    // Call 1: from BASE_INDEX, should get 1 file
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call1 =
+        getDsv1FileChanges(
+            deltaLog, tablePath, latestVersion, DeltaSourceOffset.BASE_INDEX(), true, maxFiles);
+    List<IndexedFile> dsv2Call1 =
+        getDsv2FileChanges(
+            tablePath, latestVersion, DeltaSourceOffset.BASE_INDEX(), true, maxFiles);
+    assertCDCFileChangesMatch(dsv1Call1, dsv2Call1);
+    long dsv1DataCount1 = dsv1Call1.stream().filter(f -> f.add() != null).count();
+    assertTrue(dsv1DataCount1 > 0, "Call 1 should return at least 1 data file");
+
+    // Find the last data file index from call 1
+    long lastIndex1 =
+        dsv2Call1.stream()
+            .filter(IndexedFile::hasFileAction)
+            .mapToLong(IndexedFile::getIndex)
+            .max()
+            .orElse(DeltaSourceOffset.BASE_INDEX());
+
+    // Call 2: resume from lastIndex1, should get the next file (not stall)
+    List<org.apache.spark.sql.delta.sources.IndexedFile> dsv1Call2 =
+        getDsv1FileChanges(deltaLog, tablePath, latestVersion, lastIndex1, true, maxFiles);
+    List<IndexedFile> dsv2Call2 =
+        getDsv2FileChanges(tablePath, latestVersion, lastIndex1, true, maxFiles);
+    assertCDCFileChangesMatch(dsv1Call2, dsv2Call2);
+    long dsv2DataCount2 = dsv2Call2.stream().filter(IndexedFile::hasFileAction).count();
+    assertTrue(dsv2DataCount2 > 0, "Call 2 should return new data files (not stall)");
+  }
+
+  /** Helper: get DSv1 CDC file changes for given offset. */
+  private List<org.apache.spark.sql.delta.sources.IndexedFile> getDsv1FileChanges(
+      DeltaLog deltaLog,
+      String tablePath,
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<Integer> maxFiles)
+      throws Exception {
+    scala.collection.immutable.Map<String, String> cdcOptionsMap =
+        Map$.MODULE$.<String, String>empty().updated("readChangeFeed", "true");
+    DeltaOptions cdcOptions = new DeltaOptions(cdcOptionsMap, spark.sessionState().conf());
+    DeltaSource deltaSource = createDeltaSource(deltaLog, tablePath, cdcOptions);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> files = new ArrayList<>();
+    try (ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> iter =
+        deltaSource.getFileChangesWithRateLimit(
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            ScalaUtils.toScalaOption(createAdmissionLimits(maxFiles, Optional.empty())))) {
+      while (iter.hasNext()) files.add(iter.next());
+    }
+    return files;
+  }
+
+  /** Helper: get DSv2 CDC file changes for given offset. */
+  private List<IndexedFile> getDsv2FileChanges(
+      String tablePath,
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<Integer> maxFiles)
+      throws Exception {
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager = new PathBasedSnapshotManager(tablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    List<IndexedFile> files = new ArrayList<>();
+    try (CloseableIterator<IndexedFile> iter =
+        stream.getFileChangesForCDC(
+            fromVersion,
+            fromIndex,
+            isInitialSnapshot,
+            createAdmissionLimits(maxFiles, Optional.empty()),
+            Optional.empty())) {
+      while (iter.hasNext()) files.add(iter.next());
+    }
+    return files;
   }
 
   private static void sql(String query, Object... args) {
