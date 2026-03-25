@@ -25,6 +25,8 @@ import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
+import io.delta.spark.internal.v2.read.cdc.CDCReadFunction;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
@@ -197,22 +199,7 @@ public class PartitionUtils {
         otherConstantMetadataColumnValues);
   }
 
-  /**
-   * Create a PartitionReaderFactory for reading Parquet files with Delta-specific features.
-   *
-   * <p>Uses DeltaParquetFileFormatV2 which supports column mapping, deletion vectors, and other
-   * Delta features through the ProtocolMetadataAdapterV2.
-   *
-   * <p>For tables with deletion vectors enabled, this method:
-   *
-   * <ol>
-   *   <li>Adds __delta_internal_is_row_deleted column to read schema
-   *   <li>Creates a reader that generates the is_row_deleted column using DV bitmap
-   *   <li>Wraps the reader to filter out deleted rows and remove internal columns
-   * </ol>
-   *
-   * @param snapshot The Delta table snapshot containing protocol, metadata, and table path
-   */
+  /** Create a PartitionReaderFactory for non-CDC reads. */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
       Snapshot snapshot,
       StructType dataSchema,
@@ -222,11 +209,85 @@ public class PartitionUtils {
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf,
       SQLConf sqlConf) {
+    return createReaderFactory(
+        snapshot,
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf,
+        /* cdcSchemaContext= */ Optional.empty());
+  }
+
+  /**
+   * Create a PartitionReaderFactory for CDC reads. Reader chain: Parquet → (optional DV filter) →
+   * CDC null-coalesce.
+   */
+  public static PartitionReaderFactory createCDCDeltaParquetReaderFactory(
+      Snapshot snapshot,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions,
+      Configuration hadoopConf,
+      SQLConf sqlConf) {
+    return createReaderFactory(
+        snapshot,
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        dataFilters,
+        scalaOptions,
+        hadoopConf,
+        sqlConf,
+        Optional.of(
+            new CDCSchemaContext(
+                readDataSchema,
+                partitionSchema,
+                SchemaUtils.convertKernelSchemaToSparkSchema(snapshot.getSchema()))));
+  }
+
+  /**
+   * Shared reader factory builder. Reader chain: Parquet → (optional DV filter) → (optional CDC
+   * null-coalesce).
+   *
+   * <p>For tables with deletion vectors enabled:
+   *
+   * <ol>
+   *   <li>Adds __delta_internal_is_row_deleted column to read schema
+   *   <li>Creates a reader that generates the is_row_deleted column using DV bitmap
+   *   <li>Wraps the reader to filter out deleted rows and remove internal columns
+   * </ol>
+   *
+   * <p>For CDC reads, the read schema is augmented with CDC columns (_change_type, _commit_version,
+   * _commit_timestamp) before DV wrapping, and a final CDCReadFunction wrapper null-coalesces those
+   * columns from per-file constants.
+   */
+  private static PartitionReaderFactory createReaderFactory(
+      Snapshot snapshot,
+      StructType dataSchema,
+      StructType partitionSchema,
+      StructType readDataSchema,
+      Filter[] dataFilters,
+      scala.collection.immutable.Map<String, String> scalaOptions,
+      Configuration hadoopConf,
+      SQLConf sqlConf,
+      Optional<CDCSchemaContext> cdcSchemaContext) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    Protocol protocol = snapshotImpl.getProtocol();
+    Metadata metadata = snapshotImpl.getMetadata();
     // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
+
+    // For CDC reads, augment the read schema with CDC columns before DV wrapping.
+    if (cdcSchemaContext.isPresent()) {
+      readDataSchema = cdcSchemaContext.get().getReadDataSchemaWithCDC();
+    }
 
     boolean metadataColumnRequested =
         Arrays.stream(readDataSchema.fields())
@@ -266,8 +327,15 @@ public class PartitionUtils {
     Option<Boolean> useMetadataRowIndex =
         dvSchemaContext.isPresent() ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
-        createDeltaParquetFileFormat(
-            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex);
+        new DeltaParquetFileFormatV2(
+            protocol,
+            metadata,
+            /* nullableRowTrackingConstantFields */ false,
+            /* nullableRowTrackingGeneratedFields */ false,
+            optimizationsEnabled,
+            Option.apply(tablePath),
+            /* isCDCRead */ cdcSchemaContext.isPresent(),
+            /* useMetadataRowIndexOpt */ useMetadataRowIndex);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
@@ -292,6 +360,11 @@ public class PartitionUtils {
     // generated by the Parquet reader, so they remain correct after DV filtering.
     if (rowTrackingSchemaContext.isPresent()) {
       readFunc = RowTrackingReadFunction.wrap(readFunc, rowTrackingSchemaContext.get());
+    }
+
+    // Wrap reader to null-coalesce CDC columns from per-file constants.
+    if (cdcSchemaContext.isPresent()) {
+      readFunc = CDCReadFunction.wrap(readFunc, cdcSchemaContext.get(), enableVectorizedReader);
     }
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
@@ -323,6 +396,17 @@ public class PartitionUtils {
         useMetadataRowIndex);
   }
 
+  private static void addDvMetadata(
+      Map<String, Object> metadata, Optional<DeletionVectorDescriptor> dvOpt) {
+    if (dvOpt.isPresent()) {
+      metadata.put(
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
+          dvOpt.get().serializeToBase64());
+      metadata.put(
+          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
+    }
+  }
+
   /**
    * Build metadata map for PartitionedFile containing DV descriptor if present.
    *
@@ -331,13 +415,7 @@ public class PartitionUtils {
   private static scala.collection.immutable.Map<String, Object> buildDvMetadata(
       Optional<DeletionVectorDescriptor> dvOpt) {
     Map<String, Object> metadata = new HashMap<>();
-    if (dvOpt.isPresent()) {
-      metadata.put(
-          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_ID_ENCODED(),
-          dvOpt.get().serializeToBase64());
-      metadata.put(
-          DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
-    }
+    addDvMetadata(metadata, dvOpt);
     return scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
   }
 
