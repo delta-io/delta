@@ -431,8 +431,14 @@ class DeltaTableV2 private(
     deltaTableV2
   }
 
-  override def toString: String =
-    s"DeltaTableV2($spark,$path,$catalogTable,$tableIdentifier,$timeTravelOpt,$options)"
+  // Avoid stringifying CatalogTable or options (may contain fs.* credentials).
+  // Inlines the name() fallback using `path` to avoid triggering lazy deltaLog init.
+  override def toString: String = {
+    val label = catalogTable.map(_.identifier.unquotedString)
+      .orElse(tableIdentifier)
+      .getOrElse(s"delta.`$path`")
+    s"DeltaTableV2($label, path=$path)"
+  }
 }
 
 object DeltaTableV2 {
