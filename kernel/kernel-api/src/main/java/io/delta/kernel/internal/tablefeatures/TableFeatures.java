@@ -143,8 +143,10 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      // writable if change data feed is disabled
-      return !TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+      // Kernel now supports writes to CDF-enabled tables with restrictions.
+      // Validation is performed at commit time to check for unsupported mixed operations
+      // (add+remove with dataChange=true) which would require CDC file generation.
+      return true;
     }
 
     @Override
