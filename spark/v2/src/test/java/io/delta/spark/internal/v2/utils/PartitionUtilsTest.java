@@ -26,7 +26,7 @@ import io.delta.kernel.data.MapValue;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
@@ -42,7 +42,7 @@ import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import scala.collection.immutable.Map$;
 
-public class PartitionUtilsTest extends SparkDsv2TestBase {
+public class PartitionUtilsTest extends DeltaV2TestBase {
 
   private static final long MB = 1024 * 1024;
 

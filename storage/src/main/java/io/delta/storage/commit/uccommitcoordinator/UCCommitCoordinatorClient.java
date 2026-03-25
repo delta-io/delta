@@ -71,6 +71,12 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   /** Key used to identify the write version in protocol communications with the UC server. */
   private static final String WRITE_VERSION_KEY = "writeVersion";
 
+  /**
+   * Temporary kill switch for sending metadata updates through UC from the Spark path.
+   * TODO(issue #6296): remove once metadata updates are supported end-to-end.
+   */
+  private static final boolean SHOULD_PASS_METADATA_TO_UC = false;
+
   // Unity Catalog Identifiers
   /**
    * Key for identifying Unity Catalog table ID in `delta.coordinatedCommits.tableConf{-preview}`.
@@ -194,7 +200,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
   /**
    * Find the last known backfilled version by doing a listing of the last
-   * [[BACKFILL_LISTING_OFFSET]] commits. If no backfilled commits are found
+   * {@link #BACKFILL_LISTING_OFFSET} commits. If no backfilled commits are found
    * among those, a UC call is made to get the oldest tracked commit in UC.
    */
   public long getLastKnownBackfilledVersion(
@@ -429,7 +435,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() ?
+          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
             Optional.empty() :
             Optional.of(updatedActions.getNewMetadata()),
           updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
@@ -685,7 +691,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       lastKnownBackfilledVersion,
       disown,
       newMetadata,
-      newProtocol
+      newProtocol,
+      Optional.empty() /* uniform */
     );
   }
 
@@ -716,7 +723,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    *    delete the commit for v from its database.
    * 6. Now this client retries commit v (without conflict resolution since conflict=false
    *    in step 3).
-   * 7. UC rejects the commit because v <= latest_table_version and returns a retryable
+   * 7. UC rejects the commit because v {@literal <=} latest_table_version and returns a retryable
    *    conflict (retryable=true, conflict=true).
    *
    * Without this check, Delta's default response to retryable=true, conflict=true would be to
@@ -724,7 +731,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * commit the contents of v as v+2. This would result in duplicate data being written.
    *
    * This method prevents that by checking if the backfilled commit (v.json) has the same
-   * content as our retry attempt (v.<uuid>.json). If yes, we know our original commit
+   * content as our retry attempt (v.{@literal <uuid>}.json). If yes, we know our original commit
    * succeeded and can safely ignore the conflict and exit early without rebasing.
    *
    * Below is a concrete example of the failure and retry sequence:
@@ -733,9 +740,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
    * - Attempt 2: Try to commit v without conflict resolution since conflict=false in attempt-1.
    *              UC responds with retryable=true, conflict=true in the above scenario.
    *              (i.e. v is backfilled and latest version is v+1).
-   * - Fix: Compare v.<uuid>.json and v.json and *early exit* here.
+   * - Fix: Compare v.{@literal <uuid>}.json and v.json and *early exit* here.
    * - Attempt 3: [Without fix] Rebase, conflict-resolution + Try to commit v+2
-   *              => double-commit for contents of v => bug.
+   *              {@literal =>} double-commit for contents of v {@literal =>} bug.
    */
   protected boolean hasSameContent(
       LogStore logStore,

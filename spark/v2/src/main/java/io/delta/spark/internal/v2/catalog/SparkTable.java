@@ -15,7 +15,9 @@
  */
 package io.delta.spark.internal.v2.catalog;
 
+import static io.delta.spark.internal.v2.utils.ScalaUtils.toJavaOptional;
 import static io.delta.spark.internal.v2.utils.ScalaUtils.toScalaMap;
+import static io.delta.spark.internal.v2.utils.StatsUtils.toV2Statistics;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.Snapshot;
@@ -35,17 +37,23 @@ import org.apache.spark.sql.connector.catalog.*;
 import org.apache.spark.sql.connector.expressions.Expressions;
 import org.apache.spark.sql.connector.expressions.Transform;
 import org.apache.spark.sql.connector.read.ScanBuilder;
+import org.apache.spark.sql.connector.read.Statistics;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
+import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead {
+public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
-          EnumSet.of(TableCapability.BATCH_READ, TableCapability.MICRO_BATCH_READ));
+          EnumSet.of(
+              TableCapability.BATCH_READ,
+              TableCapability.MICRO_BATCH_READ,
+              TableCapability.BATCH_WRITE));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -156,7 +164,14 @@ public class SparkTable implements Table, SupportsRead {
    * etc.), not just file:// URIs.
    */
   private static String getDecodedPath(java.net.URI location) {
-    return new Path(location).toString();
+    Path hadoopPath = new Path(location);
+    // For local file system paths, return just the path component without the scheme
+    // to maintain consistency with path-based table construction where tablePath is a
+    // plain filesystem path string.
+    if (location.getScheme() == null || "file".equals(location.getScheme())) {
+      return hadoopPath.toUri().getPath();
+    }
+    return hadoopPath.toString();
   }
 
   /**
@@ -166,6 +181,15 @@ public class SparkTable implements Table, SupportsRead {
    */
   public Optional<CatalogTable> getCatalogTable() {
     return catalogTable;
+  }
+
+  /**
+   * Returns the Path to the Delta table root.
+   *
+   * @return Path created from the table path
+   */
+  public Path getTablePath() {
+    return new Path(tablePath);
   }
 
   /**
@@ -215,13 +239,37 @@ public class SparkTable implements Table, SupportsRead {
     Map<String, String> combined = new HashMap<>(this.options);
     combined.putAll(scanOptions.asCaseSensitiveMap());
     CaseInsensitiveStringMap merged = new CaseInsensitiveStringMap(combined);
+    Optional<Statistics> catalogStats =
+        catalogTable
+            .flatMap(ct -> toJavaOptional(ct.stats()))
+            .map(
+                stats ->
+                    toV2Statistics(
+                        stats,
+                        schemaProvider.getDataSchema(),
+                        schemaProvider.getPartitionSchema()));
     return new SparkScanBuilder(
         name(),
         initialSnapshot,
         snapshotManager,
         schemaProvider.getDataSchema(),
         schemaProvider.getPartitionSchema(),
+        schemaProvider.getRawSchema(),
+        catalogStats,
         merged);
+  }
+
+  /**
+   * Batch write for Delta tables via the DSv2 connector is not yet supported.
+   *
+   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
+   * follow-up changes land the full write implementation.
+   */
+  @Override
+  public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
+    requireNonNull(info, "write info is null");
+    throw new UnsupportedOperationException(
+        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
   }
 
   @Override
@@ -241,12 +289,20 @@ public class SparkTable implements Table, SupportsRead {
     return Objects.equals(identifier, that.identifier)
         && Objects.equals(tablePath, that.tablePath)
         && Objects.equals(options, that.options)
-        && Objects.equals(catalogTable, that.catalogTable);
+        && Objects.equals(catalogTable, that.catalogTable)
+        && Objects.equals(initialSnapshot.getPath(), that.initialSnapshot.getPath())
+        && initialSnapshot.getVersion() == that.initialSnapshot.getVersion();
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(identifier, tablePath, options, catalogTable);
+    return Objects.hash(
+        identifier,
+        tablePath,
+        options,
+        catalogTable,
+        initialSnapshot.getPath(),
+        initialSnapshot.getVersion());
   }
 
   /**
@@ -352,6 +408,10 @@ public class SparkTable implements Table, SupportsRead {
 
     StructType getPartitionSchema() {
       return withInit(() -> partitionSchema);
+    }
+
+    StructType getRawSchema() {
+      return withInit(() -> rawSchema);
     }
 
     Column[] getColumns() {

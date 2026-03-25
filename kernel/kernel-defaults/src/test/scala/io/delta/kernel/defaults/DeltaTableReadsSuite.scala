@@ -272,6 +272,21 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     }
   }
 
+  test("read table with far-future timestamp in stats") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`$path` (ts TIMESTAMP) USING DELTA")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (TIMESTAMP'2020-01-01 00:00:00')")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (TIMESTAMP'9999-12-31 23:59:59')")
+      val filter = new Predicate("<", new Column("ts"), Literal.ofTimestamp(253402300799000000L))
+      checkTable(
+        path,
+        Seq(TestRow(1577836800000000L)),
+        filter = filter,
+        expectedRemainingFilter = filter)
+    }
+  }
+
   //////////////////////////////////////////////////////////////////////////////////
   // Timestamp_NTZ tests
   //////////////////////////////////////////////////////////////////////////////////
@@ -926,12 +941,16 @@ trait AbstractDeltaTableReadsSuite extends AnyFunSuite { self: AbstractTestUtils
     assert(e.getMessage.contains("Unsupported Delta protocol reader version"))
   }
 
-  test("table with void type - throws KernelException") {
+  test("table with void type - schema parsing is lazy") {
     withTempDir { tempDir =>
       val path = tempDir.getCanonicalPath
       spark.sql(s"CREATE TABLE delta.`${tempDir.getAbsolutePath}`(x INTEGER, y VOID) USING DELTA")
+      // Snapshot loading should succeed since schema parsing is now lazy
+      val snapshot = latestSnapshot(path)
+      assert(snapshot.getVersion >= 0)
+      // Accessing the schema should still throw KernelException due to VOID type
       val e = intercept[KernelException] {
-        latestSnapshot(path)
+        snapshot.getSchema
       }
       assert(e.getMessage.contains(
         "Failed to parse the schema. Encountered unsupported Delta data type: VOID"))

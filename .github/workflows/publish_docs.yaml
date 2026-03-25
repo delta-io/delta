@@ -20,7 +20,7 @@ jobs:
       matrix:
         version:
           - name: latest
-            ref: v4.0.0
+            ref: v4.0.1
             java: 17
             out_dir: docs/apis/_site/api
           - name: 3.3.2
@@ -29,18 +29,18 @@ jobs:
             out_dir: docs/apis/_site/api
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           repository: delta-io/delta
           ref: ${{ matrix.version.ref }}
 
-      - uses: actions/setup-java@v3
+      - uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
           distribution: "zulu"
           java-version: ${{ matrix.version.java }}
 
       - name: Setup python environment
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
         with:
           activate-environment: delta_docs
           environment-file: docs/environment.yml
@@ -71,7 +71,7 @@ jobs:
           done
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ github.run_id }}-apidocs-${{ matrix.version.name }}
           path: ${{ matrix.version.out_dir }}
@@ -82,14 +82,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: docs/.nvmrc
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         name: Install pnpm
         with:
           package_json_file: docs/package.json
@@ -99,7 +99,7 @@ jobs:
         working-directory: docs
 
       - name: Download API docs artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: ${{ github.run_id }}-apidocs-*
           path: docs/public/api

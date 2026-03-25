@@ -171,6 +171,71 @@ public class IcebergRESTServer {
   }
 
   /**
+   * Get the limit (min-rows-requested) captured from the most recent /plan request.
+   * Delegates to adapter. For test verification.
+   */
+  public Long getCapturedLimit() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedMinRowsRequested();
+  }
+
+  /**
+   * Get the caseSensitive flag captured from the most recent /plan request.
+   * For test verification.
+   */
+  public Boolean getCapturedCaseSensitive() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedCaseSensitive();
+  }
+
+  /**
+   * Get the request path captured from the most recent /plan request.
+   * Delegates to adapter. For test verification of endpoint construction.
+   */
+  public String getCapturedPlanRequestPath() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getCapturedPlanRequestPath();
+  }
+
+  /**
+   * Set test credentials to inject into /plan responses.
+   * Used for testing credential extraction in clients.
+   *
+   * @param credentials Map of credential config (e.g., "s3.access-key-id" -> "...")
+   */
+  public void setTestCredentials(Map<String, String> credentials) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestCredentials(credentials);
+  }
+
+  /**
+   * Set test residual expression to inject into /plan responses.
+   * When set, all FileScanTasks in the response will have this residual expression
+   * instead of the default (alwaysTrue). Used for testing client-side residual validation.
+   *
+   * @param residual The residual expression to inject, or null to use the default
+   */
+  public void setTestResidual(shadedForDelta.org.apache.iceberg.expressions.Expression residual) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setTestResidual(residual);
+  }
+
+  /**
+   * Configure the server to fail the next N /plan requests with the specified HTTP status code.
+   * After N failures, subsequent requests proceed normally.
+   * Used for testing HTTP retry logic in the client.
+   *
+   * @param count Number of /plan requests to fail
+   * @param statusCode HTTP status code to return for injected failures (e.g., 503, 404)
+   */
+  public void setFailNextPlanRequests(int count, int statusCode) {
+    IcebergRESTCatalogAdapterWithPlanSupport.setFailNextPlanRequests(count, statusCode);
+  }
+
+  /**
+   * Get the total number of /plan requests received since last clearCaptured().
+   * Used for verifying retry behavior in tests.
+   */
+  public int getPlanRequestCount() {
+    return IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestCount();
+  }
+
+  /**
    * Clear captured filter and projection. Call between tests.
    */
   public void clearCaptured() {

@@ -194,7 +194,7 @@ class DeltaTableV2 private(
       deltaLog.getSnapshotAt(
         version,
         catalogTableOpt = catalogTable,
-        enforceTimeTravelWithinDeletedFileRetention = true)
+        enforceTimeTravelWithinDeletedFileRetention = spec.enforceRetention)
     }.getOrElse(
       deltaLog.update(
         stalenessAcceptable = true,
@@ -242,7 +242,9 @@ class DeltaTableV2 private(
         base.put(TableCatalog.PROP_OWNER, table.owner)
       }
       v1Table.storage.properties.foreach { case (key, value) =>
-        base.put(TableCatalog.OPTION_PREFIX + key, value)
+        if (!DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(key.startsWith)) {
+          base.put(TableCatalog.OPTION_PREFIX + key, value)
+        }
       }
       if (v1Table.tableType == CatalogTableType.EXTERNAL) {
         base.put(TableCatalog.PROP_EXTERNAL, "true")
@@ -434,6 +436,15 @@ class DeltaTableV2 private(
 }
 
 object DeltaTableV2 {
+
+  /**
+   * Storage property key prefixes that should be excluded from the user-visible V2 table
+   * properties returned by [[DeltaTableV2.properties()]]. These are Hadoop filesystem
+   * configuration options that may contain sensitive credentials (access keys, session
+   * tokens, etc.) injected by catalogs at table-load time.
+   */
+  private[delta] val HIDDEN_STORAGE_PROPERTY_PREFIXES: Seq[String] = Seq("fs.")
+
   def unapply(deltaTable: DeltaTableV2): Option[(
       SparkSession,
       Path,

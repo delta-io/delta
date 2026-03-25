@@ -84,8 +84,8 @@ trait MetadataCleanup extends DeltaLogging {
         truncateDate(clock.getTimeMillis() - retentionMillis, cutoffTruncationGranularity).getTime
       val formattedDate = fileCutOffTime.toGMTString
       logInfo(
-        log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Starting the deletion " +
-        log"of log files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
+        log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+        log"Starting the deletion of log files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
 
       if (!metadataCleanupAllowed(snapshotToCleanup, fileCutOffTime.getTime)) {
         logInfo("Metadata cleanup was skipped due to not satisfying the requirements " +
@@ -147,8 +147,8 @@ trait MetadataCleanup extends DeltaLogging {
           sidecarDeletionMetrics)
         logInfo(log"Sidecar deletion metrics: ${MDC(DeltaLogKeys.METRICS, sidecarDeletionMetrics)}")
       }
-      logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Deleted " +
-        log"${MDC(DeltaLogKeys.NUM_FILES, numDeleted.toLong)} log files and " +
+      logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+        log"Deleted ${MDC(DeltaLogKeys.NUM_FILES, numDeleted.toLong)} log files and " +
         log"${MDC(DeltaLogKeys.NUM_FILES2, numDeletedUnbackfilled.toLong)} unbackfilled commit " +
         log"files older than ${MDC(DeltaLogKeys.DATE, formattedDate)}")
     }
@@ -443,11 +443,11 @@ trait MetadataCleanup extends DeltaLogging {
       .filterNot(path => activeSidecarFiles.contains(path.getName))
     val sidecarDeletionStartTimeMs = System.currentTimeMillis()
     logInfo(
-      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Starting the deletion of " +
-      log"unreferenced sidecar files")
+      log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] " +
+      log"Starting the deletion of unreferenced sidecar files")
     val count = deleteMultiple(fs, sidecarFilesToDelete)
 
-    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedTableId)}] Deleted " +
+    logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, truncatedUnsafeVolatileTableId)}] Deleted " +
       log"${MDC(DeltaLogKeys.COUNT, count)} sidecar files")
     metrics.numSidecarFilesDeleted = count
     val endTimeMs = System.currentTimeMillis()

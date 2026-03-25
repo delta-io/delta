@@ -37,6 +37,7 @@ import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.storage.LogStore
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize
 import org.apache.hadoop.fs.FileStatus
 import org.apache.hadoop.fs.Path
@@ -57,7 +58,10 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  * @param numDeletionVectorsOpt The number of Deletion Vectors present in the snapshot.
  * @param numMetadata Number of `Metadata` actions in the snapshot
  * @param numProtocol Number of `Protocol` actions in the snapshot
- * @param histogramOpt Optional file size histogram
+ * @param histogramOpt Optional file size histogram. Note: the Delta spec field name is
+ *                     `fileSizeHistogram` (used by Kernel/Java/Rust). Delta-Spark historically
+ *                     wrote `histogramOpt`. The `@JsonAlias` allows reading both field names so
+ *                     that CRC files written by either Kernel or Delta-Spark are compatible.
  * @param deletedRecordCountsHistogramOpt A histogram of the deleted records count distribution
  *                                        for all the files in the snapshot.
  */
@@ -77,7 +81,58 @@ case class VersionChecksum(
     domainMetadata: Option[Seq[DomainMetadata]],
     metadata: Metadata,
     protocol: Protocol,
+    // Accept both "histogramOpt" (legacy Delta-Spark) and
+    // "fileSizeHistogram" (Delta spec / Kernel).
+    @JsonAlias(Array("fileSizeHistogram"))
     histogramOpt: Option[FileSizeHistogram],
+    deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
+    allFiles: Option[Seq[AddFile]]) {
+
+  /**
+   * Converts to the protocol-compliant representation that serializes the histogram field as
+   * `fileSizeHistogram` (the Delta spec field name) instead of `histogramOpt`.
+   */
+  def toProtocolCompliant: VersionChecksumProtocolCompliant = VersionChecksumProtocolCompliant(
+    txnId = txnId,
+    tableSizeBytes = tableSizeBytes,
+    numFiles = numFiles,
+    numDeletedRecordsOpt = numDeletedRecordsOpt,
+    numDeletionVectorsOpt = numDeletionVectorsOpt,
+    numMetadata = numMetadata,
+    numProtocol = numProtocol,
+    inCommitTimestampOpt = inCommitTimestampOpt,
+    setTransactions = setTransactions,
+    domainMetadata = domainMetadata,
+    metadata = metadata,
+    protocol = protocol,
+    fileSizeHistogram = histogramOpt,
+    deletedRecordCountsHistogramOpt = deletedRecordCountsHistogramOpt,
+    allFiles = allFiles
+  )
+}
+
+/**
+ * Protocol-compliant version of [[VersionChecksum]] that serializes the file size histogram
+ * using the Delta spec field name `fileSizeHistogram` instead of the legacy `histogramOpt`.
+ * Used only for CRC file writes when the protocol-compliant flag is enabled.
+ */
+case class VersionChecksumProtocolCompliant(
+    txnId: Option[String],
+    tableSizeBytes: Long,
+    numFiles: Long,
+    @JsonDeserialize(contentAs = classOf[Long])
+    numDeletedRecordsOpt: Option[Long],
+    @JsonDeserialize(contentAs = classOf[Long])
+    numDeletionVectorsOpt: Option[Long],
+    numMetadata: Long,
+    numProtocol: Long,
+    @JsonDeserialize(contentAs = classOf[Long])
+    inCommitTimestampOpt: Option[Long],
+    setTransactions: Option[Seq[SetTransaction]],
+    domainMetadata: Option[Seq[DomainMetadata]],
+    metadata: Metadata,
+    protocol: Protocol,
+    fileSizeHistogram: Option[FileSizeHistogram],
     deletedRecordCountsHistogramOpt: Option[DeletedRecordCountsHistogram],
     allFiles: Option[Seq[AddFile]])
 
@@ -98,15 +153,23 @@ trait RecordChecksum extends DeltaLogging {
       return
     }
 
-    val version = snapshot.version
     val checksumWithoutTxnId = getChecksum(snapshot)
     val checksum = checksumWithoutTxnId.copy(txnId = Some(txnId))
+    writeChecksumFile(snapshot.version, checksum)
+  }
+
+  protected def writeChecksumFile(version: Long, checksum: VersionChecksum): Unit = {
     val eventData = mutable.Map[String, Any]("operationSucceeded" -> false)
     eventData("numAddFileActions") = checksum.allFiles.map(_.size).getOrElse(-1)
     eventData("numSetTransactionActions") = checksum.setTransactions.map(_.size).getOrElse(-1)
     val startTimeMs = System.currentTimeMillis()
     try {
-      val toWrite = JsonUtils.toJson(checksum) + "\n"
+      val toWrite = (if (spark.conf.get(
+          DeltaSQLConf.DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL)) {
+        JsonUtils.toJson(checksum.toProtocolCompliant)
+      } else {
+        JsonUtils.toJson(checksum)
+      }) + "\n"
       eventData("jsonSerializationTimeTakenMs") = System.currentTimeMillis() - startTimeMs
       eventData("checksumLength") = toWrite.length
       val stream = writer.createAtomic(

@@ -21,7 +21,7 @@ import java.util.Locale
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.actions.CommitInfo
-import org.apache.spark.sql.delta.coordinatedcommits.CoordinatedCommitsBaseSuite
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogOwnedTestBaseSuite
 import org.apache.spark.sql.delta.sources.{DeltaSink, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.{DeltaColumnMappingSelectedTestMixin, DeltaSQLCommandTest}
 import org.apache.spark.sql.delta.test.DeltaSQLTestUtils
@@ -76,7 +76,7 @@ abstract class DeltaSinkTest
 class DeltaSinkSuite
   extends DeltaSinkTest
   with DeltaColumnMappingTestUtils
-  with CoordinatedCommitsBaseSuite
+  with CatalogOwnedTestBaseSuite
   with DeltaSQLTestUtils {
 
   import testImplicits._
@@ -655,14 +655,51 @@ class DeltaSinkSuite
         "deltaLog should not be initialized after constructor")
     }
   }
+
+  test("DeltaSink rejects DataFrame with UDT containing NullType") {
+    failAfter(streamingTimeout) {
+      withTempDirs { (outputDir, checkpointDir) =>
+        val inputData = MemoryStream[Int]
+        val ds = inputData.toDS()
+        val dsWriter =
+          ds.map(i => (i, new NullData()))
+            .toDF("id", "value")
+            .writeStream
+            .option("checkpointLocation", checkpointDir.getCanonicalPath)
+            .format("delta")
+
+        val wrapperException = intercept[StreamingQueryException] {
+          val q = dsWriter.start(outputDir.getCanonicalPath)
+          inputData.addData(42)
+          q.processAllAvailable()
+        }
+        assert(wrapperException.cause.isInstanceOf[AnalysisException])
+        checkError(
+          wrapperException.cause.asInstanceOf[AnalysisException],
+          "DELTA_NULL_SCHEMA_IN_STREAMING_WRITE")
+      }
+    }
+  }
 }
 
-class DeltaSinkWithCoordinatedCommitsBatch1Suite extends DeltaSinkSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(1)
+// Batch sizes 1, 2, and 100 exercise different backfill behaviors in the commit coordinator.
+// Batch size 1 triggers a backfill on every commit (commitVersion % 1 == 0), testing the most
+// granular backfill path. Batch size 2 triggers backfill every other commit, testing the boundary
+// between backfilled and unbackfilled commits. Batch size 100 leaves most commits unbackfilled,
+// testing the production-like path where streaming must read from both the commit coordinator
+// and the filesystem. This follows the same pattern as other CatalogManaged (CCv2) test suites
+// (DeltaLogSuite, DeltaSourceSuite, etc.).
+
+class DeltaSinkWithCatalogManagedBatch1Suite extends DeltaSinkSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(1)
 }
 
-class DeltaSinkWithCoordinatedCommitsBatch100Suite extends DeltaSinkSuite {
-  override def coordinatedCommitsBackfillBatchSize: Option[Int] = Some(100)
+class DeltaSinkWithCatalogManagedBatch2Suite extends DeltaSinkSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(2)
+}
+
+class DeltaSinkWithCatalogManagedBatch100Suite extends DeltaSinkSuite {
+  override def catalogOwnedCoordinatorBackfillBatchSize: Option[Int] = Some(100)
 }
 
 abstract class DeltaSinkColumnMappingSuiteBase extends DeltaSinkSuite

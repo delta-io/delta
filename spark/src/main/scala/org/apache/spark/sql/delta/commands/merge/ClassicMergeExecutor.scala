@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.commands.{DeletionVectorBitmapGenerator, DMLWi
 import org.apache.spark.sql.delta.commands.cdc.CDCReader.{CDC_TYPE_COLUMN_NAME, CDC_TYPE_NOT_CDC}
 import org.apache.spark.sql.delta.commands.merge.MergeOutputGeneration.{SOURCE_ROW_INDEX_COL, TARGET_ROW_INDEX_COL}
 import org.apache.spark.sql.delta.files.TahoeBatchFileIndex
+import org.apache.spark.sql.delta.stats.StatsCollectionUtils
 import org.apache.spark.sql.delta.util.SetAccumulator
 
 import org.apache.spark.sql.{Column, Dataset, SparkSession}
@@ -552,7 +553,8 @@ trait ClassicMergeExecutor extends MergeOutputGeneration {
     val (dvActions, metricsMap) = DMLWithDeletionVectorsHelper.processUnmodifiedData(
       spark,
       touchedFilesWithDVs,
-      deltaTxn.snapshot)
+      deltaTxn.snapshot,
+      StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, deltaTxn.metadata))
 
     metrics("numTargetDeletionVectorsAdded")
       .set(metricsMap.getOrElse("numDeletionVectorsAdded", 0L))

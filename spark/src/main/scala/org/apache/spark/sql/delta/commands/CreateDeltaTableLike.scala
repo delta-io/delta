@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta.commands
 
-import org.apache.spark.sql.delta.{DeltaErrors, Snapshot}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaOptions, Snapshot}
 import org.apache.spark.sql.delta.hooks.{UpdateCatalog, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
@@ -24,6 +24,7 @@ import org.apache.spark.sql.{SaveMode, SparkSession}
 import org.apache.spark.sql.catalyst.SQLConfHelper
 import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType}
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
+import org.apache.spark.sql.catalyst.util.CharVarcharUtils
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.types.StructType
 
@@ -106,15 +107,26 @@ trait CreateDeltaTableLike extends SQLConfHelper {
         }
       case TableCreationModes.Replace | TableCreationModes.CreateOrReplace
         if existingTableOpt.isDefined =>
-        UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        // Catalog-managed / CC tables are owned by the delegated V2 catalog plugin (for example
+        // Unity Catalog), so SessionCatalog's post-commit UpdateCatalogHook must not run.
+        if (!allowCatalogManaged) {
+          UpdateCatalogFactory.getUpdateCatalogHook(table, spark).updateSchema(spark, snapshot)
+        }
       case TableCreationModes.Replace =>
         val ident = Identifier.of(table.identifier.database.toArray, table.identifier.table)
         throw DeltaErrors.cannotReplaceMissingTableException(ident)
       case TableCreationModes.CreateOrReplace =>
-      spark.sessionState.catalog.createTable(
-        cleaned,
-        ignoreIfExists = false,
-        validateLocation = false)
+        createTableFunc match {
+          case Some(createFunc) =>
+            // This is the new missing-table path where creation is delegated through the V2
+            // catalog plugin (for example Unity Catalog) instead of SessionCatalog.createTable().
+            createFunc(cleaned)
+          case None =>
+            spark.sessionState.catalog.createTable(
+              cleaned,
+              ignoreIfExists = false,
+              validateLocation = false)
+        }
     }
     if (conf.getConf(DeltaSQLConf.HMS_FORCE_ALTER_TABLE_DATA_SCHEMA)) {
       spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
@@ -152,13 +164,23 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           ++ additionalProperties,
         storage = storageProps,
         tracksPartitionsInCatalog = true)
-    } else {
+    } else if (allowCatalogManaged) {
       // Setting table properties is required for creating catalogManaged tables.
-      val properties: Map[String, String] =
-        if (allowCatalogManaged) UpdateCatalog.updatedProperties(snapshot) else Map.empty
+      table.copy(
+        // Here we use snapshot.schema instead of table.schema because it reflects the actual
+        // committed state of the table.
+        // Delta does not have a distinct storage type for Char/Varchar; in snapshots, they are
+        // represented in String type with extra type metadata. We convert them to back to the
+        // original Char/Varchar types when storing them in the catalog.
+        schema = CharVarcharUtils.getRawSchema(snapshot.schema),
+        partitionColumnNames = snapshot.metadata.partitionColumns,
+        properties = UpdateCatalog.updatedProperties(snapshot),
+        storage = storageProps,
+        tracksPartitionsInCatalog = true)
+    } else {
       table.copy(
         schema = new StructType(),
-        properties = properties,
+        properties = Map.empty,
         partitionColumnNames = Nil,
         // Remove write specific options when updating the catalog
         storage = storageProps,
@@ -167,15 +189,15 @@ trait CreateDeltaTableLike extends SQLConfHelper {
   }
 
   /**
-   * Horrible hack to differentiate between DataFrameWriterV1 and V2 so that we can decide
+   * Differentiate between DataFrameWriterV1 and V2 so that we can decide
    * what to do with table metadata. In DataFrameWriterV1, mode("overwrite").saveAsTable,
    * behaves as a CreateOrReplace table, but we have asked for "overwriteSchema" as an
    * explicit option to overwrite partitioning or schema information. With DataFrameWriterV2,
    * the behavior asked for by the user is clearer: .createOrReplace(), which means that we
    * should overwrite schema and/or partitioning. Therefore we have this hack.
    */
-  protected def isV1Writer: Boolean = {
-    Thread.currentThread().getStackTrace.exists(_.toString.contains(
-      classOf[org.apache.spark.sql.classic.DataFrameWriter[_]].getCanonicalName + "."))
+  protected def isV1WriterSaveAsTableOverwrite: Boolean = {
+    val options = new DeltaOptions(table.storage.properties, conf)
+    CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(options, mode)
   }
 }

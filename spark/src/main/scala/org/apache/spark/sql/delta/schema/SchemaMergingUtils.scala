@@ -339,6 +339,11 @@ object SchemaMergingUtils {
       tf: (Seq[String], StructField, Resolver) => StructField): T = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
+        case s: StructType
+          if org.apache.spark.sql.execution.datasources.VariantMetadata.isVariantStruct(s) =>
+          // A variant struct is logically still a variant, so we should not recurse into its
+          // fields like a normal struct.
+          s
         case StructType(fields) =>
           StructType(fields.map { field =>
             val newField = tf(path, field, DELTA_COL_RESOLVER)

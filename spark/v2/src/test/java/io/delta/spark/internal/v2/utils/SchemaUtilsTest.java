@@ -38,6 +38,7 @@ import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.VariantType;
 import java.util.stream.Stream;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
@@ -66,6 +67,7 @@ public class SchemaUtilsTest {
     checkConversion(DataTypes.ShortType, ShortType.SHORT);
     checkConversion(DataTypes.TimestampType, TimestampType.TIMESTAMP);
     checkConversion(DataTypes.TimestampNTZType, TimestampNTZType.TIMESTAMP_NTZ);
+    checkConversion(DataTypes.VariantType, VariantType.VARIANT);
   }
 
   @Test

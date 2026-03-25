@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaLog, DeltaTableUtils}
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
+import org.apache.spark.sql.delta.expressions.DecodeNestedZ85EncodedVariant
 import org.apache.spark.sql.delta.implicits._
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -43,9 +44,11 @@ import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.expressions.Literal.{FalseLiteral, TrueLiteral}
 import org.apache.spark.sql.catalyst.util.TypeUtils
 import org.apache.spark.sql.execution.InSubqueryExec
+import org.apache.spark.sql.execution.datasources.VariantMetadata
 import org.apache.spark.sql.expressions.SparkUserDefinedFunction
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType}
+import org.apache.spark.sql.internal.SQLConf
+import org.apache.spark.sql.types.{AtomicType, BooleanType, CalendarIntervalType, DataType, DateType, LongType, NumericType, StringType, StructField, StructType, TimestampNTZType, TimestampType, VariantType}
 import org.apache.spark.unsafe.types.{CalendarInterval, UTF8String}
 
 /**
@@ -129,7 +132,12 @@ private [sql] object DataSkippingPredicate {
 object SkippingEligibleColumn {
   def unapply(arg: Expression): Option[(Seq[String], DataType)] = {
     // Only atomic types are eligible for skipping, and args should always be resolved by now.
-    val eligible = arg.resolved && arg.dataType.isInstanceOf[AtomicType]
+    // When `pushVariantIntoScan` is true, Variants in the read schema are transformed into Structs
+    // to facilitate shredded reads. Therefore, filters like `v is not null` where `v` is a variant
+    // column look like the filters on struct data. `VariantMetadata.isVariantStruct` helps in
+    // distinguishing between "true structs" and "variant structs".
+    val eligible = arg.resolved && (arg.dataType.isInstanceOf[AtomicType] ||
+      VariantMetadata.isVariantStruct(arg.dataType))
     if (eligible) searchChain(arg).map(_ -> arg.dataType) else None
   }
 
@@ -160,6 +168,8 @@ object SkippingEligibleDataType {
   // Call this directly, e.g. `SkippingEligibleDataType(dataType)`
   def apply(dataType: DataType): Boolean = dataType match {
     case _: NumericType | DateType | TimestampType | TimestampNTZType | StringType => true
+    case _: VariantType =>
+      SQLConf.get.getConf(DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS)
     case _ => false
   }
 
@@ -222,6 +232,27 @@ private[delta] object DataSkippingReader {
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()),
     Option(ExpressionEncoder[java.lang.Long]()))
+
+  /**
+   * For timestamps, JSON serialization will truncate to milliseconds. This means
+   * that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
+   * records that differ only in microsecond precision. (For example, a file containing only
+   * 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
+   * to contain the range from 01:02:03.456 to 01:02:03.457.)
+   *
+   * To avoid overflow when the timestamp is near Long.MAX_VALUE, we check if adding 1
+   * millisecond would overflow. If so, we saturate to Long.MAX_VALUE to ensure the max stat
+   * is >= all actual values in the file while avoiding arithmetic overflow.
+   */
+  def getAdjustedTimestamp(col: Column, tsType: DataType): Column = {
+    val maxTimestampLiteral = Literal(Long.MaxValue, tsType)
+    val overflowThresholdLiteral = Literal(Long.MaxValue - 1000, tsType)
+    val adjustedExpr = If(
+      GreaterThan(col.expr, overflowThresholdLiteral),
+      maxTimestampLiteral,
+      TimestampAdd("MILLISECOND", Literal(1L, LongType), col.expr))
+    Column(Cast(adjustedExpr, tsType))
+  }
 }
 
 /**
@@ -258,7 +289,18 @@ trait DataSkippingReaderBase
 
   /** Returns a DataFrame expression to obtain a list of files with parsed statistics. */
   private def withStatsInternal0: DataFrame = {
-    allFiles.withColumn("stats", from_json(col("stats"), statsSchema))
+    val parsedStats = from_json(col("stats"), statsSchema)
+    // Only use DecodeNestedZ85EncodedVariant if the schema contains VariantType.
+    // This avoids performance overhead for tables without variant columns.
+    // `DecodeNestedZ85EncodedVariant` is a temporary workaround since the Spark 4.1 from_json
+    // expression has no way to decode a VariantVal from an encoded Z85 string.
+    // TODO: Add Z85 decoding to Variant in Spark 4.2 and use that from_json option here.
+    val decodedStats = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(DecodeNestedZ85EncodedVariant(parsedStats.expr))
+    } else {
+      parsedStats
+    }
+    allFiles.withColumn("stats", decodedStats)
   }
 
   private lazy val withStatsCache =
@@ -1066,27 +1108,9 @@ trait DataSkippingReaderBase
       .filterNot(_._2.isInstanceOf[StructType])
       .map {
         case (statCol, TimestampType, _) if pathToStatType.head == MAX =>
-          // SC-22824: For timestamps, JSON serialization will truncate to milliseconds. This means
-          // that we must adjust 1 millisecond upwards for max stats, or we will incorrectly skip
-          // records that differ only in microsecond precision. (For example, a file containing only
-          // 01:02:03.456789 will be written with min == max == 01:02:03.456, so we must consider it
-          // to contain the range from 01:02:03.456 to 01:02:03.457.)
-          //
-          // There is a longer term task SC-22825 to fix the serialization problem that caused this.
-          // But we need the adjustment in any case to correctly read stats written by old versions.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
-          Column(Cast(TimestampAdd(
-            "MILLISECOND",
-            new Literal(1L, LongType),
-            statCol.expr), TimestampType))
+          getAdjustedTimestamp(statCol, TimestampType)
         case (statCol, TimestampNTZType, _) if pathToStatType.head == MAX =>
-          // We also apply the same adjustment of max stats that was applied to Timestamp
-          // for TimestampNTZ because these 2 types have the same precision in terms of time.
-          // TimeAdd is removed in Spark 4.1, using TimestampAdd instead
-          Column(Cast(TimestampAdd(
-            "MILLISECOND",
-            new Literal(1L, LongType),
-            statCol.expr), TimestampNTZType))
+          getAdjustedTimestamp(statCol, TimestampNTZType)
         case (statCol, _, _) =>
           statCol
       }
@@ -1113,6 +1137,10 @@ trait DataSkippingReaderBase
   /** Overload for convenience working with StatsColumn helpers */
   final protected[delta] def getStatsColumnOrNullLiteral(stat: StatsColumn): Column =
     getStatsColumnOpt(stat.pathToStatType, stat.pathToColumn).getOrElse(lit(null))
+
+  /** Overload for delta table property override */
+  override protected def getDataSkippingStringPrefixLength: Int =
+    StatsCollectionUtils.getDataSkippingStringPrefixLength(spark, metadata)
 
   /**
    * Returns an expression that can be used to check that the required statistics are present for a
@@ -1238,7 +1266,10 @@ trait DataSkippingReaderBase
       partitionFilters: Seq[Expression],
       keepNumRecords: Boolean): (Seq[AddFile], DataSize) = recordFrameProfile(
       "Delta", "DataSkippingReader.filterOnPartitions") {
-    val df = if (keepNumRecords) {
+    val forceCollectRowCount =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+    val shouldCollectStats = keepNumRecords || forceCollectRowCount
+    val df = if (shouldCollectStats) {
       // use withStats instead of allFiles so the `stats` column is already parsed
       val filteredFiles =
         DeltaLog.filterFileList(metadata.partitionSchema, withStats, partitionFilters)
@@ -1253,7 +1284,36 @@ trait DataSkippingReaderBase
     }
     val files = convertDataFrameToAddFiles(df)
     val sizeInBytesByPartitionFilters = files.map(_.size).sum
-    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), None, Some(files.size))
+    // Compute row count if we have stats available and forceCollectRowCount is enabled
+    val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+      sumRowCounts(files)
+    } else {
+      (None, None)
+    }
+    files.toSeq -> DataSize(Some(sizeInBytesByPartitionFilters), rowCount, Some(files.size),
+      logicalRowCount)
+  }
+
+  /**
+   * Sums up the numPhysicalRecords and numLogicalRecords from the given AddFile objects.
+   * Returns (None, None) if any file is missing physical record stats.
+   * Returns (Some(physical), None) if any file is missing logical record stats.
+   */
+  private def sumRowCounts(files: Seq[AddFile]): (Option[Long], Option[Long]) = {
+    var physicalRows = 0L
+    var logicalRows = 0L
+    var physicalMissing = false
+    var logicalMissing = false
+    files.foreach { file =>
+      physicalMissing = physicalMissing || file.numPhysicalRecords.isEmpty
+      logicalMissing = logicalMissing || file.numLogicalRecords.isEmpty
+      physicalRows += file.numPhysicalRecords.getOrElse(0L)
+      logicalRows += file.numLogicalRecords.getOrElse(0L)
+    }
+    (
+      if (physicalMissing) None else Some(physicalRows),
+      if (logicalMissing) None else Some(logicalRows)
+    )
   }
 
   /**
@@ -1310,13 +1370,24 @@ trait DataSkippingReaderBase
     if (filters == Seq(TrueLiteral) || filters.isEmpty || schema.isEmpty) {
       recordDeltaOperation(deltaLog, "delta.skipping.none") {
         // When there are no filters we can just return allFiles with no extra processing
+        val forceCollectRowCount =
+          spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_ALWAYS_COLLECT_STATS)
+        val shouldCollectStats = keepNumRecords || forceCollectRowCount
+        lazy val files = getAllFiles(shouldCollectStats)
+        // Compute row count if forceCollectRowCount is enabled
+        val (rowCount, logicalRowCount) = if (forceCollectRowCount) {
+          sumRowCounts(files)
+        } else {
+          (None, None)
+        }
         val dataSize = DataSize(
           bytesCompressed = sizeInBytesIfKnown,
-          rows = None,
-          files = numOfFilesIfKnown)
+          rows = rowCount,
+          files = numOfFilesIfKnown,
+          logicalRows = logicalRowCount)
         return DeltaScan(
           version = version,
-          files = getAllFiles(keepNumRecords),
+          files = files,
           total = dataSize,
           partition = dataSize,
           scanned = dataSize)(

@@ -18,6 +18,7 @@ package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
+import org.apache.spark.SparkThrowable
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types._
@@ -48,6 +49,28 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
     checkAllTestCasesImplemented(ignoredTestCases)
   }
 
+  for (enableAutoMergeSQLConf <- BOOLEAN_DOMAIN) {
+    val testMsg = s"enableAutoMergeSQLConf=$enableAutoMergeSQLConf"
+    testInserts("WITH SCHEMA EVOLUTION or .option always take precedence over the SQL Conf, " +
+        testMsg)(
+      initialData = TestData("a int, s struct <x: int>", Seq("""{ "a": 1, "s": { "x": 2 } }""")),
+      partitionBy = Seq("a"),
+      overwriteWhere = "a" -> 1,
+      insertData = TestData("a int, s struct <x: int, y: int>",
+        Seq("""{ "a": 1, "s": { "x": 4, "y": 5 } }""")),
+      expectedResult = ExpectedResult.Success(
+        expected = new StructType()
+          .add("a", IntegerType)
+          .add("s", new StructType()
+            .add("x", IntegerType)
+            .add("y", IntegerType)
+          )),
+      confs = Seq(
+        DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> enableAutoMergeSQLConf.toString),
+      withSchemaEvolution = true
+    )
+  }
+
   for (schemaEvolution <- BOOLEAN_DOMAIN) {
     // We allow adding new top-level columns with schema evolution for all inserts.
     testInserts(s"insert with extra top-level column, schemaEvolution=$schemaEvolution")(
@@ -71,13 +94,12 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         SQLInsertColList(SaveMode.Overwrite),
         SQLInsertOverwritePartitionColList
       ),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
 
-    // Adding new top-level columns with schema evolution is allowed for all inserts except SQL
-    // inserts by name, but dataframe inserts by name don't support implicit casting and will fail
-    // due to the type mismatch.
+    // Adding new top-level columns with schema evolution is allowed for all inserts, but dataframe
+    // inserts by name don't support implicit casting and will fail due to the type mismatch.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
@@ -96,7 +118,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         })
       },
       includeInserts = insertsByPosition + StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with extra top-level column and implicit cast," +
@@ -115,25 +137,35 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
+    // SQL inserts by name fail with a different error in the analysis when there's an extra column
+    // and schema evolution is disabled.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
       partitionBy = Seq("a"),
       overwriteWhere = "a" -> 1,
       insertData = TestData("a int, b long, c int", Seq("""{ "a": 1, "b": 4, "c": 5  }""")),
-      expectedResult = ExpectedResult.Failure(ex => {
-        checkError(
-          ex,
-          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
-          parameters = Map(
-            "tableName" -> s"`$catalogName`.`default`.`target`",
-            "tableColumns" -> "`a`, `b`",
-            "dataColumns" -> "`a`, `b`, `c`"
-          ))
-      }),
+      expectedResult = if (schemaEvolution) {
+        ExpectedResult.Success(
+          expected = new StructType()
+            .add("a", IntegerType)
+            .add("b", IntegerType)
+            .add("c", IntegerType))
+      } else {
+        ExpectedResult.Failure(ex => {
+          checkError(
+            ex,
+            "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+            parameters = Map(
+              "tableName" -> s"`$catalogName`.`default`.`target`",
+              "tableColumns" -> "`a`, `b`",
+              "dataColumns" -> "`a`, `b`, `c`"
+            ))
+        })
+      },
       includeInserts = insertsSQL.intersect(insertsByName) -- Set(
         // It's not possible to specify a column that doesn't exist in the target using SQL with an
         // explicit column list.
@@ -141,7 +173,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         SQLInsertColList(SaveMode.Overwrite),
         SQLInsertOverwritePartitionColList
       ),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     // We allow adding new nested struct fields for all inserts, including SQL inserts by name.
@@ -164,7 +196,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
   }
 
@@ -190,10 +222,10 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
       expectedResult = ExpectedResult.Success(expected = expectedAnswer),
       includeInserts = inserts,
       confs = Seq(
-        DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
         DeltaSQLConf.DELTA_INSERT_PRESERVE_NULL_SOURCE_STRUCTS.key
           -> preserveNullSourceStructs.toString
-      )
+      ),
+      withSchemaEvolution = true
     )
   }
 
@@ -228,7 +260,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
         SQLInsertColList(SaveMode.Overwrite),
         SQLInsertOverwritePartitionColList
       ),
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
 
     testInserts(s"insert with extra nested field and implicit cast," +
@@ -248,7 +280,31 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           ))
       }),
       includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
-      confs = Seq(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> schemaEvolution.toString)
+      withSchemaEvolution = schemaEvolution
     )
+  }
+
+  // When DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED is disabled, SQL INSERT BY NAME with extra
+  // top-level columns should fail even when schema evolution is enabled.
+  test("insert by name with extra top-level column and implicit cast fails " +
+      "when byNameSchemaEvolution is disabled") {
+    withTable("target") {
+      sql("CREATE TABLE target (a INT, b INT) USING DELTA")
+      withSQLConf(
+          DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true",
+          DeltaSQLConf.DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED.key -> "false") {
+        val ex = intercept[SparkThrowable] {
+          sql("INSERT INTO target BY NAME SELECT 1 AS a, 2L AS b, 3 AS c")
+        }
+        checkError(
+          ex,
+          "INSERT_COLUMN_ARITY_MISMATCH.TOO_MANY_DATA_COLUMNS",
+          parameters = Map(
+            "tableName" -> s"`$catalogName`.`default`.`target`",
+            "tableColumns" -> "`a`, `b`",
+            "dataColumns" -> "`a`, `b`, `c`"
+          ))
+      }
+    }
   }
 }

@@ -153,6 +153,15 @@ public final class DeltaErrors {
     return new KernelException(message);
   }
 
+  public static KernelException resolvedEndVersionAfterMaxCatalogVersion(
+      String tablePath, long resolvedEndVersion, long maxCatalogVersion) {
+    String message =
+        String.format(
+            "%s: Resolved end version to %s which is after max catalog version %s",
+            tablePath, resolvedEndVersion, maxCatalogVersion);
+    return new KernelException(message);
+  }
+
   /* ------------------------ PROTOCOL EXCEPTIONS ----------------------------- */
   public static UnsupportedProtocolVersionException unsupportedReaderProtocol(
       String tablePath, int tableReaderVersion) {
@@ -525,6 +534,17 @@ public final class DeltaErrors {
         String.format(
             "Cannot modify append-only table. Table `%s` has configuration %s=true.",
             tablePath, TableConfig.APPEND_ONLY_ENABLED.getKey()));
+  }
+
+  public static KernelException cdfMixedAddRemoveNotSupported(String tablePath) {
+    return new KernelException(
+        String.format(
+            "Cannot add and remove data in the same transaction when Change Data Feed is enabled "
+                + "on table %s. This would require writing CDC files for DML operations, which is "
+                + "not yet supported by Delta Kernel. You can perform add-only operations (like "
+                + "INSERT or CREATE TABLE), remove-only operations (like DELETE), or mixed "
+                + "operations with dataChange=false (like OPTIMIZE).",
+            tablePath));
   }
 
   public static KernelException rowTrackingMetadataMissingInFile(String entry, String filePath) {

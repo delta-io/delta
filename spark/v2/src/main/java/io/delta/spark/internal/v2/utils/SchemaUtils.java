@@ -35,6 +35,7 @@ import io.delta.kernel.types.StructField;
 import io.delta.kernel.types.StructType;
 import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
+import io.delta.kernel.types.VariantType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -113,8 +114,9 @@ public class SchemaUtils {
           kernelMap.isValueContainsNull());
     } else if (kernelDataType instanceof StructType) {
       return convertKernelSchemaToSparkSchema((StructType) kernelDataType);
+    } else if (kernelDataType instanceof VariantType) {
+      return DataTypes.VariantType;
     } else {
-      // TODO: add variant type, this requires upgrading spark version dependency to 4.0
       throw new IllegalArgumentException("unsupported data type " + kernelDataType);
     }
   }
@@ -189,6 +191,8 @@ public class SchemaUtils {
     } else if (sparkDataType instanceof org.apache.spark.sql.types.StructType) {
       return convertSparkSchemaToKernelSchema(
           (org.apache.spark.sql.types.StructType) sparkDataType);
+    } else if (sparkDataType instanceof org.apache.spark.sql.types.VariantType) {
+      return VariantType.VARIANT;
     } else {
       throw new IllegalArgumentException("unsupported data type " + sparkDataType);
     }

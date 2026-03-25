@@ -1,5 +1,13 @@
 name: "Delta Iceberg Latest"
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
 jobs:
   test:
     name: "DIL: Scala ${{ matrix.scala }}"
@@ -11,23 +19,14 @@ jobs:
     env:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
-      - uses: actions/checkout@v3
-        # TODO we can make this more selective
-      - uses: technote-space/get-diff-action@v4
-        id: git-diff
-        with:
-          PATTERNS: |
-            **
-            .github/workflows/**
-            !kernel/**
-            !connectors/**
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
           distribution: "zulu"
           java-version: "17"
       - name: Cache Scala, SBT
-        uses: actions/cache@v3
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
         with:
           path: |
             ~/.sbt
@@ -37,7 +36,7 @@ jobs:
           # the above directories when we use the key for the first time. After that, each run will
           # just use the cache. The cache is immutable so we need to use a new key when trying to
           # cache new stuff.
-          key: delta-sbt-cache-spark3.2-scala${{ matrix.scala }}
+          key: delta-sbt-cache-spark4.0-scala${{ matrix.scala }}
       - name: Install Job dependencies
         run: |
           sudo apt-get update
@@ -56,9 +55,7 @@ jobs:
           pyenv install 3.8.18
           pyenv global system 3.8.18
           pipenv --python 3.8.18 install
-        if: steps.git-diff.outputs.diff
       - name: Run Scala/Java and Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
-          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group iceberg
-        if: steps.git-diff.outputs.diff
+          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group iceberg --spark-version 4.0

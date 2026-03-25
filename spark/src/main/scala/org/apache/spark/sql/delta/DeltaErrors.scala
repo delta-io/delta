@@ -170,6 +170,29 @@ trait DeltaErrorsBase
     )
   }
 
+  def initialSnapshotTooLargeForStreaming(
+      snapshotVersion: Long,
+      numFiles: Long,
+      maxFiles: Int,
+      tablePath: String): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE",
+      messageParameters = Array(
+        tablePath,
+        snapshotVersion.toString,
+        numFiles.toString,
+        maxFiles.toString,
+        s"""To fix this issue, choose one of:
+           |
+           |  1. Increase spark.databricks.delta.streaming.initialSnapshotMaxFiles
+           |     (current: $maxFiles)
+           |
+           |  2. Use 'startingVersion' option to skip the initial snapshot and start
+           |     from a specific version""".stripMargin
+      )
+    )
+  }
+
   def deltaSourceIgnoreChangesError(
       version: Long,
       removedFile: String,
@@ -530,6 +553,15 @@ trait DeltaErrorsBase
       pos = 0)
   }
 
+  /** Throwable used when a non-constant expression is used as a version/timestamp arg in CDC. */
+  def cdcNonConstantArgument(
+      fnName: String, paramName: String, position: Int, expr: Expression): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CDC_NON_CONSTANT_ARGUMENT",
+      messageParameters = Array(s"`$paramName`", position.toString, s"`$fnName`", expr.sql)
+    )
+  }
+
   /** Throwable used when a null 'start' or 'end' is provided in CDC reads. */
   def nullRangeBoundaryInCDCRead(): Throwable = {
     new DeltaIllegalArgumentException(errorClass = "DELTA_CDC_READ_NULL_RANGE_BOUNDARY")
@@ -549,9 +581,9 @@ trait DeltaErrorsBase
    * Throwable used for invalid CDC 'start' and 'latest' options, where latest < start
    */
   def startVersionAfterLatestVersion(start: Long, latest: Long): Throwable = {
-    new IllegalArgumentException(
-      s"Provided Start version($start) for reading change data is invalid. " +
-        s"Start version cannot be greater than the latest version of the table($latest).")
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_CDC_START_VERSION_AFTER_LATEST",
+      messageParameters = Array(start.toString, latest.toString))
   }
 
   def setTransactionVersionConflict(appId: String, version1: Long, version2: Long): Throwable = {
@@ -1053,6 +1085,20 @@ trait DeltaErrorsBase
     )
   }
 
+  def unsupportedPartitionColumnChange(
+      operation: String,
+      oldPartitionColumns: Seq[String],
+      newPartitionColumns: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_UNSUPPORTED_PARTITION_COLUMN_CHANGE",
+      messageParameters = Array(
+        operation,
+        oldPartitionColumns.mkString(", "),
+        newPartitionColumns.mkString(", ")
+      )
+    )
+  }
+
   def nonPartitionColumnAbsentException(colsDropped: Boolean): Throwable = {
     val msg = if (colsDropped) {
       " Columns which are of NullType have been dropped."
@@ -1197,6 +1243,14 @@ trait DeltaErrorsBase
         version.get.toString
       ))
     }
+  }
+
+  def streamingSchemaMismatchOnRestart(
+      querySchema: StructType,
+      tableSchema: StructType): RuntimeException = {
+    new DeltaIllegalStateException(
+      errorClass = "DELTA_STREAMING_SCHEMA_MISMATCH_ON_RESTART",
+      messageParameters = Array(formatSchema(querySchema), formatSchema(tableSchema)))
   }
 
   def streamWriteNullTypeException: Throwable = {
@@ -3167,7 +3221,8 @@ trait DeltaErrorsBase
       spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
-      detectedDuringStreaming: Boolean): Throwable = {
+      detectedDuringStreaming: Boolean,
+      isV2DataSource: Boolean = false): Throwable = {
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
@@ -3177,7 +3232,8 @@ trait DeltaErrorsBase
       generateDocsLinkOption(spark, docLink).getOrElse("-"),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
-        "detectedDuringStreaming" -> detectedDuringStreaming.toString
+        "detectedDuringStreaming" -> detectedDuringStreaming.toString,
+        "isV2DataSource" -> isV2DataSource.toString
       ))
   }
 
@@ -3486,8 +3542,8 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UniversalFormat.ICEBERG_FORMAT,
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. To enable IcebergCompatV2, set the table property " +
-        "'delta.enableIcebergCompatV2' = 'true'."
+        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
+        "IcebergCompatV2."
       )
     )
   }
@@ -3565,6 +3621,7 @@ trait DeltaErrorsBase
     new DeltaIllegalStateException(
       errorClass = "DELTA_ICEBERG_COMPAT_VIOLATION.REWRITE_DATA_FAILED",
       messageParameters = Array(
+        icebergCompatVersion.toString,
         icebergCompatVersion.toString,
         icebergCompatVersion.toString
       ),
@@ -3865,10 +3922,10 @@ trait DeltaErrorsBase
     case other => other.simpleString
   }
 
-  def deltaCannotVacuumManagedTable(): Throwable = {
+  def operationBlockedOnCatalogManagedTable(operation: String): Throwable = {
     new DeltaUnsupportedOperationException(
-      errorClass = "DELTA_UNSUPPORTED_VACUUM_ON_MANAGED_TABLE",
-      messageParameters = Array.empty)
+      errorClass = "DELTA_UNSUPPORTED_CATALOG_MANAGED_TABLE_OPERATION",
+      messageParameters = Array(operation))
   }
 
   def deltaCannotCreateCatalogManagedTable(): Throwable = {
@@ -4303,7 +4360,9 @@ class DeltaStreamingNonAdditiveSchemaIncompatibleException(
     val enableNonAdditiveSchemaEvolution: Boolean = false,
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
-    errorClass = if (enableNonAdditiveSchemaEvolution) {
+    errorClass = if (additionalProperties.getOrElse("isV2DataSource", "false") == "true") {
+      "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2"
+    } else if (enableNonAdditiveSchemaEvolution) {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"
     } else {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE"

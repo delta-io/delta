@@ -29,6 +29,7 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
+import io.delta.kernel.unitycatalog.adapters.UniformAdapter
 import io.delta.kernel.utils.{CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
 import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
@@ -237,6 +238,99 @@ class UCCatalogManagedCommitterSuite
       assert(latestProtocol.getReaderFeatures === protocolUpgrade.getReaderFeatures)
       assert(latestProtocol.getWriterFeatures === protocolUpgrade.getWriterFeatures)
       assert(latestMetadata.getConfiguration === metadataUpgrade.getConfiguration)
+    }
+  }
+
+  test("CATALOG_WRITE: Iceberg metadata is extracted and passed to UC client") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      val icebergProperties = Map(
+        UniformAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v1.json",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "1",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => icebergProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
+      val icebergOpt = updatedTableData.getCurrentIcebergOpt
+      assert(icebergOpt.isDefined)
+      val iceberg = icebergOpt.get
+      assert(iceberg.getMetadataLocation === "s3://bucket/table/metadata/v1.json")
+      assert(iceberg.getConvertedDeltaVersion === 1L)
+      assert(iceberg.getConvertedDeltaTimestamp === "2025-01-04T03:13:11.423")
+    }
+  }
+
+  test("CATALOG_WRITE: empty committer properties result in no Iceberg metadata") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      val emptyProperties = Map.empty[String, String].asJava
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => emptyProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+      committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+
+      // ===== THEN =====
+      val updatedTableData = ucClient.getTablesCopy.get(testUcTableId).get
+      val icebergOpt = updatedTableData.getCurrentIcebergOpt
+      assert(icebergOpt.isEmpty)
+    }
+  }
+
+  test("CATALOG_WRITE: throws exception when convertedDeltaVersion " +
+    "does not match commit version") {
+    withTempDirAndAllDeltaSubDirs { case (tablePath, logPath) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      ucClient.insertTableDataAfterCreate(testUcTableId)
+      val committer = new UCCatalogManagedCommitter(ucClient, testUcTableId, tablePath)
+
+      // ===== WHEN =====
+      // Commit version is 1, but convertedDeltaVersion is 2 (mismatch)
+      val icebergProperties = Map(
+        UniformAdapter.ICEBERG_METADATA_LOCATION_KEY -> "s3://bucket/table/metadata/v2.json",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_VERSION_KEY -> "2",
+        UniformAdapter.ICEBERG_CONVERTED_DELTA_TIMESTAMP_KEY -> "2025-01-04T03:13:11.423").asJava
+
+      val commitMetadata = createCommitMetadata(
+        version = 1,
+        logPath = logPath,
+        committerProperties = () => icebergProperties,
+        readPandMOpt = Optional.of(
+          new KernelTuple2[Protocol, Metadata](
+            protocolWithCatalogManagedSupport,
+            basicPartitionedMetadata)))
+
+      // ===== THEN =====
+      val exception = intercept[IllegalStateException] {
+        committer.commit(defaultEngine, emptyActionsIterator, commitMetadata)
+      }
+      assert(exception.getMessage.contains(
+        "Uniform convertedDeltaVersion (2) must match commit version (1)"))
     }
   }
 

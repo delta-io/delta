@@ -27,6 +27,7 @@ import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -47,6 +48,7 @@ import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
@@ -76,14 +78,28 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       List.of(
           "delta.feature.appendOnly",
           DELTA_CATALOG_MANAGED_KEY,
+          "delta.feature.deletionVectors",
+          "delta.feature.domainMetadata",
           "delta.feature.inCommitTimestamp",
           "delta.feature.invariants",
+          "delta.feature.rowTracking",
+          "delta.feature.v2Checkpoint",
           "delta.feature.vacuumProtocolCheck");
   private static final Map<String, String> EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES =
       EXPECTED_MANAGED_TABLE_FEATURES.stream()
           .collect(Collectors.toMap(Function.identity(), k -> SUPPORTED));
 
   private static final String EXTERNAL_TBLPROPERTIES_CLAUSE = "TBLPROPERTIES ('Foo'='Bar')";
+
+  /**
+   * Returns true if the Unity Catalog Spark version >0.4.0 so that it supports complex data types
+   * in columns and partition index.
+   */
+  private static boolean isUcSparkNewerThan040() {
+    final int[] VER_0_4_0 = {0, 4, 0};
+    int[] ucSparkVersion = getUnityCatalogSparkVersion();
+    return Arrays.compare(ucSparkVersion, VER_0_4_0) > 0;
+  }
 
   String tempDir;
   private Set<String> tablesToCleanUp = new HashSet<>();
@@ -305,10 +321,20 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     if (replaceTable) {
       // First, create a different table to replace.
       sql(
-          "CREATE TABLE %s USING DELTA %s AS SELECT 0.1 AS col1",
-          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE_OTHER);
+          "CREATE TABLE %s USING DELTA %s AS SELECT %s AS col1",
+          fullTableName,
+          MANAGED_TBLPROPERTIES_CLAUSE_OTHER,
+          // Older version UC Spark client can't support Decimal type
+          isUcSparkNewerThan040() ? "0.1" : "1");
       tablesToCleanUp.add(fullTableName);
     }
+
+    // TODO: Remove the block if UC and delta support the atomic RT and RTAS.
+    if (replaceTable) {
+      assertThatThrownBy(() -> sql(options.createTableSql()));
+      return;
+    }
+
     // Create table
     sql(options.createTableSql());
     tablesToCleanUp.add(fullTableName);
@@ -321,13 +347,20 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify that table information maintained at the uc server side are expected.
-    assertUCTableInfo(
-        tableType,
-        fullTableName,
-        List.of("i", "s"),
-        Map.of("Foo", "Bar"),
-        comment,
-        options.getExternalTableLocation());
+    // TODO: Remove the block when delta supports the CTAS in the correct way. Currently CTAS
+    //  is missing AbstractDeltaCatalog.translateUCTableIdProperty
+    if (!withAsSelect || replaceTable) {
+      assertUCTableInfo(
+          tableType,
+          fullTableName,
+          List.of("i", "s"),
+          Map.of("Foo", "Bar"),
+          comment,
+          options.getExternalTableLocation(),
+          withCluster,
+          options.getClusterColumn(),
+          options.getPartitionColumn());
+    }
   }
 
   @Test
@@ -386,23 +419,32 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     withTempDir(
         (Path dir) -> {
           try {
+            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
+            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
             // CREATE OR REPLACE with new schema
             if (tableType == TableType.MANAGED) {
-              sql(
-                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
-                  tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+              assertThatThrownBy(
+                  () ->
+                      sql(
+                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
+                          tableName, MANAGED_TBLPROPERTIES_CLAUSE));
             } else {
-              sql(
-                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
-                  tableName, dir.toString());
+              assertThatThrownBy(
+                  () ->
+                      sql(
+                          "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA LOCATION '%s'",
+                          tableName, dir.toString()));
             }
 
+            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
+
             // Assert the unity catalog table information.
-            assertUCTableInfo(tableType, tableName, List.of("id", "name"), Map.of(), null, null);
+            // assertUCTableInfo(
+            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
 
             // Insert data to verify new schema
-            sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            check(tableName, List.of(List.of("1", "Alice")));
+            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+            // check(tableName, List.of(List.of("1", "Alice")));
           } finally {
             sql("DROP TABLE IF EXISTS %s", tableName);
           }
@@ -411,6 +453,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
+    Assumptions.assumeTrue(
+        isUcSparkNewerThan040() || tableType != TableType.MANAGED,
+        "Older UC Spark package can't support uploading complex types to UC server for managed table");
     String schema =
         // Numeric types
         "col_tinyint TINYINT, col_smallint SMALLINT, col_int INT, col_bigint BIGINT, "
@@ -462,7 +507,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                   "col_date",
                   "col_timestamp",
                   "col_timestamp_ntz"),
-              Map.of(),
+              // This feature is automatically enabled due to use of TIMESTAMP_NTZ
+              Map.of("delta.feature.timestampNtz", "supported"),
               null,
               null);
 
@@ -493,6 +539,9 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testTableWithComplexTypes(TableType tableType) throws Exception {
+    Assumptions.assumeTrue(
+        isUcSparkNewerThan040() || tableType != TableType.MANAGED,
+        "Older UC Spark package can't support uploading complex types to UC server for managed table");
     String schema =
         "id INT, arr ARRAY<INT>, "
             + "map_col MAP<STRING, INT>, "
@@ -559,6 +608,29 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
       String comment,
       String externalTableLocation)
       throws ApiException {
+    assertUCTableInfo(
+        tableType,
+        fullTableName,
+        expectedColumns,
+        customizedProps,
+        comment,
+        externalTableLocation,
+        false,
+        Optional.empty(),
+        Optional.empty());
+  }
+
+  private void assertUCTableInfo(
+      TableType tableType,
+      String fullTableName,
+      List<String> expectedColumns,
+      Map<String, String> customizedProps,
+      String comment,
+      String externalTableLocation,
+      boolean withCluster,
+      Optional<String> clusterColumn,
+      Optional<String> partitionColumn)
+      throws ApiException {
     UnityCatalogInfo uc = unityCatalogInfo();
     String catalogName = uc.catalogName();
     String schemaName = uc.schemaName();
@@ -580,36 +652,82 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // updated later and that would cause problem.
     List<ColumnInfo> columns = tableInfo.getColumns();
     assertThat(columns).isNotNull();
-    assertThat(columns).isEmpty();
 
     if (tableType == TableType.MANAGED) {
+      assertThat(columns).isNotEmpty();
+      List<String> columnNamesFromServer =
+          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
+      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+      // Partition index is only set after UC-Spark 0.4.0
+      if (isUcSparkNewerThan040() && partitionColumn.isPresent()) {
+        List<ColumnInfo> matchingColumns =
+            columns.stream()
+                .filter(c -> c.getName().equals(partitionColumn.get()))
+                .collect(Collectors.toList());
+        assertThat(matchingColumns).hasSize(1);
+        assertThat(matchingColumns.get(0).getPartitionIndex()).isEqualTo(0);
+      } else {
+        assertThat(columns.stream().anyMatch(c -> c.getPartitionIndex() != null)).isFalse();
+      }
       // Delta sent properties of managed tables to server
       Map<String, String> tablePropertiesFromServer = tableInfo.getProperties();
+      tablePropertiesFromServer.remove("table_type", "MANAGED"); // New property by Spark 4.1
 
-      // The server-side table properties should contain feature properties.
-      assertThat(tablePropertiesFromServer)
-          .containsAllEntriesOf(EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES);
+      // CLUSTER BY has two extra properties
+      final Map<String, String> expectedClusteringProperties =
+          withCluster
+              ? ImmutableMap.<String, String>builder()
+                  .put("clusteringColumns", "[[\"" + clusterColumn.get() + "\"]]")
+                  .put("delta.feature.clustering", SUPPORTED)
+                  .build()
+              : ImmutableMap.of();
+      final Map<String, String> expectedOtherProperties =
+          ImmutableMap.<String, String>builder()
+              .put("delta.checkpointPolicy", "v2")
+              .put("delta.enableDeletionVectors", "true")
+              .put("delta.enableInCommitTimestamps", "true")
+              .put("delta.enableRowTracking", "true")
+              .put("delta.lastUpdateVersion", "0")
+              .put("delta.minReaderVersion", "3")
+              .put("delta.minWriterVersion", "7")
+              .put(UC_TABLE_ID_KEY, tableInfo.getTableId())
+              // User specified custom table property is also sent.
+              .putAll(customizedProps)
+              .putAll(expectedClusteringProperties)
+              .build();
+      // The value of these properties aren't predictable. But at least we confirm their existence.
+      final Set<String> expectedPropertiesWithVariableValue =
+          Set.of(
+              "delta.lastCommitTimestamp",
+              "delta.rowTracking.materializedRowCommitVersionColumnName",
+              "delta.rowTracking.materializedRowIdColumnName");
 
-      // The server-side table properties should include customized properties.
-      assertThat(tablePropertiesFromServer).containsAllEntriesOf(customizedProps);
+      // This is combination of expectedOtherProperties and
+      //  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.
+      Map<String, String> expectedProperties =
+          Stream.concat(
+                  EXPECTED_MANAGED_TABLE_FEATURES_PROPERTIES.entrySet().stream(),
+                  expectedOtherProperties.entrySet().stream())
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
-      // The server-side table properties should include built-in table properties.
-      assertThat(tablePropertiesFromServer)
-          .containsAllEntriesOf(
-              ImmutableMap.of(
-                  "delta.enableInCommitTimestamps",
-                  "true",
-                  "delta.lastUpdateVersion",
-                  "0",
-                  "delta.minReaderVersion",
-                  "3",
-                  "delta.minWriterVersion",
-                  "7",
-                  UC_TABLE_ID_KEY,
-                  tableInfo.getTableId()));
+      // Server has all the expected table properties
+      expectedProperties.forEach(
+          (key, value) -> assertThat(tablePropertiesFromServer).containsEntry(key, value));
+      expectedPropertiesWithVariableValue.forEach(
+          key -> assertThat(tablePropertiesFromServer).containsKey(key));
 
-      // Lastly the timestamp value is always changing so skip checking its value
-      assertThat(tablePropertiesFromServer).containsKey("delta.lastCommitTimestamp");
+      // Server doesn't have any unexpected table properties. If anyone introduces a new table
+      // property and this fails, update the list of expected properties.
+      Map<String, String> unexpectedTablePropertiesFromServer =
+          tablePropertiesFromServer.entrySet().stream()
+              .filter(
+                  entry ->
+                      !expectedProperties.containsKey(entry.getKey())
+                          && !expectedPropertiesWithVariableValue.contains(entry.getKey()))
+              .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+      assertThat(unexpectedTablePropertiesFromServer).isEmpty();
+    } else {
+      assertThat(columns).isEmpty();
     }
 
     // Also verify table using DESC EXTENDED

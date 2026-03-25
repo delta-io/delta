@@ -21,7 +21,7 @@ import java.util.Optional
 import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
-import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CoordinatedCommitsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, OptimisticTransaction, Snapshot, SnapshotDescriptor}
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, CheckpointPolicy, CoordinatedCommitsTableFeature, DeletionVectorsTableFeature, DeltaConfig, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, NameMapping, OptimisticTransaction, RowTrackingFeature, Snapshot, SnapshotDescriptor, TableFeature, V2CheckpointTableFeature}
 import org.apache.spark.sql.delta.actions.{Metadata, Protocol, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.commands.CloneTableCommand
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
@@ -166,7 +166,7 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case spark.sessionState.analyzer.CatalogAndIdentifier(catalog, _) =>
         if (catalog.getClass.getName == UCCommitCoordinatorBuilder.UNITY_CATALOG_CONNECTOR_CLASS) {
           // UC is the current commit coordinator.
-          Some("unity-catalog")
+          Some(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
         } else {
           // Other catalog (e.g., `spark_catalog`) is the commit coordinator.
           Some(catalog.name)
@@ -174,6 +174,76 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       case _ =>
         None
     }
+  }
+
+  /**
+   * The "Quality of Life" table features that will be enabled automatically
+   * when creating CatalogOwned tables.
+   * Note that we also include the properties (i.e., DeltaConfig and target value)
+   * used to determine whether the table features and the corresponding
+   * properties/metadata have been enabled or not.
+   */
+  val QOL_TABLE_FEATURES_AND_PROPERTIES: Seq[(TableFeature, DeltaConfig[_], String)] =
+    qolTableFeatureAndProperties
+
+  def qolTableFeatureAndProperties: Seq[(TableFeature, DeltaConfig[_], String)] =
+    Seq(
+      (DeletionVectorsTableFeature, DeltaConfigs.ENABLE_DELETION_VECTORS_CREATION, "true"),
+      (V2CheckpointTableFeature, DeltaConfigs.CHECKPOINT_POLICY, CheckpointPolicy.V2.name),
+      (RowTrackingFeature, DeltaConfigs.ROW_TRACKING_ENABLED, "true")
+    )
+
+  /**
+   * Return true if we should enable CatalogOwned either via default spark
+   * session configuration during creating a new table,
+   * or via the explicit table property overrides.
+   */
+  def shouldEnableCatalogOwned(
+      spark: SparkSession,
+      propertyOverrides: Map[String, String],
+      isCreatingNew: Boolean = true): Boolean = {
+    // Check explicit property overrides when creating a new or upgrading an existing table.
+    val isExplicitlyEnablingCO = TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(
+      configs = propertyOverrides).contains(CatalogOwnedTableFeature)
+
+    // Check default spark session configuration only when creating a new table.
+    val isEnablingCOByDefault =
+      isCreatingNew && CatalogOwnedTableUtils.defaultCatalogOwnedEnabled(spark)
+
+    isExplicitlyEnablingCO || isEnablingCOByDefault
+  }
+
+  /**
+   * Checks if a configuration is already set in metadata or Spark defaults.
+   * Ensures we don't override user preferences.
+   */
+  private def isAlreadyConfigured(
+      config: DeltaConfig[_],
+      configuration: Map[String, String],
+      spark: SparkSession): Boolean = {
+    configuration.contains(config.key) ||
+      spark.sessionState.conf.contains(config.defaultTablePropertyKey)
+  }
+
+  /**
+   * Updates table metadata with appropriate QoL features for CatalogManaged tables.
+   *
+   * Main entry point for QoL feature enablement during table creation.
+   * See [[getQoLConfigsToAdd]] for the logic that determines which features are added.
+   *
+   * @param spark SparkSession for configuration
+   * @param metadata Table metadata to update
+   * @return Updated metadata with QoL features
+   */
+  def updateMetadataForQoLFeatures(
+      spark: SparkSession,
+      metadata: Metadata): Metadata = {
+    val qoLConfigsToAdd = QOL_TABLE_FEATURES_AND_PROPERTIES.collect {
+      case (feature, config, targetValue) if
+          !isAlreadyConfigured(config, metadata.configuration, spark) =>
+        config.key -> targetValue
+    }.toMap
+    metadata.copy(configuration = metadata.configuration ++ qoLConfigsToAdd)
   }
 
   val ICT_TABLE_PROPERTY_CONFS = Seq(
@@ -232,18 +302,25 @@ object CatalogOwnedTableUtils extends DeltaLogging {
   }
 
   /**
-   * Validates the Catalog-Owned properties in explicit command overrides and default
+   * Validates the CatalogManaged properties in explicit command overrides and default
    * SparkSession properties for `CreateDeltaTableCommand`.
+   *
+   * @param spark The SparkSession.
+   * @param tableExists Whether the table already exists.
+   * @param query The query to be executed (e.g., CloneTableCommand).
+   * @param catalogTableProperties The table properties from the catalog table.
+   * @param existingTableSnapshotOpt The snapshot of the existing table, if it exists.
    */
   def validatePropertiesForCreateDeltaTableCommand(
       spark: SparkSession,
       tableExists: Boolean,
       query: Option[LogicalPlan],
-      catalogTableProperties: Map[String, String]): Unit = {
+      catalogTableProperties: Map[String, String],
+      existingTableSnapshotOpt: Option[Snapshot] = None): Unit = {
     val (command, propertyOverrides) = query match {
       // For CLONE, we cannot use the properties from the catalog table, because they are already
       // the result of merging the source table properties with the overrides, but we do not
-      // consider the source table properties for Catalog-Owned tables.
+      // consider the source table properties for CatalogManaged tables.
       case Some(cmd: CloneTableCommand) =>
         (if (tableExists) "REPLACE with CLONE" else "CREATE with CLONE",
           cmd.tablePropertyOverrides)
@@ -256,13 +333,28 @@ object CatalogOwnedTableUtils extends DeltaLogging {
       assert(command == "REPLACE with CLONE" || command == "REPLACE",
         s"Unexpected command: $command")
       validateUCTableIdNotPresent(property = propertyOverrides)
-      // Blocks explicit enablements of Catalog-Owned through REPLACE commands.
-      // We *ignore* default enablement of Catalog-Owned for REPLACE commands.
-      if (TableFeatureProtocolUtils.getSupportedFeaturesFromTableConfigs(propertyOverrides)
-          .contains(CatalogOwnedTableFeature)) {
+
+      val isSpecifyingCatalogManaged = TableFeatureProtocolUtils
+        .getSupportedFeaturesFromTableConfigs(propertyOverrides)
+        .contains(CatalogOwnedTableFeature)
+      val existingTableIsCatalogManaged = existingTableSnapshotOpt.exists(_.isCatalogOwned)
+
+      // Allow specifying CatalogManaged in REPLACE TABLE if the existing table is already
+      // CatalogManaged. In this case, the commit coordinator properties are treated as a no-op.
+      // Block if trying to enable CatalogManaged on a non-CatalogManaged table via REPLACE.
+      // Users should either upgrade the existing table or create a fresh CatalogManaged table.
+      //
+      // Note: We intentionally use `&& !` instead of `!=` here. Using `!=` would also block the
+      // case where a CatalogManaged table is replaced without explicitly specifying CatalogManaged
+      // properties, which would hurt customer experience by forcing them to always specify CC
+      // properties on every REPLACE command. Since the existing Delta behavior already preserves
+      // the CatalogManaged status during REPLACE (the table type won't change), there's no need
+      // to block that case.
+      if (isSpecifyingCatalogManaged && !existingTableIsCatalogManaged) {
         throw new IllegalStateException(
-          "Specifying Catalog-Owned in REPLACE TABLE command is not supported. " +
-          "Please use CREATE TABLE command to create a Catalog-Owned table.")
+          "Specifying CatalogManaged in REPLACE TABLE command is not supported " +
+          "for tables that are not already CatalogManaged. " +
+          "Please either upgrade the existing table or create a fresh CatalogManaged table.")
       }
     }
   }
@@ -677,6 +769,18 @@ object CoordinatedCommitsUtils extends DeltaLogging {
    */
   def getExplicitICTConfigurations(properties: Map[String, String]): Map[String, String] = {
     properties.filter { case (k, _) => ICT_TABLE_PROPERTY_KEYS.contains(k) }
+  }
+
+  /**
+   * Extracts the explicit QoL configurations from the provided properties.
+   *
+   * These are preserved across catalog-managed REPLACE when the existing table already has the
+   * QoL defaults materialized in metadata, so a no-op REPLACE does not accidentally drop them
+   * while rebuilding the configuration map.
+   */
+  def getExplicitQoLConfigurations(properties: Map[String, String]): Map[String, String] = {
+    val qolKeys = CatalogOwnedTableUtils.QOL_TABLE_FEATURES_AND_PROPERTIES.map(_._2.key).toSet
+    properties.filter { case (k, _) => qolKeys.contains(k) }
   }
 
   /**

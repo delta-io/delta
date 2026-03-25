@@ -121,6 +121,23 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
 
   private void handlePlanRequest(HttpServletRequest req, HttpServletResponse resp)
       throws IOException {
+    // Track plan request count for testing retry behavior
+    IcebergRESTCatalogAdapterWithPlanSupport.incrementPlanRequestCount();
+
+    // Check if we should inject a failure for testing HTTP retry logic
+    int remainingFailures = IcebergRESTCatalogAdapterWithPlanSupport.getAndDecrementFailCount();
+    if (remainingFailures > 0) {
+      int failStatusCode = IcebergRESTCatalogAdapterWithPlanSupport.getPlanRequestFailStatusCode();
+      LOG.info("Injecting test failure: returning HTTP {} ({} failures remaining)",
+          failStatusCode, remainingFailures - 1);
+      resp.setStatus(failStatusCode);
+      resp.setContentType("application/json");
+      resp.getWriter().write(
+          "{\"error\": {\"message\": \"Injected test failure\", \"type\": \"TestError\", \"code\": "
+          + failStatusCode + "}}");
+      return;
+    }
+
     try {
       // Extract request components
       String path = req.getPathInfo();
@@ -159,7 +176,21 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
       // Write response
       if (response != null) {
         PrintWriter writer = resp.getWriter();
-        mapper.writeValue(writer, response);
+        
+        // Check if we need to inject test credentials
+        Map<String, String> testCredentials = 
+            IcebergRESTCatalogAdapterWithPlanSupport.getTestCredentials();
+        
+        if (testCredentials != null && !testCredentials.isEmpty()) {
+          // Inject storage-credentials into the response JSON
+          String responseJson = mapper.writeValueAsString(response);
+          String modifiedJson = injectStorageCredentials(responseJson, testCredentials);
+          writer.write(modifiedJson);
+        } else {
+          // No credentials to inject, write response as-is
+          mapper.writeValue(writer, response);
+        }
+        
         writer.flush();
       }
 
@@ -210,5 +241,36 @@ public class IcebergRESTServletWithPlanSupport extends RESTCatalogServlet {
   private String extractBody(HttpServletRequest req) throws IOException {
     BufferedReader reader = req.getReader();
     return reader.lines().collect(Collectors.joining());
+  }
+  
+  /**
+   * Inject storage-credentials section into the plan response JSON.
+   * Follows Iceberg REST catalog spec structure for credentials:
+   * {
+   *   "storage-credentials": [{
+   *     "config": {
+   *       "s3.access-key-id": "...",
+   *       ...
+   *     }
+   *   }]
+   * }
+   */
+  private String injectStorageCredentials(
+      String originalJson, 
+      Map<String, String> credentials) throws IOException {
+    
+    // Parse original JSON
+    Map<String, Object> responseMap = mapper.readValue(originalJson, Map.class);
+    
+    // Build storage-credentials structure
+    Map<String, Object> credConfig = new HashMap<>(credentials);
+    Map<String, Object> credWrapper = new HashMap<>();
+    credWrapper.put("config", credConfig);
+    
+    // Add as array (spec requires array even with single element)
+    responseMap.put("storage-credentials", Collections.singletonList(credWrapper));
+    
+    // Serialize back to JSON
+    return mapper.writeValueAsString(responseMap);
   }
 }
