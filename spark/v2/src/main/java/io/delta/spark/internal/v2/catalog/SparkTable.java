@@ -229,7 +229,20 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsR
 
   /** Returns partition column names in table order. */
   public List<String> getPartitionColumnNames() {
-    return schemaProvider.getPartitionColumnNames();
+    List<String> snapshotPartitionColumns = schemaProvider.getPartitionColumnNames();
+    if (!snapshotPartitionColumns.isEmpty()) {
+      return snapshotPartitionColumns;
+    }
+
+    if (catalogTable.isPresent()) {
+      List<String> catalogPartitionColumns =
+          scala.collection.JavaConverters.seqAsJavaList(catalogTable.get().partitionColumnNames());
+      if (!catalogPartitionColumns.isEmpty()) {
+        return Collections.unmodifiableList(new ArrayList<>(catalogPartitionColumns));
+      }
+    }
+
+    return snapshotPartitionColumns;
   }
 
   @Override
