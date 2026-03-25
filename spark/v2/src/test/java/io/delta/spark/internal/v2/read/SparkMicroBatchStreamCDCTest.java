@@ -174,7 +174,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
       throws Exception {
     String tablePath = tempDir.getAbsolutePath();
     String tableName =
-        "test_cdc_compare_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+        "test_cdc_compare_" + (testDescription.hashCode() & 0x7fffffff) + "_" + System.nanoTime();
     createEmptyTestTable(tablePath, tableName);
     sql("ALTER TABLE %s SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')", tableName);
     setup.setup(tableName, tempDir);

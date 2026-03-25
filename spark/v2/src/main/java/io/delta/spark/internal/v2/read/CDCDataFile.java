@@ -36,6 +36,8 @@ public class CDCDataFile {
   @Nullable private final String changeType;
   private final long commitTimestamp;
   private final long fileSize;
+  @Nullable private final String dvBase64Override;
+  private final boolean invertedDvFilter;
 
   private CDCDataFile(
       @Nullable AddFile addFile,
@@ -45,7 +47,9 @@ public class CDCDataFile {
       @Nullable MapValue cdcPartitionValues,
       @Nullable String changeType,
       long commitTimestamp,
-      long fileSize) {
+      long fileSize,
+      @Nullable String dvBase64Override,
+      boolean invertedDvFilter) {
     this.addFile = addFile;
     this.removeFile = removeFile;
     this.isAddCDCFile = isAddCDCFile;
@@ -54,6 +58,8 @@ public class CDCDataFile {
     this.changeType = changeType;
     this.commitTimestamp = commitTimestamp;
     this.fileSize = fileSize;
+    this.dvBase64Override = dvBase64Override;
+    this.invertedDvFilter = invertedDvFilter;
   }
 
   /** Create a CDCDataFile inferred from an AddFile action (always "insert"). */
@@ -66,7 +72,9 @@ public class CDCDataFile {
         /* cdcPartitionValues= */ null,
         CDCReader.CDC_TYPE_INSERT(),
         commitTimestamp,
-        addFile.getSize());
+        addFile.getSize(),
+        /* dvBase64Override= */ null,
+        /* invertedDvFilter= */ false);
   }
 
   /** Create a CDCDataFile inferred from a RemoveFile action (always "delete"). */
@@ -79,7 +87,9 @@ public class CDCDataFile {
         /* cdcPartitionValues= */ null,
         CDCReader.CDC_TYPE_DELETE_STRING(),
         commitTimestamp,
-        removeFile.getSize().orElse(0L));
+        removeFile.getSize().orElse(0L),
+        /* dvBase64Override= */ null,
+        /* invertedDvFilter= */ false);
   }
 
   /** Create a CDCDataFile for an explicit AddCDCFile action. */
@@ -95,7 +105,28 @@ public class CDCDataFile {
         /* cdcPartitionValues= */ partitionValues,
         /* changeType= */ null,
         commitTimestamp,
-        size);
+        size,
+        /* dvBase64Override= */ null,
+        /* invertedDvFilter= */ false);
+  }
+
+  /**
+   * Create a CDCDataFile for a DV-diff same-path pair. The file reads only the rows identified by
+   * the inline diff DV, using IF_NOT_CONTAINED filter (keep marked rows = changed rows).
+   */
+  public static CDCDataFile fromDVDiff(
+      AddFile addFile, String changeType, long commitTimestamp, String dvBase64) {
+    return new CDCDataFile(
+        addFile,
+        /* removeFile= */ null,
+        /* isAddCDCFile= */ false,
+        /* cdcPath= */ null,
+        /* cdcPartitionValues= */ null,
+        changeType,
+        commitTimestamp,
+        addFile.getSize(),
+        dvBase64,
+        /* invertedDvFilter= */ true);
   }
 
   @Nullable
@@ -110,24 +141,25 @@ public class CDCDataFile {
 
   /** Returns the file path for any CDC file variant. */
   public String getPath() {
-    if (addFile != null) {
-      return addFile.getPath();
-    } else if (removeFile != null) {
-      return removeFile.getPath();
-    } else {
-      return cdcPath;
-    }
+    if (addFile != null) return addFile.getPath();
+    if (removeFile != null) return removeFile.getPath();
+    return cdcPath;
   }
 
-  /**
-   * Returns the partition values for any CDC file variant. May be null for RemoveFile when
-   * extendedFileMetadata is not present.
-   */
   @Nullable
   public MapValue getPartitionValues() {
     if (addFile != null) return addFile.getPartitionValues();
     if (removeFile != null) return removeFile.getPartitionValues().orElse(null);
     return cdcPartitionValues;
+  }
+
+  @Nullable
+  public String getDvBase64Override() {
+    return dvBase64Override;
+  }
+
+  public boolean usesInvertedDvFilter() {
+    return invertedDvFilter;
   }
 
   @Nullable
@@ -148,14 +180,9 @@ public class CDCDataFile {
     return isAddCDCFile;
   }
 
-  /** Returns true if the underlying file action has a deletion vector. */
   public boolean hasDeletionVector() {
-    if (addFile != null) {
-      return addFile.getDeletionVector().isPresent();
-    }
-    if (removeFile != null) {
-      return removeFile.getDeletionVector().isPresent();
-    }
+    if (addFile != null) return addFile.getDeletionVector().isPresent();
+    if (removeFile != null) return removeFile.getDeletionVector().isPresent();
     return false;
   }
 
@@ -167,12 +194,15 @@ public class CDCDataFile {
     } else if (removeFile != null) {
       sb.append("removeFile=").append(removeFile);
     } else {
-      sb.append("explicit=true");
+      sb.append("explicit=true, path=").append(cdcPath);
     }
     if (changeType != null) {
       sb.append(", changeType='").append(changeType).append("'");
     }
     sb.append(", commitTimestamp=").append(commitTimestamp);
+    if (dvBase64Override != null) {
+      sb.append(", dvDiff=true");
+    }
     sb.append("}");
     return sb.toString();
   }

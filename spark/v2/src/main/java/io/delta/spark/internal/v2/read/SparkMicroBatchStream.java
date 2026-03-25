@@ -832,6 +832,8 @@ public class SparkMicroBatchStream
       if (limits.isPresent()) {
         snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
       }
+      // The same AdmissionLimits instance is shared: combine() is sequential concatenation,
+      // so snapshot files consume capacity before delta logs are processed.
       CloseableIterator<IndexedFile> deltaChanges =
           filterDeltaLogsWithRateLimitForCDC(
               fromVersion + 1, fromVersion, fromIndex, limits, endOffset);
@@ -927,7 +929,7 @@ public class SparkMicroBatchStream
     CloseableIterator<CommitActions> commits =
         getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET);
 
-    // Early exit: skip opening further commits once the budget is spent.
+    // Version-level rate limiting: stop processing commits once capacity is exhausted.
     if (limits.isPresent()) {
       commits = commits.takeWhile(commit -> limits.get().hasCapacity());
     }
@@ -1778,11 +1780,72 @@ public class SparkMicroBatchStream
         result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
       }
     } else {
-      for (CDCDataFile cdcFile : inferredCdcFiles) {
-        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      // Bucket AddFile and RemoveFile by path to detect same-path DV pairs.
+      // Same-path pairs occur when a DV-based delete produces {RemoveFile(old), AddFile(same
+      // path + new DV)}. These need DV-diff processing rather than simple insert/delete.
+      Map<String, AddFile> addByPath = new HashMap<>();
+      Map<String, RemoveFile> removeByPath = new HashMap<>();
+      for (CDCDataFile cdc : inferredCdcFiles) {
+        if (cdc.getAddFile() != null) {
+          addByPath.put(cdc.getAddFile().getPath(), cdc.getAddFile());
+        } else if (cdc.getRemoveFile() != null) {
+          removeByPath.put(cdc.getRemoveFile().getPath(), cdc.getRemoveFile());
+        }
+      }
+
+      Set<String> samePathKeys = new HashSet<>(addByPath.keySet());
+      samePathKeys.retainAll(removeByPath.keySet());
+
+      // Non-same-path actions: pure inserts/deletes, preserving delta-log order
+      for (CDCDataFile cdc : inferredCdcFiles) {
+        String path = cdc.getPath();
+        if (path == null || !samePathKeys.contains(path)) {
+          result.add(IndexedFile.cdc(version, fileIndex++, cdc));
+        }
+      }
+
+      // Same-path pairs: DV diff processing
+      for (String path : samePathKeys) {
+        AddFile add = addByPath.get(path);
+        RemoveFile remove = removeByPath.get(path);
+        List<CDCDataFile> dvDiffFiles = generateDVDiffCDCFiles(add, remove, timestamp);
+        for (CDCDataFile f : dvDiffFiles) {
+          result.add(IndexedFile.cdc(version, fileIndex++, f));
+        }
       }
     }
 
+    return result;
+  }
+
+  /**
+   * Generates CDCDataFiles for a same-path Add+Remove pair by computing the DV bitmap diff.
+   * Delegates to {@link org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper} which has access to
+   * private[delta] DV APIs (DeletionVectorStore, DeletionVectorUtils).
+   */
+  private List<CDCDataFile> generateDVDiffCDCFiles(AddFile add, RemoveFile remove, long timestamp) {
+    String addDvBase64 =
+        add.getDeletionVector().isPresent()
+            ? add.getDeletionVector().get().serializeToBase64()
+            : null;
+    String removeDvBase64 =
+        remove.getDeletionVector().isPresent()
+            ? remove.getDeletionVector().get().serializeToBase64()
+            : null;
+
+    // Use non-URI-encoded data path for DV file resolution (tablePath is URI-encoded
+    // from toUri().toString() which causes issues with %-prefixed DV file names).
+    String dataPath = ((SnapshotImpl) snapshotAtSourceInit).getDataPath().toString();
+    scala.Tuple2<String, String>[] diffs =
+        org.apache.spark.sql.delta.v2.CDCDeletionVectorHelper.computeDVDiff(
+            addDvBase64, removeDvBase64, hadoopConf, dataPath);
+
+    List<CDCDataFile> result = new ArrayList<>();
+    for (scala.Tuple2<String, String> diff : diffs) {
+      String changeType = diff._1();
+      String dvBase64 = diff._2();
+      result.add(CDCDataFile.fromDVDiff(add, changeType, timestamp, dvBase64));
+    }
     return result;
   }
 
