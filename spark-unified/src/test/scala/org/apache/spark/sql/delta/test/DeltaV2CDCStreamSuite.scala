@@ -65,6 +65,7 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
     "maxFilesPerTrigger - batch reject stops iteration to prevent data loss",
 
     // ========== Misc tests ==========
+    "check starting[Version/Timestamp] > latest version without error",
     "excludeRegex works with cdc",
     "excludeRegex on cdcPath should not return Add/RemoveFiles",
     "schema check for cdc stream",
@@ -74,8 +75,6 @@ class DeltaV2CDCStreamSuite extends DeltaCDCStreamSuite with V2ForceTest {
   private lazy val shouldFailTests = Set(
     // === Error message format differs in V2 (missing [DELTA_VERSION_NOT_FOUND] prefix) ===
     "starting[Version/Timestamp] > latest version",
-    // === V2 doesn't support allowOutOfRange for startingVersion (follow-up PR) ===
-    "check starting[Version/Timestamp] > latest version without error",
     // === sql("DELETE FROM delta.`...`") not supported under STRICT V2 mode ===
     "double delete-only on the same file"
   )
