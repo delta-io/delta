@@ -389,7 +389,8 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
 
   Seq(
     // "defaultColumns", add this to this test once we support defaultColumns
-    // "collations", add this to this test once we support collations
+    "collations",
+    "collations-preview",
     "variantType").foreach { incompatibleFeature =>
     test(s"cannot enable with incompatible feature $incompatibleFeature") {
       checkUnsupportedOrIncompatibleFeature(
@@ -399,7 +400,7 @@ class IcebergWriterCompatV1MetadataValidatorAndUpdaterSuite
     }
   }
 
-  Seq("collations", "defaultColumns").foreach { unsupportedIncompatibleFeature =>
+  Seq("defaultColumns").foreach { unsupportedIncompatibleFeature =>
     test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
       // We add this test here so that it will fail when we add Kernel support for these features
       // When this happens -> add the feature to the test above
