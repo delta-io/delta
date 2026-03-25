@@ -452,6 +452,22 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testConvertValueToKernelLiteral_DecimalWithScaleExceedingPrecision() {
+    // BigDecimal("0.00") has precision=1, scale=2 which violates precision >= scale.
+    // The conversion should normalize precision to max(precision, scale + 1).
+    BigDecimal bd = new BigDecimal("0.00");
+    assertEquals(1, bd.precision(), "Precondition: precision of 0.00 should be 1");
+    assertEquals(2, bd.scale(), "Precondition: scale of 0.00 should be 2");
+
+    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(bd);
+    assertTrue(result.isPresent(), "BigDecimal 0.00 should be convertible");
+
+    Literal literal = result.get();
+    // Normalized precision should be max(1, 2+1) = 3
+    assertEquals(new DecimalType(3, 2), literal.getDataType());
+  }
+
+  @Test
   public void testConvertValueToKernelLiteral_NullValue() {
     Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(null);
     assertFalse(result.isPresent(), "null values should return empty Optional");
