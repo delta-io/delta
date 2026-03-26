@@ -58,6 +58,13 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
 
   protected var hasWritten = false
 
+  private case class PreparedFileFormatWrite(
+      outputSpec: FileFormatWriter.OutputSpec,
+      physicalPlan: SparkPlan,
+      options: Map[String, String],
+      driverStatsTrackers: Seq[WriteJobStatsTracker],
+      allStatsTrackers: Seq[WriteJobStatsTracker])
+
   private[delta] val deltaDataSubdir =
     if (spark.sessionState.conf.getConf(DeltaSQLConf.WRITE_DATA_FILES_TO_SUBDIR)) {
       Some("data")
@@ -389,6 +396,76 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     }
   }
 
+  private def prepareDriverStatsTrackers(spark: SparkSession): Seq[WriteJobStatsTracker] = {
+    val statsTrackers = ListBuffer[WriteJobStatsTracker]()
+    if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
+      val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(
+        new SerializableConfiguration(deltaLog.newDeltaHadoopConf()),
+        BasicWriteJobStatsTracker.metrics)
+      registerSQLMetrics(spark, basicWriteJobStatsTracker.driverSideMetrics)
+      statsTrackers.append(basicWriteJobStatsTracker)
+    }
+    statsTrackers.toSeq
+  }
+
+  private def buildWriterOptions(writeOptions: Option[DeltaOptions]): Map[String, String] = {
+    // Iceberg spec requires partition columns in data files
+    val writePartitionColumns = IcebergCompat.isAnyEnabled(metadata) ||
+      protocol.isFeatureSupported(MaterializePartitionColumnsTableFeature)
+    // Retain only a minimal selection of Spark writer options to avoid any potential
+    // compatibility issues
+    (writeOptions match {
+      case None => Map.empty[String, String]
+      case Some(writeOptions) =>
+        writeOptions.options.filterKeys { key =>
+          key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
+            key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
+        }.toMap
+    }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) ++
+      VariantShreddingShims.getVariantInferShreddingSchemaOptions(
+        DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata))
+  }
+
+  private def prepareFileFormatWrite(
+      spark: SparkSession,
+      outputPath: Path,
+      queryExecution: QueryExecution,
+      output: Seq[Attribute],
+      partitioningColumns: Seq[Attribute],
+      constraints: Seq[Constraint],
+      writeOptions: Option[DeltaOptions],
+      isOptimize: Boolean,
+      optionalStatsTracker: Option[DeltaJobStatisticsTracker],
+      identityTrackerOpt: Option[DeltaIdentityColumnStatsTracker]): PreparedFileFormatWrite = {
+    val outputSpec = FileFormatWriter.OutputSpec(
+      outputPath.toString,
+      Map.empty,
+      output)
+
+    val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
+      partitioningColumns, constraints)
+    val checkInvariants = DeltaInvariantCheckerExec(spark, empty2NullPlan, constraints)
+    // No need to plan optimized write if the write command is OPTIMIZE, which aims to produce
+    // evenly-balanced data files already.
+    val physicalPlan = if (!isOptimize &&
+      shouldOptimizeWrite(writeOptions, spark.sessionState.conf)) {
+      DeltaOptimizedWriterExec(checkInvariants, metadata.partitionColumns, deltaLog)
+    } else {
+      checkInvariants
+    }
+
+    val driverStatsTrackers = prepareDriverStatsTrackers(spark)
+    val allStatsTrackers =
+      optionalStatsTracker.toSeq ++ driverStatsTrackers ++ identityTrackerOpt.toSeq
+
+    PreparedFileFormatWrite(
+      outputSpec = outputSpec,
+      physicalPlan = physicalPlan,
+      options = buildWriterOptions(writeOptions),
+      driverStatsTrackers = driverStatsTrackers,
+      allStatsTrackers = allStatsTrackers)
+  }
+
 
   /**
    * Writes out the dataframe after performing schema validation. Returns a list of
@@ -443,72 +520,39 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
     )
 
     SQLExecution.withNewExecutionId(queryExecution, Option("deltaTransactionalWrite")) {
-      val outputSpec = FileFormatWriter.OutputSpec(
-        outputPath.toString,
-        Map.empty,
-        output)
-
-      val empty2NullPlan = convertEmptyToNullIfNeeded(queryExecution.executedPlan,
-        partitioningColumns, constraints)
-      val checkInvariants = DeltaInvariantCheckerExec(spark, empty2NullPlan, constraints)
-      // No need to plan optimized write if the write command is OPTIMIZE, which aims to produce
-      // evenly-balanced data files already.
-      val physicalPlan = if (!isOptimize &&
-        shouldOptimizeWrite(writeOptions, spark.sessionState.conf)) {
-        DeltaOptimizedWriterExec(checkInvariants, metadata.partitionColumns, deltaLog)
-      } else {
-        checkInvariants
-      }
-
-      val statsTrackers: ListBuffer[WriteJobStatsTracker] = ListBuffer()
-
-      if (spark.conf.get(DeltaSQLConf.DELTA_HISTORY_METRICS_ENABLED)) {
-        val basicWriteJobStatsTracker = new BasicWriteJobStatsTracker(
-          new SerializableConfiguration(deltaLog.newDeltaHadoopConf()),
-          BasicWriteJobStatsTracker.metrics)
-        registerSQLMetrics(spark, basicWriteJobStatsTracker.driverSideMetrics)
-        statsTrackers.append(basicWriteJobStatsTracker)
-      }
-
-      // Iceberg spec requires partition columns in data files
-      val writePartitionColumns = IcebergCompat.isAnyEnabled(metadata) ||
-        protocol.isFeatureSupported(MaterializePartitionColumnsTableFeature)
-      // Retain only a minimal selection of Spark writer options to avoid any potential
-      // compatibility issues
-      val options = (writeOptions match {
-        case None => Map.empty[String, String]
-        case Some(writeOptions) =>
-          writeOptions.options.filterKeys { key =>
-            key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
-              key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
-          }.toMap
-      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) ++
-        VariantShreddingShims.getVariantInferShreddingSchemaOptions(
-          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata))
+      val preparedWrite = prepareFileFormatWrite(
+        spark = spark,
+        outputPath = outputPath,
+        queryExecution = queryExecution,
+        output = output,
+        partitioningColumns = partitioningColumns,
+        constraints = constraints,
+        writeOptions = writeOptions,
+        isOptimize = isOptimize,
+        optionalStatsTracker = optionalStatsTracker,
+        identityTrackerOpt = identityTrackerOpt)
 
       try {
         DeltaFileFormatWriter.write(
           sparkSession = spark,
-          plan = physicalPlan,
+          plan = preparedWrite.physicalPlan,
           fileFormat = deltaLog.fileFormat(protocol, metadata), // TODO support changing formats.
           committer = committer,
-          outputSpec = outputSpec,
+          outputSpec = preparedWrite.outputSpec,
           // scalastyle:off deltahadoopconfiguration
           hadoopConf =
             spark.sessionState.newHadoopConfWithOptions(metadata.configuration ++ deltaLog.options),
           // scalastyle:on deltahadoopconfiguration
           partitionColumns = partitioningColumns,
           bucketSpec = None,
-          statsTrackers = optionalStatsTracker.toSeq
-            ++ statsTrackers
-            ++ identityTrackerOpt.toSeq,
-          options = options)
+          statsTrackers = preparedWrite.allStatsTrackers,
+          options = preparedWrite.options)
       } catch {
         case InnerInvariantViolationException(violationException) =>
           // Pull an InvariantViolationException up to the top level if it was the root cause.
           throw violationException
       }
-      statsTrackers.foreach {
+      preparedWrite.driverStatsTrackers.foreach {
         case tracker: BasicWriteJobStatsTracker =>
           val numOutputRowsOpt = tracker.driverSideMetrics.get("numOutputRows").map(_.value)
           IdentityColumn.logTableWrite(snapshot, trackIdentityHighWaterMarks, numOutputRowsOpt)
