@@ -16,15 +16,20 @@
 
 package io.delta.kernel.unitycatalog
 
+import java.io.{File, PrintWriter}
+
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.expressions.Column
 import io.delta.kernel.internal.SnapshotImpl
+import io.delta.kernel.internal.actions.DomainMetadata
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain
 import io.delta.kernel.internal.fs.Path
+import io.delta.kernel.internal.rowtracking.RowTrackingMetadataDomain
 import io.delta.kernel.test.MockSnapshotUtils
 import io.delta.kernel.transaction.DataLayoutSpec
 import io.delta.kernel.types.{IntegerType, StringType, StructType}
-import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.{CloseableIterable, FileStatus}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -200,6 +205,180 @@ class UnityCatalogUtilsSuite
 
       val props = UnityCatalogUtils.getPropertiesForCreate(engine, snapshot).asScala
       assert(props("clusteringColumns") == "[]")
+    }
+  }
+
+  //////////////////////////
+  // parseCommitFile tests
+  //////////////////////////
+
+  /** Helper to write JSON action lines to a temp file and return a FileStatus for it. */
+  private def writeCommitFile(dir: String, lines: Seq[String]): FileStatus = {
+    val file = new File(dir, "test-commit.json")
+    val writer = new PrintWriter(file)
+    try {
+      lines.foreach(writer.println)
+    } finally {
+      writer.close()
+    }
+    FileStatus.of(file.getAbsolutePath, file.length(), file.lastModified())
+  }
+
+  test("parseCommitFile: extracts protocol, metadata, commitInfo, and domainMetadata") {
+    withTempDirAndEngine { case (tmpDir, engine) =>
+      val lines = Seq(
+        """{"commitInfo":{"inCommitTimestamp":1749830855993,"timestamp":1749830855992,""" +
+          """"engineInfo":"test-engine","operation":"CREATE TABLE",""" +
+          """"operationParameters":{},"isBlindAppend":true,"txnId":"txn-123",""" +
+          """"operationMetrics":{}}}""",
+        // scalastyle:off line.size.limit
+        """{"metaData":{"id":"test-table-id","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"col1\",\"type\":\"integer\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{"delta.enableInCommitTimestamps":"true"},"createdTime":1749830855646}}""",
+        // scalastyle:on line.size.limit
+        """{"protocol":{"minReaderVersion":3,"minWriterVersion":7,""" +
+          """"readerFeatures":["catalogManaged"],""" +
+          """"writerFeatures":["catalogManaged","inCommitTimestamp"]}}""",
+        """{"domainMetadata":{"domain":"delta.clustering","configuration":"{}","removed":false}}""")
+
+      val commitFile = writeCommitFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+
+      // Verify Protocol.
+      assert(result.getProtocol.isPresent)
+      val protocol = result.getProtocol.get()
+      assert(protocol.getMinReaderVersion == 3)
+      assert(protocol.getMinWriterVersion == 7)
+      assert(protocol.getReaderFeatures.asScala == Set("catalogManaged"))
+      assert(protocol.getWriterFeatures.asScala == Set("catalogManaged", "inCommitTimestamp"))
+
+      // Verify Metadata.
+      assert(result.getMetadata.isPresent)
+      val metadata = result.getMetadata.get()
+      assert(metadata.getId == "test-table-id")
+      assert(metadata.getConfiguration.get("delta.enableInCommitTimestamps") == "true")
+      assert(metadata.getSchema.fields().size() == 1)
+      assert(metadata.getSchema.get("col1").getDataType == IntegerType.INTEGER)
+
+      // Verify CommitInfo.
+      assert(result.getCommitInfo.isPresent)
+      val commitInfo = result.getCommitInfo.get()
+      assert(commitInfo.getInCommitTimestamp.isPresent)
+      assert(commitInfo.getInCommitTimestamp.get() == 1749830855993L)
+      assert(commitInfo.getOperation.get() == "CREATE TABLE")
+      assert(commitInfo.getTxnId.get() == "txn-123")
+
+      // Verify DomainMetadata.
+      assert(result.getDomainMetadatas.size() == 1)
+      val dm = result.getDomainMetadatas.get(0)
+      assert(dm.getDomain == "delta.clustering")
+      assert(dm.getConfiguration == "{}")
+      assert(!dm.isRemoved)
+    }
+  }
+
+  test("parseCommitFile: data-only commit with commitInfo returns empty protocol and metadata") {
+    withTempDirAndEngine { case (tmpDir, engine) =>
+      val lines = Seq(
+        """{"commitInfo":{"inCommitTimestamp":1749830871085,"timestamp":1749830871084,""" +
+          """"engineInfo":"test-engine","operation":"WRITE",""" +
+          """"operationParameters":{"mode":"Append"},"isBlindAppend":true,""" +
+          """"txnId":"txn-456","operationMetrics":{}}}""",
+        """{"add":{"path":"part-00000.parquet","partitionValues":{},"size":889,""" +
+          """"modificationTime":1749830870833,"dataChange":true}}""")
+
+      val commitFile = writeCommitFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+
+      assert(!result.getProtocol.isPresent)
+      assert(!result.getMetadata.isPresent)
+      assert(result.getCommitInfo.isPresent)
+      val commitInfo = result.getCommitInfo.get()
+      assert(commitInfo.getInCommitTimestamp.get() == 1749830871085L)
+      assert(commitInfo.getOperation.get() == "WRITE")
+      assert(result.getDomainMetadatas.isEmpty)
+    }
+  }
+
+  test("parseCommitFile: commit with multiple domain metadata actions") {
+    withTempDirAndEngine { case (tmpDir, engine) =>
+      val lines = Seq(
+        """{"commitInfo":{"timestamp":100,"engineInfo":"e","operation":"op",""" +
+          """"operationParameters":{},"isBlindAppend":true,"txnId":"t",""" +
+          """"operationMetrics":{}}}""",
+        s"""{"domainMetadata":{"domain":"${ClusteringMetadataDomain.DOMAIN_NAME}",""" +
+          """"configuration":"{\"columns\":[\"a\"]}","removed":false}}""",
+        s"""{"domainMetadata":{"domain":"${RowTrackingMetadataDomain.DOMAIN_NAME}",""" +
+          """"configuration":"{\"highWaterMark\":100}","removed":false}}""",
+        """{"domainMetadata":{"domain":"myapp.customDomain","configuration":"custom",""" +
+          """"removed":true}}""")
+
+      val commitFile = writeCommitFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+
+      assert(!result.getProtocol.isPresent)
+      assert(!result.getMetadata.isPresent)
+      assert(result.getCommitInfo.isPresent)
+
+      val domainMetadatas = result.getDomainMetadatas.asScala
+      assert(domainMetadatas.size == 3)
+
+      assert(domainMetadatas(0).getDomain == ClusteringMetadataDomain.DOMAIN_NAME)
+      assert(domainMetadatas(0).getConfiguration == "{\"columns\":[\"a\"]}")
+      assert(!domainMetadatas(0).isRemoved)
+
+      assert(domainMetadatas(1).getDomain == RowTrackingMetadataDomain.DOMAIN_NAME)
+      assert(domainMetadatas(1).getConfiguration == "{\"highWaterMark\":100}")
+      assert(!domainMetadatas(1).isRemoved)
+
+      assert(domainMetadatas(2).getDomain == "myapp.customDomain")
+      assert(domainMetadatas(2).getConfiguration == "custom")
+      assert(domainMetadatas(2).isRemoved)
+    }
+  }
+
+  test("parseCommitFile: commit with only metadata returns empty protocol and commitInfo") {
+    withTempDirAndEngine { case (tmpDir, engine) =>
+      // scalastyle:off line.size.limit
+      val lines = Seq(
+        """{"metaData":{"id":"meta-only-id","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"x\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{}}}""")
+      // scalastyle:on line.size.limit
+
+      val commitFile = writeCommitFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+
+      assert(!result.getProtocol.isPresent)
+      assert(result.getMetadata.isPresent)
+      assert(result.getMetadata.get().getId == "meta-only-id")
+      assert(!result.getCommitInfo.isPresent)
+      assert(result.getDomainMetadatas.isEmpty)
+    }
+  }
+
+  test("parseCommitFile: commit with only protocol returns empty metadata and commitInfo") {
+    withTempDirAndEngine { case (tmpDir, engine) =>
+      val lines = Seq(
+        """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""")
+
+      val commitFile = writeCommitFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+
+      assert(result.getProtocol.isPresent)
+      assert(result.getProtocol.get().getMinReaderVersion == 1)
+      assert(result.getProtocol.get().getMinWriterVersion == 2)
+      assert(!result.getMetadata.isPresent)
+      assert(!result.getCommitInfo.isPresent)
+      assert(result.getDomainMetadatas.isEmpty)
+    }
+  }
+
+  test("parseCommitFile: empty commit file returns all fields absent") {
+    withTempDirAndEngine { case (tmpDir, engine) =>
+      val commitFile = writeCommitFile(tmpDir, Seq.empty)
+      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+
+      assert(!result.getProtocol.isPresent)
+      assert(!result.getMetadata.isPresent)
+      assert(!result.getCommitInfo.isPresent)
+      assert(result.getDomainMetadatas.isEmpty)
     }
   }
 }

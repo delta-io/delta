@@ -17,22 +17,32 @@
 package io.delta.kernel.unitycatalog;
 
 import static io.delta.kernel.commit.CatalogCommitterUtils.*;
+import static io.delta.kernel.internal.DeltaErrors.wrapEngineExceptionThrowsIO;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
+import static io.delta.kernel.internal.util.Utils.singletonCloseableIterator;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.delta.kernel.commit.CommitMetadata;
+import io.delta.kernel.data.ColumnVector;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
 import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
 import io.delta.kernel.types.*;
+import io.delta.kernel.utils.CloseableIterator;
+import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -41,6 +51,105 @@ public class UnityCatalogUtils {
 
   private static final String UC_PROP_CLUSTERING_COLUMNS = "clusteringColumns";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+  /** Read schema for parsing staged commit files. */
+  private static final StructType STAGED_COMMIT_READ_SCHEMA =
+      new StructType()
+          .add("protocol", Protocol.FULL_SCHEMA)
+          .add("metaData", Metadata.FULL_SCHEMA)
+          .add("commitInfo", CommitInfo.FULL_SCHEMA)
+          .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
+  /**
+   * Parse a single staged (unratified) commit JSON file and extract its actions.
+   *
+   * <p>Reads the commit file using the provided Engine's JsonHandler and extracts:
+   *
+   * <ul>
+   *   <li>Protocol action (if present)
+   *   <li>Metadata action (if present)
+   *   <li>CommitInfo action (if present)
+   *   <li>DomainMetadata actions (zero or more)
+   * </ul>
+   *
+   * @param engine the engine to use for reading the JSON commit file
+   * @param commitFile the staged commit file to parse
+   * @return a {@link ParsedStagedCommit} containing the extracted actions
+   */
+  public static ParsedStagedCommit parseCommitFile(Engine engine, FileStatus commitFile) {
+    Protocol protocol = null;
+    Metadata metadata = null;
+    CommitInfo commitInfo = null;
+    List<DomainMetadata> domainMetadatas = new ArrayList<>();
+
+    try (CloseableIterator<ColumnarBatch> batches =
+        wrapEngineExceptionThrowsIO(
+            () ->
+                engine
+                    .getJsonHandler()
+                    .readJsonFiles(
+                        singletonCloseableIterator(commitFile),
+                        STAGED_COMMIT_READ_SCHEMA,
+                        Optional.empty()),
+            "Parsing staged commit file %s with readSchema=%s",
+            commitFile.getPath(),
+            STAGED_COMMIT_READ_SCHEMA)) {
+
+      while (batches.hasNext()) {
+        final ColumnarBatch batch = batches.next();
+
+        if (protocol == null) {
+          final ColumnVector protocolVector = batch.getColumnVector(0);
+          for (int i = 0; i < protocolVector.getSize(); i++) {
+            Protocol p = Protocol.fromColumnVector(protocolVector, i);
+            if (p != null) {
+              protocol = p;
+              break;
+            }
+          }
+        }
+
+        if (metadata == null) {
+          final ColumnVector metadataVector = batch.getColumnVector(1);
+          for (int i = 0; i < metadataVector.getSize(); i++) {
+            Metadata m = Metadata.fromColumnVector(metadataVector, i);
+            if (m != null) {
+              metadata = m;
+              break;
+            }
+          }
+        }
+
+        if (commitInfo == null) {
+          final ColumnVector commitInfoVector = batch.getColumnVector(2);
+          for (int i = 0; i < commitInfoVector.getSize(); i++) {
+            CommitInfo ci = CommitInfo.fromColumnVector(commitInfoVector, i);
+            if (ci != null) {
+              commitInfo = ci;
+              break;
+            }
+          }
+        }
+
+        final ColumnVector domainMetadataVector = batch.getColumnVector(3);
+        for (int i = 0; i < domainMetadataVector.getSize(); i++) {
+          DomainMetadata dm = DomainMetadata.fromColumnVector(domainMetadataVector, i);
+          if (dm != null) {
+            domainMetadatas.add(dm);
+          }
+        }
+      }
+    } catch (IOException ex) {
+      throw new UncheckedIOException(
+          "Failed to parse staged commit file: " + commitFile.getPath(), ex);
+    }
+
+    return new ParsedStagedCommit(
+        Optional.ofNullable(protocol),
+        Optional.ofNullable(metadata),
+        Optional.ofNullable(commitInfo),
+        domainMetadatas);
+  }
 
   /**
    * Extract all properties that should be sent to Unity Catalog when creating a table (version 0).
