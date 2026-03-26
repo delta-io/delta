@@ -82,6 +82,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // === Commit/Checkpoint file missing detection ===
     "incremental: first commit file missing, fails",
     "incremental: commit file gap between versions, fails",
+    "incremental: first commit file missing, failOnDataLoss=false succeeds",
     "initial snapshot: commit file missing but checkpoint intact, succeeds",
     "initial snapshot: both checkpoint and commit file missing, fails",
     "initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
@@ -146,7 +147,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "type widening: restarting with stale DataFrame should recover",
 
     // === Data Loss Detection ===
-    "incremental: first commit file missing, failOnDataLoss=false succeeds",
+    // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
+    // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
     "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
     // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
     // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
