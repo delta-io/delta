@@ -251,8 +251,8 @@ public final class Literal implements Expression {
    *   <li>TIMESTAMP: {@link Long} represents the microseconds since epoch in UTC
    *   <li>TIMESTAMP_NTZ: {@link Long} represents the microseconds since epoch with no timezone
    *   <li>DECIMAL: {@link BigDecimal}.Use {@link #getDataType()} to find the precision and scale
-   *   <li>GEOMETRY: {@link String} WKT representation
-   *   <li>GEOGRAPHY: {@link String} WKT representation
+   *   <li>GEOMETRY: {@link String} WKT (Well-Known Text) representation
+   *   <li>GEOGRAPHY: {@link String} WKT (Well-Known Text) representation
    * </ul>
    *
    * @return Literal value.
