@@ -1,10 +1,12 @@
 name: "Delta Spark"
 on:
   push:
+    branches: [master]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
+    branches: [master]
     paths-ignore:
       - '**.md'
       - '**.txt'
