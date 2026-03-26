@@ -5,21 +5,21 @@ Delta Lake tables store data in parquet files, and Parquet supports multiple com
 
 --------
 
-> ***New Section after [Append-only Tables](#append-only-tables)***
+> ***New top-level Section just before [Appendix](#appendix)***
 
-## Table Properties
+# Table Properties
 
 Delta Lake tables support a set of properties stored in the `configuration` field of the `metaData` action that control various aspects of table behavior.
 
-### Overview
+## Overview
 
 Property | Description
 -|-
 [`delta.parquet.compression.codec`](#deltaparquetcompressioncodec) | Compression codec for new Parquet data and checkpoint files
 
-### Property Details
+## Property Details
 
-#### delta.parquet.compression.codec
+### delta.parquet.compression.codec
 
 Specifies the compression codec writers SHOULD use when writing new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state.
 
