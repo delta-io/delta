@@ -29,7 +29,7 @@ public class WriterResultContext implements Serializable {
   private long highWatermark;
 
   public WriterResultContext() {
-    this(-1L, -1L);
+    this(Long.MAX_VALUE, -1L);
   }
 
   public WriterResultContext(long lwm, long hwm) {
