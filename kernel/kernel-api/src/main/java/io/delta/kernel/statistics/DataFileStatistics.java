@@ -439,7 +439,11 @@ public class DataFileStatistics {
       LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
     } else if (type instanceof GeometryType || type instanceof GeographyType) {
-      GeometryUtils.validatePointWKT((String) value);
+      if (type instanceof GeographyType) {
+        GeometryUtils.validateGeographyPointWKT((String) value);
+      } else {
+        GeometryUtils.validatePointWKT((String) value);
+      }
       generator.writeString((String) value);
     } else {
       throw unsupportedStatsDataType(type);

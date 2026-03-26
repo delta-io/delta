@@ -1234,18 +1234,18 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
 
     val minValues = Map(
       new Column("geom") -> Literal.ofGeospatialWKT(
-        "POINT Z(1.0 2.0 3.0)",
+        "POINT Z (1.0 2.0 3.0)",
         GeometryType.ofDefault()),
       new Column("geog") -> Literal.ofGeospatialWKT(
-        "POINT ZM(10.0 20.0 30.0 40.0)",
+        "POINT ZM (10.0 20.0 30.0 40.0)",
         GeographyType.ofDefault())).asJava
 
     val maxValues = Map(
       new Column("geom") -> Literal.ofGeospatialWKT(
-        "POINT Z(4.0 5.0 6.0)",
+        "POINT Z (4.0 5.0 6.0)",
         GeometryType.ofDefault()),
       new Column("geog") -> Literal.ofGeospatialWKT(
-        "POINT ZM(40.0 50.0 60.0 70.0)",
+        "POINT ZM (40.0 50.0 60.0 70.0)",
         GeographyType.ofDefault())).asJava
 
     val nullCount = Map(
@@ -1266,19 +1266,19 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
 
     val stats = deserialized.get()
     assert(stats.getMinValues.get(new Column("geom")).getValue ==
-      "POINT Z(1.0 2.0 3.0)")
+      "POINT Z (1.0 2.0 3.0)")
     assert(stats.getMinValues.get(new Column("geog")).getValue ==
-      "POINT ZM(10.0 20.0 30.0 40.0)")
+      "POINT ZM (10.0 20.0 30.0 40.0)")
     assert(stats.getMaxValues.get(new Column("geom")).getValue ==
-      "POINT Z(4.0 5.0 6.0)")
+      "POINT Z (4.0 5.0 6.0)")
     assert(stats.getMaxValues.get(new Column("geog")).getValue ==
-      "POINT ZM(40.0 50.0 60.0 70.0)")
+      "POINT ZM (40.0 50.0 60.0 70.0)")
   }
 
   test("round-trip preserves full double precision (17 digits) in POINT WKT") {
     // 17 significant digits is the max needed to distinguish IEEE 754 doubles
     val minWkt = "POINT (-122.41941550123456 37.774929501234567)"
-    val maxWkt = "POINT Z(179.99999999999997 89.999999999999986 12345.678901234567)"
+    val maxWkt = "POINT Z (179.99999999999997 89.999999999999986 12345.678901234567)"
 
     val schema = new StructType()
       .add("geom", GeometryType.ofDefault())
@@ -1319,8 +1319,10 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
     val stats = deserialized.get()
     assert(stats.getMinValues.get(new Column("geom")).getValue === minWkt)
     assert(stats.getMaxValues.get(new Column("geom")).getValue === minWkt)
-    assert(stats.getMinValues.get(new Column("geom3d")).getValue === maxWkt)
-    assert(stats.getMaxValues.get(new Column("geom3d")).getValue === maxWkt)
+    assert(stats.getMinValues.get(new Column("geom3d")).getValue ===
+      maxWkt)
+    assert(stats.getMaxValues.get(new Column("geom3d")).getValue ===
+      maxWkt)
   }
 
   test("deserializing invalid geospatial stats throws KernelException") {
@@ -1458,6 +1460,67 @@ class DataFileStatisticsSuite extends AnyFunSuite with Matchers {
       DataFileStatistics.deserializeFromJson(missingParens, schema)
     }
     assert(ex3.getMessage.contains("Geospatial stats must be a valid POINT WKT"))
+  }
+
+  test("deserialization with missing geospatial stats in JSON") {
+    val schema = new StructType()
+      .add("geom", GeometryType.ofDefault())
+      .add("geog", GeographyType.ofDefault())
+      .add("id", IntegerType.INTEGER)
+
+    // Stats JSON has no min/max for geospatial columns
+    val json =
+      """{
+        |  "numRecords": 100,
+        |  "minValues": { "id": 1 },
+        |  "maxValues": { "id": 99 },
+        |  "nullCount": { "id": 0 }
+        |}""".stripMargin
+
+    val result = DataFileStatistics.deserializeFromJson(json, schema)
+    assert(result.isPresent)
+    val stats = result.get()
+    assert(stats.getNumRecords == 100)
+    assert(!stats.getMinValues.containsKey(new Column("geom")))
+    assert(!stats.getMinValues.containsKey(new Column("geog")))
+    assert(stats.getMinValues.get(new Column("id")).getValue == 1)
+  }
+
+  test("geography coordinate range validation on deserialization") {
+    val schema = new StructType()
+      .add("geog", GeographyType.ofDefault())
+
+    val outOfRange =
+      """|{
+         |  "numRecords": 10,
+         |  "minValues": { "geog": "POINT (200 0)" }
+         |}""".stripMargin
+    val ex = intercept[KernelException] {
+      DataFileStatistics.deserializeFromJson(outOfRange, schema)
+    }
+    assert(ex.getMessage.contains("out of range"))
+  }
+
+  test("geography coordinate range validation on serialization") {
+    val schema = new StructType()
+      .add("geog", GeographyType.ofDefault())
+
+    val minValues = Map[Column, Literal](
+      new Column("geog") -> Literal.ofGeospatialWKT(
+        "POINT (200 0)",
+        GeographyType.ofDefault())).asJava
+
+    val stats = new DataFileStatistics(
+      10,
+      minValues,
+      Collections.emptyMap[Column, Literal](),
+      Collections.emptyMap[Column, java.lang.Long](),
+      Optional.empty())
+
+    val ex = intercept[KernelException] {
+      stats.serializeAsJson(schema)
+    }
+    assert(ex.getMessage.contains("out of range"))
   }
 
 }

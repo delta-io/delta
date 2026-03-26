@@ -194,15 +194,17 @@ public final class Literal implements Expression {
   }
 
   /**
-   * Create a geospatial Well-Known Text (WKT) literal with the given data type. See
-   * https://en.wikipedia.org/wiki/Well-known_text_representation_of_geometry
+   * Create a geospatial Well-Known Text (WKT) literal with the given data type. This factory only
+   * enforces the type contract (GeometryType or GeographyType). Callers are responsible for WKT
+   * content validation, as different engines may support different geometry types beyond POINT.
    *
    * @param wkt WKT string value
-   * @param dataType must be {@link GeometryType} or {@link GeographyType}
-   * @return a {@link Literal} with the given geospatial type and String value
+   * @param dataType must be GeometryType or GeographyType
+   * @return a Literal with the given geospatial type and String value
    */
   public static Literal ofGeospatialWKT(String wkt, DataType dataType) {
-    Objects.requireNonNull(wkt, "WKT string cannot be null; use Literal.ofNull() for null values");
+    Objects.requireNonNull(
+        wkt, "WKT string cannot be null; use Literal.ofNull()" + " for null values");
     checkArgument(
         dataType instanceof GeometryType || dataType instanceof GeographyType,
         "dataType must be GeometryType or GeographyType, got: %s",

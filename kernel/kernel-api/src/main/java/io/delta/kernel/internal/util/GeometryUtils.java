@@ -29,19 +29,19 @@ public class GeometryUtils {
       Pattern.compile("^POINT\\s*(ZM|Z|M)?\\s*\\(([^)]+)\\)$", Pattern.CASE_INSENSITIVE);
 
   /**
-   * Formats x/y (and optional z/m) coordinates as a WKT POINT string. Examples: "POINT (1.0 2.0)",
-   * "POINT Z(1.0 2.0 3.0)", "POINT ZM(1.0 2.0 3.0 4.0)".
+   * Formats x/y (and optional z/m) coordinates as a WKT POINT string. Uses standard OGC WKT format:
+   * "POINT(1.0 2.0)", "POINT Z (1.0 2.0 3.0)", "POINT ZM (1.0 2.0 3.0 4.0)".
    */
   public static String formatPointWKT(double x, double y, OptionalDouble z, OptionalDouble m) {
     boolean hasZ = z.isPresent();
     boolean hasM = m.isPresent();
-    StringBuilder sb = new StringBuilder("POINT ");
+    StringBuilder sb = new StringBuilder("POINT");
     if (hasZ && hasM) {
-      sb.append("ZM");
+      sb.append(" ZM ");
     } else if (hasZ) {
-      sb.append("Z");
+      sb.append(" Z ");
     } else if (hasM) {
-      sb.append("M");
+      sb.append(" M ");
     }
     sb.append("(").append(x).append(" ").append(y);
     z.ifPresent(v -> sb.append(" ").append(v));
@@ -63,11 +63,13 @@ public class GeometryUtils {
   }
 
   /**
-   * Parses the x and y coordinates from a WKT POINT string. Returns double[]{x, y}.
+   * Parses only the x and y coordinates from a WKT POINT string. Returns double[]{x, y}. Z and M
+   * coordinates are validated but not returned because stats bounding boxes only use 2D
+   * coordinates.
    *
-   * <p>Supported formats: POINT (x y), POINT Z(x y z), POINT M(x y m), POINT ZM(x y z m).
+   * <p>Supported formats: POINT(x y), POINT Z (x y z), POINT M (x y m), POINT ZM (x y z m).
    *
-   * @throws IllegalArgumentException if the input is null or not a valid POINT WKT
+   * @throws IllegalArgumentException if not a valid POINT WKT
    */
   public static double[] parsePointXY(String wkt) {
     Objects.requireNonNull(wkt, "WKT POINT string cannot be null");
@@ -80,7 +82,7 @@ public class GeometryUtils {
     String coordStr = matcher.group(2).trim();
     String[] parts = coordStr.split("\\s+");
 
-    String mod = modifier == null ? "" : modifier.toUpperCase();
+    String mod = (modifier == null) ? "" : modifier.toUpperCase();
     int expectedCount;
     switch (mod) {
       case "ZM":
@@ -117,6 +119,36 @@ public class GeometryUtils {
       return new double[] {x, y};
     } catch (NumberFormatException e) {
       throw new IllegalArgumentException("Invalid coordinate in WKT POINT string: " + wkt, e);
+    }
+  }
+
+  /**
+   * Validates that the given WKT POINT is a valid geography point with coordinates in range:
+   * longitude in [-180, 180] and latitude in [-90, 90]. Throws KernelException if invalid.
+   */
+  public static void validateGeographyPointWKT(String wkt) {
+    double[] xy;
+    try {
+      xy = parsePointXY(wkt);
+    } catch (IllegalArgumentException e) {
+      throw new io.delta.kernel.exceptions.KernelException(
+          String.format("Geospatial stats must be a valid POINT WKT" + " but got: %s", wkt), e);
+    }
+    validateGeographyCoordinates(xy[0], xy[1], wkt);
+  }
+
+  /**
+   * Validates that longitude is in [-180, 180] and latitude is in [-90, 90]. Throws KernelException
+   * if out of range.
+   */
+  public static void validateGeographyCoordinates(double lon, double lat, String wkt) {
+    if (lon < -180 || lon > 180 || lat < -90 || lat > 90) {
+      throw new io.delta.kernel.exceptions.KernelException(
+          String.format(
+              "Geography coordinates out of range: longitude"
+                  + " must be in [-180, 180], latitude must be"
+                  + " in [-90, 90], but got: %s",
+              wkt));
     }
   }
 }

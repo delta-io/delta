@@ -265,7 +265,11 @@ public class JsonUtils {
               String.format("Expected %s as WKT string but got: %s", typeName, valueNode));
         }
         String wkt = valueNode.asText();
-        GeometryUtils.validatePointWKT(wkt);
+        if (dataType instanceof GeographyType) {
+          GeometryUtils.validateGeographyPointWKT(wkt);
+        } else {
+          GeometryUtils.validatePointWKT(wkt);
+        }
         return Literal.ofGeospatialWKT(wkt, dataType);
       } else {
         throw unsupportedStatsDataType(dataType);

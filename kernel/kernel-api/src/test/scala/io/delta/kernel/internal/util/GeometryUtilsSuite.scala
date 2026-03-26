@@ -57,10 +57,24 @@ class GeometryUtilsSuite extends AnyFunSuite {
   }
 
   test("whitespace variations") {
+    // no space before paren
     checkXY("POINT(1.0 2.0)", 1.0, 2.0)
     checkXY("POINT Z(1.0 2.0 3.0)", 1.0, 2.0)
+    checkXY("POINT M(1.0 2.0 4.0)", 1.0, 2.0)
+    checkXY("POINT ZM(1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    // extra spaces before paren
+    checkXY("POINT  (1.0 2.0)", 1.0, 2.0)
+    checkXY("POINT Z  (1.0 2.0 3.0)", 1.0, 2.0)
+    checkXY("POINT M  (1.0 2.0 4.0)", 1.0, 2.0)
+    checkXY("POINT ZM  (1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    // extra spaces between modifier and paren
+    checkXY("POINT  Z  (1.0 2.0 3.0)", 1.0, 2.0)
+    checkXY("POINT  M  (1.0 2.0 4.0)", 1.0, 2.0)
+    checkXY("POINT  ZM  (1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    // extra spaces around/between coordinates
     checkXY("POINT (  1.0   2.0  )", 1.0, 2.0)
-    checkXY("POINT  ZM(1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    checkXY("POINT Z (  1.0   2.0   3.0  )", 1.0, 2.0)
+    checkXY("POINT ZM (  1.0   2.0   3.0   4.0  )", 1.0, 2.0)
   }
 
   test("case insensitivity") {
@@ -82,7 +96,20 @@ class GeometryUtilsSuite extends AnyFunSuite {
   test("wrong coordinate count throws") {
     checkInvalid("POINT (1.0 2.0 3.0)", "expects 2 coordinates but got 3")
     checkInvalid("POINT Z(1.0 2.0)", "expects 3 coordinates but got 2")
+    checkInvalid("POINT M(1.0 2.0)", "expects 3 coordinates but got 2")
     checkInvalid("POINT ZM(1.0 2.0 3.0)", "expects 4 coordinates but got 3")
+  }
+
+  test("excess coordinates throws") {
+    checkInvalid("POINT Z(1.0 2.0 3.0 4.0)", "expects 3 coordinates but got 4")
+    checkInvalid("POINT M(1.0 2.0 3.0 4.0)", "expects 3 coordinates but got 4")
+    checkInvalid("POINT ZM(1.0 2.0 3.0 4.0 5.0)", "expects 4 coordinates but got 5")
+  }
+
+  test("non-space separators are rejected") {
+    // comma/semicolon create 1 token instead of 2
+    checkInvalid("POINT (1.0,2.0)", "expects 2 coordinates but got 1")
+    checkInvalid("POINT (1.0;2.0)", "expects 2 coordinates but got 1")
   }
 
   test("non-numeric coordinate throws") {
@@ -104,7 +131,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.empty(),
       OptionalDouble.empty())
-    assert(wkt === "POINT (1.0 2.0)")
+    assert(wkt === "POINT(1.0 2.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -116,7 +143,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.of(3.0),
       OptionalDouble.empty())
-    assert(wkt === "POINT Z(1.0 2.0 3.0)")
+    assert(wkt === "POINT Z (1.0 2.0 3.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -128,7 +155,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.empty(),
       OptionalDouble.of(4.0))
-    assert(wkt === "POINT M(1.0 2.0 4.0)")
+    assert(wkt === "POINT M (1.0 2.0 4.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -140,7 +167,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.of(3.0),
       OptionalDouble.of(4.0))
-    assert(wkt === "POINT ZM(1.0 2.0 3.0 4.0)")
+    assert(wkt === "POINT ZM (1.0 2.0 3.0 4.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -156,4 +183,38 @@ class GeometryUtilsSuite extends AnyFunSuite {
     assert(xy(0) === -180.0)
     assert(xy(1) === -90.0)
   }
+
+  // Geography coordinate range validation tests
+
+  test("validateGeographyPointWKT - valid coordinates") {
+    GeometryUtils.validateGeographyPointWKT("POINT (0 0)")
+    GeometryUtils.validateGeographyPointWKT("POINT (-180 -90)")
+    GeometryUtils.validateGeographyPointWKT("POINT (180 90)")
+    GeometryUtils.validateGeographyPointWKT("POINT Z (10 20 100)")
+  }
+
+  test("validateGeographyPointWKT - longitude out of range") {
+    val e = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (181 0)")
+    }
+    assert(e.getMessage.contains("out of range"))
+
+    val e2 = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (-181 0)")
+    }
+    assert(e2.getMessage.contains("out of range"))
+  }
+
+  test("validateGeographyPointWKT - latitude out of range") {
+    val e = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (0 91)")
+    }
+    assert(e.getMessage.contains("out of range"))
+
+    val e2 = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (0 -91)")
+    }
+    assert(e2.getMessage.contains("out of range"))
+  }
+
 }
