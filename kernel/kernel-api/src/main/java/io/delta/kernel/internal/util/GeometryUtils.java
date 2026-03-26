@@ -24,9 +24,13 @@ import java.util.regex.Pattern;
 public class GeometryUtils {
   private GeometryUtils() {}
 
-  // Matches: POINT [ZM|Z|M] (coords)
+  // Matches: POINT [ZM|Z|M] (coords) - (case-insensitive, flexible whitespace)
   private static final Pattern POINT_WKT_PATTERN =
       Pattern.compile("^POINT\\s*(ZM|Z|M)?\\s*\\(([^)]+)\\)$", Pattern.CASE_INSENSITIVE);
+
+  // Matches: POINT [Z|M|ZM] EMPTY - (case-insensitive, flexible whitespace)
+  private static final Pattern POINT_EMPTY_PATTERN =
+      Pattern.compile("^POINT\\s*(ZM|Z|M)?\\s+EMPTY$", Pattern.CASE_INSENSITIVE);
 
   /**
    * Formats x/y (and optional z/m) coordinates as a WKT POINT string. Uses standard OGC WKT format:
@@ -35,13 +39,20 @@ public class GeometryUtils {
   public static String formatPointWKT(double x, double y, OptionalDouble z, OptionalDouble m) {
     boolean hasZ = z.isPresent();
     boolean hasM = m.isPresent();
+    if (Double.isNaN(x) && Double.isNaN(y)) {
+      StringBuilder sb = new StringBuilder("POINT");
+      if (hasZ == hasM) {
+        if (hasZ) sb.append(" ZM");
+      } else {
+        sb.append(hasZ ? " Z" : " M");
+      }
+      return sb.append(" EMPTY").toString();
+    }
     StringBuilder sb = new StringBuilder("POINT");
-    if (hasZ && hasM) {
-      sb.append(" ZM ");
-    } else if (hasZ) {
-      sb.append(" Z ");
-    } else if (hasM) {
-      sb.append(" M ");
+    if (hasZ == hasM) {
+      if (hasZ) sb.append(" ZM ");
+    } else {
+      sb.append(hasZ ? " Z " : " M ");
     }
     sb.append("(").append(x).append(" ").append(y);
     z.ifPresent(v -> sb.append(" ").append(v));
@@ -67,13 +78,22 @@ public class GeometryUtils {
    * coordinates are validated but not returned because stats bounding boxes only use 2D
    * coordinates.
    *
-   * <p>Supported formats: POINT(x y), POINT Z (x y z), POINT M (x y m), POINT ZM (x y z m).
+   * <p>Supported formats: POINT(x y), POINT Z (x y z), POINT M (x y m), POINT ZM (x y z m), POINT
+   * EMPTY, POINT Z EMPTY, POINT M EMPTY, POINT ZM EMPTY.
+   *
+   * <p>All EMPTY variants return {NaN, NaN}.
    *
    * @throws IllegalArgumentException if not a valid POINT WKT
    */
   public static double[] parsePointXY(String wkt) {
     Objects.requireNonNull(wkt, "WKT POINT string cannot be null");
-    Matcher matcher = POINT_WKT_PATTERN.matcher(wkt.trim());
+    String trimmed = wkt.trim();
+
+    if (POINT_EMPTY_PATTERN.matcher(trimmed).matches()) {
+      return new double[] {Double.NaN, Double.NaN};
+    }
+
+    Matcher matcher = POINT_WKT_PATTERN.matcher(trimmed);
     if (!matcher.matches()) {
       throw new IllegalArgumentException("Invalid WKT POINT string: " + wkt);
     }
@@ -142,6 +162,10 @@ public class GeometryUtils {
    * if out of range.
    */
   public static void validateGeographyCoordinates(double lon, double lat, String wkt) {
+    // POINT EMPTY produces NaN — skip range check
+    if (Double.isNaN(lon) && Double.isNaN(lat)) {
+      return;
+    }
     if (lon < -180 || lon > 180 || lat < -90 || lat > 90) {
       throw new io.delta.kernel.exceptions.KernelException(
           String.format(

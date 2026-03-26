@@ -56,6 +56,29 @@ class GeometryUtilsSuite extends AnyFunSuite {
     checkXY("POINT ZM(0.0 0.0 0.0 0.0)", 0.0, 0.0)
   }
 
+  test("POINT EMPTY variants - returns NaN") {
+    for (
+      wkt <- Seq(
+        "POINT EMPTY",
+        "POINT Z EMPTY",
+        "POINT M EMPTY",
+        "POINT ZM EMPTY",
+        "point empty",
+        "point z empty",
+        "point m empty",
+        "point zm empty",
+        "POINT   EMPTY",
+        "POINT  Z  EMPTY",
+        "POINT  ZM  EMPTY")
+    ) {
+      withClue(s"$wkt should parse as NaN: ") {
+        val xy = parsePointXY(wkt)
+        assert(xy(0).isNaN)
+        assert(xy(1).isNaN)
+      }
+    }
+  }
+
   test("whitespace variations") {
     // no space before paren
     checkXY("POINT(1.0 2.0)", 1.0, 2.0)
@@ -81,6 +104,23 @@ class GeometryUtilsSuite extends AnyFunSuite {
     checkXY("point (1.0 2.0)", 1.0, 2.0)
     checkXY("POINT zm(1.0 2.0 3.0 4.0)", 1.0, 2.0)
     checkXY("Point Z(1.0 2.0 3.0)", 1.0, 2.0)
+  }
+
+  test("scientific notation") {
+    checkXY("POINT (1.5e2 2.5E2)", 150.0, 250.0)
+    checkXY("POINT (-1.5e2 2.5e-1)", -150.0, 0.25)
+    checkXY("POINT (1e3 2e3)", 1000.0, 2000.0)
+    checkXY("POINT (-1E3 -2E3)", -1000.0, -2000.0)
+    checkXY("POINT (1.23456789e10 -9.87654321e-5)", 1.23456789e10, -9.87654321e-5)
+    checkXY("POINT Z (1e2 2e2 3e2)", 100.0, 200.0)
+  }
+
+  test("integer coordinates (no decimal point)") {
+    checkXY("POINT (1 2)", 1.0, 2.0)
+    checkXY("POINT (-100 200)", -100.0, 200.0)
+    checkXY("POINT (0 0)", 0.0, 0.0)
+    checkXY("POINT Z (1 2 3)", 1.0, 2.0)
+    checkXY("POINT ZM (1 2 3 4)", 1.0, 2.0)
   }
 
   test("null input throws") {
@@ -173,6 +213,42 @@ class GeometryUtilsSuite extends AnyFunSuite {
     assert(xy(1) === 2.0)
   }
 
+  test("formatPointWKT - EMPTY round-trips") {
+    val empty2d = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.empty(),
+      OptionalDouble.empty())
+    assert(empty2d === "POINT EMPTY")
+    val xy = parsePointXY(empty2d)
+    assert(xy(0).isNaN)
+    assert(xy(1).isNaN)
+
+    val emptyZ = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.of(Double.NaN),
+      OptionalDouble.empty())
+    assert(emptyZ === "POINT Z EMPTY")
+    assert(parsePointXY(emptyZ)(0).isNaN)
+
+    val emptyM = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.empty(),
+      OptionalDouble.of(Double.NaN))
+    assert(emptyM === "POINT M EMPTY")
+    assert(parsePointXY(emptyM)(0).isNaN)
+
+    val emptyZM = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.of(Double.NaN),
+      OptionalDouble.of(Double.NaN))
+    assert(emptyZM === "POINT ZM EMPTY")
+    assert(parsePointXY(emptyZM)(0).isNaN)
+  }
+
   test("formatPointWKT - round-trip negative coords") {
     val wkt = formatPointWKT(
       -180.0,
@@ -191,6 +267,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
     GeometryUtils.validateGeographyPointWKT("POINT (-180 -90)")
     GeometryUtils.validateGeographyPointWKT("POINT (180 90)")
     GeometryUtils.validateGeographyPointWKT("POINT Z (10 20 100)")
+    GeometryUtils.validateGeographyPointWKT("POINT EMPTY")
   }
 
   test("validateGeographyPointWKT - longitude out of range") {
