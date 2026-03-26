@@ -68,6 +68,13 @@ object DeltaFileFormatWriter extends Logging {
    */
   private var executedPlan: Option[SparkPlan] = None
 
+  private case class PreparedOutputWriter(
+      outputWriterFactory: OutputWriterFactory,
+      finalOutputSpec: OutputSpec,
+      dataColumns: Seq[Attribute],
+      outputDataColumns: Seq[Attribute],
+      caseInsensitiveOptions: CaseInsensitiveMap[String])
+
   // scalastyle:off argcount
   /**
    * Basic work flow of this command is:
@@ -102,42 +109,26 @@ object DeltaFileFormatWriter extends Logging {
     job.setOutputValueClass(classOf[InternalRow])
     FileOutputFormat.setOutputPath(job, new Path(outputSpec.outputPath))
 
-    val partitionSet = AttributeSet(partitionColumns)
-    // cleanup the internal metadata information of
-    // the file source metadata attribute if any before write out
-    val finalOutputSpec = outputSpec.copy(
-      outputColumns = outputSpec.outputColumns
-        .map(FileSourceMetadataAttribute.cleanupFileSourceMetadataInformation)
-    )
-    val dataColumns = finalOutputSpec.outputColumns.filterNot(partitionSet.contains)
+    val preparedOutputWriter =
+      prepareOutputWriter(
+        sparkSession = sparkSession,
+        fileFormat = fileFormat,
+        job = job,
+        outputSpec = outputSpec,
+        partitionColumns = partitionColumns,
+        options = options)
+    val finalOutputSpec = preparedOutputWriter.finalOutputSpec
+    val dataColumns = preparedOutputWriter.dataColumns
+    val outputDataColumns = preparedOutputWriter.outputDataColumns
+    val caseInsensitiveOptions = preparedOutputWriter.caseInsensitiveOptions
 
     val writerBucketSpec = V1WritesUtils.getWriterBucketSpec(bucketSpec, dataColumns, options)
     val sortColumns = V1WritesUtils.getBucketSortColumns(bucketSpec, dataColumns)
 
-    val caseInsensitiveOptions = CaseInsensitiveMap(options)
-
-    val dataSchema = dataColumns.toStructType
-    DataSourceUtils.verifySchema(fileFormat, dataSchema)
-    DataSourceUtils.checkFieldNames(fileFormat, dataSchema)
-    // Note: prepareWrite has side effect. It sets "job".
-
-    val outputDataColumns =
-      if (caseInsensitiveOptions.get(DeltaOptions.WRITE_PARTITION_COLUMNS).contains("true")) {
-        dataColumns ++ partitionColumns
-      } else dataColumns
-
-    val outputWriterFactory =
-      fileFormat.prepareWrite(
-        sparkSession,
-        job,
-        caseInsensitiveOptions,
-        outputDataColumns.toStructType
-      )
-
     val description = new WriteJobDescription(
       uuid = UUID.randomUUID.toString,
       serializableHadoopConf = new SerializableConfiguration(job.getConfiguration),
-      outputWriterFactory = outputWriterFactory,
+      outputWriterFactory = preparedOutputWriter.outputWriterFactory,
       allColumns = finalOutputSpec.outputColumns,
       dataColumns = outputDataColumns,
       partitionColumns = partitionColumns,
@@ -220,6 +211,49 @@ object DeltaFileFormatWriter extends Logging {
     }
   }
   // scalastyle:on argcount
+
+  private def prepareOutputWriter(
+      sparkSession: SparkSession,
+      fileFormat: FileFormat,
+      job: Job,
+      outputSpec: OutputSpec,
+      partitionColumns: Seq[Attribute],
+      options: Map[String, String]): PreparedOutputWriter = {
+    val partitionSet = AttributeSet(partitionColumns)
+    // cleanup the internal metadata information of
+    // the file source metadata attribute if any before write out
+    val finalOutputSpec = outputSpec.copy(
+      outputColumns = outputSpec.outputColumns
+        .map(FileSourceMetadataAttribute.cleanupFileSourceMetadataInformation)
+    )
+    val dataColumns = finalOutputSpec.outputColumns.filterNot(partitionSet.contains)
+
+    val dataSchema = dataColumns.toStructType
+    DataSourceUtils.verifySchema(fileFormat, dataSchema)
+    DataSourceUtils.checkFieldNames(fileFormat, dataSchema)
+
+    val caseInsensitiveOptions = CaseInsensitiveMap(options)
+    val outputDataColumns =
+      if (caseInsensitiveOptions.get(DeltaOptions.WRITE_PARTITION_COLUMNS).contains("true")) {
+        dataColumns ++ partitionColumns
+      } else dataColumns
+
+    // Note: prepareWrite has side effect. It sets "job".
+    val outputWriterFactory =
+      fileFormat.prepareWrite(
+        sparkSession,
+        job,
+        caseInsensitiveOptions,
+        outputDataColumns.toStructType
+      )
+
+    PreparedOutputWriter(
+      outputWriterFactory = outputWriterFactory,
+      finalOutputSpec = finalOutputSpec,
+      dataColumns = dataColumns,
+      outputDataColumns = outputDataColumns,
+      caseInsensitiveOptions = caseInsensitiveOptions)
+  }
 
   private def executeWrite(
       sparkSession: SparkSession,
