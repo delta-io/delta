@@ -8,5 +8,12 @@
 /project/                       @tdas
 /version.sbt                    @tdas
 
+# Python client, examples, and tooling
+/python/                        @tdas
+
+# Iceberg / UniForm integration and shaded Iceberg sources
+/iceberg/                       @tdas
+/icebergShaded/                 @tdas
+
 # All files in the root directory
 /*                              @tdas
