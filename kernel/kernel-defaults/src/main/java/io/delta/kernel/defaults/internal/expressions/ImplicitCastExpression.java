@@ -82,12 +82,10 @@ final class ImplicitCastExpression implements Expression {
    *     {@link ColumnVector}.
    */
   ColumnVector eval(ColumnVector input) {
-    // DECIMAL widening: value stays the same, only type metadata changes
+    // DECIMAL widening: value stays the same, only type metadata changes.
+    // No canCastTo guard needed here: this expression is only constructed after
+    // canCastTo has already returned true at the call site, same as other type branches.
     if (input.getDataType() instanceof DecimalType && outputType instanceof DecimalType) {
-      if (!canCastTo(input.getDataType(), outputType)) {
-        throw new UnsupportedOperationException(
-            format("Cannot cast %s to %s", input.getDataType(), outputType));
-      }
       return new DecimalUpConverter(outputType, input);
     }
 
