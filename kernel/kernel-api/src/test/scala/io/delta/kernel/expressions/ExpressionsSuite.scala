@@ -48,7 +48,7 @@ class ExpressionsSuite extends AnyFunSuite {
     assert(bd.scale() == 18)
     val lit = Literal.ofDecimal(bd, bd.precision(), bd.scale())
     val dt = lit.getDataType.asInstanceOf[DecimalType]
-    assert(dt.getPrecision >= dt.getScale)
+    assert(dt.getPrecision == 18)
     assert(dt.getScale == 18)
   }
 
@@ -59,6 +59,14 @@ class ExpressionsSuite extends AnyFunSuite {
     assert(dt.getPrecision == 10)
     assert(dt.getScale == 2)
     assert(lit.getValue.asInstanceOf[java.math.BigDecimal].compareTo(bd) == 0)
+  }
+
+  test("ofDecimal: rejects scale exceeding DecimalType max precision (38)") {
+    val bd = java.math.BigDecimal.valueOf(0, 39) // scale=39 > MAX_PRECISION
+    val ex = intercept[IllegalArgumentException] {
+      Literal.ofDecimal(bd, bd.precision(), bd.scale())
+    }
+    assert(ex.getMessage.contains("Invalid precision and scale combo"))
   }
 
   test("ofDecimal: rejects value that exceeds adjusted precision") {
