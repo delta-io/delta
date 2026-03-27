@@ -42,7 +42,7 @@ import io.delta.sharing.spark.test.shims.SharingStreamingTestShims.{
   StreamMetadata
 }
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest}
+import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.{
   DateType,
   IntegerType,
@@ -1742,4 +1742,215 @@ class DeltaFormatSharingSourceSuite
         }
       }
     }
+
+  // Tests for Trigger.AvailableNow with native SupportsTriggerAvailableNow implementation.
+
+  private val disableAvailableNowWorkaround = Map.empty[String, String]
+
+  /**
+   * Helper to set up a Delta Sharing streaming test with AvailableNow trigger.
+   * Creates a delta table and shared table, prepares mock client metadata, and runs the
+   * provided test body with the workaround disabled.
+   */
+  private def withAvailableNowSharingStream(testName: String)(
+      testBody: (String, String, String, java.io.File, java.io.File) => Unit): Unit = {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = s"delta_table_available_now_$testName"
+      withTable(deltaTableName) {
+        createTableForStreaming(deltaTableName)
+        val sharedTableName = s"shared_available_now_$testName"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+        withSQLConf((getDeltaSharingClassesSQLConf ++ disableAvailableNowWorkaround).toSeq: _*) {
+          testBody(deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir)
+        }
+      }
+    }
+  }
+
+  /** Run an AvailableNow streaming query to completion, with optional extra read options. */
+  private def runAvailableNowQuery(
+      tablePath: String,
+      outputDir: java.io.File,
+      checkpointDir: java.io.File,
+      extraOptions: Map[String, String] = Map.empty): Unit = {
+    var builder = spark.readStream
+      .format("deltaSharing")
+      .option("responseFormat", "delta")
+    extraOptions.foreach { case (k, v) => builder = builder.option(k, v) }
+    val q = builder
+      .load(tablePath)
+      .writeStream
+      .format("delta")
+      .option("checkpointLocation", checkpointDir.toString)
+      .trigger(Trigger.AvailableNow())
+      .start(outputDir.toString)
+    try {
+      q.processAllAvailable()
+    } finally {
+      q.stop()
+    }
+  }
+
+  test("Trigger.AvailableNow processes all data across multiple micro-batches") {
+    withAvailableNowSharingStream("basic") {
+      (deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir) =>
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('c'), ('d')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('e'), ('f')")
+
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName, sharedTable = sharedTableName, versionAsOf = Some(3L))
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        // Use maxFilesPerTrigger=1 to force multiple micro-batches.
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir,
+          extraOptions = Map("maxFilesPerTrigger" -> "1"))
+
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b", "c", "d", "e", "f").toDF())
+        assertBlocksAreCleanedUp()
+    }
+  }
+
+  test("Trigger.AvailableNow excludes data arriving after query start") {
+    withAvailableNowSharingStream("snapshot") {
+      (deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir) =>
+        // Insert data at version 1 and version 2.
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('c'), ('d')")
+
+        // Mock getTableVersion to return version 1 (simulating the frozen version),
+        // even though version 2 exists. This simulates data arriving after query start.
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName, Some(1L))
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName, sharedTable = sharedTableName, versionAsOf = Some(1L))
+
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+
+        // Only version 1 data should be processed; version 2 data is excluded.
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b").toDF())
+        assertBlocksAreCleanedUp()
+    }
+  }
+
+  test("Trigger.AvailableNow restart resumes from checkpoint") {
+    withAvailableNowSharingStream("restart") {
+      (deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir) =>
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName, sharedTable = sharedTableName, versionAsOf = Some(1L))
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        // First run: process initial data.
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b").toDF())
+
+        // Insert more data.
+        sql(s"INSERT INTO $deltaTableName VALUES ('c'), ('d')")
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResultForStreaming(
+          deltaTableName, sharedTableName, 2, 2)
+
+        // Second run: should resume from checkpoint and only process new data.
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b", "c", "d").toDF())
+        assertBlocksAreCleanedUp()
+    }
+  }
+
+  test("Trigger.AvailableNow terminates when no new data after initial run") {
+    withAvailableNowSharingStream("nodata") {
+      (deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir) =>
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName, sharedTable = sharedTableName, versionAsOf = Some(1L))
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b").toDF())
+
+        // Second run with no new data -- should terminate immediately.
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+
+        // Same data as before -- no new data processed.
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b").toDF())
+        assertBlocksAreCleanedUp()
+    }
+  }
+
+  test("Trigger.AvailableNow processes incremental versions after snapshot") {
+    withAvailableNowSharingStream("incremental") {
+      (deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir) =>
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName, sharedTable = sharedTableName, versionAsOf = Some(1L))
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        // First run: process snapshot.
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b").toDF())
+
+        // Insert more data across multiple versions.
+        sql(s"INSERT INTO $deltaTableName VALUES ('c')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('d')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('e')")
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResultForStreaming(
+          deltaTableName, sharedTableName, 2, 4)
+
+        // Second run: process all incremental versions and terminate.
+        runAvailableNowQuery(tablePath, outputDir, checkpointDir)
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b", "c", "d", "e").toDF())
+        assertBlocksAreCleanedUp()
+    }
+  }
+
+  test("Trigger.ProcessingTime is not affected by AvailableNow changes") {
+    withAvailableNowSharingStream("processing_time") {
+      (deltaTableName, sharedTableName, tablePath, outputDir, checkpointDir) =>
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        prepareMockedClientAndFileSystemResult(
+          deltaTable = deltaTableName, sharedTable = sharedTableName, versionAsOf = Some(1L))
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        // Use default trigger (ProcessingTime) -- should work unchanged.
+        val q = spark.readStream
+          .format("deltaSharing")
+          .option("responseFormat", "delta")
+          .load(tablePath)
+          .writeStream
+          .format("delta")
+          .option("checkpointLocation", checkpointDir.toString)
+          .start(outputDir.toString)
+        try {
+          q.processAllAvailable()
+        } finally {
+          q.stop()
+        }
+
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.getCanonicalPath),
+          Seq("a", "b").toDF())
+        assertBlocksAreCleanedUp()
+    }
+  }
 }
