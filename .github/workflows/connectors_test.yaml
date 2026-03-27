@@ -1,5 +1,9 @@
 name: "Delta Connectors"
-on: [push, pull_request]
+on:
+  push:
+    branches: [branch-4.0-test-ga]
+  pull_request:
+    branches: [branch-4.0-test-ga]
 jobs:
   build:
     name: "DC: Scala ${{ matrix.scala }}"
@@ -9,37 +13,39 @@ jobs:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.13, 2.12.18]
     steps:
-      - uses: actions/checkout@v2
-      - name: install java
-        uses: actions/setup-java@v2
-        with:
-          distribution: 'zulu'
-          java-version: '8'
-      - name: Cache Scala, SBT
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.sbt
-            ~/.ivy2
-            ~/.cache/coursier
-            ~/.m2
-          key: build-cache-3-with-scala_${{ matrix.scala }}
-      - name: Run Scala Style tests on test sources (Scala 2.12 only)
-        run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
-        if: startsWith(matrix.scala, '2.12.')
-      - name: Run sqlDeltaImport tests (Scala 2.12 and 2.13 only)
-        run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
-        if: ${{ !startsWith(matrix.scala, '2.11.') }}
+    - uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2.7.0
+    - name: install java
+      uses: actions/setup-java@91d3aa4956ec4a53e477c4907347b5e3481be8c9 # v2.5.1
+      with:
+        distribution: 'zulu'
+        java-version: '8'
+    - name: Cache Scala, SBT
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.sbt
+          ~/.ivy2
+          ~/.cache/coursier
+          ~/.m2
+        key: build-cache-3-with-scala_${{ matrix.scala }}
+    - name: Run Scala Style tests on test sources (Scala 2.12 only)
+      run: build/sbt "++ ${{ matrix.scala }}" testScalastyle
+      if: startsWith(matrix.scala, '2.12.')
+    - name: Run sqlDeltaImport tests (Scala 2.12 and 2.13 only)
+      run: build/sbt "++ ${{ matrix.scala }}" sqlDeltaImport/test
+      if: ${{ !startsWith(matrix.scala, '2.11.') }}
         # These tests are not working yet
         # - name: Run Delta Standalone Compatibility tests (Scala 2.12 only)
         #  run: build/sbt "++ ${{ matrix.scala }}" compatibility/test
         #  if: startsWith(matrix.scala, '2.12.')
-      - name: Run Delta Standalone tests
-        run: build/sbt "++ ${{ matrix.scala }}" standalone/test testStandaloneCosmetic/test standaloneParquet/test testParquetUtilsWithStandaloneCosmetic/test
-      - name: Run Hive 3 tests
-        run: build/sbt "++ ${{ matrix.scala }}" hiveMR/test hiveTez/test
-      - name: Run Hive 2 tests
-        run: build/sbt "++ ${{ matrix.scala }}" hive2MR/test hive2Tez/test
-      - name: Run Flink tests (Scala 2.12 only)
-        run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
-        if: ${{ startsWith(matrix.scala, '2.12.') }}
+    - name: Run Delta Standalone tests
+      run: build/sbt "++ ${{ matrix.scala }}" standalone/test 
+        testStandaloneCosmetic/test standaloneParquet/test 
+        testParquetUtilsWithStandaloneCosmetic/test
+    - name: Run Hive 3 tests
+      run: build/sbt "++ ${{ matrix.scala }}" hiveMR/test hiveTez/test
+    - name: Run Hive 2 tests
+      run: build/sbt "++ ${{ matrix.scala }}" hive2MR/test hive2Tez/test
+    - name: Run Flink tests (Scala 2.12 only)
+      run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
+      if: ${{ startsWith(matrix.scala, '2.12.') }}
