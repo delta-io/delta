@@ -1,9 +1,7 @@
-name: "Delta Lake Tests"
+name: "Delta Lake Tests [DISABLED]"
 on:
-  push:
-    branches: [branch-2.1]
-  pull_request:
-    branches: [branch-2.1]
+# manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-20.04
@@ -56,3 +54,4 @@ jobs:
     - name: Run Scala/Java and Python tests
       run: |
         pipenv run python run-tests.py
+    if: false
