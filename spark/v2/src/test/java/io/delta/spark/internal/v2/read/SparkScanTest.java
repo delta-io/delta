@@ -113,6 +113,131 @@ public class SparkScanTest extends DeltaV2TestBase {
       Arrays.asList("city=hz", "city=sh", "city=bj", "city=sz");
 
   // ===============================================================================================
+  // Tests for columnarSupportMode
+  // ===============================================================================================
+
+  @Test
+  public void testColumnarSupportModeReturnsSupported() {
+    // Table schema uses simple types (INT, STRING) which are batch-read-compatible
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(
+        Scan.ColumnarSupportMode.SUPPORTED,
+        scan.columnarSupportMode(),
+        "columnarSupportMode should return SUPPORTED for batch-compatible schema");
+  }
+
+  @Test
+  public void testColumnarSupportModeDoesNotTriggerPlanning() throws Exception {
+    // Calling columnarSupportMode() must NOT trigger file planning (the whole point of the
+    // override is to avoid the early planInputPartitions() call that PARTITION_DEFINED causes).
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Call columnarSupportMode before any planning
+    scan.columnarSupportMode();
+
+    // Verify the scan has not been planned yet
+    Field plannedField = SparkScan.class.getDeclaredField("planned");
+    plannedField.setAccessible(true);
+    assertFalse(
+        (boolean) plannedField.get(scan), "columnarSupportMode() should not trigger file planning");
+  }
+
+  @Test
+  public void testColumnarSupportModeWithUnsupportedSchema(@TempDir File tempDir) throws Exception {
+    // Create a table with a MAP column and disable nested column vectorized reading
+    // to ensure the schema is not batch-read-compatible
+    String path = tempDir.getAbsolutePath();
+    String mapTableName = "columnar_map_table";
+
+    withTable(
+        new String[] {mapTableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id INT, tags MAP<STRING, STRING>) USING delta LOCATION '%s'",
+                  mapTableName, path));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, map('k', 'v'))", mapTableName));
+
+          withSQLConf(
+              "spark.sql.parquet.enableNestedColumnVectorizedReader",
+              "false",
+              () -> {
+                SparkTable mapTable =
+                    new SparkTable(
+                        Identifier.of(new String[] {"spark_catalog", "default"}, mapTableName),
+                        path,
+                        options);
+                SparkScanBuilder builder = (SparkScanBuilder) mapTable.newScanBuilder(options);
+                SparkScan scan = (SparkScan) builder.build();
+
+                assertEquals(
+                    Scan.ColumnarSupportMode.UNSUPPORTED,
+                    scan.columnarSupportMode(),
+                    "columnarSupportMode should return UNSUPPORTED for schema with MAP type"
+                        + " when nested column vectorized reader is disabled");
+              });
+        });
+  }
+
+  @Test
+  public void testColumnarSupportModeWithVectorizedReaderDisabled() throws Exception {
+    // When spark.sql.parquet.enableVectorizedReader is false, columnarSupportMode should
+    // return UNSUPPORTED even for batch-compatible schemas.
+    withSQLConf(
+        "spark.sql.parquet.enableVectorizedReader",
+        "false",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          assertEquals(
+              Scan.ColumnarSupportMode.UNSUPPORTED,
+              scan.columnarSupportMode(),
+              "columnarSupportMode should return UNSUPPORTED when vectorized reader is disabled");
+        });
+  }
+
+  @Test
+  public void testColumnarSupportModeWithDeletionVectors(@TempDir File tempDir) throws Exception {
+    // For a DV-enabled table with a batch-compatible schema, columnarSupportMode should still
+    // return SUPPORTED because the DV internal column (__delta_internal_is_row_deleted, ByteType)
+    // is also batch-compatible. This verifies consistency with PartitionUtils reader factory.
+    String dvPath = tempDir.getAbsolutePath();
+    String dvTableName = "columnar_dv_table";
+
+    withTable(
+        new String[] {dvTableName},
+        () -> {
+          spark.sql(
+              String.format(
+                  "CREATE TABLE %s (id INT, value STRING) USING delta "
+                      + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true') "
+                      + "LOCATION '%s'",
+                  dvTableName, dvPath));
+          spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", dvTableName));
+
+          SparkTable dvTable =
+              new SparkTable(
+                  Identifier.of(new String[] {"spark_catalog", "default"}, dvTableName),
+                  dvPath,
+                  options);
+          SparkScanBuilder builder = (SparkScanBuilder) dvTable.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+
+          // DV-enabled table with simple types should still return SUPPORTED because the
+          // DV column (ByteType) is batch-compatible
+          assertEquals(
+              Scan.ColumnarSupportMode.SUPPORTED,
+              scan.columnarSupportMode(),
+              "columnarSupportMode should return SUPPORTED for DV-enabled table with"
+                  + " batch-compatible schema");
+        });
+  }
+
+  // ===============================================================================================
   // Tests for getDataSchema, getPartitionSchema, getReadDataSchema, getOptions, getConfiguration
   // ===============================================================================================
 
@@ -463,7 +588,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(
         "The following streaming options are not supported: [readchangefeed]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreDeletes, skipChangeCommits, excludeRegex].",
+            + "maxBytesPerTrigger, ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex].",
         exception.getMessage());
   }
 
@@ -942,7 +1067,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testPlanInputPartitionsGroupsFilesByPartition(@TempDir File tempDir) {
+  public void testPlanInputPartitionsGroupsFilesByPartition(@TempDir File tempDir)
+      throws Exception {
     // Create a table with multiple files per partition to actually exercise the grouping logic
     // in planPartitionedInputPartitions (the default test table has 1 file per partition,
     // which would pass even without grouping).
@@ -966,44 +1092,52 @@ public class SparkScanTest extends DeltaV2TestBase {
             tempDir.getAbsolutePath(),
             options);
 
-    SparkScanBuilder builder = (SparkScanBuilder) multiFileTable.newScanBuilder(options);
-    SparkScan scan = (SparkScan) builder.build();
-    Batch batch = scan.toBatch();
+    // Force maxPartitionBytes=1 so each file gets its own FilePartition, making the
+    // totalPartitions > 2 assertion deterministic regardless of default parallelism.
+    withSQLConf(
+        "spark.sql.files.maxPartitionBytes",
+        "1",
+        () -> {
+          SparkScanBuilder builder = (SparkScanBuilder) multiFileTable.newScanBuilder(options);
+          SparkScan scan = (SparkScan) builder.build();
+          Batch batch = scan.toBatch();
 
-    InputPartition[] partitions = batch.planInputPartitions();
+          InputPartition[] partitions = batch.planInputPartitions();
 
-    // Verify all partitions are DeltaInputPartition with partition keys
-    Map<InternalRow, List<DeltaInputPartition>> partitionsByKey = new HashMap<>();
-    for (InputPartition p : partitions) {
-      assertTrue(p instanceof DeltaInputPartition);
-      DeltaInputPartition dp = (DeltaInputPartition) p;
-      partitionsByKey.computeIfAbsent(dp.partitionKey(), k -> new ArrayList<>()).add(dp);
-    }
+          // Verify all partitions are DeltaInputPartition with partition keys
+          Map<InternalRow, List<DeltaInputPartition>> partitionsByKey = new HashMap<>();
+          for (InputPartition p : partitions) {
+            assertTrue(p instanceof DeltaInputPartition);
+            DeltaInputPartition dp = (DeltaInputPartition) p;
+            partitionsByKey.computeIfAbsent(dp.partitionKey(), k -> new ArrayList<>()).add(dp);
+          }
 
-    // Should have exactly 2 unique partition keys (part=1 and part=2)
-    assertEquals(2, partitionsByKey.size(), "Should have 2 unique partition keys");
+          // Should have exactly 2 unique partition keys (part=1 and part=2)
+          assertEquals(2, partitionsByKey.size(), "Should have 2 unique partition keys");
 
-    // Verify that the grouping actually produced multiple DeltaInputPartitions for a single
-    // partition key (since multiple files exist per partition and each gets its own
-    // FilePartition at default maxSplitBytes)
-    int totalPartitions = partitions.length;
-    assertTrue(
-        totalPartitions > 2,
-        "With 5 files across 2 partitions, should have more than 2 input partitions, "
-            + "got "
-            + totalPartitions);
+          // Verify that the grouping actually produced multiple DeltaInputPartitions for a
+          // single partition key (since multiple files exist per partition and each gets its
+          // own FilePartition when maxPartitionBytes=1)
+          int totalPartitions = partitions.length;
+          assertTrue(
+              totalPartitions > 2,
+              "With 5 files across 2 partitions, should have more than 2 input partitions, "
+                  + "got "
+                  + totalPartitions);
 
-    // Verify all DeltaInputPartitions with the same key share the same partition key instance
-    for (Map.Entry<InternalRow, List<DeltaInputPartition>> entry : partitionsByKey.entrySet()) {
-      List<DeltaInputPartition> group = entry.getValue();
-      InternalRow expectedKey = group.get(0).partitionKey();
-      for (DeltaInputPartition dp : group) {
-        assertEquals(
-            expectedKey,
-            dp.partitionKey(),
-            "All partitions in the same group should have equal partition keys");
-      }
-    }
+          // Verify all DeltaInputPartitions with the same key share the same partition key
+          for (Map.Entry<InternalRow, List<DeltaInputPartition>> entry :
+              partitionsByKey.entrySet()) {
+            List<DeltaInputPartition> group = entry.getValue();
+            InternalRow expectedKey = group.get(0).partitionKey();
+            for (DeltaInputPartition dp : group) {
+              assertEquals(
+                  expectedKey,
+                  dp.partitionKey(),
+                  "All partitions in the same group should have equal partition keys");
+            }
+          }
+        });
   }
 
   @Test
