@@ -1,17 +1,16 @@
-name: Add new and updated issues to Needs Review
+name: Add new and updated issues to Needs Review [DISABLED]
 
 env:
   eng_usernames: allisonport-db scottsand-db tdas vkorukanti zsxwing
   devrel_usernames: dennyglee MrPowers nkarpov vinijaiswal
 
 on:
-  issues:
-    types: [opened, reopened]
-  issue_comment:
-    types: [created]
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 
 jobs:
   automate-new-updated-issues:
+    if: false
     if: ${{ !github.event.issue.pull_request &&
       !contains('allisonport-db scottsand-db tdas vkorukanti zsxwing dennyglee MrPowers nkarpov vinijaiswal', github.event.sender.login) }}
     runs-on: ubuntu-latest

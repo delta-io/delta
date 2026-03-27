@@ -1,7 +1,10 @@
-name: "Delta Connectors Tests"
-on: [push, pull_request]
+name: "Delta Connectors Tests [DISABLED]"
+on:
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   build:
+    if: false
     name: "Run tests"
     runs-on: ubuntu-20.04
     strategy:
