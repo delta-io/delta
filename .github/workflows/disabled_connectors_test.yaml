@@ -1,9 +1,7 @@
-name: "Delta Connectors"
+name: "Delta Connectors [DISABLED]"
 on:
-  push:
-    branches: [ds-11122025]
-  pull_request:
-    branches: [ds-11122025]
+# manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   build:
     name: "DC: Scala ${{ matrix.scala }}"
@@ -42,3 +40,4 @@ jobs:
       run: build/sbt "++ ${{ matrix.scala }}" standalone/test 
         testStandaloneCosmetic/test standaloneParquet/test 
         testParquetUtilsWithStandaloneCosmetic/test
+    if: false

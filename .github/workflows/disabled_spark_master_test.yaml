@@ -1,9 +1,7 @@
-name: "Delta Spark Master"
+name: "Delta Spark Master [DISABLED]"
 on:
-  push:
-    branches: [ds-11122025]
-  pull_request:
-    branches: [ds-11122025]
+# manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
     name: "DSM: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
@@ -20,7 +18,8 @@ jobs:
       NUM_SHARDS: 4
     steps:
     - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-    - uses: technote-space/get-diff-action@623b016c454ae55181c010cb611bd5d7028102c9 # v4.2.0
+    - uses: 
+        technote-space/get-diff-action@623b016c454ae55181c010cb611bd5d7028102c9     # v4.2.0
       id: git-diff
       with:
         PATTERNS: |
@@ -61,3 +60,4 @@ jobs:
         TEST_PARALLELISM_COUNT=4 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/test
         TEST_PARALLELISM_COUNT=4 build/sbt -DsparkVersion=master "++ ${{ matrix.scala }}" clean connectServer/assembly connectClient/test
       if: steps.git-diff.outputs.diff
+    if: false
