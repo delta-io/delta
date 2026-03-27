@@ -1742,5 +1742,4 @@ class DeltaFormatSharingSourceSuite
         }
       }
     }
-
 }
