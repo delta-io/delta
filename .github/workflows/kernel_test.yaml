@@ -1,17 +1,21 @@
 name: "Delta Kernel Tests"
-on: [push, pull_request]
+on:
+  push:
+    branches: [branch-3.0]
+  pull_request:
+    branches: [branch-3.0]
 jobs:
   test:
     runs-on: ubuntu-20.04
     env:
       SCALA_VERSION: 2.12.17
     steps:
-      - uses: actions/checkout@v3
-      - name: install java
-        uses: actions/setup-java@v3
-        with:
-          distribution: "zulu"
-          java-version: "8"
-      - name: Run tests
-        run: |
-          python run-tests.py --group kernel --coverage
+    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+    - name: install java
+      uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      with:
+        distribution: "zulu"
+        java-version: "8"
+    - name: Run tests
+      run: |
+        python run-tests.py --group kernel --coverage
