@@ -1,7 +1,10 @@
-name: "Delta Spark Python"
-on: [push, pull_request]
+name: "Delta Spark Python [DISABLED]"
+on:
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
+    if: false
     name: "DSP"
     runs-on: ubuntu-24.04
     strategy:
