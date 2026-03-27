@@ -1130,7 +1130,7 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
     }
   }
 
-  test("Adding non-nullable field fails") {
+  test("Adding non-nullable field inside new nullable struct succeeds") {
     withTempDirAndEngine { (tablePath, engine) =>
       val table = Table.forPath(engine, tablePath)
       val initialSchema = new StructType()
@@ -1158,11 +1158,13 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         .add("s", new StringType(utf8Lcase), true, fieldMetadataForColumn(6, "s"))
         .add("c", IntegerType.INTEGER, true, currentSchema.get("c").getMetadata)
 
-      assertSchemaEvolutionFails[KernelException](
-        table,
-        engine,
-        newSchema,
-        "Cannot add non-nullable field non_nullable_field")
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val resultSchema = table.getLatestSnapshot(engine).getSchema
+      val bStruct = resultSchema.get("b").getDataType.asInstanceOf[StructType]
+      assert(
+        !bStruct.get("non_nullable_field").isNullable,
+        "non_nullable_field should remain non-nullable")
     }
   }
 
@@ -1223,6 +1225,115 @@ trait DeltaTableSchemaEvolutionSuiteBase extends AnyFunSuite with AbstractWriteU
         engine,
         newSchema,
         "Cannot add non-nullable field new_required_field")
+    }
+  }
+
+  test("Adding nullable struct with deeply nested non-nullable field " +
+    "through map and array succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add("a", StringType.STRING, true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val nestedIdsForM = FieldMetadata.builder()
+        .putLong("m.key", 6)
+        .putLong("m.value", 7)
+        .putLong("m.value.element", 8)
+        .build()
+      val mMetadata = FieldMetadata.builder()
+        .putLong(ColumnMapping.COLUMN_MAPPING_ID_KEY, 3)
+        .putString(ColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY, "m")
+        .putFieldMetadata(ColumnMapping.COLUMN_MAPPING_NESTED_IDS_KEY, nestedIdsForM)
+        .build()
+
+      val newSchema = new StructType()
+        .add("a", StringType.STRING, true, currentSchema.get("a").getMetadata)
+        .add(
+          "outer",
+          new StructType()
+            .add(
+              "m",
+              new MapType(
+                StringType.STRING,
+                new ArrayType(
+                  new StructType()
+                    .add("f", StringType.STRING, false, fieldMetadataForColumn(5, "f")),
+                  false),
+                false),
+              true,
+              mMetadata),
+          true,
+          fieldMetadataForColumn(2, "outer"))
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val resultSchema = table.getLatestSnapshot(engine).getSchema
+      assertColumnMapping(resultSchema.get("outer"), 2, "outer")
+      val outerStruct = resultSchema.get("outer").getDataType.asInstanceOf[StructType]
+      assert(outerStruct.indexOf("m") >= 0, "m should exist inside outer")
+      val mapType = outerStruct.get("m").getDataType.asInstanceOf[MapType]
+      val arrayType = mapType.getValueType.asInstanceOf[ArrayType]
+      val innerStruct = arrayType.getElementType.asInstanceOf[StructType]
+      assert(
+        !innerStruct.get("f").isNullable,
+        "f should remain non-nullable through map -> array -> struct nesting")
+    }
+  }
+
+  test("Adding nullable struct with non-nullable inner field " +
+    "alongside unchanged sibling succeeds") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      val table = Table.forPath(engine, tablePath)
+      val initialSchema = new StructType()
+        .add(
+          "parent",
+          new StructType()
+            .add("sibling", IntegerType.INTEGER, true),
+          true)
+
+      createEmptyTable(
+        engine,
+        tablePath,
+        initialSchema,
+        tableProperties = Map(
+          TableConfig.COLUMN_MAPPING_MODE.getKey -> "id",
+          TableConfig.ICEBERG_COMPAT_V2_ENABLED.getKey -> "true"))
+
+      val currentSchema = table.getLatestSnapshot(engine).getSchema
+      val parentMeta = currentSchema.get("parent").getMetadata
+      val parentStruct = currentSchema.get("parent").getDataType.asInstanceOf[StructType]
+      val siblingMeta = parentStruct.get("sibling").getMetadata
+
+      val newSchema = new StructType()
+        .add(
+          "parent",
+          new StructType()
+            .add("sibling", IntegerType.INTEGER, true, siblingMeta)
+            .add(
+              "new_struct",
+              new StructType()
+                .add("f", StringType.STRING, false, fieldMetadataForColumn(4, "f")),
+              true,
+              fieldMetadataForColumn(3, "new_struct")),
+          true,
+          parentMeta)
+
+      updateTableMetadata(engine, tablePath, newSchema)
+
+      val resultSchema = table.getLatestSnapshot(engine).getSchema
+      val resultParent = resultSchema.get("parent").getDataType.asInstanceOf[StructType]
+      assert(resultParent.indexOf("sibling") >= 0, "sibling should still exist")
+      val newStruct = resultParent.get("new_struct").getDataType.asInstanceOf[StructType]
+      assert(!newStruct.get("f").isNullable, "f should remain non-nullable after schema evolution")
     }
   }
 
