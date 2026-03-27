@@ -1,5 +1,9 @@
 name: "Delta Kernel"
-on: [push, pull_request]
+on:
+  push:
+    branches: [branch-4.0-test-ga]
+  pull_request:
+    branches: [branch-4.0-test-ga]
 jobs:
   test:
     name: "DK"
@@ -7,15 +11,15 @@ jobs:
     env:
       SCALA_VERSION: 2.12.18
     steps:
-      - uses: actions/checkout@v3
-      - name: install java
-        uses: actions/setup-java@v3
-        with:
-          distribution: "zulu"
-          java-version: "8"
-      - name: Run tests
-        run: |
-          python run-tests.py --group kernel --coverage
-      - name: Run integration tests
-        run: |
-          cd kernel/examples && python run-kernel-examples.py --use-local
+    - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+    - name: install java
+      uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+      with:
+        distribution: "zulu"
+        java-version: "8"
+    - name: Run tests
+      run: |
+        python run-tests.py --group kernel --coverage
+    - name: Run integration tests
+      run: |
+        cd kernel/examples && python run-kernel-examples.py --use-local
