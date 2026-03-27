@@ -1,18 +1,12 @@
-name: Publish Docs
+name: Publish Docs [DISABLED]
 
 on:
-  push:
-    branches:
-      - master
-    paths:
-      - docs/**
-  release:
-    types:
-      - published
+  # manual-only, auto triggers removed
   workflow_dispatch:
 
 jobs:
   build_api_docs:
+    if: false
     name: Build API docs (${{ matrix.version.name }})
     runs-on: ubuntu-latest
 
@@ -77,6 +71,7 @@ jobs:
           path: ${{ matrix.version.out_dir }}
 
   build_site:
+    if: false
     name: Build site
     needs: build_api_docs
     runs-on: ubuntu-latest

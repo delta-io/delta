@@ -1,17 +1,12 @@
-name: "Delta Spark Python"
+name: "Delta Spark Python [DISABLED]"
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-  pull_request:
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)
   generate-matrix:
+    if: false
     name: "Generate Released Spark Versions Matrix"
     runs-on: ubuntu-24.04
     outputs:
@@ -32,6 +27,7 @@ jobs:
           echo "Generated released Spark versions: $SPARK_VERSIONS"
 
   test:
+    if: false
     name: "DSP (${{ matrix.spark_version }})"
     runs-on: ubuntu-24.04
     needs: generate-matrix

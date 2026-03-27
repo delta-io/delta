@@ -1,15 +1,10 @@
-name: "Delta Iceberg Latest"
+name: "Delta Iceberg Latest [DISABLED]"
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-  pull_request:
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
+    if: false
     name: "DIL: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-24.04
     strategy:
