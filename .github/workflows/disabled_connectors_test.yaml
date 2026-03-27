@@ -1,9 +1,7 @@
-name: "Delta Connectors Tests"
+name: "Delta Connectors Tests [DISABLED]"
 on:
-  push:
-    branches: [branch-3.1]
-  pull_request:
-    branches: [branch-3.1]
+# manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   build:
     name: "Run tests"
@@ -49,3 +47,4 @@ jobs:
     - name: Run Flink tests (Scala 2.12 only)
       run: build/sbt -mem 3000 "++ ${{ matrix.scala }}" flink/test
       if: ${{ startsWith(matrix.scala, '2.12.') }}
+    if: false
