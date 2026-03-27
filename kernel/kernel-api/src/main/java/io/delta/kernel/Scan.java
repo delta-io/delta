@@ -111,11 +111,16 @@ public interface Scan {
    * counts) in the returned rows.
    *
    * <p>When {@code includeStats=true}, the JSON file statistics are always read from the log and
-   * included in the returned columnar batches. This is useful for connectors that need per-file
-   * metadata (e.g., {@code numRecords}) to implement optimizations such as limit pushdown.
+   * included in the returned columnar batches. Specifically, the {@code add} struct in each
+   * returned row gains an additional {@code stats} field (a JSON string containing per-file
+   * statistics such as {@code numRecords}, {@code minValues}, and {@code maxValues}). The full
+   * schema of the returned rows is defined by {@link
+   * io.delta.kernel.internal.InternalScanFileUtils#SCAN_FILE_SCHEMA_WITH_STATS}. This is useful for
+   * connectors that need per-file metadata to implement optimizations such as limit pushdown.
    *
    * <p>When {@code includeStats=false}, this method behaves identically to {@link
-   * #getScanFiles(Engine)}.
+   * #getScanFiles(Engine)} and the returned row schema matches {@link
+   * io.delta.kernel.internal.InternalScanFileUtils#SCAN_FILE_SCHEMA}.
    *
    * @param engine {@link Engine} instance to use in Delta Kernel.
    * @param includeStats whether to read and include the JSON file statistics in the returned rows.
