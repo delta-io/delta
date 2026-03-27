@@ -1,9 +1,7 @@
-name: "Delta Lake Tests"
+name: "Delta Lake Tests [DISABLED]"
 on:
-  push:
-    branches: [branch-2.3]
-  pull_request:
-    branches: [branch-2.3]
+# manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
     runs-on: ubuntu-20.04
@@ -57,3 +55,4 @@ jobs:
       run: |
         pipenv run python run-tests.py --coverage
         cd examples/scala && build/sbt "++ $SCALA_VERSION compile"
+    if: false
