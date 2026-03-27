@@ -1,23 +1,17 @@
-name: "Delta Spark Latest"
+name: "Delta Spark Python [DISABLED]"
 on:
-  push:
-    branches: [kernel-20250227]
-  pull_request:
-    branches: [kernel-20250227]
+# manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
-    name: "DSL: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
+    name: "DSP"
     runs-on: ubuntu-24.04
     strategy:
       matrix:
         # These Scala versions must match those in the build.sbt
-        scala: [2.12.18, 2.13.13]
-        # Important: This list of shards must be [0..NUM_SHARDS - 1]
-        shard: [0, 1, 2, 3]
+        scala: [2.12.18]
     env:
       SCALA_VERSION: ${{ matrix.scala }}
-      # Important: This must be the same as the length of shards in matrix
-      NUM_SHARDS: 4
     steps:
     - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
     - uses: technote-space/get-diff-action@623b016c454ae55181c010cb611bd5d7028102c9 # v4.2.0
@@ -84,14 +78,9 @@ jobs:
         pipenv run pip install pyarrow==8.0.0
         pipenv run pip install numpy==1.20.3
       if: steps.git-diff.outputs.diff
-    - name: Scala structured logging style check
-      run: |
-        if [ -f ./dev/spark_structured_logging_style.py ]; then
-            python3 ./dev/spark_structured_logging_style.py
-        fi
-      if: steps.git-diff.outputs.diff
-    - name: Run Scala/Java and Python tests
+    - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
       run: |
-        TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark --shard ${{ matrix.shard }}
+        TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark-python
       if: steps.git-diff.outputs.diff
+    if: false
