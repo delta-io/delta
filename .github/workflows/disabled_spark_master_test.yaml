@@ -1,7 +1,10 @@
-name: "Delta Spark Master"
-on: [push, pull_request]
+name: "Delta Spark Master [DISABLED]"
+on:
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
+    if: false
     name: "DSM: Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
     runs-on: ubuntu-24.04
     strategy:
