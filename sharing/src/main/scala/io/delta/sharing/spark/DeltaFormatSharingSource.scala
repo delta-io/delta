@@ -525,6 +525,7 @@ case class DeltaFormatSharingSource(
    *                        it will only load files since startingOffset.reservoirVersion.
    * @param endingVersionForQuery The ending version used for the query, always smaller than
    *                              the latest table version on server.
+   * @param fileIdHash            Optional hash algorithm to use for file ID hashing.
    */
   private def getTableFileChanges(
       startingOffset: DeltaSourceOffset,
