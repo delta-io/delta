@@ -43,7 +43,11 @@ import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.connector.read.streaming
-import org.apache.spark.sql.connector.read.streaming.{ReadLimit, SupportsAdmissionControl}
+import org.apache.spark.sql.connector.read.streaming.{
+  ReadLimit,
+  SupportsAdmissionControl,
+  SupportsTriggerAvailableNow
+}
 import org.apache.spark.sql.execution.streaming.{Offset, Source}
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.types.StructType
@@ -55,7 +59,7 @@ import org.apache.spark.sql.types.StructType
  * When a new stream is started, delta sharing starts by fetching delta log from the server side,
  * constructing a local delta log, and call delta source apis to compute offset or read data.
  *
- * TODO: Support CDC Streaming, SupportsTriggerAvailableNow and SupportsConcurrentExecution.
+ * TODO: Support CDC Streaming and SupportsConcurrentExecution.
  */
 case class DeltaFormatSharingSource(
     spark: SparkSession,
@@ -67,6 +71,7 @@ case class DeltaFormatSharingSource(
     metadataPath: String)
     extends Source
     with SupportsAdmissionControl
+    with SupportsTriggerAvailableNow
     with DeltaLogging {
 
   private val sourceId = Some(UUID.randomUUID().toString().split('-').head)
@@ -194,11 +199,28 @@ case class DeltaFormatSharingSource(
     s", with queryId(${client.getQueryId})"
   }
 
+  // Whether this query is running in Trigger.AvailableNow mode.
+  // TODO: If SupportsConcurrentExecution is added, these need @volatile or synchronization.
+  private var isTriggerAvailableNow: Boolean = false
+
+  // The server version captured at query start for Trigger.AvailableNow. All processing is capped
+  // at this version. Not persisted -- re-captured fresh on every query start.
+  private var frozenServerVersionForAvailableNow: Long = -1
+
   // A variable to store the latest table version on server, returned from the getTableVersion rpc.
   // Used to store the latest table version for getOrUpdateLatestTableVersion when not getting
   // updates from the server.
   // For all other callers, please use getOrUpdateLatestTableVersion instead of this variable.
   private var latestTableVersionOnServer: Long = -1
+
+  override def prepareForTriggerAvailableNow(): Unit = {
+    // Call getOrUpdateLatestTableVersion BEFORE setting isTriggerAvailableNow, so the guard
+    // inside getOrUpdateLatestTableVersion doesn't short-circuit and we get a real RPC.
+    frozenServerVersionForAvailableNow = getOrUpdateLatestTableVersion
+    isTriggerAvailableNow = true
+    logInfo(s"Prepared for Trigger.AvailableNow with frozenServerVersionForAvailableNow=" +
+      s"$frozenServerVersionForAvailableNow," + getTableInfoForLogging)
+  }
 
   /**
    * Check the latest table version from the delta sharing server through the client.getTableVersion
@@ -208,6 +230,9 @@ case class DeltaFormatSharingSource(
    * @return the latest table version on the server.
    */
   private def getOrUpdateLatestTableVersion: Long = {
+    if (isTriggerAvailableNow) {
+      return frozenServerVersionForAvailableNow
+    }
     val currentTimeMillis = System.currentTimeMillis()
     if ((currentTimeMillis - lastTimestampForGetVersionFromServer) >=
       QUERY_TABLE_VERSION_INTERVAL_MILLIS) {
@@ -420,7 +445,8 @@ case class DeltaFormatSharingSource(
   // snapshot (isStartingVersion = true), and advancing the offset is necessary for delta sharing
   // streaming to fetch new files from the delta sharing server.
   private def maybeMoveToNextVersion(
-      latestOffsetFromDeltaSource: streaming.Offset): DeltaSourceOffset = {
+      latestOffsetFromDeltaSource: streaming.Offset): streaming.Offset = {
+    if (latestOffsetFromDeltaSource == null) return null
     val deltaLatestOffset = deltaSource.toDeltaSourceOffset(latestOffsetFromDeltaSource)
     if (deltaLatestOffset.isInitialSnapshot &&
       (numFileActionsInStartingSnapshotOpt.exists(_ == deltaLatestOffset.index + 1))) {
@@ -447,6 +473,13 @@ case class DeltaFormatSharingSource(
   private def needNewFilesFromServer(
       startingOffset: DeltaSourceOffset,
       latestTableVersion: Long): Boolean = {
+    // In AvailableNow mode, stop fetching once the local log has all data up to the frozen version.
+    // Using >= defensively; in practice the local log version should only equal the frozen version
+    // since fetches are capped at frozenServerVersionForAvailableNow via getEndingVersionForRpc.
+    if (isTriggerAvailableNow &&
+        latestTableVersionInLocalDeltaLogOpt.exists(_ >= frozenServerVersionForAvailableNow)) {
+      return false
+    }
     if (latestTableVersionInLocalDeltaLogOpt.isEmpty) {
       return true
     }
