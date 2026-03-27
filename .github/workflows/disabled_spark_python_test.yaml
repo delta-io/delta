@@ -1,8 +1,11 @@
-name: "Delta Iceberg Latest"
-on: [push, pull_request]
+name: "Delta Spark Python [DISABLED]"
+on:
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   test:
-    name: "DIL: Scala ${{ matrix.scala }}"
+    if: false
+    name: "DSP"
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -12,13 +15,13 @@ jobs:
       SCALA_VERSION: ${{ matrix.scala }}
     steps:
       - uses: actions/checkout@v3
-        # TODO we can make this more selective
       - uses: technote-space/get-diff-action@v4
         id: git-diff
         with:
           PATTERNS: |
             **
             .github/workflows/**
+            !unity/**
             !kernel/**
             !connectors/**
       - name: install java
@@ -55,10 +58,34 @@ jobs:
           eval "$(pyenv virtualenv-init -)"
           pyenv install 3.8.18
           pyenv global system 3.8.18
-          pipenv --python 3.8.18 install
+          pipenv --python 3.8 install
+          # Update the pip version to 24.0. By default `pyenv.run` installs the latest pip version
+          # available. From version 24.1, `pip` doesn't allow installing python packages
+          # with version string containing `-`. In Delta-Spark case, the pypi package generated has
+          # `-SNAPSHOT` in version (e.g. `3.3.0-SNAPSHOT`) as the version is picked up from
+          # the`version.sbt` file.
+          pipenv run pip install pip==24.0 setuptools==69.5.1 wheel==0.43.0
+          # Install PySpark without bundled Scala 2.12 JARs - read more in the future note below
+          pipenv run pip install pyspark==3.5.3 --no-deps
+          pipenv run pip install py4j==0.10.9.7
+          pipenv run pip install flake8==3.5.0 pypandoc==1.3.3
+          pipenv run pip install black==23.9.1
+          pipenv run pip install importlib_metadata==3.10.0
+          # The mypy versions 0.982 and 1.8.0 have conflicting rules (cannot get style checks to
+          # pass for both versions on the same file) so we upgrade this to match Spark 4.0
+          pipenv run pip install mypy==1.8.0
+          pipenv run pip install mypy-protobuf==3.3.0
+          pipenv run pip install cryptography==37.0.4
+          pipenv run pip install twine==4.0.1
+          pipenv run pip install wheel==0.33.4
+          pipenv run pip install setuptools==41.1.0
+          pipenv run pip install pydocstyle==3.0.0
+          pipenv run pip install pandas==1.1.3
+          pipenv run pip install pyarrow==8.0.0
+          pipenv run pip install numpy==1.20.3
         if: steps.git-diff.outputs.diff
-      - name: Run Scala/Java and Python tests
+      - name: Run Python tests
         # when changing TEST_PARALLELISM_COUNT make sure to also change it in spark_master_test.yaml
         run: |
-          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group iceberg
+          TEST_PARALLELISM_COUNT=4 pipenv run python run-tests.py --group spark-python
         if: steps.git-diff.outputs.diff

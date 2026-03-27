@@ -1,7 +1,10 @@
-name: "Delta Connectors"
-on: [push, pull_request]
+name: "Delta Connectors [DISABLED]"
+on:
+  # manual-only, auto triggers removed
+  workflow_dispatch:
 jobs:
   build:
+    if: false
     name: "DC: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-24.04
     strategy:
