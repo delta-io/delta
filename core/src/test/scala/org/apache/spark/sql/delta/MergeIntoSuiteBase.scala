@@ -5061,6 +5061,35 @@ abstract class MergeIntoSuiteBase
       Option("Aggregate functions are not supported in the .* condition of MERGE operation.*")
   )
 
+  test("Merge should use the same SparkSession consistently") {
+    withTempDir { dir =>
+      withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "false") {
+        val r = dir.getCanonicalPath
+        val sourcePath = s"$r/source"
+        val targetPath = s"$r/target"
+        val numSourceRecords = 20
+        spark.range(numSourceRecords)
+          .withColumn("x", $"id")
+          .withColumn("y", $"id")
+          .write.mode("overwrite").format("delta").save(sourcePath)
+        spark.range(1)
+          .withColumn("x", $"id")
+          .write.mode("overwrite").format("delta").save(targetPath)
+        val spark2 = spark.newSession
+        spark2.conf.set(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key, "true")
+        val target = io.delta.tables.DeltaTable.forPath(spark2, targetPath)
+        val source = spark.read.format("delta").load(sourcePath).alias("s")
+        val merge = target.alias("t")
+          .merge(source, "t.id = s.id")
+          .whenMatched.updateExpr(Map("t.x" -> "t.x + 1"))
+          .whenNotMatched.insertAll()
+          .execute()
+        // The target table should have the same number of rows as the source after the merge
+        assert(spark.read.format("delta").load(targetPath).count() == numSourceRecords)
+      }
+    }
+  }
+
   testWithTempView("test merge on temp view - basic") { isSQLTempView =>
     withTable("tab") {
       withTempView("src") {
