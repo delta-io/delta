@@ -19,6 +19,7 @@ package io.delta.tables
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta.{DeltaErrors, DeltaTableUtils}
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import io.delta.tables.execution._
 
 import org.apache.spark.annotation._
@@ -295,7 +296,7 @@ class DeltaTableBuilder private[tables](
    * @since 1.0.0
    */
   @Evolving
-  def execute(): DeltaTable = {
+  def execute(): DeltaTable = withActiveSession(spark) {
     if (identifier == null && location.isEmpty) {
       throw DeltaErrors.analysisException("Table name or location has to be specified")
     }

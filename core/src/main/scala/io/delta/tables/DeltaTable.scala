@@ -21,6 +21,7 @@ import java.sql.Timestamp
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.DeltaTableUtils.withActiveSession
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -930,7 +931,7 @@ object DeltaTable {
    * @since 1.0.0
    */
   @Evolving
-  def createOrReplace(spark: SparkSession): DeltaTableBuilder = {
+  def createOrReplace(spark: SparkSession): DeltaTableBuilder = withActiveSession(spark) {
     new DeltaTableBuilder(spark, ReplaceTableOptions(orCreate = true))
   }
 
