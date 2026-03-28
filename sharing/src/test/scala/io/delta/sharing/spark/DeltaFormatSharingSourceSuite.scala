@@ -1867,11 +1867,13 @@ class DeltaFormatSharingSourceSuite
       withTable(deltaTableName) {
         sql(s"""CREATE TABLE $deltaTableName (value STRING)
                |USING DELTA""".stripMargin)
-        // Version 1: 2 rows
         sql(s"INSERT INTO $deltaTableName VALUES ('v1a'), ('v1b')")
-        // Version 2: 2 rows
-        sql(s"INSERT INTO $deltaTableName VALUES ('v2a'), ('v2b')")
-        // Version 3: 2 rows
+        // Version 2: exactly 2 files (1 row each) for the mid-version case.
+        // parallelize with numSlices=2 places each row in its own partition.
+        spark.createDataFrame(
+          spark.sparkContext.parallelize(Seq(Row("v2a"), Row("v2b")), 2),
+          new StructType().add("value", StringType)
+        ).write.mode("append").insertInto(deltaTableName)
         sql(s"INSERT INTO $deltaTableName VALUES ('v3a'), ('v3b')")
         val tableId = DeltaLog.forTable(
           spark, new TableIdentifier(deltaTableName))
@@ -1958,13 +1960,19 @@ class DeltaFormatSharingSourceSuite
           } finally {
             q.stop()
           }
-          // The legacy checkpoint was at version 2, index 0 -- the only
-          // file in version 2 (each INSERT produces 1 file with 2 rows).
-          // Since all files in version 2 were already consumed, the stream
-          // transitions immediately and only processes version 3.
-          checkAnswer(
-            spark.read.format("delta").load(outputDir.getCanonicalPath),
-            Seq("v3a", "v3b").toDF())
+          // The legacy checkpoint was at version 2, index 0 (1 of 2 files
+          // processed). The stream finishes the remaining file in version 2,
+          // transitions to DeltaSourceOffset at the version boundary, then
+          // processes version 3 normally.
+          val outputValues = spark.read.format("delta")
+            .load(outputDir.getCanonicalPath)
+            .collect().map(_.getString(0)).toSet
+          assert(outputValues.size == 3,
+            s"Expected 3 rows (1 remaining v2 + 2 v3) but got: $outputValues")
+          assert(outputValues.contains("v3a") && outputValues.contains("v3b"),
+            s"Expected v3a and v3b in output but got: $outputValues")
+          assert(outputValues.intersect(Set("v2a", "v2b")).size == 1,
+            s"Expected exactly one v2 row from the unprocessed file but got: $outputValues")
 
           // Validate the final offset has transitioned to DeltaSourceOffset format.
           val offsetLog = new OffsetSeqLog(
