@@ -407,6 +407,9 @@ case class CreateDeltaTableCommand(
           ignoreIfExists = false,
           validateLocation = false)
     }
+    if (conf.getConf(DeltaSQLConf.DELTA_SAVE_SCHEMA_GLUE_CATALOG_ENABLED)) {
+    spark.sessionState.catalog.alterTableDataSchema(cleaned.identifier, cleaned.schema)
+    }
   }
 
   /** Clean up the information we pass on to store in the catalog. */
@@ -421,8 +424,14 @@ case class CreateDeltaTableCommand(
       table.storage.copy(properties = Map.empty)
     }
 
+    val newSchema = if (conf.getConf(DeltaSQLConf.DELTA_SAVE_SCHEMA_GLUE_CATALOG_ENABLED)) {
+      table.schema.copy()
+    } else {
+      new StructType()
+    }
+
     table.copy(
-      schema = new StructType(),
+      schema = newSchema,
       properties = Map.empty,
       partitionColumnNames = Nil,
       // Remove write specific options when updating the catalog

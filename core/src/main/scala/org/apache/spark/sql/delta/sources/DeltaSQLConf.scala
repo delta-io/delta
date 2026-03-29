@@ -1151,6 +1151,18 @@ trait DeltaSQLConfBase {
           |Only change this for testing!""".stripMargin)
       .booleanConf
       .createWithDefault(true)
+
+  val DELTA_SAVE_SCHEMA_GLUE_CATALOG_ENABLED =
+    buildConf("fixSchema.GlueCatalog")
+      .internal()
+      .doc(
+        """
+          | This conf fix the schema in tableCatalog object and force an alter table
+          | schema command after upload the schema. As in spark project the schema is removed
+          | because delta is not a valid serDe configuration.
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase
