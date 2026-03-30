@@ -378,9 +378,9 @@ public class DataFileStatistics {
    * @throws KernelException if the data types don't match
    */
   private void validateLiteralType(StructField field, Literal literal) {
-    DataType fieldType = field.getDataType();
-    // Variant stats are Z85-encoded strings
-    DataType expectedLiteralType = fieldType instanceof VariantType ? StringType.STRING : fieldType;
+    // Variant stats in JSON are Z85 encoded strings, all other stats should match the field type
+    DataType expectedLiteralType =
+        field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
     if (literal.getDataType() == null
         || !expectedLiteralType.isWriteCompatible(literal.getDataType())) {
       throw DeltaErrors.statsTypeMismatch(
@@ -438,12 +438,11 @@ public class DataFileStatistics {
       LocalDateTime localDateTime = ChronoUnit.MICROS.addTo(EPOCH, epochMicros).toLocalDateTime();
       LocalDateTime truncated = localDateTime.truncatedTo(ChronoUnit.MILLIS);
       generator.writeString(truncated.format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
-    } else if (type instanceof GeometryType || type instanceof GeographyType) {
-      if (type instanceof GeographyType) {
-        GeometryUtils.validateGeographyPointWKT((String) value);
-      } else {
-        GeometryUtils.validatePointWKT((String) value);
-      }
+    } else if (type instanceof GeometryType) {
+      GeometryUtils.validatePointWKT((String) value);
+      generator.writeString((String) value);
+    } else if (type instanceof GeographyType) {
+      GeometryUtils.validateGeographyPointWKT((String) value);
       generator.writeString((String) value);
     } else {
       throw unsupportedStatsDataType(type);
