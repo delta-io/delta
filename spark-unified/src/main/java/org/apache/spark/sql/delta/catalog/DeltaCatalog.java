@@ -16,15 +16,22 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.kernel.Transaction;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
+import io.delta.spark.internal.v2.ddl.CreateTableBuilder;
+import io.delta.spark.internal.v2.ddl.DDLRequest;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils;
 import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.*;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.types.StructType;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -129,5 +136,62 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
     } else {
       return v1ConnectorSupplier.get();
     }
+  }
+
+  // ── CREATE TABLE (DSv2 + Kernel path) ─────────────────────────────
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    if (!mode.shouldUseKernelForCreateTable(isUnityCatalog(), properties)) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+
+    // For UC-managed tables, pre-register to get the UC-assigned tableId and location.
+    // TODO: If the Kernel commit below fails, this leaves a catalog entry with no Delta log
+    //  (zombie table). Add cleanup/rollback (e.g. super.dropTable) on commit failure.
+    Optional<UCTableInfo> ucInfo =
+        isUnityCatalog()
+            ? preRegisterAndExtractUCInfo(ident, schema, partitions, properties)
+            : Optional.empty();
+
+    // prepare
+    DDLRequest request =
+        CreateTableBuilder.prepare(
+            ident, schema, partitions, properties, spark().sessionState().newHadoopConf(), ucInfo);
+
+    // build + commit
+    Transaction txn = CreateTableBuilder.buildTransaction(request);
+    txn.commit(request.engine(), CloseableIterable.emptyIterable());
+
+    // load via V2 connector
+    return new SparkTable(ident, request.tablePath());
+  }
+
+  /**
+   * Registers the table in the UC catalog via the V1 delegate path and extracts the UC-assigned
+   * table metadata (tableId, managed location, ucUri, authConfig).
+   *
+   * <p>This is required because the UC committer needs the tableId to coordinate the Kernel
+   * commit, and UC only assigns the tableId during table creation. So we must register first,
+   * then commit the Delta log through the UC committer.
+   *
+   * @return UC table info if the delegate catalog is UC-backed, otherwise empty
+   */
+  private Optional<UCTableInfo> preRegisterAndExtractUCInfo(
+      Identifier ident, StructType schema, Transform[] partitions, Map<String, String> properties) {
+    // Delegates to AbstractDeltaCatalog (V1 path) which registers in the UC catalog
+    Table t = super.createTable(ident, schema, partitions, properties);
+    if (!(t instanceof V1Table)) {
+      throw new IllegalStateException(
+          "Expected V1Table from delegate catalog, got: " + t.getClass().getName());
+    }
+    CatalogTable ct = ((V1Table) t).catalogTable();
+    return UCUtils.extractTableInfo(ct, spark());
   }
 }

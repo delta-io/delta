@@ -83,7 +83,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
-  private lazy val isUnityCatalog: Boolean = {
+  protected lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
