@@ -24,6 +24,7 @@ import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.LogReplay;
+import io.delta.kernel.internal.util.SchemaUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.types.StructType;
 import java.util.Optional;
@@ -72,8 +73,7 @@ public class ScanBuilderImpl implements ScanBuilder {
 
   @Override
   public ScanBuilder withReadSchema(StructType readSchema) {
-    // TODO: Validate that readSchema is a subset of the table schema or that extra fields are
-    //  metadata columns.
+    SchemaUtils.validateReadSchemaIsSubset(readSchema, snapshotSchema);
     this.readSchema = readSchema;
     return this;
   }
