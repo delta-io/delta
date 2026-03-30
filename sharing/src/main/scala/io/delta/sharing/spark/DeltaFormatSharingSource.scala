@@ -351,10 +351,11 @@ case class DeltaFormatSharingSource(
     )
   }
 
-  /** Convert a DeltaSourceOffset back to legacy DeltaSharingSourceOffset. Used
-    * when transitioning from legacy checkpoints: mid-version offsets are kept
-    * in legacy format until the stream reaches a version boundary.
-    */
+  /**
+   * Convert a DeltaSourceOffset back to legacy DeltaSharingSourceOffset. Used
+   * when transitioning from legacy checkpoints: mid-version offsets are kept
+   * in legacy format until the stream reaches a version boundary.
+   */
   private def convertDeltaSourceOffsetToLegacyOffset(
       o: DeltaSourceOffset
   ): streaming.Offset = {
