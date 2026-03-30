@@ -850,6 +850,18 @@ trait DeltaConfigsBase extends DeltaLogging {
     validationFunction = _ => true,
     helpMessage = "needs to be a boolean."
   )
+  /**
+   * Guard property automatically set when a new IcebergCompat table is created
+   * Atomic UniForm Iceberg conversion requires this property to be present
+   */
+  val ICEBERG_ATOMIC_CONVERSION_SUPPORTED = buildConfig[Boolean](
+    "universalFormat.iceberg.atomicConversion.supported",
+    "false",
+    _.toBoolean,
+    _ => true,
+    "needs to be a boolean.",
+    userConfigurable = true
+  )
 
   val CAST_ICEBERG_TIME_TYPE = buildConfig[Boolean](
     key = "castIcebergTimeType",

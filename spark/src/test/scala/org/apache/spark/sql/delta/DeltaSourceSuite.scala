@@ -2019,6 +2019,57 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
+  test("streaming with ignoreChanges = true allows both delete and change commits") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(
+        inputDir.toString, Map(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"))
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3).map(Row(_)))
+
+        // Delete all rows: delete-only commit, allowed by ignoreChanges
+        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+
+        // The delete commit is skipped (no AddFiles)
+        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+        q.processAllAvailable()
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5).map(Row(_)))
+
+        // Overwrite produces both AddFile and RemoveFile actions (change commit).
+        // Unlike skipChangeCommits which skips the commit, ignoreChanges lets the
+        // AddFiles through (potentially duplicating data).
+        Seq(6, 7, 8).toDF("x")
+          .write
+          .mode("overwrite")
+          .format("delta")
+          .save(inputDir.toString)
+
+        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+
+        q.processAllAvailable()
+
+        // The overwrite commit's AddFiles ARE emitted (unlike skipChangeCommits). The
+        // result includes the overwrite's new rows.
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(Row(_)))
+      } finally {
+        q.stop()
+      }
+    }
+  }
+
   test("fail on data loss - starting from missing files") {
     withTempDirs { (srcData, targetData, chkLocation) =>
       def addData(): Unit = {
@@ -2945,6 +2996,47 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
               t.getStackTrace.exists(
                 _.toString.contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"))))
         )
+      }
+    }
+  }
+
+  test("streaming processes 100 sequential single-value commits and contains all values 0 to 99") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      // TODO(#6339): enable batch size 2 after fix PR merged
+      assume(!catalogOwnedCoordinatorBackfillBatchSize.contains(2),
+        "Test cannot pass with batch size 2 due to issue #6339")
+      // Write the first value to initialize the Delta table
+      Seq(0).toDF("x").write.format("delta").save(inputDir.toString)
+
+      val df = loadStreamWithOptions(inputDir.toString, Map.empty[String, String])
+
+      val q = df.writeStream
+        .format("delta")
+        .option("checkpointLocation", checkpointDir.toString)
+        .start(outputDir.toString)
+
+      try {
+        // Process the initial commit (value 0)
+        q.processAllAvailable()
+
+        // Append values 1 through 99, one commit each
+        (1 until 100).foreach { i =>
+          Seq(i).toDF("x")
+            .write
+            .format("delta")
+            .mode("append")
+            .save(inputDir.toString)
+        }
+
+        q.processAllAvailable()
+
+        // Verify the output contains exactly all values from 0 to 99
+        checkAnswer(
+          spark.read.format("delta").load(outputDir.toString),
+          (0 until 100).map(Row(_))
+        )
+      } finally {
+        q.stop()
       }
     }
   }
