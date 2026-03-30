@@ -291,7 +291,8 @@ trait DeltaTestUtilsBase {
 
   @deprecated("Use checkError() instead")
   protected def errorContains(errMsg: String, str: String): Unit = {
-    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)))
+    assert(errMsg.toLowerCase(Locale.ROOT).contains(str.toLowerCase(Locale.ROOT)),
+      s"'$errMsg' did not contain '$str'")
   }
 
   /**
