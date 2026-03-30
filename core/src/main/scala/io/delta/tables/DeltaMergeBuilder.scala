@@ -220,7 +220,7 @@ class DeltaMergeBuilder private(
     // Preprocess the actions and verify
     val mergeIntoCommand = PreprocessTableMerge(sparkSession.sessionState.conf)(resolvedMergeInto)
     sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.run(sparkSession)
+    toDataset(sparkSession, mergeIntoCommand)
   }
 
   /**
