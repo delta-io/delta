@@ -145,9 +145,7 @@ public class DeltaV2Mode {
           return false;
         }
         return CatalogTableUtils.isCatalogManagedFeatureEnabled(
-                tableProperties, CatalogTableUtils.FEATURE_CATALOG_MANAGED)
-            || CatalogTableUtils.isCatalogManagedFeatureEnabled(
-                tableProperties, CatalogTableUtils.FEATURE_CATALOG_OWNED_PREVIEW);
+                tableProperties, CatalogTableUtils.FEATURE_CATALOG_MANAGED);
       default:
         return false;
     }

@@ -46,6 +46,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.fs.Path;
 import org.apache.log4j.Logger;
 import org.apache.spark.sql.connector.catalog.TableCatalog;
+import org.apache.spark.sql.delta.sources.DeltaSQLConf$;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
@@ -410,6 +411,40 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
             String.format(
                 "Managed table creation requires table property '%s'='%s' to be set",
                 DELTA_CATALOG_MANAGED_KEY, SUPPORTED));
+  }
+
+  @Test
+  public void testCreateManagedTableInStrictV2Mode() throws ApiException {
+    String configKey = DeltaSQLConf$.MODULE$.V2_ENABLE_MODE().key();
+    String originalMode = spark().conf().get(configKey, "NONE");
+    String tableName = "strict_v2_managed_create";
+    String fullTableName = fullTableName(tableName);
+
+    try {
+      spark().conf().set(configKey, "STRICT");
+
+      sql(
+          "CREATE TABLE %s (id INT NOT NULL, name STRING, year INT NOT NULL) "
+              + "USING DELTA PARTITIONED BY (year) %s",
+          fullTableName, MANAGED_TBLPROPERTIES_CLAUSE);
+      tablesToCleanUp.add(fullTableName);
+
+      sql("INSERT INTO %s VALUES (1, 'a', 2024)", fullTableName);
+      check(fullTableName, List.of(List.of("1", "a", "2024")));
+    } finally {
+      spark().conf().set(configKey, originalMode);
+    }
+
+    assertUCTableInfo(
+        TableType.MANAGED,
+        fullTableName,
+        List.of("id", "name", "year"),
+        Map.of("Foo", "Bar"),
+        /* comment = */ null,
+        /* externalTableLocation = */ null,
+        /* withCluster = */ false,
+        /* clusterColumn = */ Optional.empty(),
+        /* partitionColumn = */ Optional.of("year"));
   }
 
   @TestAllTableTypes

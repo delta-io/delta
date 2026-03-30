@@ -53,9 +53,6 @@ public class DeltaV2ModeCreateTableTest {
     assertTrue(
         auto.shouldUseKernelForCreateTable(
             true, Map.of("delta.feature.catalogManaged", "supported")));
-    assertTrue(
-        auto.shouldUseKernelForCreateTable(
-            true, Map.of("delta.feature.catalogOwned-preview", "supported")));
   }
 
   @Test
