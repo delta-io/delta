@@ -19,12 +19,12 @@ package io.delta.sharing.spark
 import java.time.LocalDateTime
 
 import org.apache.spark.sql.delta.{DeltaIllegalStateException, DeltaLog}
-import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.DeltaOptions.{
   IGNORE_CHANGES_OPTION,
   IGNORE_DELETES_OPTION,
   SKIP_CHANGE_COMMITS_OPTION
 }
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.sharing.client.DeltaSharingRestClient
