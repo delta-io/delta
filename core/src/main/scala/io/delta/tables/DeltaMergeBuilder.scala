@@ -228,7 +228,7 @@ class DeltaMergeBuilder private(
       PreprocessTableMerge(sparkSession.sessionState.conf)(strippedMergeInto)
         .asInstanceOf[MergeIntoCommand]
     sparkSession.sessionState.analyzer.checkAnalysis(mergeIntoCommand)
-    mergeIntoCommand.run(sparkSession)
+    toDataset(sparkSession, mergeIntoCommand)
   }
 
   /**
