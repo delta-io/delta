@@ -525,11 +525,21 @@ def normalizeColumnNamesInDataType(
       val existingFields = toFieldMap(existing)
       // scalastyle:off caselocale
       val existingFieldNames = existing.fieldNames.map(_.toLowerCase).toSet
-      assert(existingFieldNames.size == existing.length,
-        "Delta tables don't allow field names that only differ by case")
+      if (existingFieldNames.size != existing.length) {
+        val duplicates = existing.fieldNames.groupBy(_.toLowerCase).collect {
+          case (_, names) if names.length > 1 => names.mkString(", ")
+        }
+        throw DeltaErrors.foundDuplicateColumnsException("in the existing schema",
+          duplicates.mkString("; "))
+      }
       val newFields = newtype.fieldNames.map(_.toLowerCase).toSet
-      assert(newFields.size == newtype.length,
-        "Delta tables don't allow field names that only differ by case")
+      if (newFields.size != newtype.length) {
+        val duplicates = newtype.fieldNames.groupBy(_.toLowerCase).collect {
+          case (_, names) if names.length > 1 => names.mkString(", ")
+        }
+        throw DeltaErrors.foundDuplicateColumnsException("in the read schema",
+          duplicates.mkString("; "))
+      }
       // scalastyle:on caselocale
 
       if (!allowMissingColumns &&
