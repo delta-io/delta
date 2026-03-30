@@ -485,7 +485,7 @@ trait DeltaCommand extends DeltaLogging with DeltaCommandInvariants {
     val baseRelation = txn.deltaLog.createRelation(
       snapshotToUseOpt = Some(txn.snapshot),
       catalogTableOpt = txn.catalogTable)
-    val tableRelation = LogicalRelation(baseRelation, txn.catalogTable)
+    val tableRelation = LogicalRelation(baseRelation)
     if (tableAliasOpt.isDefined) {
       SubqueryAlias(
         identifier = tableAliasOpt.get,
