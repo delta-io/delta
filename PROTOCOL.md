@@ -1874,7 +1874,7 @@ nullCount | The number of `null` values for this column | <p>If the `nullCount` 
 minValues | A value that is equal to the smallest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is less than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 maxValues | A value that is equal to the largest valid value[^1] present in the file for this column. If all valid rows are null, this carries no information. | A value that is greater than or equal to all valid values[^1] present in this file for this column. If all valid rows are null, this carries no information.
 
-[^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds.
+[^1]: String columns are cut off at a fixed prefix length. Timestamp columns are truncated down to milliseconds. Implementations **must not** truncate timezone offsets in timestamp statistics to minute precision in a way that changes the represented instant. Modern writers SHOULD encode timestamp statistics as instants in UTC with microsecond precision (for example, using an ISO 8601 representation adjusted to UTC, such as `1970-01-01T00:00:00.123456Z`). Readers MUST treat statistics as approximate bounds and MAY widen the effective min/max range to avoid incorrectly skipping files when older writers produced truncated timestamp statistics.
 
 ## Partition Value Serialization
 
