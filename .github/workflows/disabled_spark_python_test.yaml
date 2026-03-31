@@ -87,19 +87,7 @@ jobs:
           # cache new stuff.
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Set up uv
-        run: |
-          # uv 0.10.1 (2026-02-10) — SHA from official release asset:
-          # https://github.com/astral-sh/uv/releases/download/0.10.1/uv-x86_64-unknown-linux-gnu.tar.gz.sha256
-          UV_VERSION="0.10.1"
-          UV_SHA256="8b5af2d678da1bdae80a5107c934f6ab010c6cdeb2de5b8e07568031d9486051"
-          curl -fsSL -o uv-x86_64-unknown-linux-gnu.tar.gz \
-            "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz"
-          echo "${UV_SHA256}  uv-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c -
-          tar -xzf uv-x86_64-unknown-linux-gnu.tar.gz
-          install -m 755 uv-x86_64-unknown-linux-gnu/uv /usr/local/bin/uv
-          install -m 755 uv-x86_64-unknown-linux-gnu/uvx /usr/local/bin/uvx
-          rm -rf uv-x86_64-unknown-linux-gnu uv-x86_64-unknown-linux-gnu.tar.gz
-          uv --version
+        run: bash project/scripts/install-uv.sh
       - name: Install Job dependencies
         run: |
           sudo apt-get update

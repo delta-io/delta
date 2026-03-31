@@ -37,16 +37,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv (SHA-verified, statically-linked musl build for portability)
-RUN UV_VERSION="0.10.1" && \
-    UV_SHA256="d1a3b08dd9abf9e500541cadd0e2f4b144c99b9265fb00e500c2b5c82a3b4ee8" && \
-    curl -fsSL -o uv.tar.gz \
-      "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-musl.tar.gz" && \
-    echo "${UV_SHA256}  uv.tar.gz" | sha256sum -c - && \
-    tar -xzf uv.tar.gz && \
-    install -m 755 uv-x86_64-unknown-linux-musl/uv /usr/local/bin/uv && \
-    install -m 755 uv-x86_64-unknown-linux-musl/uvx /usr/local/bin/uvx && \
-    rm -rf uv-x86_64-unknown-linux-musl uv.tar.gz
+# Install uv (SHA-verified; version+checksum defined in project/scripts/install-uv.sh)
+COPY project/scripts/install-uv.sh /tmp/install-uv.sh
+RUN bash /tmp/install-uv.sh && rm /tmp/install-uv.sh
 
 # Create venv with Python 3.8 and install hash-verified locked dependencies
 COPY docker-build-requirements.lock /tmp/requirements.lock
