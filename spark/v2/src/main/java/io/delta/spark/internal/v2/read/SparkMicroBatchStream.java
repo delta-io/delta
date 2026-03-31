@@ -783,6 +783,20 @@ public class SparkMicroBatchStream
       // If the requested version range doesn't exist (e.g., we're asking for version 6 when
       // the table only has versions 0-5).
       return Utils.toCloseableIterator(Collections.emptyIterator());
+    } catch (IllegalArgumentException e) {
+      // Handle TOCTOU race: loadLatestSnapshot() and getTableChanges() each make independent
+      // HTTP calls to the UC getCommits endpoint. Under CI resource pressure, the UC server can
+      // return a stale latestTableVersion on the second call, causing
+      // validateVersionBoundariesExist to throw. This is safe to retry on the next micro-batch.
+      if (e.getMessage() != null && e.getMessage().contains("latest version ratified by UC")) {
+        logger.warn(
+            "UC server returned stale version during offset discovery (startVersion={}). "
+                + "Treating as no new data; next micro-batch will retry. Error: {}",
+            startVersion,
+            e.getMessage());
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
+      throw e;
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
