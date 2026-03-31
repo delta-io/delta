@@ -24,6 +24,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.kernel.metrics.TransactionReport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,7 +32,8 @@ import org.slf4j.LoggerFactory;
 public class MaintenanceListener implements TableEventListener {
 
   @Override
-  public void onPostCommit(AbstractKernelTable source, Snapshot snapshot) {
+  public void onPostCommit(
+      AbstractKernelTable source, Snapshot snapshot, TransactionReport report) {
     source.executeWithTiming("postcommit.maintenance", new MaintenanceTask(source, snapshot));
   }
 
@@ -56,18 +58,18 @@ public class MaintenanceListener implements TableEventListener {
         table.getCacheManager().put(table.getTablePath().toString(), published);
         // Checkpoint can be done only on published snapshots
         if (table.getConf().shouldCreateCheckpoint()) {
-          if (snapshot instanceof SnapshotImpl
-              && ((SnapshotImpl) snapshot)
+          if (published instanceof SnapshotImpl
+              && ((SnapshotImpl) published)
                   .getProtocol()
                   .getWriterFeatures()
                   .contains(TableFeatures.CHECKPOINT_V2_RW_FEATURE.featureName())) {
             // Use v2 incremental checkpoint when possible
             table.withTiming(
                 "postcommit.maintenance.checkpoint",
-                () -> new CheckpointWriter(engine, snapshot).write());
+                () -> new CheckpointWriter(engine, published).write());
           } else {
             table.withTiming(
-                "postcommit.maintenance.checkpoint", () -> snapshot.writeCheckpoint(engine));
+                "postcommit.maintenance.checkpoint", () -> published.writeCheckpoint(engine));
           }
         }
       } catch (Exception e) {
