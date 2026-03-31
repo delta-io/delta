@@ -28,8 +28,8 @@ import org.apache.spark.util.Clock
  * point for all Delta table operations.
  *
  * Two implementations:
- *  - [[DeltaLog]] (existing, flag OFF): reads the Delta protocol via log replay
- *  - KernelTableManager (new, flag ON): reads the Delta protocol via Kernel
+ *  - [[DeltaLog]] (existing): reads the Delta protocol via log replay
+ *  - KernelTableManager (future): reads the Delta protocol via Kernel
  *
  * Commands, OptimisticTransaction, and other business logic code against this interface
  * so they work with either backend.
