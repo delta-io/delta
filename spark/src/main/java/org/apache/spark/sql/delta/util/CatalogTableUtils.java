@@ -46,9 +46,9 @@ public final class CatalogTableUtils {
    * delta.feature.catalogManaged and preview variant
    * delta.feature.catalogOwned-preview
    */
-  static final String FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged";
+  public static final String FEATURE_CATALOG_MANAGED = "delta.feature.catalogManaged";
 
-  static final String FEATURE_CATALOG_OWNED_PREVIEW = "delta.feature.catalogOwned-preview";
+  public static final String FEATURE_CATALOG_OWNED_PREVIEW = "delta.feature.catalogOwned-preview";
   private static final String SUPPORTED = "supported";
 
   private CatalogTableUtils() {}
@@ -107,7 +107,7 @@ public final class CatalogTableUtils {
    * @param featureKey The feature key
    * @return {@code true} when the feature key is set to {@code supported}
    */
-  private static boolean isCatalogManagedFeatureEnabled(
+  public static boolean isCatalogManagedFeatureEnabled(
       Map<String, String> tableProperties, String featureKey) {
     requireNonNull(tableProperties, "tableProperties is null");
     requireNonNull(featureKey, "featureKey is null");
