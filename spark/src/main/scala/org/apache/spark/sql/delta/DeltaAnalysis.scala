@@ -1575,6 +1575,13 @@ case class DeltaDynamicPartitionOverwriteCommand(
 
     // TODO: The configuration can be fetched directly from WriteIntoDelta's txn. Don't pass
     //  in the default snapshot's metadata config here.
+    if (deltaOptions.isReplaceOnOrUsingDefined) {
+      if (deltaOptions.replaceOn.isDefined) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+    }
     WriteIntoDelta(
       deltaTable.deltaLog,
       SaveMode.Overwrite,
