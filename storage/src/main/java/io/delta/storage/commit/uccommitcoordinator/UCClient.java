@@ -25,6 +25,7 @@ import io.delta.storage.commit.uniform.UniformMetadata;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -120,6 +121,69 @@ public interface UCClient extends AutoCloseable {
       URI tableUri,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;
+
+  /** SDK-agnostic column definition for {@link #finalizeCreate}. */
+  final class ColumnDef {
+    private final String name;
+    private final String typeText;
+    private final String typeName;
+    private final String typeJson;
+    private final boolean nullable;
+    private final int position;
+
+    public ColumnDef(
+        String name, String typeText, String typeName, String typeJson,
+        boolean nullable, int position) {
+      this.name = java.util.Objects.requireNonNull(name, "name is null");
+      this.typeText = java.util.Objects.requireNonNull(typeText, "typeText is null");
+      this.typeName = java.util.Objects.requireNonNull(typeName, "typeName is null");
+      this.typeJson = java.util.Objects.requireNonNull(typeJson, "typeJson is null");
+      this.nullable = nullable;
+      this.position = position;
+    }
+
+    public String getName() { return name; }
+    public String getTypeText() { return typeText; }
+    public String getTypeName() { return typeName; }
+    public String getTypeJson() { return typeJson; }
+    public boolean isNullable() { return nullable; }
+    public int getPosition() { return position; }
+  }
+
+  /**
+   * Finalizes a staging table into a real managed table in Unity Catalog.
+   *
+   * <p>After a staging table has been allocated by the connector and its initial commit data
+   * (000.json) has been written, this method promotes the staging table into a fully registered
+   * managed table by calling the UC {@code createTable} REST endpoint with matching name and
+   * storage location. UC transitions the staging table to a real table and persists the provided
+   * properties (the "Class B" properties: protocol-derived features, metadata configuration,
+   * clustering columns, {@code delta.lastUpdateVersion}, {@code delta.lastCommitTimestamp}, etc.).
+   *
+   * <p>This is the correct API for version 0 (CREATE). For version 1+ (WRITE), use
+   * {@link #commit} instead. See the
+   * <a href="https://github.com/delta-io/delta/issues/5118">Kernel UC CCv2 Create design doc</a>
+   * for the full rationale.
+   *
+   * @param tableName table name (relative to parent schema)
+   * @param catalogName parent catalog name in Unity Catalog
+   * @param schemaName parent schema name in Unity Catalog
+   * @param storageLocation the storage root URL for the table (same location used by staging table)
+   * @param columns column definitions for the table schema
+   * @param properties "Class B" properties to persist in UC (protocol features, metadata config,
+   *     {@code delta.lastUpdateVersion}, {@code delta.lastCommitTimestamp}, clustering columns)
+   * @throws IOException if there is a network or server error during finalization
+   */
+  default void finalizeCreate(
+      String tableName,
+      String catalogName,
+      String schemaName,
+      String storageLocation,
+      java.util.List<ColumnDef> columns,
+      Map<String, String> properties) throws IOException {
+    throw new UnsupportedOperationException(
+        "finalizeCreate is not supported by " + getClass().getName());
+  }
 
   /**
    * Closes any resources used by this client.

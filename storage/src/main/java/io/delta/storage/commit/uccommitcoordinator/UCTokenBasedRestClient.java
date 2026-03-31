@@ -29,7 +29,10 @@ import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.api.DeltaCommitsApi;
 import io.unitycatalog.client.api.MetastoresApi;
+import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.model.CreateTable;
+import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.DeltaCommit;
 import io.unitycatalog.client.model.DeltaCommitInfo;
 import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
@@ -39,12 +42,16 @@ import io.unitycatalog.client.model.DeltaMetadata;
 import io.unitycatalog.client.model.DeltaUniform;
 import io.unitycatalog.client.model.DeltaUniformIceberg;
 import io.unitycatalog.client.model.GetMetastoreSummaryResponse;
+import io.unitycatalog.client.model.ColumnInfo;
+import io.unitycatalog.client.model.ColumnTypeName;
+import io.unitycatalog.client.model.TableType;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.Path;
 
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -80,6 +87,7 @@ public class UCTokenBasedRestClient implements UCClient {
 
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
+  private TablesApi tablesApi;
 
   // HTTP status codes for error handling
   private static final int HTTP_BAD_REQUEST = 400;
@@ -118,13 +126,14 @@ public class UCTokenBasedRestClient implements UCClient {
     ApiClient apiClient = builder.build();
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
+    this.tablesApi = new TablesApi(apiClient);
   }
 
   /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
-    if (deltaCommitsApi == null || metastoresApi == null) {
+    if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null) {
       throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
     }
   }
@@ -221,11 +230,57 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   @Override
+  public void finalizeCreate(
+      String tableName,
+      String catalogName,
+      String schemaName,
+      String storageLocation,
+      List<UCClient.ColumnDef> columns,
+      Map<String, String> properties) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(tableName, "tableName must not be null.");
+    Objects.requireNonNull(catalogName, "catalogName must not be null.");
+    Objects.requireNonNull(schemaName, "schemaName must not be null.");
+    Objects.requireNonNull(storageLocation, "storageLocation must not be null.");
+    Objects.requireNonNull(columns, "columns must not be null.");
+    Objects.requireNonNull(properties, "properties must not be null.");
+
+    List<ColumnInfo> ucColumns = columns.stream()
+        .map(c -> new ColumnInfo()
+            .name(c.getName())
+            .typeText(c.getTypeText())
+            .typeName(ColumnTypeName.fromValue(c.getTypeName()))
+            .typeJson(c.getTypeJson())
+            .nullable(c.isNullable())
+            .position(c.getPosition()))
+        .collect(Collectors.toList());
+
+    CreateTable request = new CreateTable()
+        .name(tableName)
+        .catalogName(catalogName)
+        .schemaName(schemaName)
+        .tableType(TableType.MANAGED)
+        .dataSourceFormat(DataSourceFormat.DELTA)
+        .columns(ucColumns)
+        .storageLocation(storageLocation)
+        .properties(properties);
+
+    try {
+      tablesApi.createTable(request);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format(
+              "Failed to finalize table creation for %s.%s.%s (HTTP %s): %s",
+              catalogName, schemaName, tableName, e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  @Override
   public void close() throws IOException {
-    // Nulling out the API instances makes them eligible for GC. Once garbage collected,
-    // the underlying connection pool is freed and destroyed.
     this.deltaCommitsApi = null;
     this.metastoresApi = null;
+    this.tablesApi = null;
   }
 
   /**
