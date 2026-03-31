@@ -23,7 +23,6 @@ import io.delta.tables.DeltaTable
 import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
 import org.apache.spark.sql.delta.commands.optimize.OptimizeMetrics
-import org.apache.spark.sql.delta.shims.VariantTypeShims
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils, TestsStatistics}
 
@@ -741,7 +740,7 @@ class DeltaVariantSuite
   }
 
   test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks reads on Spark 4.0") {
-    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
       cancel("This test only applies to Spark 4.0")
     }
     // Create a table with variant while the config is off.
@@ -763,7 +762,7 @@ class DeltaVariantSuite
   }
 
   test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks writes on Spark 4.0") {
-    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
       cancel("This test only applies to Spark 4.0")
     }
     withTable("tbl") {
@@ -782,7 +781,7 @@ class DeltaVariantSuite
   }
 
   test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - blocks with preview feature on Spark 4.0") {
-    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
       cancel("This test only applies to Spark 4.0")
     }
     withTable("tbl") {
@@ -802,7 +801,7 @@ class DeltaVariantSuite
   }
 
   test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - does not block non-variant tables") {
-    if (VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+    if (!org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
       cancel("This test only applies to Spark 4.0")
     }
     withSQLConf(
@@ -817,10 +816,10 @@ class DeltaVariantSuite
   }
 
   test("DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 - no-op on Spark 4.1+") {
-    if (!VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION) {
+    if (org.apache.spark.SPARK_VERSION.startsWith("4.0")) {
       cancel("This test only applies to Spark 4.1+")
     }
-    // On Spark 4.1+, the config should have no effect since the shim returns true.
+    // On Spark 4.1+, the config should have no effect since the version check skips it.
     withSQLConf(
       DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40.key -> "true"
     ) {

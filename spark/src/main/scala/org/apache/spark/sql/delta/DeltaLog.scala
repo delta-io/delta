@@ -37,7 +37,6 @@ import org.apache.spark.sql.delta.files.{TahoeBatchFileIndex, TahoeLogFileIndex}
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
-import org.apache.spark.sql.delta.shims.VariantTypeShims
 import org.apache.spark.sql.delta.sources._
 import org.apache.spark.sql.delta.storage.LogStoreProvider
 import org.apache.spark.sql.delta.util.{FileNames, PathWithFileSystem, Utils => DeltaUtils}
@@ -412,8 +411,11 @@ class DeltaLog private(
         Seq.empty
       }
 
+    // Spark 4.0 does not support the parquet variant logical type annotation. When
+    // the config is enabled, treat the variant table features as unsupported to block
+    // all interactions with variant tables on Spark 4.0 clients.
     val unsupportedVariantFeatures =
-      if (!VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION &&
+      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
           spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
         Seq(VariantTypeTableFeature, VariantTypePreviewTableFeature)
       } else {

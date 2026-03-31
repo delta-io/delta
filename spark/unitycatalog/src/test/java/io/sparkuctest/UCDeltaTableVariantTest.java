@@ -16,9 +16,8 @@
 
 package io.sparkuctest;
 
-import org.apache.spark.sql.delta.shims.VariantTypeShims;
+import java.util.List;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.Test;
 
 /**
  * Tests that variant table feature interactions are blocked in Unity Catalog on Spark 4.0.
@@ -30,11 +29,13 @@ import org.junit.jupiter.api.Test;
  */
 public class UCDeltaTableVariantTest extends UCDeltaTableIntegrationBaseTest {
 
+  private static boolean isSpark40() {
+    return org.apache.spark.package$.MODULE$.SPARK_VERSION().startsWith("4.0");
+  }
+
   @TestAllTableTypes
   public void testVariantTableCreationBlockedOnSpark40(TableType tableType) throws Exception {
-    Assumptions.assumeFalse(
-        VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION(),
-        "This test only applies to Spark 4.0");
+    Assumptions.assumeTrue(isSpark40(), "This test only applies to Spark 4.0");
     // Table creation itself should fail on Spark 4.0 because the variant table feature
     // is treated as unsupported.
     String fullTableName = fullTableName("variant_create_blocked_test");
@@ -59,16 +60,14 @@ public class UCDeltaTableVariantTest extends UCDeltaTableIntegrationBaseTest {
 
   @TestAllTableTypes
   public void testVariantTableAllowedOnSpark41(TableType tableType) throws Exception {
-    Assumptions.assumeTrue(
-        VariantTypeShims.SUPPORTS_VARIANT_LOGICAL_TYPE_ANNOTATION(),
-        "This test only applies to Spark 4.1+");
+    Assumptions.assumeFalse(isSpark40(), "This test only applies to Spark 4.1+");
     withNewTable(
         "variant_allowed_test",
         "id INT, v VARIANT",
         tableType,
         tableName -> {
           sql("INSERT INTO %s VALUES (1, parse_json('42'))", tableName);
-          check(tableName, java.util.List.of(java.util.List.of("1", "42")));
+          check(tableName, List.of(List.of("1", "42")));
         });
   }
 }
