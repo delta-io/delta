@@ -1584,6 +1584,8 @@ case class DeltaDynamicPartitionOverwriteCommand(
           DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
         throw DeltaErrors.operationNotSupportedException("replaceUsing")
       }
+      // replaceOn/replaceUsing is incompatible with dynamic partition overwrite.
+      throw DeltaErrors.dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError()
     }
     WriteIntoDelta(
       deltaTable.deltaLog,

@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{CreateTableWriter, QueryTest, Row}
@@ -28,7 +29,8 @@ import org.apache.spark.sql.test.SharedSparkSession
  */
 class DeltaInsertReplaceOnOrUsingDFv2CreateReplaceBlockingSuite
     extends QueryTest
-    with SharedSparkSession {
+    with SharedSparkSession
+    with DeltaSQLCommandTest {
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key, "true")
