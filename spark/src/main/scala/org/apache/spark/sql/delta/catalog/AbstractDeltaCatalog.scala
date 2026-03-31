@@ -225,11 +225,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
+      val deltaOptions = new DeltaOptions(
+        withDb.storage.properties, spark.sessionState.conf)
+      if (deltaOptions.isReplaceOnOrUsingDefined) {
+        if (deltaOptions.replaceOn.isDefined && !spark.sessionState.conf.getConf(
+            DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+          throw DeltaErrors.operationNotSupportedException("replaceOn")
+        } else if (deltaOptions.replaceUsing.isDefined && !spark.sessionState.conf.getConf(
+            DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+          throw DeltaErrors.operationNotSupportedException("replaceUsing")
+        }
+      }
       WriteIntoDelta(
         DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
-        new DeltaOptions(withDb.storage.properties, spark.sessionState.conf),
+        deltaOptions,
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
         df,
