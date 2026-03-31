@@ -16,15 +16,35 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.kernel.Meta;
+import io.delta.kernel.Transaction;
+import io.delta.kernel.TransactionCommitResult;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.unitycatalog.UnityCatalogUtils;
+import io.delta.kernel.utils.CloseableIterable;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
+import io.delta.spark.internal.v2.ddl.CreateTableBuilder;
+import io.delta.spark.internal.v2.ddl.DDLRequestContext;
+import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
+import io.delta.storage.commit.uccommitcoordinator.UCClient;
+import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
-import org.apache.spark.sql.connector.catalog.Identifier;
-import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.connector.catalog.*;
+import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
+import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
+import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
+import org.apache.spark.sql.types.StructType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import scala.jdk.javaapi.CollectionConverters;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -63,6 +83,8 @@ import org.apache.spark.sql.connector.catalog.Table;
  * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
+
+  private static final Logger logger = LoggerFactory.getLogger(DeltaCatalog.class);
 
   /**
    * Loads a Delta table that is registered in the catalog.
@@ -105,6 +127,10 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
         () -> super.loadPathTable(ident));
   }
 
+  private DeltaV2Mode v2Mode() {
+    return new DeltaV2Mode(spark().sessionState().conf());
+  }
+
   /**
    * Loads a table based on the {@link DeltaV2Mode} SQL configuration.
    *
@@ -123,11 +149,176 @@ public class DeltaCatalog extends AbstractDeltaCatalog {
   private Table loadTableInternal(
       Supplier<Table> v2ConnectorSupplier,
       Supplier<Table> v1ConnectorSupplier) {
-    DeltaV2Mode connectorMode = new DeltaV2Mode(spark().sessionState().conf());
-    if (connectorMode.shouldCatalogReturnV2Tables()) {
+    if (v2Mode().shouldCatalogReturnV2Tables()) {
       return v2ConnectorSupplier.get();
     } else {
       return v1ConnectorSupplier.get();
     }
+  }
+
+  // ── CREATE TABLE (DSv2 + Kernel path) ─────────────────────────────
+  //
+  // For UC managed tables, UCSingleCatalog has already staged the table (via
+  // createStagingTable REST API) and injected the staging metadata (tableId, location,
+  // credentials) into the properties map BEFORE calling this method.
+  //
+  // The flow follows the staging-table protocol
+  // (see https://github.com/delta-io/delta/issues/5118):
+  //
+  //   1. UCSingleCatalog       — allocate staging table, inject into properties (already done)
+  //   2. txn.commit()          — Kernel writes 000.json to the staging location
+  //   3. finalizeCreateInUC()  — promote staging → real managed table with all Class-B properties
+  //
+  // This ensures post-commit properties (delta.lastUpdateVersion, delta.lastCommitTimestamp,
+  // protocol features, clustering columns) are set atomically during table creation.
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      Map<String, String> properties) {
+
+    if (!v2Mode().shouldUseKernelForCreateTable(isUnityCatalog(), properties)) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+
+    Configuration hadoopConf = spark().sessionState().newHadoopConf();
+    Optional<UCTableInfo> ucInfo = extractUCInfoFromProperties(properties);
+    ucInfo.ifPresent(info -> injectStorageCredentials(properties, hadoopConf));
+
+    DDLRequestContext request =
+        CreateTableBuilder.prepare(ident, schema, partitions, properties, hadoopConf, ucInfo);
+    try {
+      Transaction txn = CreateTableBuilder.buildTransaction(request);
+      TransactionCommitResult result =
+          txn.commit(request.engine(), CloseableIterable.emptyIterable());
+
+      if (ucInfo.isPresent()) {
+        finalizeCreateInUC(ident, schema, request, result, ucInfo.get());
+      }
+    } catch (Exception e) {
+      throw (e instanceof RuntimeException) ? (RuntimeException) e : new RuntimeException(e);
+    }
+
+    if (ucInfo.isPresent()) {
+      CatalogTable ct =
+          CatalogTableFactory.buildUCCatalogTable(
+              ident, name(), ucInfo.get().getTableId(), request.tablePath());
+      return new SparkTable(ident, ct, new HashMap<>());
+    }
+    return new SparkTable(ident, request.tablePath());
+  }
+
+  /**
+   * Extracts UC table metadata from properties that were pre-populated by {@code
+   * UCSingleCatalog.stageManagedDeltaTableAndGetProps()}. The staging table ID and location are
+   * injected into properties by the UC Spark connector before this method is reached.
+   *
+   * @return UC table info if properties contain staging metadata, empty otherwise
+   */
+  private Optional<UCTableInfo> extractUCInfoFromProperties(Map<String, String> properties) {
+    if (!isUnityCatalog()) {
+      return Optional.empty();
+    }
+
+    String tableId = properties.get("io.unitycatalog.tableId");
+    String tablePath = properties.get(TableCatalog.PROP_LOCATION);
+    if (tableId == null || tablePath == null) {
+      return Optional.empty();
+    }
+
+    UCCatalogConfig config = getUCCatalogConfig();
+    return Optional.of(
+        new UCTableInfo(
+            tableId, tablePath, config.uri(), CollectionConverters.asJava(config.authConfig())));
+  }
+
+  /**
+   * Promotes the staging table to a real UC managed table with post-commit "Class B" properties.
+   *
+   * <p>These properties are derived from the committed version-0 snapshot and include protocol
+   * features, metadata configuration, clustering columns, {@code delta.lastUpdateVersion}, and
+   * {@code delta.lastCommitTimestamp}. They are computed via {@link
+   * UnityCatalogUtils#getPropertiesForCreate}.
+   */
+  private void finalizeCreateInUC(
+      Identifier ident,
+      StructType schema,
+      DDLRequestContext request,
+      TransactionCommitResult result,
+      UCTableInfo ucInfo) {
+    SnapshotImpl snapshot =
+        (SnapshotImpl)
+            result
+                .getPostCommitSnapshot()
+                .orElseThrow(
+                    () ->
+                        new IllegalStateException(
+                            "Missing post-commit snapshot for CREATE TABLE " + ident));
+
+    Map<String, String> ucProps =
+        UnityCatalogUtils.getPropertiesForCreate(request.engine(), snapshot);
+    List<UCClient.ColumnDef> columns = toColumnDefs(schema);
+
+    try (UCClient ucClient = buildUCClient(ucInfo.getUcUri(), ucInfo.getAuthConfig())) {
+      ucClient.finalizeCreate(
+          ident.name(), name(), ident.namespace()[0], ucInfo.getTablePath(), columns, ucProps);
+      logger.info("Finalized UC table creation for {}", ident);
+    } catch (IOException e) {
+      throw new RuntimeException(
+          "Failed to finalize table creation for " + ident + " in Unity Catalog", e);
+    }
+  }
+
+  private static List<UCClient.ColumnDef> toColumnDefs(StructType schema) {
+    List<UCClient.ColumnDef> columns = new java.util.ArrayList<>();
+    org.apache.spark.sql.types.StructField[] fields = schema.fields();
+    for (int i = 0; i < fields.length; i++) {
+      org.apache.spark.sql.types.StructField f = fields[i];
+      columns.add(
+          new UCClient.ColumnDef(
+              f.name(),
+              f.dataType().catalogString(),
+              f.dataType().catalogString().toUpperCase(),
+              f.dataType().json(),
+              f.nullable(),
+              i));
+    }
+    return columns;
+  }
+
+  private UCCatalogConfig getUCCatalogConfig() {
+    scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark());
+    scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(name());
+    if (configOpt.isEmpty()) {
+      throw new IllegalStateException(
+          "Unity Catalog configuration not found for catalog '" + name() + "'");
+    }
+    return configOpt.get();
+  }
+
+  private static UCClient buildUCClient(String ucUri, Map<String, String> authConfig) {
+    Map<String, String> appVersions =
+        new HashMap<>(UCTokenBasedRestClientFactory$.MODULE$.defaultAppVersionsAsJava());
+    appVersions.put("Kernel", Meta.KERNEL_VERSION);
+    appVersions.put("Delta V2 connector", "true");
+    return UCTokenBasedRestClientFactory$.MODULE$.createUCClientWithVersions(
+        ucUri, authConfig, appVersions);
+  }
+
+  /**
+   * Injects filesystem credentials from properties into the Hadoop configuration. The UC Spark
+   * connector ({@code UCSingleCatalog}) injects temporary credentials as {@code fs.*} properties.
+   */
+  private static void injectStorageCredentials(
+      Map<String, String> properties, Configuration hadoopConf) {
+    properties.forEach(
+        (key, value) -> {
+          if (key.startsWith("fs.") || key.startsWith("dfs.")) {
+            hadoopConf.set(key, value);
+          }
+        });
   }
 }
