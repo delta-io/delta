@@ -19,6 +19,7 @@ package io.delta.sharing.spark.test.shims
 import org.apache.spark.sql.execution.streaming.{
   CheckpointFileManager => CheckpointFileManagerShim,
   CommitMetadata => CommitMetadataShim,
+  OffsetSeqLog => OffsetSeqLogShim,
   SerializedOffset => SerializedOffsetShim,
   StreamMetadata => StreamMetadataShim
 }
@@ -33,6 +34,7 @@ object SharingStreamingTestShims {
   val CheckpointFileManager: CheckpointFileManagerShim.type =
     CheckpointFileManagerShim
   val CommitMetadata: CommitMetadataShim.type = CommitMetadataShim
+  type OffsetSeqLog = OffsetSeqLogShim
   val SerializedOffset: SerializedOffsetShim.type = SerializedOffsetShim
   val StreamMetadata: StreamMetadataShim.type = StreamMetadataShim
 
