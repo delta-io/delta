@@ -18,17 +18,17 @@ on:
 
 jobs:
   test-uc-master:
-    name: "UC Integration Tests (UC Main)"
+    name: "[Non Blocking] UC Integration Tests (UC Main)"
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
       - name: install java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3
         with:
           distribution: "zulu"
           java-version: "17"
       - name: Cache Scala, SBT, Maven local
-        uses: actions/cache@v3
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3
         with:
           path: |
             ~/.sbt
@@ -60,7 +60,7 @@ jobs:
           fi
       - name: Upload test reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-reports-uc-master
           path: "**/target/test-reports/*.xml"
