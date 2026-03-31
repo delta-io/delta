@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta.v2.interop
 import org.apache.spark.sql.delta.{DeltaLog, Snapshot}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+
 import org.apache.spark.util.Clock
 
 /**
