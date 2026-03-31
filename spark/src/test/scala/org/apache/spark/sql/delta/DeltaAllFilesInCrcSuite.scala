@@ -171,6 +171,7 @@ class DeltaAllFilesInCrcSuite
           try {
             val query = s"DELETE from delta.`${tempDir.getAbsolutePath}` WHERE id >= 0"
             val (observer, future) = runQueryWithObserver(name = "A", executor, query)
+            observer.phases.analysisPhase.entryBarrier.unblock()
             observer.phases.initialPhase.entryBarrier.unblock()
             observer.phases.preparePhase.entryBarrier.unblock()
             // Make sure that delete query has run the actual computation and has reached

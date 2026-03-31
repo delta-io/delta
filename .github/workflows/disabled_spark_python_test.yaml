@@ -1,25 +1,23 @@
-name: "Delta Spark Python"
+name: "Delta Spark Python [DISABLED]"
+# SECURITY: All Python/PySpark workflows disabled due to active supply chain attack
+# targeting OSS package ecosystems (PyPI). C2 domains: models.litellm.cloud, checkmarx.zone
+# Date disabled: 2026-03-25
+# To re-enable: remove 'if: false' from all jobs and restore original triggers
 on:
-  push:
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-  pull_request:
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
+  workflow_dispatch: # manual-only, auto triggers removed
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)
   generate-matrix:
+    if: false # SECURITY: disabled - supply chain attack mitigation
     name: "Generate Released Spark Versions Matrix"
     runs-on: ubuntu-24.04
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
           distribution: "zulu"
           java-version: "17"
@@ -32,6 +30,7 @@ jobs:
           echo "Generated released Spark versions: $SPARK_VERSIONS"
 
   test:
+    if: false # SECURITY: disabled - supply chain attack mitigation
     name: "DSP (${{ matrix.spark_version }})"
     runs-on: ubuntu-24.04
     needs: generate-matrix
@@ -45,7 +44,7 @@ jobs:
       SCALA_VERSION: ${{ matrix.scala }}
       SPARK_VERSION: ${{ matrix.spark_version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: Get Spark version details
         id: spark-details
         run: |
@@ -56,12 +55,12 @@ jobs:
           echo "spark_full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
           echo "Using JVM $JVM_VERSION for Spark ${{ matrix.spark_version }} (full: $FULL_VERSION)"
       - name: install java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
           distribution: "zulu"
           java-version: ${{ steps.spark-details.outputs.jvm_version }}
       - name: Cache Scala, SBT
-        uses: actions/cache@v3
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
         with:
           path: |
             ~/.sbt
