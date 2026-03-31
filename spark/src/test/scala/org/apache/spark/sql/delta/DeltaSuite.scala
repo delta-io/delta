@@ -20,6 +20,8 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOptions
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
 import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
@@ -3354,6 +3356,69 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
            |""".stripMargin)
       checkAnswer(spark.read.load(dir.toString),
         insertedDF.filter(col("id") >= 6).union(otherDF))
+    }
+  }
+
+  for (useNullIntolerantEqualityWithDPO <- BOOLEAN_DOMAIN) {
+    test(s"useNullIntolerantEqualityWithDPO=$useNullIntolerantEqualityWithDPO " +
+        "in Dynamic Partition Overwrite") {
+      withTempDir { tempDir =>
+        Seq[(Option[Int], Option[Int], String)](
+            (None, None, "target"),
+            (Some(1), None, "target"),
+            (Some(1), Some(2), "target"),
+            (Some(1), Some(3), "target"))
+          .toDF("part1", "part2", "row_origin")
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq[(Option[Int], Option[Int], String)](
+            (None, None, "source"),
+            (Some(1), None, "source"),
+            (None, Some(1), "source"),
+            (Some(1), Some(2), "source"),
+            (Some(2), Some(3), "source"))
+          .toDF("part1", "part2", "row_origin")
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .option(DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
+            useNullIntolerantEqualityWithDPO.toString)
+          .save(tempDir.getCanonicalPath)
+
+        // When this option is set to true, partitions that contain null values are inserted,
+        // not overwritten.
+        if (useNullIntolerantEqualityWithDPO) {
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.toString),
+            Row(null, null, "source") ::
+              Row(null, null, "target") ::
+              Row(1, null, "source") ::
+              Row(1, null, "target") ::
+              Row(null, 1, "source") ::
+              Row(1, 2, "source") ::
+              Row(1, 3, "target") ::
+              Row(2, 3, "source") ::
+              Nil
+          )
+        } else {
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.toString),
+            Row(null, null, "source") ::
+              Row(1, null, "source") ::
+              Row(null, 1, "source") ::
+              Row(1, 2, "source") ::
+              Row(1, 3, "target") ::
+              Row(2, 3, "source") ::
+              Nil
+          )
+        }
+      }
     }
   }
 }
