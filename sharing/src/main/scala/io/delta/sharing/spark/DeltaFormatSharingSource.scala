@@ -352,6 +352,27 @@ case class DeltaFormatSharingSource(
   }
 
   /**
+   * Convert a DeltaSourceOffset back to legacy DeltaSharingSourceOffset. Used
+   * when transitioning from legacy checkpoints: mid-version offsets are kept
+   * in legacy format until the stream reaches a version boundary.
+   */
+  private def convertDeltaSourceOffsetToLegacyOffset(
+      o: DeltaSourceOffset
+  ): streaming.Offset = {
+    val legacyOffset = DeltaSharingSourceOffset(
+      sourceVersion = DeltaSharingSourceOffset.VERSION_1,
+      tableId = tableId,
+      tableVersion = o.reservoirVersion,
+      index = o.index,
+      isStartingVersion = o.isInitialSnapshot
+    )
+    logInfo(
+      s"Converting DeltaSourceOffset back to legacy: ${legacyOffset.json}"
+    )
+    legacyOffset
+  }
+
+  /**
    * The ending version used in rpc is restricted by both the latest table version and
    * maxVersionsPerRpc, to avoid loading too many files from the server to cause a timeout.
    * @param startingOffset The start offset used in the rpc.
@@ -411,7 +432,30 @@ case class DeltaFormatSharingSource(
 
     maybeGetLatestFileChangesFromServer(deltaSourceOffset, wasConvertedFromLegacy)
 
-    maybeMoveToNextVersion(deltaSource.latestOffset(startDeltaSourceOffsetOpt.orNull, limit))
+    val endOffset =
+      maybeMoveToNextVersion(
+        deltaSource.latestOffset(startDeltaSourceOffsetOpt.orNull, limit)
+      )
+
+    // When restarting from a legacy checkpoint mid-version, the
+    // current version may be too large for a single batch to
+    // finish. If both the start and end offsets are still
+    // mid-version, convert the end offset back to legacy format
+    // so the next batch continues with the legacy file-id hash.
+    // If the start offset is already at a version boundary
+    // (lucky case) or the end offset reaches one, return a
+    // DeltaSourceOffset to complete the transition.
+    val needsLegacyConversion = wasConvertedFromLegacy &&
+      startDeltaSourceOffsetOpt.exists(
+        _.index != DeltaSourceOffset.BASE_INDEX
+      ) &&
+      endOffset != null &&
+      endOffset.index != DeltaSourceOffset.BASE_INDEX
+    if (needsLegacyConversion) {
+      convertDeltaSourceOffsetToLegacyOffset(endOffset)
+    } else {
+      endOffset
+    }
   }
 
   // Advance the DeltaSourceOffset to the next version when the offset is at the last index of the
@@ -652,6 +696,8 @@ case class DeltaFormatSharingSource(
     // 1. start=None, end=legacy: initial snapshot restart.
     // 2. start=legacy, end=new: post-snapshot, version
     //    boundary reached in one batch.
+    // 3. start=legacy, end=legacy: post-snapshot, version
+    //    too large for a single batch.
     val wasConvertedFromLegacy = startConvertedFromLegacy || endConvertedFromLegacy
     val startingOffset = getStartingOffset(startDeltaOffsetOption, Some(endOffset))
 
