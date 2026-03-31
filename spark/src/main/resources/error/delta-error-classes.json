@@ -892,6 +892,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DFV2_CREATE_REPLACE_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "DataFrame Writer V2 create()/replace()/createOrReplace() cannot be used with the `replaceOn` or `replaceUsing` option for Delta tables."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_DOMAIN_METADATA_NOT_SUPPORTED" : {
     "message" : [
       "Detected DomainMetadata action(s) for domains <domainNames>, but DomainMetadataTableFeature is not enabled."
@@ -953,6 +959,12 @@
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_DYNAMIC_PARTITION_OVERWRITE_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "Dynamic partition overwrite is incompatible with the `replaceOn`/`replaceUsing` option."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [
@@ -1433,6 +1445,12 @@
       "The usage of <option> is not allowed when <operation> a Delta table."
     ],
     "sqlState" : "42601"
+  },
+  "DELTA_INCOMPATIBLE_DATAFRAME_OPTIONS" : {
+    "message" : [
+      "The `<firstDeltaOption>` option cannot be used with the `<secondDeltaOption>` option for Delta tables."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
     "message" : [
@@ -2187,6 +2205,12 @@
       "OPTIMIZE FULL is only supported for clustered tables with non-empty clustering columns."
     ],
     "sqlState" : "42601"
+  },
+  "DELTA_OVERWRITE_BY_FILTER_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "Overwrite by filter is incompatible with the `replaceOn`/`replaceUsing` option."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [

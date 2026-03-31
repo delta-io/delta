@@ -18,7 +18,7 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
-import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
@@ -28,6 +28,7 @@ import org.apache.spark.sql.delta.commands.DMLUtils.TaggedCommitData
 import org.apache.spark.sql.delta.constraints.Constraint
 import org.apache.spark.sql.delta.constraints.Constraints.Check
 import org.apache.spark.sql.delta.constraints.Invariants.ArbitraryExpression
+import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.DataFrame
@@ -199,6 +200,46 @@ trait WriteIntoDeltaLike {
             Check(arbitraryExpression.name, arbitraryExpression.expression)
         }
       }
+    }
+  }
+
+  /**
+   * Validates that `replaceOn`/`replaceUsing` is not combined with incompatible DataFrame options.
+   */
+  protected def validateReplaceOnOrUsingOptionCombinations(
+      options: DeltaOptions,
+      isOverwriteOperation: Boolean): Unit = {
+    // `replaceOn` and `replaceUsing` are mutually exclusive.
+    if (options.replaceOn.isDefined && options.replaceUsing.isDefined) {
+      throw DeltaErrors.incompatibleDataFrameOptions(
+        DeltaOptions.REPLACE_ON_OPTION, DeltaOptions.REPLACE_USING_OPTION)
+    }
+    val replaceOnOrUsingOption = if (options.replaceOn.isDefined) {
+      DeltaOptions.REPLACE_ON_OPTION
+    } else {
+      DeltaOptions.REPLACE_USING_OPTION
+    }
+    // These are Selective Overwrite options with very different semantics, so
+    // they are not compatible with `replaceOn`/`replaceUsing`.
+    if (options.replaceWhere.isDefined) {
+      throw DeltaErrors.overwriteByFilterIncompatibleReplaceOnOrUsingError()
+    }
+    if (options.partitionOverwriteModeInOptions) {
+      throw DeltaErrors.dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError()
+    }
+    // `replaceOn`/`replaceUsing` can only replace parts of the table, so combining it with
+    // `overwriteSchema` could corrupt the table: the non-replaced rows would still
+    // have the old schema while newly written rows would have the new schema.
+    if (options.canOverwriteSchema && isOverwriteOperation) {
+      throw DeltaErrors.incompatibleDataFrameOptions(
+        DeltaOptions.OVERWRITE_SCHEMA_OPTION, replaceOnOrUsingOption)
+    }
+
+    // `replaceOn`/`replaceUsing` replaces matched rows with new data, which is inherently
+    // a data change. Setting `dataChange` to false is contradictory.
+    if (options.rearrangeOnly) {
+      throw DeltaErrors.incompatibleDataFrameOptions(
+        DeltaOptions.DATA_CHANGE_OPTION, replaceOnOrUsingOption)
     }
   }
 }

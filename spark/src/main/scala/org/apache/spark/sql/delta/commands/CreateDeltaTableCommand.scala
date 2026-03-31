@@ -208,6 +208,13 @@ case class CreateDeltaTableCommand(
           // to once again go through analysis
           val data = DataFrameUtils.ofRows(sparkSession, query)
           val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          if (options.isReplaceOnOrUsingDefined) {
+            if (options.replaceOn.isDefined) {
+              throw DeltaErrors.operationNotSupportedException("replaceOn")
+            } else {
+              throw DeltaErrors.operationNotSupportedException("replaceUsing")
+            }
+          }
           val deltaWriter = WriteIntoDelta(
             deltaLog = deltaLog,
             mode = mode,
@@ -775,6 +782,12 @@ case class CreateDeltaTableCommand(
       !options.canOverwriteSchema
     if (isReplace && dontOverwriteSchema) {
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
+    }
+    // `replaceUsing`/`replaceOn` can only replace parts of the table, so combining them with
+    // commands that can overwrite schema could corrupt the table: the non-replaced rows would
+    // still have the old schema while newly written rows would have the new schema.
+    if (options.isReplaceOnOrUsingDefined) {
+      throw DeltaErrors.dfv2CreateReplaceIncompatibleReplaceOnOrUsingError()
     }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
