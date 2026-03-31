@@ -450,7 +450,66 @@ public class SparkScan
     boolean limitReached = false;
 
     try {
-      outer:
+private void planScanFiles() {
+  final Engine tableEngine = DefaultEngine.create(hadoopConf);
+  final String tablePath = getTablePath();
+
+  if (pushedLimit.isPresent() && pushedLimit.getAsInt() == 0) {
+    estimatedSizeInBytes = 0;
+    return;
+  }
+
+  final CloseableIterator<FilteredColumnarBatch> scanFileBatches =
+      kernelScan.getScanFiles(tableEngine, pushedLimit.isPresent());
+
+  long accumulatedRecords = 0;
+  try {
+    while (!isLimitReached(accumulatedRecords) && scanFileBatches.hasNext()) {
+      accumulatedRecords =
+          processScanBatch(scanFileBatches.next(), tablePath, accumulatedRecords);
+    }
+  } finally {
+    closeQuietly(scanFileBatches);
+  }
+
+  logLimitPushdownResult(accumulatedRecords);
+  estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
+}
+
+private long processScanBatch(
+    FilteredColumnarBatch batch, String tablePath, long accumulatedRecords) {
+  try (CloseableIterator<Row> rows = batch.getRows()) {
+    while (!isLimitReached(accumulatedRecords) && rows.hasNext()) {
+      final AddFile addFile = new AddFile(rows.next().getStruct(0));
+      totalBytes += addFile.getSize();
+      partitionedFiles.add(
+          PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
+      accumulatedRecords += getLogicalRowCount(addFile);
+    }
+  } catch (IOException e) {
+    throw new RuntimeException(e);
+  }
+  return accumulatedRecords;
+}
+
+/**
+ * Returns the logical (surviving) row count for a file. Subtracts DV cardinality from
+ * physical numRecords. Returns 0 when stats are missing (conservative: file is included
+ * but not counted toward the limit).
+ */
+private long getLogicalRowCount(AddFile addFile) {
+  Optional<Long> numRecords = addFile.getNumRecords();
+  if (!numRecords.isPresent()) return 0;
+
+  long dvCardinality = addFile.getDeletionVector()
+      .map(DeletionVectorDescriptor::getCardinality)
+      .orElse(0L);
+  return Math.max(0, numRecords.get() - dvCardinality);
+}
+
+private boolean isLimitReached(long accumulatedRecords) {
+  return pushedLimit.isPresent() && accumulatedRecords >= pushedLimit.getAsInt();
+}
       while (scanFileBatches.hasNext()) {
         final FilteredColumnarBatch batch = scanFileBatches.next();
 
