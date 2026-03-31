@@ -85,6 +85,61 @@ class PipUtilsCustomJarsTests(unittest.TestCase):
         self.spark.read.format("delta").load(self.tempFile)
 
 
+class PipUtilsExtraExcludesTests(unittest.TestCase):
+    """
+    Tests for the extra_excludes parameter of configure_spark_with_delta_pip.
+
+    Verifies that transitive dependencies (e.g. Derby) can be excluded to prevent
+    classpath conflicts when using enableHiveSupport() together with JDBC connectors.
+    See https://github.com/delta-io/delta/issues/5178.
+    """
+
+    def setUp(self) -> None:
+        builder = SparkSession.builder \
+            .appName("pip-test-excludes") \
+            .master("local[*]") \
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
+            .config("spark.sql.catalog.spark_catalog",
+                    "org.apache.spark.sql.delta.catalog.DeltaCatalog")
+
+        derby_excludes = [
+            "org.apache.derby:derby",
+            "org.apache.derby:derbyclient",
+            "org.apache.derby:derbytools",
+        ]
+        self.spark = delta.configure_spark_with_delta_pip(
+            builder, extra_excludes=derby_excludes).getOrCreate()
+        self.tempPath = tempfile.mkdtemp()
+        self.tempFile = os.path.join(self.tempPath, "tempFile")
+
+    def tearDown(self) -> None:
+        self.spark.stop()
+        shutil.rmtree(self.tempPath)
+
+    def test_excludes_conf_is_set(self) -> None:
+        excludesConf: Optional[str] = self.spark.conf.get("spark.jars.excludes")
+        assert excludesConf is not None
+        excludesList: List[str] = excludesConf.split(",")
+        self.assertIn("org.apache.derby:derby", excludesList)
+        self.assertIn("org.apache.derby:derbyclient", excludesList)
+        self.assertIn("org.apache.derby:derbytools", excludesList)
+        self.assertEqual(len(excludesList), 3)
+
+    def test_delta_still_works_with_excludes(self) -> None:
+        # Delta read/write must still work after excluding Derby.
+        self.spark.range(0, 5).write.format("delta").save(self.tempFile)
+        self.spark.read.format("delta").load(self.tempFile)
+
+    def test_packages_unaffected_by_excludes(self) -> None:
+        packagesConf: Optional[str] = self.spark.conf.get("spark.jars.packages")
+        assert packagesConf is not None
+        # Delta package must still be present.
+        self.assertTrue(
+            any("io.delta" in p for p in packagesConf.split(",")),
+            "Delta package missing from spark.jars.packages",
+        )
+
+
 if __name__ == "__main__":
     try:
         import xmlrunner
