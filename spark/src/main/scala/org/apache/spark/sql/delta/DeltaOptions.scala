@@ -53,6 +53,11 @@ trait DeltaWriteOptions
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
   val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
 
+  val useNullIntolerantEqualityWithDPO: Option[Boolean] =
+    options
+      .get(USE_NULL_INTOLERANT_EQUALITY_WITH_DPO)
+      .map(toBoolean(_, USE_NULL_INTOLERANT_EQUALITY_WITH_DPO))
+
   /**
    * Whether to add an adaptive shuffle before writing out the files to break skew, and coalesce
    * data into chunkier files.
@@ -259,6 +264,12 @@ object DeltaOptions extends DeltaLogging {
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
 
+  /**
+   * An option to ignore overwriting partitions that contain NULL in
+   * Dynamic Partition Overwrite, used by INSERT INTO ... REPLACE USING (...).
+   */
+  val USE_NULL_INTOLERANT_EQUALITY_WITH_DPO = "useNullIntolerantEqualityWithDPO"
+
   val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
   val PARTITION_OVERWRITE_MODE_DYNAMIC = "DYNAMIC"
   val PARTITION_OVERWRITE_MODE_STATIC = "STATIC"
@@ -325,6 +336,7 @@ object DeltaOptions extends DeltaLogging {
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
     USER_METADATA_OPTION,
+    USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
     PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,

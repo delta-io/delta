@@ -38,6 +38,8 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
+import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -449,6 +451,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   registerPostCommitHook(ChecksumHook)
   catalogTable.foreach { ct =>
     registerPostCommitHook(UpdateCatalogFactory.getUpdateCatalogHook(ct, spark))
+    if (CatalogTableUtils.isUnityCatalogManagedTable(ct)) {
+      registerPostCommitHook(UpdateMetricsHook(Some(ct)))
+    }
   }
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
