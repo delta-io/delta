@@ -601,14 +601,17 @@ class TrackingCommitCoordinatorClient(
       tableDesc: TableDescriptor,
       commitVersion: Long,
       actions: java.util.Iterator[String],
-      updatedActions: UpdatedActions): CommitResponse = recordOperation("commit") {
+      updatedActions: UpdatedActions,
+      catalogTrackedInfo: java.util.Optional[io.delta.storage.commit.uniform.UniformMetadata])
+      : CommitResponse = recordOperation("commit") {
     delegatingCommitCoordinatorClient.commit(
       logStore,
       hadoopConf,
       tableDesc,
       commitVersion,
       actions,
-      updatedActions)
+      updatedActions,
+      catalogTrackedInfo)
   }
 
   override def getCommits(

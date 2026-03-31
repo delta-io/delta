@@ -35,7 +35,7 @@ import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
-import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogTrackedInfo, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
@@ -2606,7 +2606,20 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
       isolationLevel: IsolationLevel): Snapshot = {
-    val actions = currentTransactionInfo.finalActionsToCommit
+    // Perform pre-commit Iceberg conversion for atomic UniForm when a catalog table is available.
+    val updatedTxnInfo = currentTransactionInfo.catalogTable match {
+      case Some(ct) if UniversalFormat.icebergEnabled(currentTransactionInfo.metadata) =>
+        val (metadataPath, _) = deltaLog.icebergConverter.convertUncommitedTxn(
+          currentTransactionInfo, attemptVersion, deltaLog, ct)
+        val commitTimestamp = java.time.Instant.now().toString
+        val uniformIceberg = DeltaUniformIceberg(
+          new java.net.URI(metadataPath),
+          attemptVersion,
+          commitTimestamp)
+        currentTransactionInfo.copy(convertedIcebergMetadata = Some(uniformIceberg))
+      case _ => currentTransactionInfo
+    }
+    val actions = updatedTxnInfo.finalActionsToCommit
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2629,7 +2642,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val jsonActions = actions.map(_.json)
 
     val (newChecksumOpt, commit) =
-      writeCommitFile(attemptVersion, jsonActions.toIterator, currentTransactionInfo)
+      writeCommitFile(attemptVersion, jsonActions.toIterator, updatedTxnInfo)
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -2679,7 +2692,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
         tableDesc: TableDescriptor,
         commitVersion: Long,
         actions: java.util.Iterator[String],
-        updatedActions: UpdatedActions): CommitResponse = {
+        updatedActions: UpdatedActions,
+        catalogTrackedInfo: java.util.Optional[io.delta.storage.commit.uniform.UniformMetadata])
+        : CommitResponse = {
       val logPath = tableDesc.getLogPath
       // Get thread local observer for Fuzz testing purpose.
       val executionObserver = TransactionExecutionObserver.getObserver
@@ -2778,9 +2793,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
   ): Commit = {
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
+    val catalogTrackedInfo = CatalogTrackedInfo(currentTransactionInfo.convertedIcebergMetadata)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
-        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier),
+        Some(catalogTrackedInfo))
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri

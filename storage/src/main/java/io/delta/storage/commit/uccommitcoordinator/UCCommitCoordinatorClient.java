@@ -34,6 +34,7 @@ import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
 import org.apache.hadoop.conf.Configuration;
@@ -284,14 +285,16 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       TableDescriptor tableDesc,
       long commitVersion,
       Iterator<String> actions,
-      UpdatedActions updatedActions) throws CommitFailedException {
+      UpdatedActions updatedActions,
+      Optional<UniformMetadata> catalogTrackedInfo) throws CommitFailedException {
     return commitImpl(
       logStore,
       hadoopConf,
       tableDesc,
       commitVersion,
       actions,
-      updatedActions);
+      updatedActions,
+      catalogTrackedInfo);
   }
 
   /**
@@ -313,7 +316,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       TableDescriptor tableDesc,
       long commitVersion,
       Iterator<String> actions,
-      UpdatedActions updatedActions) throws CommitFailedException {
+      UpdatedActions updatedActions,
+      Optional<UniformMetadata> catalogTrackedInfo) throws CommitFailedException {
     Path logPath = tableDesc.getLogPath();
     Map<String, String> coordinatedCommitsTableConf = tableDesc.getTableConf();
     checkVersionSupported(coordinatedCommitsTableConf, false /* compareRead */);
@@ -440,7 +444,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
             Optional.of(updatedActions.getNewMetadata()),
           updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
             Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
+            Optional.of(updatedActions.getNewProtocol()),
+          catalogTrackedInfo
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -645,7 +650,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.of(updatedLastKnownBackfilledVersion),
       true /* disown */,
       Optional.empty() /* newMetadata */,
-      Optional.empty() /* newProtocol */
+      Optional.empty() /* newProtocol */,
+      Optional.empty() /* uniform */
     );
     long commitDuration = System.currentTimeMillis() - commitStartTime;
 
@@ -674,7 +680,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> lastKnownBackfilledVersion,
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
-      Optional<AbstractProtocol> newProtocol
+      Optional<AbstractProtocol> newProtocol,
+      Optional<UniformMetadata> uniform
   ) throws IOException, CommitFailedException, UCCommitCoordinatorException
   {
     Optional<Commit> commit = commitFile.map(f -> new Commit(
@@ -692,7 +699,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       disown,
       newMetadata,
       newProtocol,
-      Optional.empty() /* uniform */
+      uniform
     );
   }
 
