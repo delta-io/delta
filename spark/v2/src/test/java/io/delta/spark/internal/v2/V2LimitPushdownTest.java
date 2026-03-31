@@ -244,28 +244,198 @@ public class V2LimitPushdownTest extends V2TestBase {
   }
 
   // ==========================================================================
-  // Priority 2: Robustness tests
+  // Priority 2: DSv1/DSv2 parity tests
   // ==========================================================================
 
+  /**
+   * Asserts that DSv1 and DSv2 return the same data for an ORDER BY + LIMIT query. ORDER BY makes
+   * the result deterministic so we can compare actual row values, not just counts.
+   */
+  private void assertV1V2Parity(String tablePath, String orderByCol, int limit) {
+    assertV1V2ParityWithFilter(tablePath, null, orderByCol, limit);
+  }
+
+  /**
+   * Asserts that DSv1 and DSv2 return the same data for a filtered ORDER BY + LIMIT query. When
+   * {@code filter} is non-null, it is inserted as a WHERE clause.
+   */
+  private void assertV1V2ParityWithFilter(
+      String tablePath, String filter, String orderByCol, int limit) {
+    String where = (filter != null) ? " WHERE " + filter : "";
+    String v1Query =
+        str("SELECT * FROM delta.`%s`%s ORDER BY %s LIMIT %d", tablePath, where, orderByCol, limit);
+    String v2Query =
+        str(
+            "SELECT * FROM dsv2.delta.`%s`%s ORDER BY %s LIMIT %d",
+            tablePath, where, orderByCol, limit);
+
+    List<Row> v1Rows = spark.sql(v1Query).collectAsList();
+    List<Row> v2Rows = spark.sql(v2Query).collectAsList();
+
+    assertEquals(
+        v1Rows.size(),
+        v2Rows.size(),
+        str("Row count mismatch: V1=%d, V2=%d", v1Rows.size(), v2Rows.size()));
+
+    for (int i = 0; i < v1Rows.size(); i++) {
+      assertEquals(
+          v1Rows.get(i).toString(),
+          v2Rows.get(i).toString(),
+          str("Row %d differs between V1 and V2", i));
+    }
+  }
+
   @Test
-  public void testLimitComparisonWithAndWithoutPushdown(@TempDir File tempDir) {
+  public void testParity_basicMultipleFiles(@TempDir File tempDir) {
     String tablePath = tempDir.getAbsolutePath();
     spark.sql(str("CREATE TABLE delta.`%s` (id INT, name STRING) USING delta", tablePath));
-    // Insert multiple batches to create multiple files
-    for (int i = 0; i < 5; i++) {
-      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, 'row_%d')", tablePath, i * 2, i * 2));
-      spark.sql(
-          str("INSERT INTO delta.`%s` VALUES (%d, 'row_%d')", tablePath, i * 2 + 1, i * 2 + 1));
+    for (int i = 0; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, 'row_%d')", tablePath, i, i));
     }
 
-    // V2 (with pushdown)
-    long v2Count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 3", tablePath)).count();
-    // V1 (without pushdown, via delta.`path` which uses V1 connector)
-    long v1Count = spark.sql(str("SELECT * FROM delta.`%s` LIMIT 3", tablePath)).count();
-
-    assertEquals(v1Count, v2Count, "V2 and V1 should return same row count");
-    assertEquals(3, v2Count);
+    assertV1V2Parity(tablePath, "id", 3);
+    assertV1V2Parity(tablePath, "id", 10);
+    assertV1V2Parity(tablePath, "id", 100);
   }
+
+  @Test
+  public void testParity_withDeletionVectors(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, value STRING) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
+            tablePath));
+
+    spark
+        .range(0, 200)
+        .selectExpr("id", "cast(id as string) as value")
+        .coalesce(1)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    spark
+        .range(200, 400)
+        .selectExpr("id", "cast(id as string) as value")
+        .coalesce(1)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // Delete every other row to create DVs
+    spark.sql(str("DELETE FROM delta.`%s` WHERE id %% 2 = 0", tablePath));
+
+    // Verify DVs were created
+    DeltaLog deltaLog = DeltaLog.forTable(spark, tablePath);
+    long numDVs =
+        (long)
+            deltaLog
+                .update(false, Option.empty(), Option.empty())
+                .numDeletionVectorsOpt()
+                .getOrElse(() -> 0L);
+    assertTrue(numDVs > 0, "Expected deletion vectors to be created");
+
+    assertV1V2Parity(tablePath, "id", 10);
+    assertV1V2Parity(tablePath, "id", 50);
+    assertV1V2Parity(tablePath, "id", 200);
+  }
+
+  @Test
+  public void testParity_withHeavyDeletionVectors(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, value STRING) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
+            tablePath));
+
+    // File A: 100 rows (will have 90 deleted, 10 surviving)
+    spark
+        .range(0, 100)
+        .selectExpr("id", "cast(id as string) as value")
+        .coalesce(1)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // File B: 100 rows (all surviving)
+    spark
+        .range(100, 200)
+        .selectExpr("id", "cast(id as string) as value")
+        .coalesce(1)
+        .write()
+        .format("delta")
+        .mode("append")
+        .save(tablePath);
+
+    // Delete 90% of file A via DV
+    spark.sql(str("DELETE FROM delta.`%s` WHERE id >= 10 AND id < 100", tablePath));
+
+    // 110 logical rows total (10 from file A + 100 from file B).
+    // This exercises DV cardinality subtraction in the limit accumulation logic.
+    assertV1V2Parity(tablePath, "id", 5);
+    assertV1V2Parity(tablePath, "id", 50);
+    assertV1V2Parity(tablePath, "id", 110);
+  }
+
+  @Test
+  public void testParity_withPartitionFilter(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id INT, part STRING) USING delta PARTITIONED BY (part)",
+            tablePath));
+    for (int i = 0; i < 10; i++) {
+      String part = (i % 2 == 0) ? "even" : "odd";
+      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, '%s')", tablePath, i, part));
+    }
+
+    assertV1V2ParityWithFilter(tablePath, "part = 'even'", "id", 2);
+    assertV1V2ParityWithFilter(tablePath, "part = 'odd'", "id", 3);
+  }
+
+  @Test
+  public void testParity_withColumnMapping(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id INT, name STRING) "
+                + "USING delta "
+                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
+            tablePath));
+    for (int i = 0; i < 10; i++) {
+      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, 'row_%d')", tablePath, i, i));
+    }
+
+    assertV1V2Parity(tablePath, "id", 3);
+  }
+
+  @Test
+  public void testParity_emptyTable(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(str("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+
+    assertV1V2Parity(tablePath, "id", 10);
+  }
+
+  @Test
+  public void testParity_limit0(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(str("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
+    spark.sql(str("INSERT INTO delta.`%s` VALUES (1), (2), (3)", tablePath));
+
+    assertV1V2Parity(tablePath, "id", 0);
+  }
+
+  // ==========================================================================
+  // Priority 3: Robustness tests
+  // ==========================================================================
 
   @Test
   public void testLimitWithMultipleFiles(@TempDir File tempDir) {
