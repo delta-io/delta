@@ -36,7 +36,7 @@ import org.apache.spark.sql.delta.sources.{
 }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
-import io.delta.sharing.client.DeltaSharingClient
+import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.util.ConfUtils
 import io.delta.sharing.client.model.{Table => DeltaSharingTable}
 
@@ -409,7 +409,7 @@ case class DeltaFormatSharingSource(
       return null
     }
 
-    maybeGetLatestFileChangesFromServer(deltaSourceOffset)
+    maybeGetLatestFileChangesFromServer(deltaSourceOffset, wasConvertedFromLegacy)
 
     maybeMoveToNextVersion(deltaSource.latestOffset(startDeltaSourceOffsetOpt.orNull, limit))
   }
@@ -471,17 +471,43 @@ case class DeltaFormatSharingSource(
    *                       2 usages: 1) used to compare with latestTableVersionInLocalDeltaLogOpt to
    *                       check whether new files are needed. 2) used for getTableFileChanges,
    *                       check more details in the function header.
+   * @param wasConvertedFromLegacy true when the startingOffset was converted from a legacy
+   *                               DeltaSharingSourceOffset checkpoint.
    */
-  private def maybeGetLatestFileChangesFromServer(startingOffset: DeltaSourceOffset): Unit = {
+  private def maybeGetLatestFileChangesFromServer(
+      startingOffset: DeltaSourceOffset,
+      wasConvertedFromLegacy: Boolean): Unit = {
     // Use a local variable to avoid a difference in the two usages below.
     val latestTableVersion = getOrUpdateLatestTableVersion
 
     if (needNewFilesFromServer(startingOffset, latestTableVersion)) {
-      val endingVersionForQuery =
+      // Lucky case: offset conversion lands on a version
+      // boundary -- fetch file IDs with sha256 and pull up to
+      // maxVersionsPerRpc versions as a regular batch.
+      //
+      // Unlucky case: offset conversion is mid-version -- fetch
+      // file IDs with md5 and restrict to 1 version so the
+      // batch finishes the version and lands on a boundary.
+      val isLegacyMidVersion = wasConvertedFromLegacy &&
+        startingOffset.index != DeltaSourceOffset.BASE_INDEX
+      val endingVersionForQuery = if (isLegacyMidVersion) {
+        startingOffset.reservoirVersion
+      } else {
         getEndingVersionForRpc(startingOffset, latestTableVersion)
+      }
+
+      val fileIdHash: Option[String] = if (isLegacyMidVersion) {
+        Some(DeltaSharingRestClient.FILEIDHASH_MD5)
+      } else {
+        Some(DeltaSharingRestClient.FILEIDHASH_SHA256)
+      }
+
+      logInfo(s"Legacy transition state: wasConvertedFromLegacy=$wasConvertedFromLegacy, " +
+        s"isLegacyMidVersion=$isLegacyMidVersion, fileIdHash=$fileIdHash, " +
+        s"endingVersionForQuery=$endingVersionForQuery")
 
       if (startingOffset.isInitialSnapshot || !options.readChangeFeed) {
-        getTableFileChanges(startingOffset, endingVersionForQuery)
+        getTableFileChanges(startingOffset, endingVersionForQuery, fileIdHash)
       } else {
         throw new UnsupportedOperationException("CDF Streaming is not supported yet.")
       }
@@ -499,10 +525,12 @@ case class DeltaFormatSharingSource(
    *                        it will only load files since startingOffset.reservoirVersion.
    * @param endingVersionForQuery The ending version used for the query, always smaller than
    *                              the latest table version on server.
+   * @param fileIdHash            Optional hash algorithm to use for file ID hashing.
    */
   private def getTableFileChanges(
       startingOffset: DeltaSourceOffset,
-      endingVersionForQuery: Long): Unit = {
+      endingVersionForQuery: Long,
+      fileIdHash: Option[String] = None): Unit = {
     logInfo(
       s"Fetching files with table version(${startingOffset.reservoirVersion}), " +
       s"index(${startingOffset.index}), isInitialSnapshot(${startingOffset.isInitialSnapshot})," +
@@ -521,7 +549,7 @@ case class DeltaFormatSharingSource(
         timestampAsOf = None,
         jsonPredicateHints = None,
         refreshToken = None,
-        fileIdHash = None
+        fileIdHash = fileIdHash
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFiles(
         client = client,
@@ -531,7 +559,8 @@ case class DeltaFormatSharingSource(
         versionAsOf = Some(startingOffset.reservoirVersion),
         timestampAsOf = None,
         jsonPredicateHints = None,
-        useRefreshToken = false
+        useRefreshToken = false,
+        fileIdHash = fileIdHash
       )
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines for table version ${tableFiles.version} from" +
@@ -545,13 +574,14 @@ case class DeltaFormatSharingSource(
         table = table,
         startingVersion = startingOffset.reservoirVersion,
         endingVersion = Some(endingVersionForQuery),
-        fileIdHash = None
+        fileIdHash = fileIdHash
       )
       val refreshFunc = DeltaSharingUtils.getRefresherForGetFilesWithStartingVersion(
         client = client,
         table = table,
         startingVersion = startingOffset.reservoirVersion,
-        endingVersion = Some(endingVersionForQuery)
+        endingVersion = Some(endingVersionForQuery),
+        fileIdHash = fileIdHash
       )
       logInfo(
         s"Fetched ${tableFiles.lines.size} lines from startingVersion " +
@@ -608,20 +638,27 @@ case class DeltaFormatSharingSource(
     // specifies the starting version. On restart, this Source
     // is instantiated, so we convert legacy offsets to
     // DeltaSourceOffset.
-    val endOffset = forceToDeltaSourceOffset(end)._1
+    val (endOffset, endConvertedFromLegacy) = forceToDeltaSourceOffset(end)
 
     // When the query is past the initial snapshot,
     // startOffsetOption is defined and contains the starting
     // version. Convert from legacy offset if needed.
-    val startDeltaOffsetOption =
-      startOffsetOption.map(o => forceToDeltaSourceOffset(o)._1)
+    val (startDeltaOffsetOption, startConvertedFromLegacy) =
+      startOffsetOption.map(forceToDeltaSourceOffset) match {
+        case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
+        case None => (None, false)
+      }
+    // Possible legacy conversion scenarios:
+    // 1. start=None, end=legacy: initial snapshot restart.
+    // 2. start=legacy, end=new: post-snapshot, version
+    //    boundary reached in one batch.
+    val wasConvertedFromLegacy = startConvertedFromLegacy || endConvertedFromLegacy
     val startingOffset = getStartingOffset(startDeltaOffsetOption, Some(endOffset))
 
-    // Files should already be fetched in latestOffset; this
-    // is a safeguard in case files for startOffset are not
-    // present. Whether startOffset was converted from legacy
-    // does not matter here.
-    maybeGetLatestFileChangesFromServer(startingOffset = startingOffset)
+    // For most cases, files should already be fetched in latestOffset. When latestOffset
+    // succeeded but getBatch failed, on restart, Spark engine skips latestOffset, so we need to
+    // fetch files here.
+    maybeGetLatestFileChangesFromServer(startingOffset, wasConvertedFromLegacy)
     // Reset latestProcessedEndOffsetOption only when endOffset is larger.
     // Because with microbatch pipelining, we may get getBatch requests out of order.
     if (latestProcessedEndOffsetOption.isEmpty ||

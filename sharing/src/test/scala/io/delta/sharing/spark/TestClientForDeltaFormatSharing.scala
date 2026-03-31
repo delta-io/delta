@@ -154,6 +154,10 @@ private[spark] class TestClientForDeltaFormatSharing(
     val tableFullName = s"${table.share}.${table.schema}.${table.name}"
     limit.foreach(lim => TestClientForDeltaFormatSharing.limits.put(tableFullName, lim))
     TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
+    TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {
+      TestClientForDeltaFormatSharing.fileIdHashHistory +=
+        ((table.name, "getFiles_snapshot", fileIdHash))
+    }
     jsonPredicateHints.foreach(p =>
       TestClientForDeltaFormatSharing.jsonPredicateHints.put(tableFullName, p))
 
@@ -220,6 +224,10 @@ private[spark] class TestClientForDeltaFormatSharing(
     )
     val tableFullName = s"${table.share}.${table.schema}.${table.name}"
     TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
+    TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {
+      TestClientForDeltaFormatSharing.fileIdHashHistory +=
+        ((table.name, s"getFiles_streaming_${startingVersion}_${endingVersion.get}", fileIdHash))
+    }
     val iterator = SparkEnv.get.blockManager
       .get[String](getBlockId(table.name, s"getFiles_${startingVersion}_${endingVersion.get}"))
       .map(_.data.asInstanceOf[Iterator[String]])
@@ -318,4 +326,15 @@ object TestClientForDeltaFormatSharing {
   val requestedFormat = scala.collection.mutable.Map[String, String]()
   val jsonPredicateHints = scala.collection.mutable.Map[String, String]()
   @volatile var lastCallerOrg: String = ""
+
+  // Captures (tableName, queryType, fileIdHash) for each getFiles call.
+  val fileIdHashHistory = scala.collection.mutable.ArrayBuffer[(String, String, Option[String])]()
+
+  def clearFileIdHashHistory(): Unit = fileIdHashHistory.synchronized {
+    fileIdHashHistory.clear()
+  }
+
+  def getFileIdHashHistory: Seq[(String, String, Option[String])] = fileIdHashHistory.synchronized {
+    fileIdHashHistory.toSeq
+  }
 }
