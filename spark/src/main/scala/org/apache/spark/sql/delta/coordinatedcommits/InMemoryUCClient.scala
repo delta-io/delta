@@ -92,5 +92,17 @@ class InMemoryUCClient(
       Option(endVersion.orElse(null)).map(_.toLong))
   }
 
+  /**
+   * No-op: this test double delegates commit coordination to [[InMemoryUCCommitCoordinator]]
+   * and does not model UC's catalog-level table registration.
+   */
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {}
+
   override def close(): Unit = {}
 }

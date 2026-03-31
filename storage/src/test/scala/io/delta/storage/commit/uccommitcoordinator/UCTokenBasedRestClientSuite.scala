@@ -45,6 +45,7 @@ class UCTokenBasedRestClientSuite
   private var serverUri: String = _
   private var metastoreHandler: HttpExchange => Unit = _
   private var commitsHandler: HttpExchange => Unit = _
+  private var tablesHandler: HttpExchange => Unit = _
   private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
@@ -63,6 +64,11 @@ class UCTokenBasedRestClientSuite
       }
       exchange.close()
     })
+    server.createContext("/api/2.1/unity-catalog/tables", exchange => {
+      if (tablesHandler != null) tablesHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_OK, """{"table_id":"new-table-id"}""")
+      exchange.close()
+    })
     server.start()
     serverUri = s"http://localhost:${server.getAddress.getPort}"
   }
@@ -72,6 +78,7 @@ class UCTokenBasedRestClientSuite
   override def beforeEach(): Unit = {
     metastoreHandler = null
     commitsHandler = null
+    tablesHandler = null
   }
 
   private def readRequestBody(exchange: HttpExchange): String = {
@@ -305,5 +312,135 @@ class UCTokenBasedRestClientSuite
 
     val json = objectMapper.readTree(capturedBody)
     assert(!json.has("uniform") || json.get("uniform").isNull)
+  }
+
+  // finalizeCreate tests
+  test("finalizeCreate sends correct CreateTable request with complex types") {
+    // Capture the HTTP request body sent to UC's createTable endpoint
+    var capturedBody: String = null
+    tablesHandler = exchange => {
+      capturedBody = readRequestBody(exchange)
+      sendJson(exchange, HttpStatus.SC_OK, """{"table_id":"new-table-id"}""")
+    }
+
+    // Prepare columns with primitive, complex, and parameterized types
+    val columns = new java.util.ArrayList[UCClient.ColumnDef]()
+    columns.add(new UCClient.ColumnDef("id", "INT", "int", "\"integer\"", false, 0))
+    columns.add(new UCClient.ColumnDef("tags", "ARRAY", "array<string>",
+      """{"type":"array","elementType":"string","containsNull":true}""", true, 1))
+    columns.add(new UCClient.ColumnDef("price", "DECIMAL", "decimal(10,2)",
+      """{"type":"decimal","precision":10,"scale":2}""", true, 2))
+
+    val props = new java.util.HashMap[String, String]()
+    props.put("delta.minReaderVersion", "1")
+
+    // Send the finalizeCreate request
+    withClient { client =>
+      client.finalizeCreate("my_table", "my_catalog", "my_schema",
+        "s3://bucket/path", columns, props)
+    }
+
+    // Verify the serialized CreateTable JSON matches UC's expected schema
+    val json = objectMapper.readTree(capturedBody)
+    assert(json.get("name").asText() === "my_table")
+    assert(json.get("catalog_name").asText() === "my_catalog")
+    assert(json.get("schema_name").asText() === "my_schema")
+    assert(json.get("table_type").asText() === "MANAGED")
+    assert(json.get("data_source_format").asText() === "DELTA")
+    assert(json.get("storage_location").asText() === "s3://bucket/path")
+
+    // Verify properties are serialized
+    val propsNode = json.get("properties")
+    assert(propsNode != null && !propsNode.isNull)
+    assert(propsNode.get("delta.minReaderVersion").asText() === "1")
+
+    val cols = json.get("columns")
+    assert(cols.size() === 3)
+
+    // Verify full column metadata (name, type_name, type_text, type_json, nullable, position)
+    assert(cols.get(0).get("name").asText() === "id")
+    assert(cols.get(0).get("type_name").asText() === "INT")
+    assert(cols.get(0).get("type_text").asText() === "int")
+    assert(cols.get(0).get("type_json").asText() === "\"integer\"")
+    assert(cols.get(0).get("nullable").asBoolean() === false)
+    assert(cols.get(0).get("position").asInt() === 0)
+
+    assert(cols.get(1).get("name").asText() === "tags")
+    assert(cols.get(1).get("type_name").asText() === "ARRAY")
+    assert(cols.get(1).get("type_text").asText() === "array<string>")
+    assert(cols.get(1).get("type_json").asText() ===
+      """{"type":"array","elementType":"string","containsNull":true}""")
+    assert(cols.get(1).get("nullable").asBoolean() === true)
+    assert(cols.get(1).get("position").asInt() === 1)
+
+    assert(cols.get(2).get("name").asText() === "price")
+    assert(cols.get(2).get("type_name").asText() === "DECIMAL")
+    assert(cols.get(2).get("type_text").asText() === "decimal(10,2)")
+    assert(cols.get(2).get("type_json").asText() ===
+      """{"type":"decimal","precision":10,"scale":2}""")
+    assert(cols.get(2).get("nullable").asBoolean() === true)
+    assert(cols.get(2).get("position").asInt() === 2)
+  }
+
+  test("finalizeCreate throws IllegalArgumentException for unsupported column type") {
+    // Prepare a column with a type name that doesn't map to any ColumnTypeName enum value
+    val columns = new java.util.ArrayList[UCClient.ColumnDef]()
+    columns.add(new UCClient.ColumnDef("col", "FAKETYPE", "faketype", "\"faketype\"", true, 0))
+
+    // Expect IllegalArgumentException before any HTTP call is made
+    withClient { client =>
+      val ex = intercept[IllegalArgumentException] {
+        client.finalizeCreate("tbl", "cat", "sch", "s3://bucket/tbl",
+          columns, Collections.emptyMap())
+      }
+      assert(ex.getMessage.contains("Unsupported column type"))
+      assert(ex.getMessage.contains("FAKETYPE"))
+    }
+  }
+
+  test("finalizeCreate throws IOException on server error") {
+    // Simulate UC returning HTTP 500
+    tablesHandler = exchange =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"boom"}""")
+
+    val columns = new java.util.ArrayList[UCClient.ColumnDef]()
+    columns.add(new UCClient.ColumnDef("id", "INT", "int", "\"integer\"", false, 0))
+
+    // Expect IOException wrapping the server error with the FQN in the message
+    withClient { client =>
+      val ex = intercept[java.io.IOException] {
+        client.finalizeCreate("tbl", "cat", "sch", "s3://bucket/tbl",
+          columns, Collections.emptyMap())
+      }
+      assert(ex.getMessage.contains("Failed to finalize table creation"))
+      assert(ex.getMessage.contains("cat.sch.tbl"))
+    }
+  }
+
+  test("finalizeCreate validates required parameters") {
+    val columns = new java.util.ArrayList[UCClient.ColumnDef]()
+    columns.add(new UCClient.ColumnDef("id", "INT", "int", "\"integer\"", false, 0))
+
+    // Each of the 6 required parameters must reject null
+    withClient { client =>
+      intercept[NullPointerException] {
+        client.finalizeCreate(null, "cat", "sch", "s3://b", columns, Collections.emptyMap())
+      }
+      intercept[NullPointerException] {
+        client.finalizeCreate("tbl", null, "sch", "s3://b", columns, Collections.emptyMap())
+      }
+      intercept[NullPointerException] {
+        client.finalizeCreate("tbl", "cat", null, "s3://b", columns, Collections.emptyMap())
+      }
+      intercept[NullPointerException] {
+        client.finalizeCreate("tbl", "cat", "sch", null, columns, Collections.emptyMap())
+      }
+      intercept[NullPointerException] {
+        client.finalizeCreate("tbl", "cat", "sch", "s3://b", null, Collections.emptyMap())
+      }
+      intercept[NullPointerException] {
+        client.finalizeCreate("tbl", "cat", "sch", "s3://b", columns, null)
+      }
+    }
   }
 }

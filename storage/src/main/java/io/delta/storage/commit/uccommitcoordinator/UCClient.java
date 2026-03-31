@@ -25,6 +25,9 @@ import io.delta.storage.commit.uniform.UniformMetadata;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -120,6 +123,77 @@ public interface UCClient extends AutoCloseable {
       URI tableUri,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;
+
+  /**
+   * Lightweight data transfer object that carries column metadata across the module boundary
+   * between the Spark connector and {@code delta-storage}. Needed because {@code delta-storage}
+   * cannot depend on Spark's {@code StructField} or UC SDK's {@code ColumnInfo}, so this
+   * plain-Java type bridges the gap.
+   */
+  final class ColumnDef {
+    private final String name;
+    private final String typeName;
+    private final String typeText;
+    private final String typeJson;
+    private final boolean nullable;
+    private final int position;
+
+    /**
+     * @param name     column name
+     * @param typeName UC type name (e.g. {@code "INT"}, {@code "ARRAY"}, {@code "DECIMAL"}).
+     *                 Must match a {@code ColumnTypeName} enum value in the UC SDK.
+     * @param typeText human-readable type string from Spark's {@code DataType.catalogString()}
+     *                 (e.g. {@code "int"}, {@code "array<string>"})
+     * @param typeJson JSON representation from Spark's {@code DataType.json()}
+     *                 (e.g. {@code "\"integer\""} or
+     *                 {@code {"type":"array","elementType":"string","containsNull":true}})
+     * @param nullable whether the column allows null values
+     * @param position zero-based ordinal position in the schema
+     */
+    public ColumnDef(
+        String name,
+        String typeName,
+        String typeText,
+        String typeJson,
+        boolean nullable,
+        int position) {
+      this.name = Objects.requireNonNull(name, "name is null");
+      this.typeName = Objects.requireNonNull(typeName, "typeName is null");
+      this.typeText = Objects.requireNonNull(typeText, "typeText is null");
+      this.typeJson = Objects.requireNonNull(typeJson, "typeJson is null");
+      this.nullable = nullable;
+      this.position = position;
+    }
+
+    public String getName() { return name; }
+    public String getTypeName() { return typeName; }
+    public String getTypeText() { return typeText; }
+    public String getTypeJson() { return typeJson; }
+    public boolean isNullable() { return nullable; }
+    public int getPosition() { return position; }
+  }
+
+  /**
+   * Promotes a staging table into a real managed table in Unity Catalog by calling the UC
+   * {@code createTable} REST endpoint. This is the correct API for version 0 (CREATE);
+   * for version 1+ (WRITE), use {@link #commit} instead. See delta#5118 for rationale.
+   *
+   * @param tableName table name (relative to parent schema)
+   * @param catalogName parent catalog name in Unity Catalog
+   * @param schemaName parent schema name in Unity Catalog
+   * @param storageLocation the storage root URL for the table (same as staging table)
+   * @param columns column definitions for the table schema
+   * @param properties properties to persist in UC (protocol features, metadata config, etc.)
+   * @throws IOException if there is a network or server error during finalization
+   * @throws IllegalArgumentException if a column's type name cannot be mapped to a known UC type
+   */
+  void finalizeCreate(
+      String tableName,
+      String catalogName,
+      String schemaName,
+      String storageLocation,
+      List<ColumnDef> columns,
+      Map<String, String> properties) throws IOException;
 
   /**
    * Closes any resources used by this client.
