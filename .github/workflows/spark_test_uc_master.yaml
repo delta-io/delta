@@ -44,10 +44,20 @@ jobs:
           echo "uc_version=$UC_VERSION" >> $GITHUB_OUTPUT
           echo "UC version: $UC_VERSION"
       - name: Run UC integration tests
+        id: tests
+        continue-on-error: true
         run: |
           build/sbt \
             -DunityCatalogVersion=${{ steps.uc-build.outputs.uc_version }} \
             sparkUnityCatalog/test kernelUnityCatalog/test
+      - name: Report test results
+        if: always()
+        run: |
+          if [[ "${{ steps.tests.outcome }}" == "failure" ]]; then
+            echo "::warning::UC master integration tests failed — this is a non-blocking signal. Check test logs for details."
+          else
+            echo "UC master integration tests passed."
+          fi
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
