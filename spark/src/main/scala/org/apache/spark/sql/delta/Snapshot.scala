@@ -97,7 +97,10 @@ class Snapshot(
     override val version: Long,
     val logSegment: LogSegment,
     override val deltaLog: DeltaLog,
-    val checksumOpt: Option[VersionChecksum]
+    val checksumOpt: Option[VersionChecksum],
+    // When set, Snapshot delegates data access to this provider instead of state reconstruction.
+    private[delta] val dataProviderOpt: Option[
+      org.apache.spark.sql.delta.v2.interop.SnapshotDataProvider] = None
   )
   extends SnapshotDescriptor
   with SnapshotStateManager
@@ -363,13 +366,15 @@ class Snapshot(
   }
 
   /** The current set of actions in this [[Snapshot]] as plain Rows */
-  def stateDF: DataFrame = recordFrameProfile("Delta", "stateDF") {
-    cachedState.getDF
+  def stateDF: DataFrame = dataProviderOpt match {
+    case Some(dp) => dp.stateDS(spark).toDF()
+    case None => recordFrameProfile("Delta", "stateDF") { cachedState.getDF }
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
-  def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
-    cachedState.getDS
+  def stateDS: Dataset[SingleAction] = dataProviderOpt match {
+    case Some(dp) => dp.stateDS(spark)
+    case None => recordFrameProfile("Delta", "stateDS") { cachedState.getDS }
   }
 
   private[delta] def allFilesViaStateReconstruction: Dataset[AddFile] = {
@@ -378,7 +383,10 @@ class Snapshot(
 
   // Here we need to bypass the ACL checks for SELECT anonymous function permissions.
   /** All of the files present in this [[Snapshot]]. */
-  def allFiles: Dataset[AddFile] = allFilesViaStateReconstruction
+  def allFiles: Dataset[AddFile] = dataProviderOpt match {
+    case Some(dp) => dp.allFiles(spark)
+    case None => allFilesViaStateReconstruction
+  }
 
   /** All unexpired tombstones. */
   def tombstones: Dataset[RemoveFile] = {
@@ -390,9 +398,15 @@ class Snapshot(
 
   def checkpointSizeInBytes(): Long = checkpointProvider.effectiveCheckpointSizeInBytes()
 
-  override def metadata: Metadata = _reconstructedProtocolMetadataAndICT.metadata
+  override def metadata: Metadata = dataProviderOpt match {
+    case Some(dp) => dp.metadata
+    case None => _reconstructedProtocolMetadataAndICT.metadata
+  }
 
-  override def protocol: Protocol = _reconstructedProtocolMetadataAndICT.protocol
+  override def protocol: Protocol = dataProviderOpt match {
+    case Some(dp) => dp.protocol
+    case None => _reconstructedProtocolMetadataAndICT.protocol
+  }
 
   /**
    * Tries to retrieve the protocol, metadata, and in-commit-timestamp (if needed) from the
