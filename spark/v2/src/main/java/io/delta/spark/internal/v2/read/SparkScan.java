@@ -120,8 +120,8 @@ public class SparkScan
   private final SQLConf sqlConf;
   private final ZoneId zoneId;
 
-  // Pushed limit from SupportsPushDownLimit (set via setter, not constructor)
-  private OptionalInt pushedLimit = OptionalInt.empty();
+  // Pushed limit from SupportsPushDownLimit
+  private final OptionalInt pushedLimit;
 
   // Planned input files and stats
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
@@ -145,7 +145,8 @@ public class SparkScan
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
       Optional<Statistics> catalogStats,
-      CaseInsensitiveStringMap options) {
+      CaseInsensitiveStringMap options,
+      OptionalInt pushedLimit) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
     this.initialSnapshot = Objects.requireNonNull(initialSnapshot, "initialSnapshot is null");
@@ -158,18 +159,11 @@ public class SparkScan
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
+    this.pushedLimit = Objects.requireNonNull(pushedLimit, "pushedLimit is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
     this.zoneId = ZoneId.of(sqlConf.sessionLocalTimeZone());
-  }
-
-  /**
-   * Sets the pushed limit for this scan. Called by {@link SparkScanBuilder#build()} after
-   * construction to avoid adding another constructor parameter.
-   */
-  void setPushedLimit(OptionalInt limit) {
-    this.pushedLimit = Objects.requireNonNull(limit, "limit is null");
   }
 
   /**
@@ -435,7 +429,6 @@ public class SparkScan
     final Engine tableEngine = DefaultEngine.create(hadoopConf);
     final String tablePath = getTablePath();
 
-    // Short-circuit: LIMIT 0 means no files needed
     if (pushedLimit.isPresent() && pushedLimit.getAsInt() == 0) {
       estimatedSizeInBytes = 0;
       return;
@@ -447,140 +440,90 @@ public class SparkScan
         kernelScan.getScanFiles(tableEngine, pushedLimit.isPresent());
 
     long accumulatedRecords = 0;
-    boolean limitReached = false;
-
     try {
-private void planScanFiles() {
-  final Engine tableEngine = DefaultEngine.create(hadoopConf);
-  final String tablePath = getTablePath();
-
-  if (pushedLimit.isPresent() && pushedLimit.getAsInt() == 0) {
-    estimatedSizeInBytes = 0;
-    return;
-  }
-
-  final CloseableIterator<FilteredColumnarBatch> scanFileBatches =
-      kernelScan.getScanFiles(tableEngine, pushedLimit.isPresent());
-
-  long accumulatedRecords = 0;
-  try {
-    while (!isLimitReached(accumulatedRecords) && scanFileBatches.hasNext()) {
-      accumulatedRecords =
-          processScanBatch(scanFileBatches.next(), tablePath, accumulatedRecords);
-    }
-  } finally {
-    closeQuietly(scanFileBatches);
-  }
-
-  logLimitPushdownResult(accumulatedRecords);
-  estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
-}
-
-private long processScanBatch(
-    FilteredColumnarBatch batch, String tablePath, long accumulatedRecords) {
-  try (CloseableIterator<Row> rows = batch.getRows()) {
-    while (!isLimitReached(accumulatedRecords) && rows.hasNext()) {
-      final AddFile addFile = new AddFile(rows.next().getStruct(0));
-      totalBytes += addFile.getSize();
-      partitionedFiles.add(
-          PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
-      accumulatedRecords += getLogicalRowCount(addFile);
-    }
-  } catch (IOException e) {
-    throw new RuntimeException(e);
-  }
-  return accumulatedRecords;
-}
-
-/**
- * Returns the logical (surviving) row count for a file. Subtracts DV cardinality from
- * physical numRecords. Returns 0 when stats are missing (conservative: file is included
- * but not counted toward the limit).
- */
-private long getLogicalRowCount(AddFile addFile) {
-  Optional<Long> numRecords = addFile.getNumRecords();
-  if (!numRecords.isPresent()) return 0;
-
-  long dvCardinality = addFile.getDeletionVector()
-      .map(DeletionVectorDescriptor::getCardinality)
-      .orElse(0L);
-  return Math.max(0, numRecords.get() - dvCardinality);
-}
-
-private boolean isLimitReached(long accumulatedRecords) {
-  return pushedLimit.isPresent() && accumulatedRecords >= pushedLimit.getAsInt();
-}
-      while (scanFileBatches.hasNext()) {
-        final FilteredColumnarBatch batch = scanFileBatches.next();
-
-        try (CloseableIterator<Row> addFileRowIter = batch.getRows()) {
-          while (addFileRowIter.hasNext()) {
-            final Row row = addFileRowIter.next();
-            final AddFile addFile = new AddFile(row.getStruct(0));
-
-            final PartitionedFile partitionedFile =
-                PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId);
-
-            totalBytes += addFile.getSize();
-            partitionedFiles.add(partitionedFile);
-
-            // Track accumulated rows for limit pushdown
-            if (pushedLimit.isPresent() && !limitReached) {
-              Optional<Long> numRecords = addFile.getNumRecords();
-              if (numRecords.isPresent()) {
-                long physicalRows = numRecords.get();
-                // Subtract DV cardinality to get logical (surviving) row count.
-                // Without this, tables with heavy DVs could cause under-reading:
-                // e.g., 100 physical rows with 90 deleted would count as 100 toward the
-                // limit, but only 10 rows would actually be returned.
-                long dvCardinality =
-                    addFile
-                        .getDeletionVector()
-                        .map(DeletionVectorDescriptor::getCardinality)
-                        .orElse(0L);
-                long logicalRows = Math.max(0, physicalRows - dvCardinality);
-                accumulatedRecords += logicalRows;
-                if (accumulatedRecords >= pushedLimit.getAsInt()) {
-                  limitReached = true;
-                  logger.info(
-                      "Limit pushdown: stopping file scan after {} files, {} logical rows "
-                          + "(limit: {}, total bytes: {})",
-                      partitionedFiles.size(),
-                      accumulatedRecords,
-                      pushedLimit.getAsInt(),
-                      totalBytes);
-                  break outer;
-                }
-              }
-              // Files without stats: included but not counted (conservative).
-              // This ensures correctness when stats are missing -- we may read
-              // more files than necessary, but never fewer.
-            }
-          }
-        } catch (IOException e) {
-          throw new RuntimeException(e);
-        }
+      while (!isLimitReached(accumulatedRecords) && scanFileBatches.hasNext()) {
+        accumulatedRecords =
+            processScanBatch(scanFileBatches.next(), tablePath, accumulatedRecords);
       }
     } finally {
-      // Close the scan file iterator on early break or normal completion to prevent
-      // file handle leaks. The iterator from getScanFiles() implements CloseableIterator.
-      try {
-        scanFileBatches.close();
-      } catch (IOException e) {
-        throw new RuntimeException(e);
-      }
+      closeQuietly(scanFileBatches);
     }
 
-    if (pushedLimit.isPresent() && !limitReached) {
+    logLimitPushdownResult(accumulatedRecords);
+    estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
+  }
+
+  /**
+   * Processes a single batch of scan files, adding each file to the plan and accumulating logical
+   * row counts for limit pushdown.
+   *
+   * @return the updated accumulated record count after processing this batch
+   */
+  private long processScanBatch(
+      FilteredColumnarBatch batch, String tablePath, long accumulatedRecords) {
+    try (CloseableIterator<Row> rows = batch.getRows()) {
+      while (!isLimitReached(accumulatedRecords) && rows.hasNext()) {
+        final AddFile addFile = new AddFile(rows.next().getStruct(0));
+        totalBytes += addFile.getSize();
+        partitionedFiles.add(
+            PartitionUtils.buildPartitionedFile(addFile, partitionSchema, tablePath, zoneId));
+        accumulatedRecords += getLogicalRowCount(addFile);
+      }
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
+    return accumulatedRecords;
+  }
+
+  /**
+   * Returns the logical (surviving) row count for a file. Subtracts DV cardinality from physical
+   * numRecords. Returns 0 when stats are missing (conservative: file is included but not counted
+   * toward the limit).
+   */
+  private static long getLogicalRowCount(AddFile addFile) {
+    Optional<Long> numRecords = addFile.getNumRecords();
+    if (!numRecords.isPresent()) {
+      return 0;
+    }
+    long dvCardinality =
+        addFile.getDeletionVector().map(DeletionVectorDescriptor::getCardinality).orElse(0L);
+    return Math.max(0, numRecords.get() - dvCardinality);
+  }
+
+  /** Returns true when a pushed limit is present and accumulated records have reached it. */
+  private boolean isLimitReached(long accumulatedRecords) {
+    return pushedLimit.isPresent() && accumulatedRecords >= pushedLimit.getAsInt();
+  }
+
+  /** Logs the outcome of limit pushdown after file planning completes. */
+  private void logLimitPushdownResult(long accumulatedRecords) {
+    if (!pushedLimit.isPresent()) {
+      return;
+    }
+    if (accumulatedRecords >= pushedLimit.getAsInt()) {
+      logger.info(
+          "Limit pushdown: stopping file scan after {} files, {} logical rows "
+              + "(limit: {}, total bytes: {})",
+          partitionedFiles.size(),
+          accumulatedRecords,
+          pushedLimit.getAsInt(),
+          totalBytes);
+    } else {
       logger.debug(
           "Limit pushdown: all {} files included ({} logical rows, limit: {})",
           partitionedFiles.size(),
           accumulatedRecords,
           pushedLimit.getAsInt());
     }
+  }
 
-    // Pre-compute estimated size accounting for column projection
-    estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(totalBytes);
+  /** Closes a CloseableIterator, wrapping any IOException in a RuntimeException. */
+  private static void closeQuietly(CloseableIterator<?> iterator) {
+    try {
+      iterator.close();
+    } catch (IOException e) {
+      throw new RuntimeException(e);
+    }
   }
 
   /**

@@ -194,20 +194,18 @@ public class SparkScanBuilder
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
-    SparkScan scan =
-        new SparkScan(
-            snapshotManager,
-            initialSnapshot,
-            dataSchema,
-            partitionSchema,
-            requiredDataSchema,
-            pushedKernelPredicates,
-            dataFilters,
-            kernelScanBuilder.build(),
-            catalogStats,
-            options);
-    scan.setPushedLimit(pushedLimit);
-    return scan;
+    return new SparkScan(
+        snapshotManager,
+        initialSnapshot,
+        dataSchema,
+        partitionSchema,
+        requiredDataSchema,
+        pushedKernelPredicates,
+        dataFilters,
+        kernelScanBuilder.build(),
+        catalogStats,
+        options,
+        pushedLimit);
   }
 
   CaseInsensitiveStringMap getOptions() {

@@ -14,7 +14,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.OptionalInt;
 import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -812,8 +811,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_description() {
     SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    builder.pushLimit(10);
     SparkScan scan = (SparkScan) builder.build();
-    scan.setPushedLimit(OptionalInt.of(10));
     assertTrue(
         scan.description().contains("PushedLimit: 10"),
         "description should contain PushedLimit when limit is pushed");
@@ -831,12 +830,12 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_equalsWithSameLimit() {
     SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushLimit(10);
     SparkScan scan1 = (SparkScan) builder1.build();
-    scan1.setPushedLimit(OptionalInt.of(10));
 
     SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushLimit(10);
     SparkScan scan2 = (SparkScan) builder2.build();
-    scan2.setPushedLimit(OptionalInt.of(10));
 
     assertEquals(scan1, scan2);
     assertEquals(scan1.hashCode(), scan2.hashCode());
@@ -845,12 +844,12 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_notEqualsWithDifferentLimit() {
     SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushLimit(5);
     SparkScan scan1 = (SparkScan) builder1.build();
-    scan1.setPushedLimit(OptionalInt.of(5));
 
     SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushLimit(100);
     SparkScan scan2 = (SparkScan) builder2.build();
-    scan2.setPushedLimit(OptionalInt.of(100));
 
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
@@ -863,8 +862,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     // no limit
 
     SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushLimit(10);
     SparkScan scan2 = (SparkScan) builder2.build();
-    scan2.setPushedLimit(OptionalInt.of(10));
 
     assertNotEquals(scan1, scan2);
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
@@ -882,8 +881,8 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testLimitPushdown_limit0_plansNoFiles() throws Exception {
     SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    builder.pushLimit(0);
     SparkScan scan = (SparkScan) builder.build();
-    scan.setPushedLimit(OptionalInt.of(0));
     List<PartitionedFile> files = getPartitionedFiles(scan);
     assertEquals(0, files.size(), "LIMIT 0 should plan zero files");
     assertEquals(0, getTotalBytes(scan));
@@ -900,8 +899,8 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     // Now with limit 1 -- should have fewer or equal bytes
     SparkScanBuilder builderLimit = (SparkScanBuilder) table.newScanBuilder(options);
+    builderLimit.pushLimit(1);
     SparkScan scanLimit = (SparkScan) builderLimit.build();
-    scanLimit.setPushedLimit(OptionalInt.of(1));
     long limitBytes = getTotalBytes(scanLimit);
     long limitEstimated = getEstimatedSizeInBytes(scanLimit);
 

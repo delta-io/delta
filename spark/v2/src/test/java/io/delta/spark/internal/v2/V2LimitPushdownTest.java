@@ -32,16 +32,83 @@ import scala.Option;
  * End-to-end tests for LIMIT pushdown in the Delta V2 connector.
  *
  * <p>These tests verify that {@code SELECT ... LIMIT N} returns the correct number of rows when
- * reading through the DSV2 connector, and that the limit pushdown optimization reduces planned
- * files when possible.
+ * reading through the DSV2 connector, that the limit pushdown optimization is reflected in the
+ * physical plan, and that DSv2 results match DSv1 for every scenario tested.
  *
- * <p>Note: LIMIT without ORDER BY is non-deterministic per SQL standard -- the specific rows
- * returned may vary across runs. Tests therefore check row counts, not specific row values.
+ * <p>Note: LIMIT without ORDER BY is non-deterministic per SQL standard. Parity checks use ORDER BY
+ * to make results deterministic; count-only checks do not require ORDER BY.
  */
 public class V2LimitPushdownTest extends V2TestBase {
 
   // ==========================================================================
-  // Priority 1: Correctness tests
+  // Helpers
+  // ==========================================================================
+
+  /**
+   * Asserts that the physical plan for a DSv2 query contains a pushed limit with the expected
+   * value. This verifies that the limit was actually pushed into the scan, not just that the query
+   * returned the right number of rows.
+   */
+  private void assertLimitPushed(String tablePath, int expectedLimit) {
+    String query = str("SELECT * FROM dsv2.delta.`%s` LIMIT %d", tablePath, expectedLimit);
+    String plan = spark.sql(query).queryExecution().executedPlan().toString();
+    assertTrue(
+        plan.contains("PushedLimit: " + expectedLimit),
+        str("Expected PushedLimit: %d in physical plan, but got:\n%s", expectedLimit, plan));
+  }
+
+  /**
+   * Asserts that the physical plan for a DSv2 query does NOT contain a pushed limit. Used for
+   * queries with data filters where limit pushdown should not activate.
+   */
+  private void assertLimitNotPushed(String tablePath, String filter, int limit) {
+    String query = str("SELECT * FROM dsv2.delta.`%s` WHERE %s LIMIT %d", tablePath, filter, limit);
+    String plan = spark.sql(query).queryExecution().executedPlan().toString();
+    assertFalse(
+        plan.contains("PushedLimit:"),
+        "Expected no PushedLimit in physical plan when data filter is present, but got:\n" + plan);
+  }
+
+  /**
+   * Asserts that DSv1 and DSv2 return the same data for an ORDER BY + LIMIT query. ORDER BY makes
+   * the result deterministic so we can compare actual row values, not just counts.
+   */
+  private void assertV1V2Parity(String tablePath, String orderByCol, int limit) {
+    assertV1V2ParityWithFilter(tablePath, null, orderByCol, limit);
+  }
+
+  /**
+   * Asserts that DSv1 and DSv2 return the same data for a filtered ORDER BY + LIMIT query. When
+   * {@code filter} is non-null, it is inserted as a WHERE clause.
+   */
+  private void assertV1V2ParityWithFilter(
+      String tablePath, String filter, String orderByCol, int limit) {
+    String where = (filter != null) ? " WHERE " + filter : "";
+    String v1Query =
+        str("SELECT * FROM delta.`%s`%s ORDER BY %s LIMIT %d", tablePath, where, orderByCol, limit);
+    String v2Query =
+        str(
+            "SELECT * FROM dsv2.delta.`%s`%s ORDER BY %s LIMIT %d",
+            tablePath, where, orderByCol, limit);
+
+    List<Row> v1Rows = spark.sql(v1Query).collectAsList();
+    List<Row> v2Rows = spark.sql(v2Query).collectAsList();
+
+    assertEquals(
+        v1Rows.size(),
+        v2Rows.size(),
+        str("Row count mismatch: V1=%d, V2=%d", v1Rows.size(), v2Rows.size()));
+
+    for (int i = 0; i < v1Rows.size(); i++) {
+      assertEquals(
+          v1Rows.get(i).toString(),
+          v2Rows.get(i).toString(),
+          str("Row %d differs between V1 and V2", i));
+    }
+  }
+
+  // ==========================================================================
+  // Correctness tests
   // ==========================================================================
 
   @Test
@@ -55,6 +122,8 @@ public class V2LimitPushdownTest extends V2TestBase {
 
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 3", tablePath)).count();
     assertEquals(3, count, "LIMIT 3 should return exactly 3 rows");
+    assertLimitPushed(tablePath, 3);
+    assertV1V2Parity(tablePath, "id", 3);
   }
 
   @Test
@@ -65,6 +134,8 @@ public class V2LimitPushdownTest extends V2TestBase {
 
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 100", tablePath)).count();
     assertEquals(3, count, "LIMIT larger than table should return all rows");
+    assertLimitPushed(tablePath, 100);
+    assertV1V2Parity(tablePath, "id", 100);
   }
 
   @Test
@@ -75,6 +146,7 @@ public class V2LimitPushdownTest extends V2TestBase {
 
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 0", tablePath)).count();
     assertEquals(0, count, "LIMIT 0 should return 0 rows");
+    assertV1V2Parity(tablePath, "id", 0);
   }
 
   @Test
@@ -85,6 +157,8 @@ public class V2LimitPushdownTest extends V2TestBase {
 
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 1", tablePath)).count();
     assertEquals(1, count, "LIMIT 1 should return exactly 1 row");
+    assertLimitPushed(tablePath, 1);
+    assertV1V2Parity(tablePath, "id", 1);
   }
 
   @Test
@@ -94,6 +168,8 @@ public class V2LimitPushdownTest extends V2TestBase {
 
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 10", tablePath)).count();
     assertEquals(0, count, "LIMIT on empty table should return 0 rows");
+    assertLimitPushed(tablePath, 10);
+    assertV1V2Parity(tablePath, "id", 10);
   }
 
   @Test
@@ -110,7 +186,6 @@ public class V2LimitPushdownTest extends V2TestBase {
                 + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
             tablePath));
 
-    // Insert data
     spark
         .range(1000)
         .selectExpr("id", "cast(id as string) as value")
@@ -132,9 +207,10 @@ public class V2LimitPushdownTest extends V2TestBase {
                 .getOrElse(() -> 0L);
     assertTrue(numDVs > 0, "Expected deletion vectors to be created");
 
-    // LIMIT should still return exactly the requested number of rows
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 50", tablePath)).count();
     assertEquals(50, count, "LIMIT 50 with DVs should return exactly 50 rows");
+    assertLimitPushed(tablePath, 50);
+    assertV1V2Parity(tablePath, "id", 50);
   }
 
   @Test
@@ -175,6 +251,9 @@ public class V2LimitPushdownTest extends V2TestBase {
     // LIMIT 50 must include enough files to return 50 rows.
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 50", tablePath)).count();
     assertEquals(50, count, "LIMIT 50 with heavy DVs should return exactly 50 rows");
+    assertLimitPushed(tablePath, 50);
+    assertV1V2Parity(tablePath, "id", 50);
+    assertV1V2Parity(tablePath, "id", 110);
   }
 
   @Test
@@ -194,6 +273,7 @@ public class V2LimitPushdownTest extends V2TestBase {
     long count =
         spark.sql(str("SELECT * FROM dsv2.delta.`%s` WHERE part = 'a' LIMIT 2", tablePath)).count();
     assertEquals(2, count, "Partition filter + LIMIT should return 2 rows");
+    assertV1V2ParityWithFilter(tablePath, "part = 'a'", "id", 2);
   }
 
   @Test
@@ -210,6 +290,8 @@ public class V2LimitPushdownTest extends V2TestBase {
     long count =
         spark.sql(str("SELECT * FROM dsv2.delta.`%s` WHERE id > 2 LIMIT 2", tablePath)).count();
     assertEquals(2, count, "Data filter + LIMIT should return 2 rows");
+    assertLimitNotPushed(tablePath, "id > 2", 2);
+    assertV1V2ParityWithFilter(tablePath, "id > 2", "id", 2);
   }
 
   @Test
@@ -226,6 +308,8 @@ public class V2LimitPushdownTest extends V2TestBase {
     assertEquals(2, result.count(), "Column projection + LIMIT should return 2 rows");
     assertEquals(1, result.columns().length, "Should only have 1 column");
     assertEquals("name", result.columns()[0]);
+    assertLimitPushed(tablePath, 2);
+    assertV1V2Parity(tablePath, "id", 2);
   }
 
   @Test
@@ -241,200 +325,12 @@ public class V2LimitPushdownTest extends V2TestBase {
 
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 2", tablePath)).count();
     assertEquals(2, count, "LIMIT with column mapping should return 2 rows");
+    assertLimitPushed(tablePath, 2);
+    assertV1V2Parity(tablePath, "id", 2);
   }
 
   // ==========================================================================
-  // Priority 2: DSv1/DSv2 parity tests
-  // ==========================================================================
-
-  /**
-   * Asserts that DSv1 and DSv2 return the same data for an ORDER BY + LIMIT query. ORDER BY makes
-   * the result deterministic so we can compare actual row values, not just counts.
-   */
-  private void assertV1V2Parity(String tablePath, String orderByCol, int limit) {
-    assertV1V2ParityWithFilter(tablePath, null, orderByCol, limit);
-  }
-
-  /**
-   * Asserts that DSv1 and DSv2 return the same data for a filtered ORDER BY + LIMIT query. When
-   * {@code filter} is non-null, it is inserted as a WHERE clause.
-   */
-  private void assertV1V2ParityWithFilter(
-      String tablePath, String filter, String orderByCol, int limit) {
-    String where = (filter != null) ? " WHERE " + filter : "";
-    String v1Query =
-        str("SELECT * FROM delta.`%s`%s ORDER BY %s LIMIT %d", tablePath, where, orderByCol, limit);
-    String v2Query =
-        str(
-            "SELECT * FROM dsv2.delta.`%s`%s ORDER BY %s LIMIT %d",
-            tablePath, where, orderByCol, limit);
-
-    List<Row> v1Rows = spark.sql(v1Query).collectAsList();
-    List<Row> v2Rows = spark.sql(v2Query).collectAsList();
-
-    assertEquals(
-        v1Rows.size(),
-        v2Rows.size(),
-        str("Row count mismatch: V1=%d, V2=%d", v1Rows.size(), v2Rows.size()));
-
-    for (int i = 0; i < v1Rows.size(); i++) {
-      assertEquals(
-          v1Rows.get(i).toString(),
-          v2Rows.get(i).toString(),
-          str("Row %d differs between V1 and V2", i));
-    }
-  }
-
-  @Test
-  public void testParity_basicMultipleFiles(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(str("CREATE TABLE delta.`%s` (id INT, name STRING) USING delta", tablePath));
-    for (int i = 0; i < 10; i++) {
-      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, 'row_%d')", tablePath, i, i));
-    }
-
-    assertV1V2Parity(tablePath, "id", 3);
-    assertV1V2Parity(tablePath, "id", 10);
-    assertV1V2Parity(tablePath, "id", 100);
-  }
-
-  @Test
-  public void testParity_withDeletionVectors(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id LONG, value STRING) "
-                + "USING delta "
-                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
-            tablePath));
-
-    spark
-        .range(0, 200)
-        .selectExpr("id", "cast(id as string) as value")
-        .coalesce(1)
-        .write()
-        .format("delta")
-        .mode("append")
-        .save(tablePath);
-
-    spark
-        .range(200, 400)
-        .selectExpr("id", "cast(id as string) as value")
-        .coalesce(1)
-        .write()
-        .format("delta")
-        .mode("append")
-        .save(tablePath);
-
-    // Delete every other row to create DVs
-    spark.sql(str("DELETE FROM delta.`%s` WHERE id %% 2 = 0", tablePath));
-
-    // Verify DVs were created
-    DeltaLog deltaLog = DeltaLog.forTable(spark, tablePath);
-    long numDVs =
-        (long)
-            deltaLog
-                .update(false, Option.empty(), Option.empty())
-                .numDeletionVectorsOpt()
-                .getOrElse(() -> 0L);
-    assertTrue(numDVs > 0, "Expected deletion vectors to be created");
-
-    assertV1V2Parity(tablePath, "id", 10);
-    assertV1V2Parity(tablePath, "id", 50);
-    assertV1V2Parity(tablePath, "id", 200);
-  }
-
-  @Test
-  public void testParity_withHeavyDeletionVectors(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id LONG, value STRING) "
-                + "USING delta "
-                + "TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')",
-            tablePath));
-
-    // File A: 100 rows (will have 90 deleted, 10 surviving)
-    spark
-        .range(0, 100)
-        .selectExpr("id", "cast(id as string) as value")
-        .coalesce(1)
-        .write()
-        .format("delta")
-        .mode("append")
-        .save(tablePath);
-
-    // File B: 100 rows (all surviving)
-    spark
-        .range(100, 200)
-        .selectExpr("id", "cast(id as string) as value")
-        .coalesce(1)
-        .write()
-        .format("delta")
-        .mode("append")
-        .save(tablePath);
-
-    // Delete 90% of file A via DV
-    spark.sql(str("DELETE FROM delta.`%s` WHERE id >= 10 AND id < 100", tablePath));
-
-    // 110 logical rows total (10 from file A + 100 from file B).
-    // This exercises DV cardinality subtraction in the limit accumulation logic.
-    assertV1V2Parity(tablePath, "id", 5);
-    assertV1V2Parity(tablePath, "id", 50);
-    assertV1V2Parity(tablePath, "id", 110);
-  }
-
-  @Test
-  public void testParity_withPartitionFilter(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id INT, part STRING) USING delta PARTITIONED BY (part)",
-            tablePath));
-    for (int i = 0; i < 10; i++) {
-      String part = (i % 2 == 0) ? "even" : "odd";
-      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, '%s')", tablePath, i, part));
-    }
-
-    assertV1V2ParityWithFilter(tablePath, "part = 'even'", "id", 2);
-    assertV1V2ParityWithFilter(tablePath, "part = 'odd'", "id", 3);
-  }
-
-  @Test
-  public void testParity_withColumnMapping(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(
-        str(
-            "CREATE TABLE delta.`%s` (id INT, name STRING) "
-                + "USING delta "
-                + "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')",
-            tablePath));
-    for (int i = 0; i < 10; i++) {
-      spark.sql(str("INSERT INTO delta.`%s` VALUES (%d, 'row_%d')", tablePath, i, i));
-    }
-
-    assertV1V2Parity(tablePath, "id", 3);
-  }
-
-  @Test
-  public void testParity_emptyTable(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(str("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
-
-    assertV1V2Parity(tablePath, "id", 10);
-  }
-
-  @Test
-  public void testParity_limit0(@TempDir File tempDir) {
-    String tablePath = tempDir.getAbsolutePath();
-    spark.sql(str("CREATE TABLE delta.`%s` (id INT) USING delta", tablePath));
-    spark.sql(str("INSERT INTO delta.`%s` VALUES (1), (2), (3)", tablePath));
-
-    assertV1V2Parity(tablePath, "id", 0);
-  }
-
-  // ==========================================================================
-  // Priority 3: Robustness tests
+  // Robustness tests
   // ==========================================================================
 
   @Test
@@ -447,9 +343,12 @@ public class V2LimitPushdownTest extends V2TestBase {
       spark.sql(str("INSERT INTO delta.`%s` VALUES (%d)", tablePath, i));
     }
 
-    // LIMIT 3 on a 20-file table (1 row each) should produce correct results
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s` LIMIT 3", tablePath)).count();
     assertEquals(3, count, "LIMIT 3 on 20 single-row files should return 3 rows");
+    assertLimitPushed(tablePath, 3);
+    assertV1V2Parity(tablePath, "id", 3);
+    assertV1V2Parity(tablePath, "id", 10);
+    assertV1V2Parity(tablePath, "id", 100);
   }
 
   @Test
@@ -490,5 +389,6 @@ public class V2LimitPushdownTest extends V2TestBase {
     assertEquals(1, rows.get(0).getInt(0), "First row should have id=1");
     assertEquals(2, rows.get(1).getInt(0), "Second row should have id=2");
     assertEquals(3, rows.get(2).getInt(0), "Third row should have id=3");
+    assertV1V2Parity(tablePath, "id", 3);
   }
 }
