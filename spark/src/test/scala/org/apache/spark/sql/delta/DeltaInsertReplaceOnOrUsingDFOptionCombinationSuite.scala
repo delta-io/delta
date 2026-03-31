@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.DeltaOptions.{
   REPLACE_WHERE_OPTION
 }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, DataFrameWriter, QueryTest, Row, SaveMode}
@@ -36,7 +37,8 @@ import org.apache.spark.sql.test.SharedSparkSession
  * Tests incompatible DataFrame option combinations with `replaceOn` or `replaceUsing`.
  */
 class DeltaInsertReplaceOnOrUsingDFOptionCombinationSuite extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set(DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key, "true")
