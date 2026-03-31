@@ -367,6 +367,33 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
             });
   }
 
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains at least one of
+   * the provided messages.
+   */
+  protected void assertThrowsWithCauseContainingAny(
+      List<String> expectedMessages, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                String message = t.getMessage();
+                if (message != null
+                    && expectedMessages.stream().anyMatch(expected -> message.contains(expected))) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing one of "
+                      + expectedMessages
+                      + " in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
   /** Helper to build an expected row as a list of string values. */
   protected static List<String> row(String... values) {
     return List.of(values);
