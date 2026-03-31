@@ -24,6 +24,7 @@ import static java.util.Collections.emptyMap;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.*;
+import io.delta.kernel.commit.CatalogCommitter;
 import io.delta.kernel.commit.CommitFailedException;
 import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.commit.Committer;
@@ -773,6 +774,16 @@ public class TransactionImpl implements Transaction {
 
     final Optional<SnapshotImpl> postCommitSnapshotOpt =
         buildPostCommitSnapshotOpt(engine, committedDelta, committedIctOpt, postCommitCrcOpt);
+
+    // For catalog-managed CREATE TABLE (version 0), allow the committer to finalize table
+    // registration with the catalog. This must happen after the snapshot is built because
+    // finalization requires properties derived from the committed snapshot (e.g. protocol
+    // features, commit timestamp, clustering columns).
+    if (committer instanceof CatalogCommitter
+        && committedVersion == 0
+        && postCommitSnapshotOpt.isPresent()) {
+      ((CatalogCommitter) committer).onCreateCommitted(engine, postCommitSnapshotOpt.get());
+    }
 
     return new TransactionCommitResult(
         committedVersion,

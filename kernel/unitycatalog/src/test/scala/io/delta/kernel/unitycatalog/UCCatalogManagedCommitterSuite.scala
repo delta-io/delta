@@ -29,10 +29,11 @@ import io.delta.kernel.internal.actions.{Metadata, Protocol}
 import io.delta.kernel.internal.tablefeatures.TableFeatures
 import io.delta.kernel.internal.util.{Tuple2 => KernelTuple2}
 import io.delta.kernel.test.{BaseMockJsonHandler, MockFileSystemClientUtils, TestFixtures, VectorTestUtils}
+import io.delta.kernel.types.{IntegerType, StringType, StructType}
 import io.delta.kernel.unitycatalog.adapters.UniformAdapter
-import io.delta.kernel.utils.{CloseableIterator, FileStatus}
+import io.delta.kernel.utils.{CloseableIterable, CloseableIterator, FileStatus}
 import io.delta.storage.commit.Commit
-import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
+import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 
 import InMemoryUCClient.TableData
 import org.scalatest.funsuite.AnyFunSuite
@@ -519,9 +520,58 @@ class UCCatalogManagedCommitterSuite
       val fileContent = scala.io.Source.fromFile(file).getLines().mkString("\n")
       assert(fileContent.contains(testValue))
 
-      // Validate that UC was not updated for v0
-      // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
+      // Without CreateMetadata, onCreateCommitted is a no-op so UC is not updated here.
+      // Finalization happens via the hook when CreateMetadata is provided (see separate test).
       assert(!ucClient.getTablesCopy.contains(testUcTableId))
+    }
+  }
+
+  test("onCreateCommitted: finalizes table in UC when CreateMetadata is provided") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+      val testColumns = java.util.List.of(
+        new UCClient.ColumnDef("id", "INT", "int", """{"type":"integer"}""", false, 0))
+      val createMeta = new UCCatalogManagedCommitter.CreateMetadata(
+        "tbl",
+        "cat",
+        "sch",
+        testColumns)
+
+      // ===== WHEN =====
+      val result = ucCatalogManagedClient
+        .buildCreateTableTransaction(
+          testUcTableId,
+          tablePath,
+          testSchema,
+          "test-engine",
+          createMeta)
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+
+      // ===== THEN =====
+      // onCreateCommitted should have called finalizeCreate, registering the table
+      assert(ucClient.getTablesCopy.contains("cat.sch.tbl"))
+    }
+  }
+
+  test("onCreateCommitted: skips finalization when CreateMetadata is absent") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      // ===== GIVEN =====
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+
+      // ===== WHEN =====
+      ucCatalogManagedClient
+        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+
+      // ===== THEN =====
+      assert(ucClient.getTablesCopy.isEmpty)
     }
   }
 

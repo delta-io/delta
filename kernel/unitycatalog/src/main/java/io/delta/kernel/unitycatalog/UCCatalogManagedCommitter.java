@@ -21,9 +21,11 @@ import static io.delta.kernel.internal.util.Preconditions.checkState;
 import static io.delta.kernel.unitycatalog.UCCatalogManagedClient.UC_TABLE_ID_KEY;
 import static java.util.Objects.requireNonNull;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.commit.*;
 import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.annotation.VisibleForTesting;
 import io.delta.kernel.internal.files.ParsedCatalogCommitData;
@@ -56,21 +58,60 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
+  /**
+   * Catalog-level metadata needed to finalize table creation in Unity Catalog. Bundled into a
+   * context object per guideline #5 (group related parameters into context objects).
+   */
+  public static class CreateMetadata {
+    private final String tableName;
+    private final String catalogName;
+    private final String schemaName;
+    private final List<UCClient.ColumnDef> columns;
+
+    public CreateMetadata(
+        String tableName, String catalogName, String schemaName, List<UCClient.ColumnDef> columns) {
+      this.tableName = requireNonNull(tableName);
+      this.catalogName = requireNonNull(catalogName);
+      this.schemaName = requireNonNull(schemaName);
+      this.columns = List.copyOf(requireNonNull(columns));
+    }
+  }
+
   protected final UCClient ucClient;
   protected final String ucTableId;
   protected final Path tablePath;
+  private final Optional<CreateMetadata> createMetadata;
 
   /**
-   * Creates a new UCCatalogManagedCommitter for the specified Unity Catalog-managed Delta table.
+   * Creates a committer for an existing Unity Catalog-managed Delta table (version >= 1 writes).
    *
    * @param ucClient the Unity Catalog client to use for commit operations
    * @param ucTableId the unique Unity Catalog table identifier
    * @param tablePath the path to the Delta table in the underlying storage system
    */
   public UCCatalogManagedCommitter(UCClient ucClient, String ucTableId, String tablePath) {
+    this(ucClient, ucTableId, tablePath, Optional.empty());
+  }
+
+  /**
+   * Creates a committer for a new Unity Catalog-managed Delta table (CREATE TABLE). The provided
+   * {@link CreateMetadata} enables {@link #onCreateCommitted} to finalize the table in UC after the
+   * version-0 commit succeeds.
+   */
+  public UCCatalogManagedCommitter(
+      UCClient ucClient, String ucTableId, String tablePath, CreateMetadata createMetadata) {
+    this(ucClient, ucTableId, tablePath, Optional.of(requireNonNull(createMetadata)));
+  }
+
+  private UCCatalogManagedCommitter(
+      UCClient ucClient,
+      String ucTableId,
+      String tablePath,
+      Optional<CreateMetadata> createMetadata) {
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
+    this.createMetadata = requireNonNull(createMetadata);
   }
 
   /////////////////
@@ -170,6 +211,29 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   }
 
   @Override
+  public void onCreateCommitted(Engine engine, Snapshot postCommitSnapshot) {
+    if (createMetadata.isEmpty()) {
+      return;
+    }
+    CreateMetadata meta = createMetadata.get();
+    SnapshotImpl snapshotImpl = (SnapshotImpl) postCommitSnapshot;
+    Map<String, String> ucProps = UnityCatalogUtils.getPropertiesForCreate(engine, snapshotImpl);
+    try {
+      ucClient.finalizeCreate(
+          meta.tableName,
+          meta.catalogName,
+          meta.schemaName,
+          tablePath.toUri().toString(),
+          meta.columns,
+          ucProps);
+      logger.info("[{}] Finalized table creation in Unity Catalog", ucTableId);
+    } catch (IOException e) {
+      throw new RuntimeException(
+          "Failed to finalize table creation in Unity Catalog for " + ucTableId, e);
+    }
+  }
+
+  @Override
   public Map<String, String> getRequiredTableProperties() {
     return Collections.singletonMap(UC_TABLE_ID_KEY, ucTableId);
   }
@@ -179,12 +243,10 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   ///////////////////////////
 
   /**
-   * Handles CATALOG_CREATE by writing the published delta file for version 0.
-   *
-   * <p>Note that this assumes that the table is being created within a staging location, and that
-   * the Connector will post-commit inform UC of this 000.json file.
+   * Handles CATALOG_CREATE by writing the published delta file for version 0. UC finalization
+   * (promoting the staging table) is handled by {@link #onCreateCommitted} after the post-commit
+   * snapshot is built.
    */
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   private CommitResponse createImpl(
       Engine engine,
       CloseableIterator<Row> finalizedActions,

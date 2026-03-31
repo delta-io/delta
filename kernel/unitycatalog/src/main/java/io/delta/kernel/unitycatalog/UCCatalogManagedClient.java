@@ -189,15 +189,39 @@ public class UCCatalogManagedClient {
    * <p>Configures the transaction with a {@link UCCatalogManagedCommitter} and required table
    * properties for catalog-managed table enablement.
    *
-   * <p>This assumes the table is being created in a staging location as per UC semantics. Once this
-   * transaction is built and committed, creating 000.json, you must call {@code
-   * TablesApi::createTable} to inform Unity Catalog of the successful table creation.
+   * <p>When {@code createMetadata} is provided, the committer will finalize the table in UC
+   * automatically after the version-0 commit via {@link
+   * UCCatalogManagedCommitter#onCreateCommitted}. This eliminates the need for the connector to
+   * call a separate finalization API after commit.
    *
    * @param ucTableId The Unity Catalog table ID.
    * @param tablePath The staging path to the Delta table.
    * @param schema The table schema.
    * @param engineInfo Information about the creating engine.
+   * @param createMetadata Catalog-level metadata for UC table registration (name, catalog, schema,
+   *     columns). When present, enables automatic finalization after commit.
    * @return A {@link CreateTableTransactionBuilder} configured for UC managed tables.
+   */
+  public CreateTableTransactionBuilder buildCreateTableTransaction(
+      String ucTableId,
+      String tablePath,
+      StructType schema,
+      String engineInfo,
+      UCCatalogManagedCommitter.CreateMetadata createMetadata) {
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(schema, "schema is null");
+    Objects.requireNonNull(engineInfo, "engineInfo is null");
+    Objects.requireNonNull(createMetadata, "createMetadata is null");
+
+    return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
+        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath, createMetadata))
+        .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  /**
+   * Builds a create table transaction without automatic UC finalization. The connector is
+   * responsible for calling the UC createTable API after commit.
    */
   public CreateTableTransactionBuilder buildCreateTableTransaction(
       String ucTableId, String tablePath, StructType schema, String engineInfo) {
@@ -340,6 +364,14 @@ public class UCCatalogManagedClient {
    */
   protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
     return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
+  }
+
+  protected Committer createUCCommitter(
+      UCClient ucClient,
+      String ucTableId,
+      String tablePath,
+      UCCatalogManagedCommitter.CreateMetadata createMetadata) {
+    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, createMetadata);
   }
 
   ////////////////////

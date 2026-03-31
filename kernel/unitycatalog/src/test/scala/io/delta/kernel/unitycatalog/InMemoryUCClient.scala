@@ -204,6 +204,18 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
   }
 
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {
+    val fqn = s"$catalogName.$schemaName.$tableName"
+    Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))
+  }
+
   override def close(): Unit = {}
 
   /** Visible for testing. Can be overridden to force an exception in commit method. */

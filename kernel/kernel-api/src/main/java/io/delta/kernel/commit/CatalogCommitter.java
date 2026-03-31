@@ -16,6 +16,7 @@
 
 package io.delta.kernel.commit;
 
+import io.delta.kernel.Snapshot;
 import io.delta.kernel.annotation.Experimental;
 import io.delta.kernel.engine.Engine;
 import java.util.Collections;
@@ -74,4 +75,17 @@ public interface CatalogCommitter extends Committer {
    * @throws PublishFailedException if the publish operation fails
    */
   void publish(Engine engine, PublishMetadata publishMetadata) throws PublishFailedException;
+
+  /**
+   * Called by Kernel after a CREATE TABLE commit (version 0) when the post-commit snapshot is
+   * available. Allows catalog implementations to finalize table registration using properties
+   * derived from the committed snapshot.
+   *
+   * <p>The default implementation is a no-op. Catalog-managed committers that need to register the
+   * table with an external catalog after the initial commit should override this method.
+   *
+   * @param engine the {@link Engine} instance
+   * @param postCommitSnapshot the version-0 snapshot after 000.json has been committed
+   */
+  default void onCreateCommitted(Engine engine, Snapshot postCommitSnapshot) {}
 }

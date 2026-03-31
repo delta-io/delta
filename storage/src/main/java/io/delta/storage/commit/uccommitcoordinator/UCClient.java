@@ -25,6 +25,8 @@ import io.delta.storage.commit.uniform.UniformMetadata;
 
 import java.io.IOException;
 import java.net.URI;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -120,6 +122,54 @@ public interface UCClient extends AutoCloseable {
       URI tableUri,
       Optional<Long> startVersion,
       Optional<Long> endVersion) throws IOException, UCCommitCoordinatorException;
+
+  /** Column definition for registering table schema with Unity Catalog. */
+  class ColumnDef {
+    private final String name;
+    private final String typeName;
+    private final String typeText;
+    private final String typeJson;
+    private final boolean nullable;
+    private final int position;
+
+    public ColumnDef(
+        String name, String typeName, String typeText, String typeJson,
+        boolean nullable, int position) {
+      this.name = name;
+      this.typeName = typeName;
+      this.typeText = typeText;
+      this.typeJson = typeJson;
+      this.nullable = nullable;
+      this.position = position;
+    }
+
+    public String getName() { return name; }
+    public String getTypeName() { return typeName; }
+    public String getTypeText() { return typeText; }
+    public String getTypeJson() { return typeJson; }
+    public boolean isNullable() { return nullable; }
+    public int getPosition() { return position; }
+  }
+
+  /**
+   * Promotes a staging table to a real managed table in Unity Catalog. This is the correct API
+   * for version 0 (CREATE); for version 1+ (WRITE), use {@link #commit} instead.
+   *
+   * @param tableName table name (relative to parent schema)
+   * @param catalogName parent catalog name in Unity Catalog
+   * @param schemaName parent schema name in Unity Catalog
+   * @param storageLocation the storage root URL for the table
+   * @param columns column definitions for the table schema
+   * @param properties properties to persist in UC (protocol features, metadata config, etc.)
+   * @throws IOException if there is a network or server error during finalization
+   */
+  void finalizeCreate(
+      String tableName,
+      String catalogName,
+      String schemaName,
+      String storageLocation,
+      List<ColumnDef> columns,
+      Map<String, String> properties) throws IOException;
 
   /**
    * Closes any resources used by this client.
