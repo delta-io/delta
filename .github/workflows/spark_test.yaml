@@ -66,17 +66,13 @@ jobs:
         with:
           distribution: "zulu"
           java-version: ${{ steps.spark-details.outputs.jvm_version }}
-      - name: Cache Scala, SBT
-        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3.5.0
+      - name: Restore SBT cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.sbt
             ~/.ivy2
             ~/.cache/coursier
-          # Change the key if dependencies are changed. For each key, GitHub Actions will cache the
-          # the above directories when we use the key for the first time. After that, each run will
-          # just use the cache. The cache is immutable so we need to use a new key when trying to
-          # cache new stuff.
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Scala structured logging style check
         run: |
@@ -93,3 +89,12 @@ jobs:
           name: test-reports-spark${{ matrix.spark_version }}-shard${{ matrix.shard }}
           path: "**/target/test-reports/*.xml"
           retention-days: 7
+      - name: Save SBT cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}

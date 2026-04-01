@@ -38,14 +38,13 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
-      - name: Cache SBT and dependencies
+      - name: Restore SBT cache
         id: cache-sbt
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.sbt
-            ~/.ivy2/cache
-            ~/.coursier/cache
+            ~/.ivy2
             ~/.cache/coursier
           key: sbt-flink
       - name: Check cache status
@@ -58,3 +57,12 @@ jobs:
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test
+      - name: Save SBT cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: sbt-flink
