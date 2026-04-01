@@ -31,7 +31,7 @@ import org.apache.flink.core.io.SimpleVersionedSerializer;
  * is ready to be committed to a Delta table.
  *
  * <p>{@code DeltaCommittable} instances are emitted by {@link
- * org.apache.flink.api.connector.sink.SinkWriter} implementations during checkpointing and are
+ * org.apache.flink.api.connector.sink2.SinkWriter} implementations during checkpointing and are
  * later consumed by a {@link DeltaCommitter} or global committer to finalize changes in the Delta
  * transaction log.
  *
