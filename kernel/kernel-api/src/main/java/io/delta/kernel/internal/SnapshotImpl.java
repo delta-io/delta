@@ -478,9 +478,6 @@ public class SnapshotImpl implements Snapshot {
 
     @Override
     public Optional<Integer> getIncrementalChecksumLoadCost() {
-      if (getCurrentCrcInfo().isPresent()) {
-        return Optional.of(0);
-      }
       return getLogSegment()
           .getLastSeenChecksum()
           .map(file -> (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));

@@ -15,20 +15,23 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.kernel.data.Row
-import io.delta.kernel.{Operation, Table, TableManager}
-import io.delta.kernel.Snapshot.ChecksumWriteMode
+import java.util.{Collections, Optional}
+
 import scala.jdk.CollectionConverters._
 
-import io.delta.kernel.defaults.utils.WriteUtils
+import io.delta.kernel.{Operation, Table, TableManager, Transaction}
+import io.delta.kernel.Snapshot.ChecksumWriteMode
+import io.delta.kernel.data.{FilteredColumnarBatch, Row}
+import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
+import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.toCloseableIterator
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
@@ -41,9 +44,9 @@ import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
-class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtils {
+class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils {
 
-  override val testSchema = new StructType().add("id", INTEGER)
+  val testSchema = new StructType().add("id", INTEGER)
 
   private def assertCrcExistsAtLatest(engine: Engine, tablePath: String): Unit = {
     val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
@@ -317,7 +320,23 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtil
       result0.getPostCommitSnapshot.get().writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
       var postCommitSnapshot = result0.getPostCommitSnapshot.get()
-      val data = generateData(testSchema, Seq.empty, Map.empty, 10, 1)
+
+      def stageAppendActions(txn: io.delta.kernel.Transaction): CloseableIterable[Row] = {
+        val batch = new DefaultColumnarBatch(
+          10, testSchema, Array(testColumnVector(10, INTEGER)))
+        val filteredBatch = new FilteredColumnarBatch(batch, Optional.empty())
+        val txnState = txn.getTransactionState(defaultEngine)
+        val physicalData = Transaction.transformLogicalData(
+          defaultEngine, txnState,
+          toCloseableIterator(Iterator(filteredBatch).asJava),
+          Collections.emptyMap())
+        val writeCtx = Transaction.getWriteContext(
+          defaultEngine, txnState, Collections.emptyMap())
+        val writeResult = defaultEngine.getParquetHandler.writeParquetFiles(
+          writeCtx.getTargetDirectory, physicalData, writeCtx.getStatisticsColumns)
+        inMemoryIterable(
+          Transaction.generateAppendActions(defaultEngine, txnState, writeResult, writeCtx))
+      }
 
       def commitAndAdvance(dataActions: CloseableIterable[Row]): Unit = {
         val txn = postCommitSnapshot
@@ -336,7 +355,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtil
       for (_ <- 1 to 10) {
         val txn = postCommitSnapshot
           .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
-        commitAndAdvance(getAppendActions(txn, Seq(Map.empty[String, Literal] -> data)))
+        commitAndAdvance(stageAppendActions(txn))
       }
 
       // Versions 11-12: remove one file each
@@ -362,7 +381,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtil
       for (_ <- 13 to 14) {
         val txn = postCommitSnapshot
           .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
-        commitAndAdvance(getAppendActions(txn, Seq(Map.empty[String, Literal] -> data)))
+        commitAndAdvance(stageAppendActions(txn))
       }
 
       val logPath = new io.delta.kernel.internal.fs.Path(path + "/_delta_log")

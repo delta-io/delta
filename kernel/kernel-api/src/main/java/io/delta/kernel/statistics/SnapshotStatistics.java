@@ -48,9 +48,8 @@ public interface SnapshotStatistics {
    * Returns the estimated cost of loading checksum information incrementally.
    *
    * <ul>
-   *   <li>{@code Optional.of(0)} – CRC is already cached in memory
-   *   <li>{@code Optional.of(N)} – CRC exists on storage but requires reading {@code N} delta
-   *       versions (snapshot version − last seen checksum version) to bring it up to date
+   *   <li>{@code Optional.of(N)} – CRC exists in the log segment, where {@code N} is the number of
+   *       delta versions between the last seen checksum version and the snapshot version
    *   <li>{@link Optional#empty()} – no CRC file exists in the log segment
    * </ul>
    *
@@ -61,7 +60,7 @@ public interface SnapshotStatistics {
   /**
    * Returns {@link TableStats} for the current snapshot version on a best-effort basis.
    *
-   * @param engine the engine to use for reading checksum and delta files
+   * @param engine the engine to use for reading files
    */
   Optional<TableStats> getTableStats(Engine engine) throws IOException;
 

@@ -30,12 +30,21 @@ public class TableStats {
     this.numFiles = numFiles;
   }
 
-  /** Total size of all data files in the table, in bytes. */
+  /**
+   * Total size of the table in bytes, calculated as the sum of the {@code size} field of all live
+   * {@code add} actions. See <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#version-checksum-file-schema">Checksum
+   * File Schema</a>.
+   */
   public long getTableSizeBytes() {
     return tableSizeBytes;
   }
 
-  /** Total number of data files in the table. */
+  /**
+   * Number of live {@code add} actions in this table version after action reconciliation. See <a
+   * href="https://github.com/delta-io/delta/blob/master/PROTOCOL.md#version-checksum-file-schema">Checksum
+   * File Schema</a>.
+   */
   public long getNumFiles() {
     return numFiles;
   }
