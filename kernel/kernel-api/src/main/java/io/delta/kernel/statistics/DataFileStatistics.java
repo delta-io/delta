@@ -20,10 +20,12 @@ import static java.time.format.DateTimeFormatter.ISO_LOCAL_DATE;
 
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.databind.JsonNode;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.exceptions.KernelException;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.internal.DeltaErrors;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.skipping.StatsSchemaHelper;
 import io.delta.kernel.internal.util.GeometryUtils;
 import io.delta.kernel.internal.util.JsonUtils;
@@ -337,6 +339,32 @@ public class DataFileStatistics {
         tightBounds.map(Object::toString).orElse("empty"));
   }
 
+  /**
+   * Converts this statistics object into a {@link Row} matching the schema produced by {@link
+   * io.delta.kernel.internal.actions.AddFile#buildStatsParsedSchema(StructType)}. Used when writing
+   * stats_parsed struct column in checkpoints.
+   *
+   * @param statsParsedSchema the schema produced by buildStatsParsedSchema(physicalSchema)
+   * @return a Row representing these statistics as a struct
+   */
+  public Row toRow(StructType statsParsedSchema) {
+    int numRecordsIdx = statsParsedSchema.indexOf("numRecords");
+    int minValuesIdx = statsParsedSchema.indexOf("minValues");
+    int maxValuesIdx = statsParsedSchema.indexOf("maxValues");
+    int nullCountIdx = statsParsedSchema.indexOf("nullCount");
+
+    StructType minMaxSchema = (StructType) statsParsedSchema.get("minValues").getDataType();
+    StructType nullCountSchema = (StructType) statsParsedSchema.get("nullCount").getDataType();
+
+    Map<Integer, Object> fields = new HashMap<>();
+    fields.put(numRecordsIdx, numRecords);
+    fields.put(minValuesIdx, buildLeafRow(minMaxSchema, minValues, false));
+    fields.put(maxValuesIdx, buildLeafRow(minMaxSchema, maxValues, false));
+    fields.put(nullCountIdx, buildLeafRow(nullCountSchema, nullCount, true));
+
+    return new GenericRow(statsParsedSchema, fields);
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// Private methods                                                           ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -511,6 +539,31 @@ public class DataFileStatistics {
         }
       }
     }
+  }
+
+  /**
+   * Builds a Row for one of minValues/maxValues/nullCount from the flat Column->value map.
+   *
+   * @param schema the struct schema for this sub-row (leaf columns only)
+   * @param values the map of Column->Literal (for min/max) or Column->Long (for nullCount)
+   * @param isNullCount true when building nullCount, so values are Long not Literal
+   */
+  private Row buildLeafRow(StructType schema, Map<Column, ?> values, boolean isNullCount) {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    for (int i = 0; i < schema.length(); i++) {
+      StructField field = schema.at(i);
+      Column col = new Column(field.getName());
+      Object val = values.get(col);
+      if (val != null) {
+        if (isNullCount) {
+          fieldMap.put(i, val);
+        } else {
+          Literal lit = (Literal) val;
+          fieldMap.put(i, lit.getValue());
+        }
+      }
+    }
+    return new GenericRow(schema, fieldMap);
   }
 
   /**

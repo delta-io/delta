@@ -29,11 +29,15 @@ import io.delta.kernel.exceptions.CheckpointAlreadyExistsException;
 import io.delta.kernel.exceptions.KernelEngineException;
 import io.delta.kernel.exceptions.TableNotFoundException;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.TableConfig;
 import io.delta.kernel.internal.actions.Metadata;
+import io.delta.kernel.internal.actions.SingleAction;
 import io.delta.kernel.internal.fs.Path;
 import io.delta.kernel.internal.replay.CreateCheckpointIterator;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.kernel.internal.util.*;
+import io.delta.kernel.internal.util.Clock;
+import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.*;
@@ -71,9 +75,18 @@ public class Checkpointer {
 
     final Path checkpointPath = FileNames.checkpointFileSingular(logPath, version);
 
+    final Metadata metadata = snapshot.getMetadata();
+    final boolean writeStatsAsJson = TableConfig.WRITE_STATS_AS_JSON.fromMetadata(metadata);
+    final boolean writeStatsAsStruct = TableConfig.WRITE_STATS_AS_STRUCT.fromMetadata(metadata);
+    final StructType physicalSchema = snapshot.getSchema();
+
+    final StructType checkpointSchema =
+        SingleAction.getCheckpointSchema(writeStatsAsJson, writeStatsAsStruct, physicalSchema);
+
     long numberOfAddFiles = 0;
     try (CreateCheckpointIterator checkpointDataIter =
-        snapshot.getCreateCheckpointIterator(engine)) {
+        snapshot.getCreateCheckpointIterator(
+            engine, checkpointSchema, writeStatsAsStruct, physicalSchema)) {
       // Write the iterator actions to the checkpoint using the Parquet handler
       wrapEngineExceptionThrowsIO(
           () -> {
@@ -107,7 +120,6 @@ public class Checkpointer {
     logger.info(
         "{}: Finished writing last checkpoint metadata file for version: {}", tablePath, version);
 
-    final Metadata metadata = snapshot.getMetadata();
     if (shouldPerformLogCleanup(snapshot)) {
       cleanupExpiredLogs(engine, clock, tablePath, LOG_RETENTION.fromMetadata(metadata));
     } else {

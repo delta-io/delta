@@ -400,6 +400,24 @@ public class TableConfig<T> {
           "need to be a string.",
           false);
 
+  public static final TableConfig<Boolean> WRITE_STATS_AS_JSON =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsJson",
+          "true",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
+  public static final TableConfig<Boolean> WRITE_STATS_AS_STRUCT =
+      new TableConfig<>(
+          "delta.checkpoint.writeStatsAsStruct",
+          "false",
+          Boolean::valueOf,
+          value -> true,
+          "needs to be a boolean.",
+          true);
+
   /** All the valid properties that can be set on the table. */
   private static final Map<String, TableConfig<?>> VALID_PROPERTIES =
       Collections.unmodifiableMap(
@@ -429,6 +447,8 @@ public class TableConfig<T> {
               addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
               addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
               addConfig(this, VARIANT_SHREDDING_ENABLED);
+              addConfig(this, WRITE_STATS_AS_JSON);
+              addConfig(this, WRITE_STATS_AS_STRUCT);
 
               // The below configs do not yet have their behavior correctly implemented in Kernel.
               addConfig(this, DATA_SKIPPING_STATS_COLUMNS);
