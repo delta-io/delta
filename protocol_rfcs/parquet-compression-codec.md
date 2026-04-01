@@ -23,7 +23,7 @@ Property | Description
 
 Specifies the compression codec writers SHOULD use when writing new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state.
 
-Supported values (matched case-insensitively):
+Widely supported values (matched case-insensitively):
 
 Value | Description
 -|-
@@ -34,6 +34,6 @@ Value | Description
 `lz4_raw` |  [LZ4 compression](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw) based on the LZ4 block compression format.
 `zstd` | Zstandard compression
 
-When the property is absent, writers SHOULD default to `zstd`. If a writer does not support the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.
+When the property is absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.
 
 Readers SHOULD be able to read parquet files compressed with any of the supported codecs, regardless of the current table property value. In some cases parquet files might have been written codecs that [parquet supports](https://parquet.apache.org/docs/file-format/data-pages/compression/) that are not in the list above, readers MAY support reading these files.
