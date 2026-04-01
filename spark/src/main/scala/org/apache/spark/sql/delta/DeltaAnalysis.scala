@@ -1575,6 +1575,18 @@ case class DeltaDynamicPartitionOverwriteCommand(
 
     // TODO: The configuration can be fetched directly from WriteIntoDelta's txn. Don't pass
     //  in the default snapshot's metadata config here.
+    if (deltaOptions.isReplaceOnOrUsingDefined) {
+      if (deltaOptions.replaceOn.isDefined && !sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else if (deltaOptions.replaceUsing.isDefined &&
+          !sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+      // replaceOn/replaceUsing is incompatible with dynamic partition overwrite.
+      throw DeltaErrors.dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError()
+    }
     WriteIntoDelta(
       deltaTable.deltaLog,
       SaveMode.Overwrite,
