@@ -40,6 +40,7 @@ import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
 import java.util.stream.Stream;
+import org.apache.spark.sql.catalyst.util.CollationFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
@@ -232,6 +233,106 @@ public class SchemaUtilsTest {
     org.apache.spark.sql.types.StructType sparkSchema2 =
         SchemaUtils.convertKernelSchemaToSparkSchema(actualKernelSchema);
     assertEquals(sparkSchema, sparkSchema2);
+  }
+
+  ////////////////////////////////
+  // Collation Tests             //
+  ////////////////////////////////
+
+  /** Creates a Spark StringType with the given collation name. */
+  private static org.apache.spark.sql.types.StringType sparkStringType(String collationName)
+      throws Exception {
+    int id = CollationFactory.collationNameToId(collationName);
+    return org.apache.spark.sql.types.StringType$.MODULE$.apply(id);
+  }
+
+  @Test
+  public void testCollatedStringType() throws Exception {
+    // Default UTF8_BINARY (fast path)
+    org.apache.spark.sql.types.DataType defaultResult =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(StringType.STRING);
+    assertEquals(DataTypes.StringType, defaultResult);
+
+    // Explicit UTF8_BINARY via constructor
+    StringType explicitBinary = new StringType("SPARK.UTF8_BINARY");
+    org.apache.spark.sql.types.DataType explicitResult =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(explicitBinary);
+    assertEquals(DataTypes.StringType, explicitResult);
+
+    // Confirm getName() returns bare name (not provider-qualified)
+    assertEquals(
+        "UTF8_LCASE", new StringType("SPARK.UTF8_LCASE").getCollationIdentifier().getName());
+
+    // UTF8_LCASE
+    StringType utf8Lcase = new StringType("SPARK.UTF8_LCASE");
+    org.apache.spark.sql.types.DataType lcaseResult =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(utf8Lcase);
+    org.apache.spark.sql.types.StringType expectedLcase = sparkStringType("UTF8_LCASE");
+    assertEquals(expectedLcase, lcaseResult);
+    assertEquals(
+        expectedLcase.collationId(),
+        ((org.apache.spark.sql.types.StringType) lcaseResult).collationId());
+  }
+
+  @Test
+  public void testCollatedStringTypeICU() throws Exception {
+    StringType icuCollation = new StringType("ICU.EN_USA_CI_AI");
+    org.apache.spark.sql.types.DataType result =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(icuCollation);
+    org.apache.spark.sql.types.StringType expected = sparkStringType("EN_USA_CI_AI");
+    assertEquals(expected, result);
+    assertEquals(
+        expected.collationId(), ((org.apache.spark.sql.types.StringType) result).collationId());
+  }
+
+  @Test
+  public void testCollatedStringInArray() throws Exception {
+    StringType collatedString = new StringType("SPARK.UTF8_LCASE");
+    ArrayType kernelArray = new ArrayType(collatedString, true);
+    org.apache.spark.sql.types.DataType result =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(kernelArray);
+
+    org.apache.spark.sql.types.DataType expected =
+        DataTypes.createArrayType(sparkStringType("UTF8_LCASE"), true);
+    assertEquals(expected, result);
+  }
+
+  @Test
+  public void testCollatedStringInMapValue() throws Exception {
+    StringType collatedString = new StringType("SPARK.UTF8_LCASE");
+    MapType kernelMap = new MapType(StringType.STRING, collatedString, true);
+    org.apache.spark.sql.types.DataType result =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(kernelMap);
+
+    org.apache.spark.sql.types.DataType expected =
+        DataTypes.createMapType(DataTypes.StringType, sparkStringType("UTF8_LCASE"), true);
+    assertEquals(expected, result);
+  }
+
+  @Test
+  public void testCollatedStringInStruct() throws Exception {
+    StringType collatedString = new StringType("SPARK.UTF8_LCASE");
+    StructType kernelStruct = new StructType().add("id", LongType.LONG).add("name", collatedString);
+    org.apache.spark.sql.types.StructType result =
+        SchemaUtils.convertKernelSchemaToSparkSchema(kernelStruct);
+
+    org.apache.spark.sql.types.StringType expectedType = sparkStringType("UTF8_LCASE");
+    assertEquals(expectedType, result.fields()[1].dataType());
+    assertEquals(
+        expectedType.collationId(),
+        ((org.apache.spark.sql.types.StringType) result.fields()[1].dataType()).collationId());
+  }
+
+  @Test
+  public void testUnknownCollationFailsFast() {
+    // Kernel allows constructing a StringType with any provider.name format;
+    // it does not validate whether Spark recognizes the collation name.
+    // SchemaUtils should fail fast with IllegalArgumentException rather than
+    // silently defaulting to UTF8_BINARY.
+    StringType unknown = new StringType("SPARK.NONEXISTENT");
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> SchemaUtils.convertKernelDataTypeToSparkDataType(unknown));
   }
 
   private void checkConversion(

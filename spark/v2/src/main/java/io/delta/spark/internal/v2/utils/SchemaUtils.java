@@ -75,7 +75,19 @@ public class SchemaUtils {
       DataType kernelDataType) {
     requireNonNull(kernelDataType);
     if (kernelDataType instanceof StringType) {
-      return DataTypes.StringType;
+      StringType kernelString = (StringType) kernelDataType;
+      if (kernelString.getCollationIdentifier().isSparkUTF8BinaryCollation()) {
+        return DataTypes.StringType;
+      }
+      try {
+        int collationId =
+            org.apache.spark.sql.catalyst.util.CollationFactory.collationNameToId(
+                kernelString.getCollationIdentifier().getName());
+        return org.apache.spark.sql.types.StringType$.MODULE$.apply(collationId);
+      } catch (org.apache.spark.SparkException e) {
+        throw new IllegalArgumentException(
+            "Unsupported collation: " + kernelString.getCollationIdentifier(), e);
+      }
     } else if (kernelDataType instanceof BooleanType) {
       return DataTypes.BooleanType;
     } else if (kernelDataType instanceof IntegerType) {
