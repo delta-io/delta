@@ -138,6 +138,27 @@ public class ChecksumUtils {
   }
 
   /**
+   * Reads the last-seen checksum from the log segment and attempts to bring it up to the segment's
+   * version via incremental replay. Returns {@link Optional#empty()} when no checksum exists or the
+   * incremental build is not possible.
+   *
+   * @param engine The engine to use for file operations
+   * @param logSegment The log segment to process
+   * @return The incrementally-built CRC info, or empty
+   */
+  public static Optional<CRCInfo> tryBuildCrcIncrementally(Engine engine, LogSegment logSegment)
+      throws IOException {
+    Optional<CRCInfo> lastSeenCrcInfo =
+        logSegment
+            .getLastSeenChecksum()
+            .flatMap(file -> ChecksumReader.tryReadChecksumFile(engine, file));
+    return lastSeenCrcInfo.isPresent()
+        ? buildCrcInfoIncrementally(
+            lastSeenCrcInfo.get(), engine, logSegment, /* canBuildWithOnlyRequiredFields */ true)
+        : Optional.empty();
+  }
+
+  /**
    * Builds CRC info by replaying the full log.
    *
    * @param engine The engine instance
@@ -219,7 +240,8 @@ public class ChecksumUtils {
    * @param lastSeenCrcInfo The last available CRC info to build upon
    * @param engine The engine to use for file operations
    * @param logSegment The log segment to process
-   * @param canBuildWithOnlyRequiredFields If true, allows building CRC with only required fields. Tolerates missing optional fields.
+   * @param canBuildWithOnlyRequiredFields If true, allows building CRC with only
+   *     required fields. Tolerates missing optional fields.
    * @return Optional containing the new CRC info, or empty if fallback is needed
    */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(

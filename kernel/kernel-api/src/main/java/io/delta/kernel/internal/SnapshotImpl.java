@@ -52,6 +52,7 @@ import io.delta.kernel.internal.util.FileNames;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.metrics.SnapshotReport;
 import io.delta.kernel.statistics.SnapshotStatistics;
+import io.delta.kernel.statistics.TableStats;
 import io.delta.kernel.transaction.ReplaceTableTransactionBuilder;
 import io.delta.kernel.transaction.UpdateTableTransactionBuilder;
 import io.delta.kernel.types.StructType;
@@ -473,6 +474,27 @@ public class SnapshotImpl implements Snapshot {
       }
 
       return Optional.of(Snapshot.ChecksumWriteMode.FULL);
+    }
+
+    @Override
+    public Optional<Integer> getIncrementalChecksumLoadCost() {
+      if (getCurrentCrcInfo().isPresent()) {
+        return Optional.of(0);
+      }
+      return getLogSegment()
+          .getLastSeenChecksum()
+          .map(
+              file ->
+                  (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));
+    }
+
+    @Override
+    public Optional<TableStats> getTableStats(Engine engine) throws IOException {
+      Optional<CRCInfo> crc = getCurrentCrcInfo();
+      if (!crc.isPresent()) {
+        crc = ChecksumUtils.tryBuildCrcIncrementally(engine, getLogSegment());
+      }
+      return crc.map(c -> new TableStats(c.getTableSizeBytes(), c.getNumFiles()));
     }
   }
 }
