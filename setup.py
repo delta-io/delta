@@ -69,8 +69,8 @@ setup(
         'delta': ['py.typed'],
     },
     install_requires=[
-        'pyspark>=4.0.0',
-        'importlib_metadata>=1.0.0',
+        'pyspark>=4.0.0,<4.1.0',
+        'importlib_metadata>=1.0.0,<=8.7.1',
     ],
     python_requires='>=3.9',
     cmdclass={
