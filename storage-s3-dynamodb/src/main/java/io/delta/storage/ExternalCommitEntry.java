@@ -51,17 +51,31 @@ public final class ExternalCommitEntry {
      */
     public final Long expireTime;
 
+    /*
+     * File size
+     */
+    public final Long fileSize;
+
+    /*
+     * file modification time
+     */
+    public final Long modificationTime;
+
     public ExternalCommitEntry(
             Path tablePath,
             String fileName,
             String tempPath,
             boolean complete,
-            Long expireTime) {
+            Long expireTime,
+            Long fileSize,
+            Long modificationTime) {
         this.tablePath = tablePath;
         this.fileName = fileName;
         this.tempPath = tempPath;
         this.complete = complete;
         this.expireTime = expireTime;
+        this.fileSize = fileSize;
+        this.modificationTime = modificationTime;
     }
 
     /**
@@ -73,7 +87,9 @@ public final class ExternalCommitEntry {
             this.fileName,
             this.tempPath,
             true,
-            System.currentTimeMillis() / 1000L + expirationDelaySeconds
+            System.currentTimeMillis() / 1000L + expirationDelaySeconds,
+            this.fileSize,
+            this.modificationTime
         );
     }
 
