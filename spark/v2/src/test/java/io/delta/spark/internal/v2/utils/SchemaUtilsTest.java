@@ -40,7 +40,6 @@ import io.delta.kernel.types.TimestampNTZType;
 import io.delta.kernel.types.TimestampType;
 import io.delta.kernel.types.VariantType;
 import java.util.stream.Stream;
-import org.apache.spark.sql.catalyst.util.CollationFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
@@ -240,10 +239,8 @@ public class SchemaUtilsTest {
   ////////////////////////////////
 
   /** Creates a Spark StringType with the given collation name. */
-  private static org.apache.spark.sql.types.StringType sparkStringType(String collationName)
-      throws Exception {
-    int id = CollationFactory.collationNameToId(collationName);
-    return org.apache.spark.sql.types.StringType$.MODULE$.apply(id);
+  private static org.apache.spark.sql.types.StringType sparkStringType(String collationName) {
+    return org.apache.spark.sql.types.StringType.apply(collationName);
   }
 
   @Test
@@ -333,6 +330,15 @@ public class SchemaUtilsTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> SchemaUtils.convertKernelDataTypeToSparkDataType(unknown));
+  }
+
+  @Test
+  public void testCollationRoundTrip() {
+    StringType kernelLcase = new StringType("SPARK.UTF8_LCASE");
+    org.apache.spark.sql.types.DataType sparkLcase =
+        SchemaUtils.convertKernelDataTypeToSparkDataType(kernelLcase);
+    DataType backToKernel = SchemaUtils.convertSparkDataTypeToKernelDataType(sparkLcase);
+    assertEquals(kernelLcase, backToKernel);
   }
 
   private void checkConversion(

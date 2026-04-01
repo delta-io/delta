@@ -39,6 +39,7 @@ import io.delta.kernel.types.VariantType;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.apache.spark.sql.catalyst.util.CollationFactory;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.Metadata;
 import org.apache.spark.sql.types.MetadataBuilder;
@@ -80,10 +81,8 @@ public class SchemaUtils {
         return DataTypes.StringType;
       }
       try {
-        int collationId =
-            org.apache.spark.sql.catalyst.util.CollationFactory.collationNameToId(
-                kernelString.getCollationIdentifier().getName());
-        return org.apache.spark.sql.types.StringType$.MODULE$.apply(collationId);
+        return org.apache.spark.sql.types.StringType.apply(
+            kernelString.getCollationIdentifier().getName());
       } catch (org.apache.spark.SparkException e) {
         throw new IllegalArgumentException(
             "Unsupported collation: " + kernelString.getCollationIdentifier(), e);
@@ -160,7 +159,15 @@ public class SchemaUtils {
       org.apache.spark.sql.types.DataType sparkDataType) {
     requireNonNull(sparkDataType);
     if (sparkDataType instanceof org.apache.spark.sql.types.StringType) {
-      return StringType.STRING;
+      org.apache.spark.sql.types.StringType sparkString =
+          (org.apache.spark.sql.types.StringType) sparkDataType;
+      if (sparkString.isUTF8BinaryCollation()) {
+        return StringType.STRING;
+      }
+      return new StringType(
+          CollationFactory.fetchCollation(sparkString.collationId())
+              .identifier()
+              .toStringWithoutVersion());
     } else if (sparkDataType instanceof org.apache.spark.sql.types.BooleanType) {
       return BooleanType.BOOLEAN;
     } else if (sparkDataType instanceof org.apache.spark.sql.types.IntegerType) {
