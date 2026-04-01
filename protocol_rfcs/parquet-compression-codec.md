@@ -31,6 +31,7 @@ Value | Description
 `snappy` | Snappy compression (recommended default)
 `gzip` | GZIP compression
 `lz4` | (Deprecated) LZ4 compression (Hadoop framing). For backwards compatibility only.
+`lz4_raw` |  [LZ4 compression](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw) based on the LZ4 block compression format.
 `zstd` | Zstandard compression
 
 When the property is absent, writers SHOULD default to `zstd`. If a writer does not support the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.
