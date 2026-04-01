@@ -3421,6 +3421,55 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
       }
     }
   }
+
+  for (insertReplaceCriteriaType <- Seq("replaceOn", "replaceUsing")) {
+    test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 save API") {
+      withTempDir { tempDir =>
+        checkError(
+          intercept[DeltaAnalysisException] {
+            spark.range(100).select("id").write.format("delta")
+              .mode("overwrite")
+              .option(insertReplaceCriteriaType, "true")
+              .save(tempDir.toString)
+          },
+          condition = "DELTA_OPERATION_NOT_ALLOWED",
+          sqlState = "0AKDC",
+          parameters = Map("operation" -> insertReplaceCriteriaType))
+      }
+    }
+
+    test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 insertInto") {
+      withTable("target") {
+        sql("CREATE TABLE target (id bigint, data string) USING delta")
+        val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+        checkError(
+          intercept[DeltaAnalysisException] {
+            df.write.format("delta")
+              .mode("overwrite")
+              .option(insertReplaceCriteriaType, "true")
+              .insertInto("target")
+          },
+          condition = "DELTA_OPERATION_NOT_ALLOWED",
+          sqlState = "0AKDC",
+          parameters = Map("operation" -> insertReplaceCriteriaType))
+      }
+    }
+
+    test(s"$insertReplaceCriteriaType option is not yet supported via saveAsTable") {
+      withTable("target") {
+        checkError(
+          intercept[DeltaAnalysisException] {
+            spark.range(10).write.format("delta")
+              .option(insertReplaceCriteriaType, "true")
+              .saveAsTable("target")
+          },
+          condition = "DELTA_OPERATION_NOT_ALLOWED",
+          sqlState = "0AKDC",
+          parameters = Map("operation" -> insertReplaceCriteriaType)
+        )
+      }
+    }
+  }
 }
 
 class DeltaWithCatalogOwnedBatch1Suite extends DeltaSuite {
