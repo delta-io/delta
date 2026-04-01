@@ -35,6 +35,7 @@ import org.apache.spark.sql.delta.{DeltaOptions, IdentityColumn}
 import org.apache.spark.sql.delta.DeltaTableIdentifier.gluePermissionError
 import org.apache.spark.sql.delta.commands._
 import org.apache.spark.sql.delta.constraints.{AddConstraint, DropConstraint}
+import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, UCCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.redirect.RedirectFeature
@@ -83,7 +84,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
 
   val spark = SparkSession.active
 
-  private lazy val isUnityCatalog: Boolean = {
+  protected lazy val isUnityCatalog: Boolean = {
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
@@ -376,12 +377,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     DeltaTableV2(spark, new Path(ident.name()))
   }
 
-  private def getProvider(properties: util.Map[String, String]): String = {
+  protected def getProvider(properties: util.Map[String, String]): String = {
     Option(properties.get("provider"))
       .getOrElse(spark.sessionState.conf.getConf(SQLConf.DEFAULT_DATA_SOURCE_NAME))
   }
 
-  private def createCatalogTable(
+  protected def createCatalogTable(
       ident: Identifier,
       schema: StructType,
       partitions: Array[Transform],
@@ -808,6 +809,29 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       case _ if changes.exists(_.isInstanceOf[SyncIdentity]) =>
         throw DeltaErrors.identityColumnAlterNonDeltaFormatError()
       case _ => return super.alterTable(ident, changes: _*)
+    }
+
+    val isUCManagedTable =
+      table.initialSnapshot.isCatalogOwned &&
+        table.catalogTable.exists { ct =>
+          ct.tableType == CatalogTableType.MANAGED &&
+            CatalogOwnedTableUtils
+              .getCatalogName(spark, ct.identifier)
+              .contains(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
+        }
+    val propertyOnlyChanges = changes.nonEmpty && changes.forall {
+      case _: SetProperty | _: RemoveProperty => true
+      case _ => false
+    }
+    if (isUCManagedTable && propertyOnlyChanges) {
+      // UC owns catalog metadata for managed tables. Route property-only ALTER TABLE updates
+      // through the delegated UC catalog so they hit delta/v1 updateTable instead of Delta's
+      // local metadata commit path.
+      return super.alterTable(ident, changes: _*)
+    }
+    if (isUCManagedTable && changes.exists(_.isInstanceOf[ClusterBy])) {
+      throw DeltaErrors.operationNotSupportedException(
+        "Clustering column changes on Unity Catalog managed tables")
     }
 
     val columnUpdates = new mutable.HashMap[Seq[String], DeltaChangeColumnSpec]()

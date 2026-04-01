@@ -658,6 +658,7 @@ case class AlterTableAddColumnsDeltaCommand(
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
+      txn.markUCManagedAddColumnsMetadataUpdateAllowed()
       txn.updateMetadata(newMetadata)
       txn.commit(Nil, DeltaOperations.AddColumns(
         colsToAddWithPosition.map {

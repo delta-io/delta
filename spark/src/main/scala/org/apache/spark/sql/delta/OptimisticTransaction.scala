@@ -353,6 +353,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
   /** Stores the updated protocol (if any) that will result from this txn. */
   protected var newProtocol: Option[Protocol] = None
+  protected var allowUCManagedAddColumnsMetadataUpdate: Boolean = false
 
   /** The transaction start time. */
   private val txnStartNano = System.nanoTime()
@@ -580,15 +581,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
-    // Temporary: block metadata changes on UC-managed CatalogOwned tables until Delta supports
-    // propagating metadata updates to UC. UC is identified by catalog implementation class (handles
-    // "spark_catalog" registration). New table creation is naturally excluded because
-    // isCatalogOwned is false until the first commit. REPLACE TABLE is currently also blocked
-    // here and will need to be explicitly allowed once UC supports metadata propagation.
-    // Intentionally conservative: configuration is compared as a whole map, which also
-    // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
-    // a temporary kill switch - once Delta supports propagating metadata updates to UC,
-    // this check will be removed entirely.
+    // Temporary: block UC-managed metadata changes unless the transaction explicitly opted into
+    // the narrow ADD COLUMN path that also propagates the updated schema through delta/v1.
     if (!isCreatingNewTable) {
       throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
     }
@@ -603,15 +597,33 @@ trait OptimisticTransactionImpl extends TransactionHelper
       proposedMetadata: Metadata): Boolean = {
     proposedMetadata.schemaString != existingMetadata.schemaString ||
       proposedMetadata.partitionColumns != existingMetadata.partitionColumns ||
-      proposedMetadata.description != existingMetadata.description ||
-      proposedMetadata.configuration != existingMetadata.configuration
+      proposedMetadata.description != existingMetadata.description
+  }
+
+  private def isAllowedUCManagedAddColumnsMetadataChange(
+      existingMetadata: Metadata,
+      proposedMetadata: Metadata): Boolean = {
+    if (!allowUCManagedAddColumnsMetadataUpdate) {
+      return false
+    }
+    if (proposedMetadata.partitionColumns != existingMetadata.partitionColumns ||
+        proposedMetadata.description != existingMetadata.description ||
+        proposedMetadata.configuration != existingMetadata.configuration) {
+      return false
+    }
+    val existingFields = existingMetadata.schema.fields
+    val proposedFields = proposedMetadata.schema.fields
+    proposedFields.length >= existingFields.length &&
+      existingFields.sameElements(proposedFields.take(existingFields.length))
   }
 
   private def throwIfUCManagedMetadataChanged(
       existingMetadata: Metadata,
       context: String): Unit = {
     val proposedMetadata = newMetadata.getOrElse(existingMetadata)
-    if (isUCManagedTable && hasUCManagedMetadataChange(existingMetadata, proposedMetadata)) {
+    if (isUCManagedTable &&
+        hasUCManagedMetadataChange(existingMetadata, proposedMetadata) &&
+        !isAllowedUCManagedAddColumnsMetadataChange(existingMetadata, proposedMetadata)) {
       logWarning(log"Blocking UC-managed metadata update during " +
         log"${MDC(DeltaLogKeys.OPERATION, context)} because metadata changed: " +
         log"${MDC(DeltaLogKeys.METADATA_OLD, existingMetadata)} => " +
@@ -619,6 +631,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
       throw DeltaErrors.operationNotSupportedException(
         "Metadata changes on Unity Catalog managed tables")
     }
+  }
+
+  protected[delta] def markUCManagedAddColumnsMetadataUpdateAllowed(): Unit = {
+    allowUCManagedAddColumnsMetadataUpdate = true
   }
 
   /**

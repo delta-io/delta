@@ -16,6 +16,10 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.unitycatalog.client.api.TablesApi;
+import io.unitycatalog.client.model.TableInfo;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -24,8 +28,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests that schema-changing and property-changing operations are blocked on Unity Catalog managed
- * (CatalogOwned) tables — regardless of which layer does the blocking.
+ * Tests that the managed Delta demo path allows property updates and simple add-column schema
+ * evolution on Unity Catalog managed tables, while more complex metadata changes remain blocked.
  *
  * <p>There are two distinct layers of protection:
  *
@@ -35,11 +39,12 @@ import org.junit.jupiter.api.Test;
  *       CatalogOwned table. A second guard in {@code prepareCommit()} and {@code commitLarge()}
  *       blocks {@code delta.clustering} {@code DomainMetadata} changes (e.g. via RESTORE TABLE to a
  *       version written by an older client that had different clustering columns).
- *   <li><strong>UC catalog layer</strong> in {@code UCSingleCatalog}: {@code alterTable()} throws
- *       {@code UnsupportedOperationException} for all ALTER TABLE variants. INSERT OVERWRITE with
- *       {@code overwriteSchema=true} and {@code CREATE OR REPLACE TABLE} both route through REPLACE
- *       TABLE AS SELECT (RTAS) because {@code UCSingleCatalog} does not implement {@code
- *       StagingTableCatalog}; RTAS is not supported in OSS Delta.
+ *   <li><strong>UC catalog layer</strong> in {@code UCSingleCatalog}: property-only ALTER TABLE
+ *       changes and top-level ADD COLUMN delegate into Delta, but more complex schema-changing
+ *       ALTER variants are still blocked. INSERT OVERWRITE with {@code overwriteSchema=true} and
+ *       {@code CREATE OR REPLACE TABLE} both route through REPLACE TABLE AS SELECT (RTAS) because
+ *       {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}; RTAS is not
+ *       supported in OSS Delta.
  * </ol>
  *
  * <p>EXTERNAL tables are not CatalogOwned and are NOT affected by the kill switch; they continue to
@@ -55,7 +60,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   private static final String CLUSTERING_KILL_SWITCH_ERROR =
       "Clustering column changes on Unity Catalog managed tables";
 
-  // Error produced by UCSingleCatalog.alterTable() for all ALTER TABLE variants.
+  // Historical error produced by UCSingleCatalog.alterTable() for unsupported schema-changing
+  // ALTER variants. Kept only for reference in comments below.
   private static final String ALTER_TABLE_ERROR = "Altering a table is not supported yet";
 
   // Error produced by OSS Delta when REPLACE TABLE AS SELECT (RTAS) is attempted.
@@ -116,16 +122,14 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   // ---------------------------------------------------------------------------
 
   /**
-   * All ALTER TABLE variants on a CatalogOwned table must be blocked by {@code
-   * UCSingleCatalog.alterTable()}, which throws {@code UnsupportedOperationException} for every
-   * table change regardless of the specific operation.
+   * Property-only ALTER TABLE succeeds for CatalogOwned tables, but schema-changing ALTER variants
+   * remain blocked before commit completes.
    *
-   * <p>Covered operations: SET TBLPROPERTIES (configuration change), ADD COLUMNS (schema change),
-   * and CLUSTER BY (clustering change). All share the same managed table and each throws before
-   * modifying anything.
+   * <p>Covered operations: SET TBLPROPERTIES (configuration change, allowed), ADD COLUMNS (simple
+   * top-level schema evolution, allowed), and CLUSTER BY (still blocked).
    */
   @Test
-  public void testAlterTableOperationsAreBlocked() throws Exception {
+  public void testAlterTablePropertyUpdatesSucceedButSchemaChangesStayBlocked() throws Exception {
     withNewTable(
         "block_alter_table_test",
         "id INT, name STRING",
@@ -133,18 +137,19 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
 
-          // ALTER TABLE SET TBLPROPERTIES would change configuration.
-          assertThrowsWithCauseContaining(
-              ALTER_TABLE_ERROR,
-              () -> sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName));
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName);
+          TableInfo tableInfo =
+              new TablesApi(unityCatalogInfo().createApiClient()).getTable(tableName, false, false);
+          assertThat(tableInfo.getProperties().get("custom.key")).isEqualTo("value");
 
-          // ALTER TABLE ADD COLUMNS would change the schema.
-          assertThrowsWithCauseContaining(
-              ALTER_TABLE_ERROR, () -> sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName));
+          sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName);
+          sql("INSERT INTO %s VALUES (2, 'after_add', 'v2')", tableName);
+          assertThat(sql("SELECT extra FROM %s WHERE id = 2", tableName).get(0).get(0))
+              .isEqualTo("v2");
 
-          // ALTER TABLE CLUSTER BY would change clustering columns.
+          // ALTER TABLE CLUSTER BY changes clustering columns and is blocked separately.
           assertThrowsWithCauseContaining(
-              ALTER_TABLE_ERROR, () -> sql("ALTER TABLE %s CLUSTER BY (id)", tableName));
+              CLUSTERING_KILL_SWITCH_ERROR, () -> sql("ALTER TABLE %s CLUSTER BY (id)", tableName));
         });
   }
 
@@ -243,9 +248,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * INSERT OVERWRITE with {@code overwriteSchema=true} that would replace the schema of an existing
    * CatalogOwned table must be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * the overwrite-with-schema-change through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>The flow currently reaches Delta's UC-managed metadata kill switch before any RTAS-specific
+   * handling completes.
    */
   @Test
   public void testInsertOverwriteWithOverwriteSchemaIsBlocked() throws Exception {
@@ -262,7 +266,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_val')", sourceTable);
                 assertThrowsWithCauseContaining(
-                    RTAS_ERROR,
+                    KILL_SWITCH_ERROR,
                     () ->
                         spark()
                             .read()
@@ -280,9 +284,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * {@code CREATE OR REPLACE TABLE} with a different schema on an existing CatalogOwned table must
    * be blocked.
    *
-   * <p>Because {@code UCSingleCatalog} does not implement {@code StagingTableCatalog}, Spark routes
-   * {@code CREATE OR REPLACE TABLE} through REPLACE TABLE AS SELECT (RTAS), which OSS Delta does
-   * not support.
+   * <p>The replace flow currently reaches Delta's UC-managed metadata kill switch before any
+   * RTAS-specific handling completes.
    */
   @Test
   public void testReplaceTableWithNewSchemaIsBlocked() throws Exception {
@@ -293,7 +296,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
           assertThrowsWithCauseContaining(
-              RTAS_ERROR,
+              KILL_SWITCH_ERROR,
               () ->
                   sql(
                       "CREATE OR REPLACE TABLE %s (id INT, name STRING, extra STRING) "

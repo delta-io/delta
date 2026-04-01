@@ -49,8 +49,18 @@ import org.slf4j.LoggerFactory;
  */
 public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   public UCCommitCoordinatorClient(Map<String, String> conf, UCClient ucClient) {
+    this(conf, ucClient, Optional.empty(), Collections.emptyMap());
+  }
+
+  public UCCommitCoordinatorClient(
+      Map<String, String> conf,
+      UCClient ucClient,
+      Optional<String> deltaV1BaseUri,
+      Map<String, String> deltaV1AuthConfig) {
     this.conf = conf;
     this.ucClient = ucClient;
+    this.deltaV1BaseUri = deltaV1BaseUri;
+    this.deltaV1AuthConfig = new HashMap<>(deltaV1AuthConfig);
   }
 
   /**
@@ -70,12 +80,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
   /** Key used to identify the write version in protocol communications with the UC server. */
   private static final String WRITE_VERSION_KEY = "writeVersion";
-
-  /**
-   * Temporary kill switch for sending metadata updates through UC from the Spark path.
-   * TODO(issue #6296): remove once metadata updates are supported end-to-end.
-   */
-  private static final boolean SHOULD_PASS_METADATA_TO_UC = false;
 
   // Unity Catalog Identifiers
   /**
@@ -147,6 +151,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   /** Configuration map containing settings for the coordinator client. */
   public final Map<String, String> conf;
 
+  private final Optional<String> deltaV1BaseUri;
+  private final Map<String, String> deltaV1AuthConfig;
+
   /**
    * Runs a task asynchronously using the backfillThreadPool.
    *
@@ -163,6 +170,27 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       throw new IllegalStateException("UC Table ID not found in " + tableConf);
     }
     return tableConf.get(UC_TABLE_ID_KEY);
+  }
+
+  protected Optional<DeltaV1ManagedTableClient> deltaV1Client(TableDescriptor tableDesc) {
+    if (deltaV1BaseUri.isEmpty()
+        || deltaV1AuthConfig.isEmpty()
+        || !tableDesc.getTableIdentifier().isPresent()
+        || tableDesc.getTableIdentifier().get().getNamespace().length < 2) {
+      return Optional.empty();
+    }
+    return Optional.of(
+        new DeltaV1ManagedTableClient(deltaV1BaseUri.get(), deltaV1AuthConfig));
+  }
+
+  protected boolean shouldFallbackFromDeltaV1(IOException e) {
+    return e.getMessage() != null && e.getMessage().contains("HTTP 404");
+  }
+
+  protected Optional<io.delta.storage.commit.TableIdentifier> getManagedTableIdentifier(
+      TableDescriptor tableDesc) {
+    return tableDesc.getTableIdentifier()
+      .filter(identifier -> identifier.getNamespace().length >= 2);
   }
 
   /**
@@ -427,6 +455,10 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
+        Optional<AbstractMetadata> metadataUpdates =
+            updatedActions.getNewMetadata() == updatedActions.getOldMetadata()
+                ? Optional.empty()
+                : Optional.of(updatedActions.getNewMetadata());
         commitToUC(
           tableDesc,
           logPath,
@@ -435,9 +467,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
           disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
+          metadataUpdates,
           updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
             Optional.empty() :
             Optional.of(updatedActions.getNewProtocol())
@@ -684,13 +714,59 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       commitTimestamp.orElseThrow(() -> new IllegalArgumentException(
         "Commit timestamp should be specified when commitFile is present"))
     ));
+    Optional<DeltaV1ManagedTableClient> deltaV1ClientOpt = deltaV1Client(tableDesc);
+    Optional<io.delta.storage.commit.TableIdentifier> tableIdentifierOpt =
+        getManagedTableIdentifier(tableDesc);
+    if (deltaV1ClientOpt.isPresent()
+        && tableIdentifierOpt.isPresent()
+        && newProtocol.isEmpty()) {
+      io.delta.storage.commit.TableIdentifier tableIdentifier = tableIdentifierOpt.get();
+      String[] namespace = tableIdentifier.getNamespace();
+      String catalog = namespace[0];
+      String schema = namespace[1];
+      String table = tableIdentifier.getName();
+      DeltaV1ManagedTableClient deltaV1Client = deltaV1ClientOpt.get();
+      try {
+        DeltaV1ManagedTableClient.LoadTableResponse currentState =
+            deltaV1Client.loadTable(catalog, schema, table, 0L, null);
+        DeltaV1ManagedTableClient.UpdateTableRequest request =
+            new DeltaV1ManagedTableClient.UpdateTableRequest()
+                .setAssertTableId(extractUCTableId(tableDesc))
+                .setAssertEtag(currentState.getEtag())
+                .setLatestBackfilledVersion(lastKnownBackfilledVersion.orElse(null));
+        commit.ifPresent(
+            c ->
+                request.setCommitInfo(
+                    new DeltaV1ManagedTableClient.CommitInfo()
+                        .setVersion(c.getVersion())
+                        .setTimestamp(c.getCommitTimestamp())
+                        .setFileName(c.getFileStatus().getPath().getName())
+                        .setFileSize(c.getFileStatus().getLen())
+                        .setFileModificationTimestamp(c.getFileStatus().getModificationTime())));
+        if (newMetadata.isPresent()) {
+          MetadataDiff metadataDiff = buildMetadataDiff(newMetadata.get(), tableDesc);
+          request.setSetProperties(metadataDiff.setProperties);
+          request.setRemoveProperties(metadataDiff.removeProperties);
+          request.setComment(metadataDiff.comment);
+          request.setColumns(metadataDiff.columns);
+        }
+        deltaV1Client.updateTable(catalog, schema, table, request);
+        return;
+      } catch (IOException e) {
+        if (!shouldFallbackFromDeltaV1(e)) {
+          throw e;
+        }
+      }
+    }
+    Optional<AbstractMetadata> legacyMetadata =
+        deltaV1ClientOpt.isPresent() ? Optional.empty() : newMetadata;
     ucClient.commit(
       extractUCTableId(tableDesc),
       CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
       commit,
       lastKnownBackfilledVersion,
       disown,
-      newMetadata,
+      legacyMetadata,
       newProtocol,
       Optional.empty() /* uniform */
     );
@@ -804,6 +880,51 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       TableDescriptor tableDesc,
       Optional<Long> startVersion,
       Optional<Long> endVersion) {
+    Optional<DeltaV1ManagedTableClient> deltaV1ClientOpt = deltaV1Client(tableDesc);
+    Optional<io.delta.storage.commit.TableIdentifier> tableIdentifierOpt =
+        getManagedTableIdentifier(tableDesc);
+    if (deltaV1ClientOpt.isPresent() && tableIdentifierOpt.isPresent()) {
+      try {
+        io.delta.storage.commit.TableIdentifier tableIdentifier = tableIdentifierOpt.get();
+        String[] namespace = tableIdentifier.getNamespace();
+        DeltaV1ManagedTableClient.LoadTableResponse response =
+            deltaV1ClientOpt
+                .get()
+                .loadTable(
+                    namespace[0],
+                    namespace[1],
+                    tableIdentifier.getName(),
+                    startVersion.orElse(null),
+                    endVersion.orElse(null));
+        List<Commit> commits = new ArrayList<>();
+        if (response.getCommits() != null) {
+          Path basePath =
+              CoordinatedCommitsUtils.commitDirPath(
+                  CoordinatedCommitsUtils.logDirPath(
+                      CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath())));
+          for (DeltaV1ManagedTableClient.CommitInfo commitInfo : response.getCommits()) {
+            commits.add(
+                new Commit(
+                    commitInfo.getVersion(),
+                    new FileStatus(
+                        commitInfo.getFileSize(),
+                        false,
+                        0,
+                        0,
+                        commitInfo.getFileModificationTimestamp(),
+                        new Path(basePath, commitInfo.getFileName())),
+                    commitInfo.getTimestamp()));
+          }
+        }
+        return new GetCommitsResponse(
+            commits,
+            response.getLatestTableVersion() == null ? 0L : response.getLatestTableVersion());
+      } catch (IOException e) {
+        if (!shouldFallbackFromDeltaV1(e)) {
+          throw new RuntimeException(e);
+        }
+      }
+    }
     try {
       return ucClient.getCommits(
         extractUCTableId(tableDesc),
@@ -812,6 +933,50 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         endVersion);
     } catch (IOException | UCCommitCoordinatorException e) {
       throw new RuntimeException(e);
+    }
+  }
+
+  protected MetadataDiff buildMetadataDiff(AbstractMetadata newMetadata, TableDescriptor tableDesc) {
+    Map<String, String> oldProperties = tableDesc.getTableConf();
+    Map<String, String> newProperties = newMetadata.getConfiguration();
+    Map<String, String> setProperties = new HashMap<>();
+    List<String> removeProperties = new ArrayList<>();
+    if (newProperties != null) {
+      for (Map.Entry<String, String> entry : newProperties.entrySet()) {
+        if (!Objects.equals(oldProperties.get(entry.getKey()), entry.getValue())) {
+          setProperties.put(entry.getKey(), entry.getValue());
+        }
+      }
+      for (String key : oldProperties.keySet()) {
+        if (!newProperties.containsKey(key)
+            && !UC_TABLE_ID_KEY.equals(key)
+            && !UC_TABLE_ID_KEY_OLD.equals(key)) {
+          removeProperties.add(key);
+        }
+      }
+    }
+    return new MetadataDiff(
+        setProperties,
+        removeProperties,
+        newMetadata.getDescription(),
+        DeltaV1ManagedTableClient.schemaStringToColumns(newMetadata.getSchemaString()));
+  }
+
+  protected static class MetadataDiff {
+    final Map<String, String> setProperties;
+    final List<String> removeProperties;
+    final String comment;
+    final List<io.unitycatalog.client.model.ColumnInfo> columns;
+
+    MetadataDiff(
+        Map<String, String> setProperties,
+        List<String> removeProperties,
+        String comment,
+        List<io.unitycatalog.client.model.ColumnInfo> columns) {
+      this.setProperties = setProperties;
+      this.removeProperties = removeProperties;
+      this.comment = comment;
+      this.columns = columns;
     }
   }
 

@@ -40,6 +40,7 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       TableFeatures.CATALOG_MANAGED_RW_FEATURE.featureName()
   private val FEATURE_SUPPORTED = TableFeatures.SET_TABLE_FEATURE_SUPPORTED_VALUE
   private val UC_TABLE_ID_KEY = UCCommitCoordinatorClient.UC_TABLE_ID_KEY
+  private val UC_TABLE_ID_KEY_OLD = UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
   private val UC_CATALOG_CONNECTOR = "io.unitycatalog.spark.UCSingleCatalog"
 
   // Distinctive values that would fail if hardcoded
@@ -171,6 +172,33 @@ class UCUtilsSuite extends SparkFunSuite with SharedSparkSession {
       assert(
         configMap.get("token") == UC_TOKEN_ALPHA,
         s"UC token mismatch: got ${configMap.get("token")}")
+    }
+  }
+
+  test("extractTableInfoForCreate returns empty for non-managed create properties") {
+    val createProps = new JHashMap[String, String]()
+    createProps.put("location", TABLE_PATH_ALPHA)
+
+    val result =
+      UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, createProps, CATALOG_ALPHA, spark)
+    assert(result.isEmpty, "Non-managed create should return empty")
+  }
+
+  test("extractTableInfoForCreate supports deprecated ucTableId key") {
+    val createProps = new JHashMap[String, String]()
+    createProps.put(FEATURE_CATALOG_MANAGED, FEATURE_SUPPORTED)
+    createProps.put(UC_TABLE_ID_KEY_OLD, TABLE_ID_ALPHA)
+
+    withUCCatalogConfig(CATALOG_ALPHA, UC_URI_ALPHA, UC_TOKEN_ALPHA) {
+      val result =
+        UCUtils.extractTableInfoForCreate(TABLE_PATH_ALPHA, createProps, CATALOG_ALPHA, spark)
+
+      assert(result.isPresent, "Should return table info")
+      val info = result.get()
+      assert(info.getTableId == TABLE_ID_ALPHA)
+      assert(info.getTablePath == TABLE_PATH_ALPHA)
+      assert(info.getUcUri == UC_URI_ALPHA)
+      assert(info.getAuthConfig.get("token") == UC_TOKEN_ALPHA)
     }
   }
 
