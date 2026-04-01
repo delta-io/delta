@@ -33,6 +33,6 @@ Value | Description
 `lz4` | (Deprecated) LZ4 compression (Hadoop framing). For backwards compatibility only.
 `zstd` | Zstandard compression
 
-When the property is absent, writers SHOULD default to `snappy`. If a writer does not support the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.
+When the property is absent, writers SHOULD default to `zstd`. If a writer does not support the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.
 
 Readers SHOULD be able to read parquet files compressed with any of the supported codecs, regardless of the current table property value.
