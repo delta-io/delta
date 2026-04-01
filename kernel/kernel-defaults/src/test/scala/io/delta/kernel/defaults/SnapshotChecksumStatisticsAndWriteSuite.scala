@@ -32,7 +32,7 @@ import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.FileNames
-import io.delta.kernel.internal.util.Utils.toCloseableIterator
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
 import io.delta.kernel.types.IntegerType.INTEGER
 import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
@@ -384,8 +384,8 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
               Boolean.box(true),
             Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) ->
               Long.box(fileStatus.getSize)).asJava)
-        commitAndAdvance(
-          inMemoryIterable(SingleAction.createRemoveFileSingleAction(removeRow)))
+        commitAndAdvance(inMemoryIterable(
+          singletonCloseableIterator(SingleAction.createRemoveFileSingleAction(removeRow))))
       }
 
       // Versions 13-14: append data again
