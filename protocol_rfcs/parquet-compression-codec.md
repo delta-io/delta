@@ -36,4 +36,4 @@ Value | Description
 
 When the property is absent, writers SHOULD default to `zstd`. If a writer does not support the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.
 
-Readers SHOULD be able to read parquet files compressed with any of the supported codecs, regardless of the current table property value.
+Readers SHOULD be able to read parquet files compressed with any of the supported codecs, regardless of the current table property value. In some cases parquet files might have been written codecs that [parquet supports](https://parquet.apache.org/docs/file-format/data-pages/compression/) that are not in the list above, readers MAY support reading these files.
