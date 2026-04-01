@@ -233,6 +233,10 @@ def run_tests_in_docker(image_tag, test_group, maven_repo=None):
     if disable_unidoc is not None:
         envs = envs + "-e DISABLE_UNIDOC=%s " % disable_unidoc
 
+    extra_maven_repo = os.getenv("EXTRA_MAVEN_REPO")
+    if extra_maven_repo is not None:
+        envs = envs + "-e EXTRA_MAVEN_REPO=%s " % extra_maven_repo
+
     cwd = os.getcwd()
     test_script = os.path.basename(__file__)
 
