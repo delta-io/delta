@@ -25,6 +25,7 @@ import io.delta.kernel.data.{FilteredColumnarBatch, Row}
 import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
 import io.delta.kernel.defaults.utils.TestUtils
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.InternalScanFileUtils
 import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
@@ -330,15 +331,16 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
           Array(testColumnVector(10, INTEGER)))
         val filteredBatch = new FilteredColumnarBatch(batch, Optional.empty())
         val txnState = txn.getTransactionState(defaultEngine)
+        val emptyPartValues = Collections.emptyMap[String, Literal]()
         val physicalData = Transaction.transformLogicalData(
           defaultEngine,
           txnState,
           toCloseableIterator(Iterator(filteredBatch).asJava),
-          Collections.emptyMap())
+          emptyPartValues)
         val writeCtx = Transaction.getWriteContext(
           defaultEngine,
           txnState,
-          Collections.emptyMap())
+          emptyPartValues)
         val writeResult = defaultEngine.getParquetHandler.writeParquetFiles(
           writeCtx.getTargetDirectory,
           physicalData,
