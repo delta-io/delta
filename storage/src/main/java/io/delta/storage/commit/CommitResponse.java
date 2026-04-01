@@ -25,7 +25,7 @@ import org.apache.hadoop.fs.Path;
 
 /**
  * Response container for
- * {@link CommitCoordinatorClient#commit(LogStore, Configuration, TableDescriptor, long, Iterator, UpdatedActions)}.
+ * {@link CommitCoordinatorClient#commit(LogStore, Configuration, TableDescriptor, long, Iterator, UpdatedActions, java.util.Optional)}.
  */
 public class CommitResponse {
 
