@@ -372,32 +372,39 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtil
     }
   }
 
-  test("getTableStats: CRC only before last checkpoint => empty") {
+  test("CRC only before last checkpoint => getTableStats empty, load cost empty") {
     withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
       deleteChecksumFileForTable(path, (10 to 14))
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
-      assert(!snapshot.getStatistics.getTableStats(engine).isPresent)
+      val stats = snapshot.getStatistics
+      assert(!stats.getTableStats(engine).isPresent)
+      assert(!stats.getIncrementalChecksumLoadCost.isPresent)
     }
   }
 
-  test("getTableStats: CRC exists at current version => returns TableStats") {
+  test("CRC exists at current version => getTableStats present, load cost 0") {
     withTableWithCrcAndCheckpoint { (path, engine, expectedNumFiles, expectedTableSize) =>
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
-      val tableStats = snapshot.getStatistics.getTableStats(engine)
+      val stats = snapshot.getStatistics
+      val tableStats = stats.getTableStats(engine)
       assert(tableStats.isPresent)
       assert(tableStats.get().getNumFiles === expectedNumFiles)
       assert(tableStats.get().getTableSizeBytes === expectedTableSize)
+      assert(stats.getIncrementalChecksumLoadCost === java.util.Optional.of(0))
     }
   }
 
-  test("getTableStats: CRC between checkpoint and current, success => returns TableStats") {
+  test("CRC between checkpoint and current, success => getTableStats present, load cost N") {
     withTableWithCrcAndCheckpoint { (path, engine, expectedNumFiles, expectedTableSize) =>
       deleteChecksumFileForTable(path, (12 to 14))
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
-      val tableStats = snapshot.getStatistics.getTableStats(engine)
+      val stats = snapshot.getStatistics
+      val tableStats = stats.getTableStats(engine)
       assert(tableStats.isPresent)
       assert(tableStats.get().getNumFiles === expectedNumFiles)
       assert(tableStats.get().getTableSizeBytes === expectedTableSize)
+      // CRC at v11, snapshot at v14 => cost = 14 - 11 = 3
+      assert(stats.getIncrementalChecksumLoadCost === java.util.Optional.of(3))
     }
   }
 

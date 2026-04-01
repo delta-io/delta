@@ -483,16 +483,16 @@ public class SnapshotImpl implements Snapshot {
       }
       return getLogSegment()
           .getLastSeenChecksum()
-          .map(
-              file ->
-                  (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));
+          .map(file -> (int) (version - FileNames.getFileVersion(new Path(file.getPath()))));
     }
 
     @Override
     public Optional<TableStats> getTableStats(Engine engine) throws IOException {
       Optional<CRCInfo> crc = getCurrentCrcInfo();
       if (!crc.isPresent()) {
-        crc = ChecksumUtils.tryBuildCrcIncrementally(engine, getLogSegment());
+        crc =
+            ChecksumUtils.tryBuildCrcIncrementally(
+                engine, getLogSegment(), logReplay.getLastSeenCrcInfo());
       }
       return crc.map(c -> new TableStats(c.getTableSizeBytes(), c.getNumFiles()));
     }

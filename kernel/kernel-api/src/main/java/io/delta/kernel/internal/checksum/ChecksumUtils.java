@@ -124,7 +124,7 @@ public class ChecksumUtils {
                 lastSeenCrcInfo.get(),
                 engine,
                 logSegmentAtVersion,
-                /* allowBuildWithRequiredFieldsOnly */ false)
+                /* canBuildWithOnlyRequiredFields */ false)
             : Optional.empty();
 
     // Use incrementally built CRC if available, otherwise do full log replay
@@ -138,20 +138,18 @@ public class ChecksumUtils {
   }
 
   /**
-   * Reads the last-seen checksum from the log segment and attempts to bring it up to the segment's
-   * version via incremental replay. Returns {@link Optional#empty()} when no checksum exists or the
-   * incremental build is not possible.
+   * Attempts to incrementally compute the CRC at the segment's version by replaying subsequent
+   * delta files from the given base CRC. Returns {@link Optional#empty()} when the base CRC is
+   * absent or the incremental build is not possible.
    *
    * @param engine The engine to use for file operations
    * @param logSegment The log segment to process
+   * @param lastSeenCrcInfo The last available CRC info to build upon, typically from {@link
+   *     io.delta.kernel.internal.replay.LogReplay#getLastSeenCrcInfo()}
    * @return The incrementally-built CRC info, or empty
    */
-  public static Optional<CRCInfo> tryBuildCrcIncrementally(Engine engine, LogSegment logSegment)
-      throws IOException {
-    Optional<CRCInfo> lastSeenCrcInfo =
-        logSegment
-            .getLastSeenChecksum()
-            .flatMap(file -> ChecksumReader.tryReadChecksumFile(engine, file));
+  public static Optional<CRCInfo> tryBuildCrcIncrementally(
+      Engine engine, LogSegment logSegment, Optional<CRCInfo> lastSeenCrcInfo) throws IOException {
     return lastSeenCrcInfo.isPresent()
         ? buildCrcInfoIncrementally(
             lastSeenCrcInfo.get(), engine, logSegment, /* canBuildWithOnlyRequiredFields */ true)
@@ -240,8 +238,8 @@ public class ChecksumUtils {
    * @param lastSeenCrcInfo The last available CRC info to build upon
    * @param engine The engine to use for file operations
    * @param logSegment The log segment to process
-   * @param canBuildWithOnlyRequiredFields If true, allows building CRC with only
-   *     required fields. Tolerates missing optional fields.
+   * @param canBuildWithOnlyRequiredFields If true, allows building CRC with only required fields.
+   *     Tolerates missing optional fields.
    * @return Optional containing the new CRC info, or empty if fallback is needed
    */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
@@ -384,12 +382,7 @@ public class ChecksumUtils {
     Optional<FileSizeHistogram> finalHistogram =
         lastSeenCrcInfo
             .getFileSizeHistogram()
-            .map(
-                h ->
-                    state
-                        .addedFileSizeHistogram
-                        .plus(h)
-                        .minus(state.removedFileSizeHistogram));
+            .map(h -> state.addedFileSizeHistogram.plus(h).minus(state.removedFileSizeHistogram));
 
     // Build and return the new CRC info
     return Optional.of(
