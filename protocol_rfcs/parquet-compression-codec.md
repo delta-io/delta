@@ -27,7 +27,7 @@ Supported values (matched case-insensitively):
 
 Value | Description
 -|-
-`uncompressed` | No compression
+`uncompressed` or `none` | No compression
 `snappy` | Snappy compression (recommended default)
 `gzip` | GZIP compression
 `lz4` | (Deprecated) LZ4 compression (Hadoop framing). For backwards compatibility only.
