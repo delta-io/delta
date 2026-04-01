@@ -2499,6 +2499,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED =
+    buildConf("replaceOn.dataframe.writer.enabled")
+      .internal()
+      .doc("When false, the `replaceOn` option is blocked in DataFrameWriter APIs.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED =
+    buildConf("replaceUsing.dataframe.writer.enabled")
+      .internal()
+      .doc("When false, the `replaceUsing` option is blocked in DataFrameWriter APIs.")
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_ARBITRARY_TABLE_PROPERTIES =
     buildConf("allowArbitraryProperties.enabled")
       .doc(
