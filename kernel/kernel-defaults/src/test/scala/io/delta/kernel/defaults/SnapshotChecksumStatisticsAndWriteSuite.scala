@@ -315,7 +315,9 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       f: (String, Engine, Long, Long) => Unit): Unit = {
     withTempDirAndEngine { (path, engine) =>
       val txn0 = TableManager.buildCreateTableTransaction(
-        path, testSchema, "x").build(engine)
+        path,
+        testSchema,
+        "x").build(engine)
       val result0 = txn0.commit(engine, emptyIterable())
       result0.getPostCommitSnapshot.get().writeChecksum(engine, ChecksumWriteMode.SIMPLE)
 
@@ -323,17 +325,24 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
 
       def stageAppendActions(txn: io.delta.kernel.Transaction): CloseableIterable[Row] = {
         val batch = new DefaultColumnarBatch(
-          10, testSchema, Array(testColumnVector(10, INTEGER)))
+          10,
+          testSchema,
+          Array(testColumnVector(10, INTEGER)))
         val filteredBatch = new FilteredColumnarBatch(batch, Optional.empty())
         val txnState = txn.getTransactionState(defaultEngine)
         val physicalData = Transaction.transformLogicalData(
-          defaultEngine, txnState,
+          defaultEngine,
+          txnState,
           toCloseableIterator(Iterator(filteredBatch).asJava),
           Collections.emptyMap())
         val writeCtx = Transaction.getWriteContext(
-          defaultEngine, txnState, Collections.emptyMap())
+          defaultEngine,
+          txnState,
+          Collections.emptyMap())
         val writeResult = defaultEngine.getParquetHandler.writeParquetFiles(
-          writeCtx.getTargetDirectory, physicalData, writeCtx.getStatisticsColumns)
+          writeCtx.getTargetDirectory,
+          physicalData,
+          writeCtx.getStatisticsColumns)
         inMemoryIterable(
           Transaction.generateAppendActions(defaultEngine, txnState, writeResult, writeCtx))
       }
@@ -385,7 +394,8 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       }
 
       val logPath = new io.delta.kernel.internal.fs.Path(path + "/_delta_log")
-      val crcInfo = ChecksumReader.tryReadChecksumFile(engine,
+      val crcInfo = ChecksumReader.tryReadChecksumFile(
+        engine,
         FileStatus.of(FileNames.checksumFile(logPath, 14).toString)).get()
       f(path, engine, crcInfo.getNumFiles, crcInfo.getTableSizeBytes)
     }
