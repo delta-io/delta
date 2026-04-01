@@ -508,10 +508,10 @@ public class TransactionMetadataFactory {
 
     // Skip standalone compat validation if the corresponding writer compat already ran it.
     // WriterCompatV1 validates CompatV2 (via enforcer), WriterCompatV3 validates CompatV3.
-    applyIcebergCompatValidation(
+    applyIcebergCompatValidationIfNeeded(
         TableConfig.ICEBERG_WRITER_COMPAT_V1_ENABLED,
         IcebergCompatV2MetadataValidatorAndUpdater::validateAndUpdateIcebergCompatV2Metadata);
-    applyIcebergCompatValidation(
+    applyIcebergCompatValidationIfNeeded(
         TableConfig.ICEBERG_WRITER_COMPAT_V3_ENABLED,
         IcebergCompatV3MetadataValidatorAndUpdater::validateAndUpdateIcebergCompatV3Metadata);
   }
@@ -550,7 +550,7 @@ public class TransactionMetadataFactory {
    * Applies an iceberg compat validator, but only if the given writer compat gate is not enabled.
    * When the writer compat feature is enabled, it already runs this compat validation internally.
    */
-  private void applyIcebergCompatValidation(
+  private void applyIcebergCompatValidationIfNeeded(
       TableConfig<Boolean> writerCompatGate, IcebergCompatValidator validator) {
     if (!writerCompatGate.fromMetadata(getEffectiveMetadata())) {
       applyIcebergCompatValidation(validator);
