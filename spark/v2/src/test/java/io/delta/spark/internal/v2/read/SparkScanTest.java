@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -909,6 +910,35 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertTrue(
         limitEstimated <= allFilesEstimated,
         "estimatedSize with limit should be <= estimatedSize without limit");
+  }
+
+  @Test
+  public void testLimitPushdown_negativeLimitRejected() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> builder.pushLimit(-1),
+        "Negative limit should be rejected");
+  }
+
+  @Test
+  public void testLimitPushdown_clearedWhenDataFiltersExist() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    // Push a data filter (non-partition filter) that becomes a post-scan residual
+    builder.pushFilters(
+        new org.apache.spark.sql.sources.Filter[] {
+          new org.apache.spark.sql.sources.EqualTo("name", "test")
+        });
+    builder.pushLimit(10);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(
+        OptionalInt.empty(),
+        scan.getPushedLimit(),
+        "Pushed limit should be cleared when data filters exist");
+    assertFalse(
+        scan.description().contains("PushedLimit"),
+        "Description should not contain PushedLimit when data filters cause limit to be cleared");
   }
 
   // ================================================================================================

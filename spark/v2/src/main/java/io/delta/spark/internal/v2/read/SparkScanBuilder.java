@@ -183,6 +183,9 @@ public class SparkScanBuilder
    */
   @Override
   public boolean pushLimit(int limit) {
+    if (limit < 0) {
+      throw new IllegalArgumentException("Pushed limit must be non-negative, got: " + limit);
+    }
     this.pushedLimit = OptionalInt.of(limit);
     return true;
   }
@@ -194,6 +197,11 @@ public class SparkScanBuilder
 
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
+    // Spark's V2ScanRelationPushDown currently only pushes limits when no post-scan residual
+    // filters remain (PhysicalOperation(_, Nil, _)). Defensively clear the limit here when
+    // data filters exist, so the connector does not depend on this external optimizer invariant.
+    OptionalInt effectiveLimit = dataFilters.length > 0 ? OptionalInt.empty() : this.pushedLimit;
+
     return new SparkScan(
         snapshotManager,
         initialSnapshot,
@@ -205,7 +213,7 @@ public class SparkScanBuilder
         kernelScanBuilder.build(),
         catalogStats,
         options,
-        pushedLimit);
+        effectiveLimit);
   }
 
   CaseInsensitiveStringMap getOptions() {
