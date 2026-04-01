@@ -455,7 +455,7 @@ def run_flink_integration_tests():
     env = { }
     try:
         cmd = ["build/sbt", "project flink", "testOnly *DeltaSinkTest"]
-        print("\nRunning IntegrationTests of storage\n=====================")
+        print("\nRunning IntegrationTests of Flink\n=====================")
         print("Command: %s" % " ".join(cmd))
         run_cmd(cmd, stream_output=True, env=env)
     except:

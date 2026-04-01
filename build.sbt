@@ -1408,7 +1408,8 @@ lazy val flink = (project in file("flink"))
     commonSettings,
     releaseSettings,
     javafmtCheckSettings(),
-    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    Compile / doc / sources := Seq.empty,
+    publishArtifact := scalaBinaryVersion.value == "2.13", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
     assembly / assemblyMergeStrategy := {
