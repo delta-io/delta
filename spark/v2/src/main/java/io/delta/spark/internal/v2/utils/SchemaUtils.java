@@ -83,7 +83,7 @@ public class SchemaUtils {
       try {
         return org.apache.spark.sql.types.StringType.apply(
             kernelString.getCollationIdentifier().getName());
-      } catch (org.apache.spark.SparkException e) {
+      } catch (Exception e) {
         throw new IllegalArgumentException(
             "Unsupported collation: " + kernelString.getCollationIdentifier(), e);
       }
