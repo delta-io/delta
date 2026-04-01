@@ -1,17 +1,17 @@
 /*
- *  Copyright (2026) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 package io.delta.flink.sink;
@@ -28,6 +28,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import org.apache.flink.api.common.eventtime.Watermark;
 import org.apache.flink.api.connector.sink2.CommittingSinkWriter;
+import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.groups.SinkWriterMetricGroup;
 import org.apache.flink.streaming.api.connector.sink2.SupportsPreWriteTopology;
 import org.apache.flink.table.data.RowData;
@@ -78,6 +79,8 @@ public class DeltaSinkWriter
   private final List<DeltaWriterResult> completedWrites;
 
   private final SinkWriterMetricGroup metricGroup;
+  private final Counter numFilesWrittenCounter;
+  private volatile long lastSendTimeMs;
 
   private DeltaSinkWriter(
       String jobId,
@@ -101,6 +104,9 @@ public class DeltaSinkWriter
     this.completedWrites = new ArrayList<>();
 
     this.metricGroup = metricGroup;
+    this.numFilesWrittenCounter = metricGroup.counter("numFilesWritten");
+    metricGroup.setCurrentSendTimeGauge(() -> lastSendTimeMs);
+    metricGroup.gauge("activePartitions", () -> (long) this.writerTasksByPartition.asMap().size());
     metricGroup.gauge(
         "resultBufferSize",
         () ->
@@ -120,21 +126,26 @@ public class DeltaSinkWriter
    */
   @Override
   public void write(RowData element, Context context) throws IOException, InterruptedException {
-    final Map<String, Literal> partitionValues =
-        Conversions.FlinkToDelta.partitionValues(
-            deltaTable.getSchema(), deltaTable.getPartitionColumns(), element);
+    try {
+      final Map<String, Literal> partitionValues =
+          Conversions.FlinkToDelta.partitionValues(
+              deltaTable.getSchema(), deltaTable.getPartitionColumns(), element);
 
-    Map<String, String> writerKey =
-        partitionValues.entrySet().stream()
-            .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
+      Map<String, String> writerKey =
+          partitionValues.entrySet().stream()
+              .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().toString()));
 
-    writerTasksByPartition
-        .get(
-            writerKey,
-            (key) ->
-                new DeltaWriterTask(
-                    jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues))
-        .write(element, context);
+      writerTasksByPartition
+          .get(
+              writerKey,
+              (key) ->
+                  new DeltaWriterTask(
+                      jobId, subtaskId, attemptNumber, deltaTable, conf, partitionValues))
+          .write(element, context);
+    } catch (IOException | InterruptedException e) {
+      metricGroup.getNumRecordsSendErrorsCounter().inc();
+      throw e;
+    }
 
     // Recording Metrics
     if (element instanceof BinaryRowData) {
@@ -175,7 +186,12 @@ public class DeltaSinkWriter
     // Close the evicted task and collect its result
     try {
       if (value != null) {
-        completedWrites.addAll(value.complete());
+        long startMs = System.currentTimeMillis();
+        List<DeltaWriterResult> results = value.complete();
+        lastSendTimeMs = System.currentTimeMillis() - startMs;
+
+        numFilesWrittenCounter.inc(results.size());
+        completedWrites.addAll(results);
       }
     } catch (IOException e) {
       throw new RuntimeException(e);
