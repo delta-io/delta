@@ -28,7 +28,7 @@ import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
 import io.delta.kernel.internal.InternalScanFileUtils
-import io.delta.kernel.internal.actions.{RemoveFile, SingleAction}
+import io.delta.kernel.internal.actions.{CommitInfo, RemoveFile, SingleAction}
 import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.FileNames
@@ -441,6 +441,15 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       val snapshot14 = TableManager.loadSnapshot(path).build(engine)
       val scanFileRows = collectScanFileRows(snapshot14.getScanBuilder.build())
       val removePath = InternalScanFileUtils.getFilePath(scanFileRows.head)
+
+      // Write delta log directly - Kernel's commit API validates remove size,
+      // but we need a remove without size to test incremental checksum fallback
+      val commitInfoRow = new GenericRow(
+        CommitInfo.FULL_SCHEMA,
+        Map[Integer, Object](
+          Integer.valueOf(CommitInfo.FULL_SCHEMA.indexOf("timestamp")) ->
+            Long.box(System.currentTimeMillis()),
+          Integer.valueOf(CommitInfo.FULL_SCHEMA.indexOf("operation")) -> "WRITE").asJava)
       val removeRow = new GenericRow(
         RemoveFile.FULL_SCHEMA,
         Map[Integer, Object](
@@ -449,12 +458,14 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
             Long.box(System.currentTimeMillis()),
           Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) ->
             Boolean.box(true)).asJava)
-      val txn = snapshot14
-        .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
-      txn.commit(
-        engine,
-        inMemoryIterable(
-          singletonCloseableIterator(SingleAction.createRemoveFileSingleAction(removeRow))))
+      val logPath = new io.delta.kernel.internal.fs.Path(path + "/_delta_log")
+      engine.getJsonHandler.writeJsonFileAtomically(
+        FileNames.deltaFile(logPath, 15),
+        toCloseableIterator(
+          Iterator(
+            SingleAction.createCommitInfoSingleAction(commitInfoRow),
+            SingleAction.createRemoveFileSingleAction(removeRow)).asJava),
+        false)
 
       deleteChecksumFileForTable(path, Seq(15))
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 15)
