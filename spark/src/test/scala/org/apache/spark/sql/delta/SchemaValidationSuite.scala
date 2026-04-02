@@ -401,7 +401,7 @@ class SchemaValidationSuite
       val e = intercept[AnalysisException] {
         spark.sql(s"ALTER TABLE `$tblName` ADD COLUMNS (col2 string)")
       }
-      assert(e.getMessage.contains("Found duplicate column(s) in adding columns: col2"))
+      assert(e.getMessage.contains("Found duplicate column(s): col2"))
     },
     concurrentChange = (spark: SparkSession, tblName: String) => {
       spark.read.format("delta").table(tblName)
