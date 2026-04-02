@@ -904,5 +904,4 @@ class DeltaInsertReplaceWhereTargetAliasSuite
           Row(2L, Row(20L, "y"), "b")))
     }
   }
-
 }
