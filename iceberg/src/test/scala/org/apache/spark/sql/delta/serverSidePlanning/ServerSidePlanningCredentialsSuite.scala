@@ -70,7 +70,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     withTempTable("credentialsTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.credentialsTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         // Covers the successful credential extraction and Hadoop configuration injection cases.
         val testCases: Seq[CredentialTestCase] = Seq(
@@ -147,7 +147,7 @@ class ServerSidePlanningCredentialsSuite extends QueryTest with SharedSparkSessi
     withTempTable("incompleteCredsTest") { table =>
       populateTestData(s"rest_catalog.${defaultNamespace}.incompleteCredsTest")
 
-      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", "")
+      val client = new IcebergRESTCatalogPlanningClient(serverUri, "test_catalog", () => "")
       try {
         // Test cases for incomplete credentials that should throw errors
         val errorTestCases = Seq(

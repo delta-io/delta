@@ -470,6 +470,16 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_ALWAYS_COLLECT_STATS =
+    buildConf("alwaysCollectStats.enabled")
+      .internal()
+      .doc("When true, row counts are collected from file statistics even when there are no " +
+        "data filters. This is useful for ensuring PreparedDeltaFileIndex always has row count " +
+        "information available. Note: this may have a small performance overhead as it requires " +
+        "summing numRecords from all files.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELTA_LIMIT_PUSHDOWN_ENABLED =
     buildConf("stats.limitPushdown.enabled")
       .internal()
@@ -742,7 +752,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |and streaming inserts with struct type cast.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
 
   val DELTA_MERGE_PRESERVE_NULL_SOURCE_STRUCTS_UPDATE_STAR =
     buildConf("merge.preserveNullSourceStructs.updateStar")
@@ -765,7 +775,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |type cast during INSERT operations.
           |""".stripMargin)
       .booleanConf
-      .createWithDefault(DeltaUtils.isTesting)
+      .createWithDefault(true)
+
+  val DELTA_INSERT_BY_NAME_SCHEMA_EVOLUTION_ENABLED =
+    buildConf("insert.byName.schemaEvolution.enabled")
+      .internal()
+      .doc(
+        """When enabled, SQL INSERT INTO BY NAME operations allow schema evolution: extra columns in
+          |the source that are not in the target table schema are added to the target schema when
+          |schema evolution (mergeSchema) is also enabled. Disable this flag to revert to the old
+          |behavior where extra columns always cause an error, regardless of schema evolution
+          |settings.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
 
   val DELTA_SCHEMA_TYPE_CHECK =
     buildConf("schema.typeCheck.enabled")
@@ -886,6 +908,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "is first provisioned and cannot be used configure an existing table.")
       .intConf
       .createWithDefault(5)
+
+  val COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED =
+    buildConf("coordinatedCommits.commitFilesIterator.backfillGapFix.enabled")
+      .internal()
+      .doc("When enabled, commitFilesIterator falls back to filesystem listing when all " +
+        "unbackfilled commits are concurrently backfilled between Phase 1 (filesystem listing) " +
+        "and Phase 2 (coordinator query), preventing silent data loss.")
+      .booleanConf
+      .createWithDefault(true)
 
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs end
@@ -1352,6 +1383,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
   val DELTA_WRITE_CHECKSUM_ENABLED =
     buildConf("writeChecksumFile.enabled")
       .doc("Whether the checksum file can be written.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val DELTA_CHECKSUM_HISTOGRAM_FIELD_FOLLOWS_PROTOCOL =
+    buildConf("writeChecksumFile.histogramFollowsProtocol")
+      .internal()
+      .doc("""When true, writes the file size histogram to CRC files using the Delta spec field
+             |name "fileSizeHistogram". When false, uses the legacy Delta-Spark field name
+             |"histogramOpt".""".stripMargin)
       .booleanConf
       .createWithDefault(true)
 
@@ -2459,6 +2499,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED =
+    buildConf("replaceOn.dataframe.writer.enabled")
+      .internal()
+      .doc("When false, the `replaceOn` option is blocked in DataFrameWriter APIs.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED =
+    buildConf("replaceUsing.dataframe.writer.enabled")
+      .internal()
+      .doc("When false, the `replaceUsing` option is blocked in DataFrameWriter APIs.")
+      .booleanConf
+      .createWithDefault(true)
+
   val ALLOW_ARBITRARY_TABLE_PROPERTIES =
     buildConf("allowArbitraryProperties.enabled")
       .doc(
@@ -3166,7 +3220,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .internal()
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
-      .createWithDefault(50000)
+      .createWithDefault(100000)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

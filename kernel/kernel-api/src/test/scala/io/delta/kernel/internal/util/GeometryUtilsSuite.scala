@@ -1,5 +1,5 @@
 /*
- * Copyright (2023) The Delta Lake Project Authors.
+ * Copyright (2026) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -56,11 +56,48 @@ class GeometryUtilsSuite extends AnyFunSuite {
     checkXY("POINT ZM(0.0 0.0 0.0 0.0)", 0.0, 0.0)
   }
 
+  test("POINT EMPTY variants - returns NaN") {
+    for (
+      wkt <- Seq(
+        "POINT EMPTY",
+        "POINT Z EMPTY",
+        "POINT M EMPTY",
+        "POINT ZM EMPTY",
+        "point empty",
+        "point z empty",
+        "point m empty",
+        "point zm empty",
+        "POINT   EMPTY",
+        "POINT  Z  EMPTY",
+        "POINT  ZM  EMPTY")
+    ) {
+      withClue(s"$wkt should parse as NaN: ") {
+        val xy = parsePointXY(wkt)
+        assert(xy(0).isNaN)
+        assert(xy(1).isNaN)
+      }
+    }
+  }
+
   test("whitespace variations") {
+    // no space before paren
     checkXY("POINT(1.0 2.0)", 1.0, 2.0)
     checkXY("POINT Z(1.0 2.0 3.0)", 1.0, 2.0)
+    checkXY("POINT M(1.0 2.0 4.0)", 1.0, 2.0)
+    checkXY("POINT ZM(1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    // extra spaces before paren
+    checkXY("POINT  (1.0 2.0)", 1.0, 2.0)
+    checkXY("POINT Z  (1.0 2.0 3.0)", 1.0, 2.0)
+    checkXY("POINT M  (1.0 2.0 4.0)", 1.0, 2.0)
+    checkXY("POINT ZM  (1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    // extra spaces between modifier and paren
+    checkXY("POINT  Z  (1.0 2.0 3.0)", 1.0, 2.0)
+    checkXY("POINT  M  (1.0 2.0 4.0)", 1.0, 2.0)
+    checkXY("POINT  ZM  (1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    // extra spaces around/between coordinates
     checkXY("POINT (  1.0   2.0  )", 1.0, 2.0)
-    checkXY("POINT  ZM(1.0 2.0 3.0 4.0)", 1.0, 2.0)
+    checkXY("POINT Z (  1.0   2.0   3.0  )", 1.0, 2.0)
+    checkXY("POINT ZM (  1.0   2.0   3.0   4.0  )", 1.0, 2.0)
   }
 
   test("case insensitivity") {
@@ -69,8 +106,26 @@ class GeometryUtilsSuite extends AnyFunSuite {
     checkXY("Point Z(1.0 2.0 3.0)", 1.0, 2.0)
   }
 
+  test("scientific notation") {
+    checkXY("POINT (1.5e2 2.5E2)", 150.0, 250.0)
+    checkXY("POINT (-1.5e2 2.5e-1)", -150.0, 0.25)
+    checkXY("POINT (1e3 2e3)", 1000.0, 2000.0)
+    checkXY("POINT (-1E3 -2E3)", -1000.0, -2000.0)
+    checkXY("POINT (1.23456789e10 -9.87654321e-5)", 1.23456789e10, -9.87654321e-5)
+    checkXY("POINT Z (1e2 2e2 3e2)", 100.0, 200.0)
+  }
+
+  test("integer coordinates (no decimal point)") {
+    checkXY("POINT (1 2)", 1.0, 2.0)
+    checkXY("POINT (-100 200)", -100.0, 200.0)
+    checkXY("POINT (0 0)", 0.0, 0.0)
+    checkXY("POINT Z (1 2 3)", 1.0, 2.0)
+    checkXY("POINT ZM (1 2 3 4)", 1.0, 2.0)
+  }
+
   test("null input throws") {
-    checkInvalid(null, "cannot be null")
+    val e = intercept[NullPointerException](parsePointXY(null))
+    assert(e.getMessage.contains("cannot be null"))
   }
 
   test("missing parens throws") {
@@ -81,12 +136,33 @@ class GeometryUtilsSuite extends AnyFunSuite {
   test("wrong coordinate count throws") {
     checkInvalid("POINT (1.0 2.0 3.0)", "expects 2 coordinates but got 3")
     checkInvalid("POINT Z(1.0 2.0)", "expects 3 coordinates but got 2")
+    checkInvalid("POINT M(1.0 2.0)", "expects 3 coordinates but got 2")
     checkInvalid("POINT ZM(1.0 2.0 3.0)", "expects 4 coordinates but got 3")
+  }
+
+  test("excess coordinates throws") {
+    checkInvalid("POINT Z(1.0 2.0 3.0 4.0)", "expects 3 coordinates but got 4")
+    checkInvalid("POINT M(1.0 2.0 3.0 4.0)", "expects 3 coordinates but got 4")
+    checkInvalid("POINT ZM(1.0 2.0 3.0 4.0 5.0)", "expects 4 coordinates but got 5")
+  }
+
+  test("non-space separators are rejected") {
+    // comma/semicolon create 1 token instead of 2
+    checkInvalid("POINT (1.0,2.0)", "expects 2 coordinates but got 1")
+    checkInvalid("POINT (1.0;2.0)", "expects 2 coordinates but got 1")
   }
 
   test("non-numeric coordinate throws") {
     checkInvalid("POINT (1.0 foo)", "Invalid coordinate")
     checkInvalid("POINT ZM(1.0 2.0 3.0 bar)", "Invalid coordinate")
+  }
+
+  test("NaN and Infinity coordinates throw") {
+    checkInvalid("POINT (NaN 1.0)", "finite numbers")
+    checkInvalid("POINT (1.0 NaN)", "finite numbers")
+    checkInvalid("POINT (Infinity 1.0)", "finite numbers")
+    checkInvalid("POINT (1.0 -Infinity)", "finite numbers")
+    checkInvalid("POINT Z(1.0 2.0 NaN)", "finite numbers")
   }
 
   test("formatPointWKT - 2D") {
@@ -95,7 +171,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.empty(),
       OptionalDouble.empty())
-    assert(wkt === "POINT (1.0 2.0)")
+    assert(wkt === "POINT(1.0 2.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -107,7 +183,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.of(3.0),
       OptionalDouble.empty())
-    assert(wkt === "POINT Z(1.0 2.0 3.0)")
+    assert(wkt === "POINT Z (1.0 2.0 3.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -119,7 +195,7 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.empty(),
       OptionalDouble.of(4.0))
-    assert(wkt === "POINT M(1.0 2.0 4.0)")
+    assert(wkt === "POINT M (1.0 2.0 4.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
@@ -131,10 +207,46 @@ class GeometryUtilsSuite extends AnyFunSuite {
       2.0,
       OptionalDouble.of(3.0),
       OptionalDouble.of(4.0))
-    assert(wkt === "POINT ZM(1.0 2.0 3.0 4.0)")
+    assert(wkt === "POINT ZM (1.0 2.0 3.0 4.0)")
     val xy = parsePointXY(wkt)
     assert(xy(0) === 1.0)
     assert(xy(1) === 2.0)
+  }
+
+  test("formatPointWKT - EMPTY round-trips") {
+    val empty2d = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.empty(),
+      OptionalDouble.empty())
+    assert(empty2d === "POINT EMPTY")
+    val xy = parsePointXY(empty2d)
+    assert(xy(0).isNaN)
+    assert(xy(1).isNaN)
+
+    val emptyZ = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.of(Double.NaN),
+      OptionalDouble.empty())
+    assert(emptyZ === "POINT Z EMPTY")
+    assert(parsePointXY(emptyZ)(0).isNaN)
+
+    val emptyM = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.empty(),
+      OptionalDouble.of(Double.NaN))
+    assert(emptyM === "POINT M EMPTY")
+    assert(parsePointXY(emptyM)(0).isNaN)
+
+    val emptyZM = formatPointWKT(
+      Double.NaN,
+      Double.NaN,
+      OptionalDouble.of(Double.NaN),
+      OptionalDouble.of(Double.NaN))
+    assert(emptyZM === "POINT ZM EMPTY")
+    assert(parsePointXY(emptyZM)(0).isNaN)
   }
 
   test("formatPointWKT - round-trip negative coords") {
@@ -146,5 +258,39 @@ class GeometryUtilsSuite extends AnyFunSuite {
     val xy = parsePointXY(wkt)
     assert(xy(0) === -180.0)
     assert(xy(1) === -90.0)
+  }
+
+  // Geography coordinate range validation tests
+
+  test("validateGeographyPointWKT - valid coordinates") {
+    GeometryUtils.validateGeographyPointWKT("POINT (0 0)")
+    GeometryUtils.validateGeographyPointWKT("POINT (-180 -90)")
+    GeometryUtils.validateGeographyPointWKT("POINT (180 90)")
+    GeometryUtils.validateGeographyPointWKT("POINT Z (10 20 100)")
+    GeometryUtils.validateGeographyPointWKT("POINT EMPTY")
+  }
+
+  test("validateGeographyPointWKT - longitude out of range") {
+    val e = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (181 0)")
+    }
+    assert(e.getMessage.contains("out of range"))
+
+    val e2 = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (-181 0)")
+    }
+    assert(e2.getMessage.contains("out of range"))
+  }
+
+  test("validateGeographyPointWKT - latitude out of range") {
+    val e = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (0 91)")
+    }
+    assert(e.getMessage.contains("out of range"))
+
+    val e2 = intercept[io.delta.kernel.exceptions.KernelException] {
+      GeometryUtils.validateGeographyPointWKT("POINT (0 -91)")
+    }
+    assert(e2.getMessage.contains("out of range"))
   }
 }

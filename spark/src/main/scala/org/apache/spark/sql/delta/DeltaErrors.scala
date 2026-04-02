@@ -3046,6 +3046,33 @@ trait DeltaErrorsBase
     )
   }
 
+  def dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DYNAMIC_PARTITION_OVERWRITE_INCOMPATIBLE_REPLACE_ON_OR_USING"
+    )
+  }
+
+  def incompatibleDataFrameOptions(
+      firstDeltaOption: String,
+      secondDeltaOption: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INCOMPATIBLE_DATAFRAME_OPTIONS",
+      messageParameters = Array(firstDeltaOption, secondDeltaOption)
+    )
+  }
+
+  def overwriteByFilterIncompatibleReplaceOnOrUsingError(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_OVERWRITE_BY_FILTER_INCOMPATIBLE_REPLACE_ON_OR_USING"
+    )
+  }
+
+  def dfv2CreateReplaceIncompatibleReplaceOnOrUsingError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_DFV2_CREATE_REPLACE_INCOMPATIBLE_REPLACE_ON_OR_USING",
+      messageParameters = Array.empty)
+  }
+
   def replaceWhereUsedInOverwrite(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty
@@ -3221,7 +3248,8 @@ trait DeltaErrorsBase
       spark: SparkSession,
       readSchema: StructType,
       incompatibleSchema: StructType,
-      detectedDuringStreaming: Boolean): Throwable = {
+      detectedDuringStreaming: Boolean,
+      isV2DataSource: Boolean = false): Throwable = {
     val docLink = "/versioning.html#column-mapping"
     val enableNonAdditiveSchemaEvolution = spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING)
@@ -3231,7 +3259,8 @@ trait DeltaErrorsBase
       generateDocsLinkOption(spark, docLink).getOrElse("-"),
       enableNonAdditiveSchemaEvolution,
       additionalProperties = Map(
-        "detectedDuringStreaming" -> detectedDuringStreaming.toString
+        "detectedDuringStreaming" -> detectedDuringStreaming.toString,
+        "isV2DataSource" -> isV2DataSource.toString
       ))
   }
 
@@ -3540,8 +3569,8 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UniversalFormat.ICEBERG_FORMAT,
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. To enable IcebergCompatV2, set the table property " +
-        "'delta.enableIcebergCompatV2' = 'true'."
+        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
+        "IcebergCompatV2."
       )
     )
   }
@@ -4358,7 +4387,9 @@ class DeltaStreamingNonAdditiveSchemaIncompatibleException(
     val enableNonAdditiveSchemaEvolution: Boolean = false,
     val additionalProperties: Map[String, String] = Map.empty)
   extends DeltaUnsupportedOperationException(
-    errorClass = if (enableNonAdditiveSchemaEvolution) {
+    errorClass = if (additionalProperties.getOrElse("isV2DataSource", "false") == "true") {
+      "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_V2"
+    } else if (enableNonAdditiveSchemaEvolution) {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"
     } else {
       "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE"

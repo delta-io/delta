@@ -25,6 +25,7 @@ import scala.language.existentials
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
@@ -232,8 +233,18 @@ trait StatisticsCollection extends DeltaLogging {
     }
 
     // This may be very expensive because it is rewriting JSON.
+    // If the stats schema contains variant types, we need to encode them as Z85 strings
+    // before serializing to JSON. This preserves the variant stats that were originally
+    // written with Z85 encoding.
+    val statsStruct = struct(allStatCols: _*)
+    val encodedStatsStruct = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(EncodeNestedVariantAsZ85String(statsStruct.expr))
+    } else {
+      statsStruct
+    }
+
     withStats
-      .withColumn("stats", when(col(statsColName).isNotNull, to_json(struct(allStatCols: _*))))
+      .withColumn("stats", when(col(statsColName).isNotNull, to_json(encodedStatsStruct)))
       .drop(col(Checkpoints.STRUCT_STATS_COL_NAME)) // Note: does not always exist.
   }
 

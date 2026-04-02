@@ -64,10 +64,17 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
    *     requirements
    */
   public static Optional<Metadata> validateAndUpdateIcebergWriterCompatV3Metadata(
-      boolean isCreatingNewTable, Metadata newMetadata, Protocol newProtocol) {
+      boolean isCreatingNewTable,
+      Metadata newMetadata,
+      Protocol newProtocol,
+      Optional<Protocol> prevProtocol) {
     return INSTANCE.validateAndUpdateMetadata(
         new IcebergCompatInputContext(
-            INSTANCE.compatFeatureName(), isCreatingNewTable, newMetadata, newProtocol));
+            INSTANCE.compatFeatureName(),
+            isCreatingNewTable,
+            newMetadata,
+            newProtocol,
+            prevProtocol));
   }
 
   /// //////////////////////////////////////////////////////////////////////////////
@@ -90,7 +97,8 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                       .validateAndUpdateIcebergCompatV3Metadata(
                           inputContext.isCreatingNewTable,
                           inputContext.newMetadata,
-                          inputContext.newProtocol));
+                          inputContext.newProtocol,
+                          inputContext.prevProtocol));
 
   /**
    * Current set of allowed table features for Iceberg writer compat V3. This combines the common
@@ -105,6 +113,7 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                   ICEBERG_WRITER_COMPAT_V3,
                   DELETION_VECTORS_RW_FEATURE,
                   VARIANT_RW_FEATURE,
+                  VARIANT_SHREDDING_RW_FEATURE,
                   VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
                   VARIANT_RW_PREVIEW_FEATURE,
                   // Also allow writerV1 features for backward compatibility.

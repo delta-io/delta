@@ -26,6 +26,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -41,17 +42,27 @@ import org.apache.spark.sql.catalyst.expressions.InterpretedPredicate;
 import org.apache.spark.sql.connector.expressions.FieldReference;
 import org.apache.spark.sql.connector.expressions.NamedReference;
 import org.apache.spark.sql.connector.read.*;
+import org.apache.spark.sql.connector.read.colstats.ColumnStatistics;
+import org.apache.spark.sql.connector.read.partitioning.KeyGroupedPartitioning;
+import org.apache.spark.sql.connector.read.partitioning.Partitioning;
+import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.types.StringType;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** Spark DSV2 Scan implementation backed by Delta Kernel. */
-public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntimeV2Filtering {
+public class SparkScan
+    implements Scan,
+        SupportsReportStatistics,
+        SupportsRuntimeV2Filtering,
+        SupportsReportPartitioning {
 
   /** Supported streaming options for the V2 connector. */
   private static final List<String> SUPPORTED_STREAMING_OPTIONS =
@@ -60,22 +71,23 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.STARTING_VERSION_OPTION(),
               DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
-              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION()));
+              DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
+              DeltaOptions.IGNORE_CHANGES_OPTION(),
+              DeltaOptions.IGNORE_DELETES_OPTION(),
+              DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
+              DeltaOptions.EXCLUDE_REGEX_OPTION()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, and maxBytesPerTrigger are supported.
-   * User-defined custom options (not in DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreChanges,
+   * ignoreDeletes, skipChangeCommits, and excludeRegex are supported. User-defined custom options
+   * (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.EXCLUDE_REGEX_OPTION().toLowerCase(),
                   DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
-                  DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
-                  DeltaOptions.IGNORE_DELETES_OPTION().toLowerCase(),
-                  DeltaOptions.SKIP_CHANGE_COMMITS_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
@@ -96,6 +108,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
   private final io.delta.kernel.Scan kernelScan;
+  private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
@@ -123,6 +136,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Predicate[] pushedToKernelFilters,
       Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
+      Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
 
     this.snapshotManager = Objects.requireNonNull(snapshotManager, "snapshotManager is null");
@@ -134,6 +148,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
+    this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
@@ -152,6 +167,39 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     Collections.addAll(fields, readDataSchema.fields());
     Collections.addAll(fields, partitionSchema.fields());
     return new StructType(fields.toArray(new StructField[0]));
+  }
+
+  /**
+   * Override columnarSupportMode to explicitly declare whether this scan supports columnar
+   * (vectorized) reading. Without this override, the default {@code PARTITION_DEFINED} mode causes
+   * Spark to eagerly call {@code planInputPartitions()} during query planning to check
+   * per-partition columnar support, triggering unnecessary early file enumeration.
+   *
+   * <p>Since columnar support is uniform across all partitions (determined by schema compatibility
+   * and table features, not by individual files), we can declare it at the scan level to avoid this
+   * overhead.
+   *
+   * <p>This must stay consistent with the vectorized reader decision in {@link
+   * PartitionUtils#createDeltaParquetReaderFactory}. In particular, deletion-vector-enabled tables
+   * augment the read schema with internal columns (e.g., {@code __delta_internal_is_row_deleted}),
+   * which changes the schema passed to the vectorized reader check. We replicate that logic here to
+   * ensure the scan-level declaration matches the per-partition reader behavior.
+   */
+  @Override
+  public Scan.ColumnarSupportMode columnarSupportMode() {
+    // When the table supports deletion vectors, the reader factory augments the read schema
+    // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
+    // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in
+    // the future, this code path picks them up automatically.
+    StructType schemaForBatchCheck =
+        PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)
+            ? new DeletionVectorSchemaContext(readDataSchema, partitionSchema)
+                .getSchemaWithDvColumn()
+            : readDataSchema;
+
+    return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, schemaForBatchCheck)
+        ? Scan.ColumnarSupportMode.SUPPORTED
+        : Scan.ColumnarSupportMode.UNSUPPORTED;
   }
 
   @Override
@@ -207,15 +255,49 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public Statistics estimateStatistics() {
     ensurePlanned();
+    final long plannedBytes = estimatedSizeInBytes;
+
+    // When catalog stats are available and CBO is enabled, combine table-level stats
+    // (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
+    // conf.cboEnabled || conf.planStatsEnabled.
+    boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+    if (useCatalogStats && catalogStats.isPresent()) {
+      final Statistics stats = catalogStats.get();
+      return new Statistics() {
+        @Override
+        public OptionalLong sizeInBytes() {
+          // Planned file size is authoritative (even if 0 for an empty table)
+          return OptionalLong.of(plannedBytes);
+        }
+
+        @Override
+        public OptionalLong numRows() {
+          // TODO: Use accurate row count from planned files (sum of AddFile.numRecords)
+          //  instead of catalog stats, which are stale (point-in-time from ANALYZE) and
+          //  not adjusted for partition pruning.
+          return stats.numRows();
+        }
+
+        @Override
+        public Map<NamedReference, ColumnStatistics> columnStats() {
+          // TODO: After partition pruning, column stats (e.g. min, max, nullCount,
+          //  distinctCount) could be tightened based on the pruned file-level stats.
+          return stats.columnStats();
+        }
+      };
+    }
+
+    // No catalog stats available or CBO disabled — return stats from planned files only
     return new Statistics() {
       @Override
       public OptionalLong sizeInBytes() {
-        return OptionalLong.of(estimatedSizeInBytes);
+        return OptionalLong.of(plannedBytes);
       }
 
       @Override
       public OptionalLong numRows() {
-        // Row count is unknown at planning time.
+        // Row count is unknown without catalog stats
         return OptionalLong.empty();
       }
     };
@@ -237,6 +319,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    *       (equivalent to Project output)
    * </ul>
    *
+   * <p>When catalog column stats are available, uses per-column {@code avgLen} instead of {@code
+   * defaultSize()} for more accurate size estimation, mirroring {@code
+   * EstimationUtils.getSizePerRow()} behavior.
+   *
    * <p>This provides consistent statistics with the v1 code path (LogicalRelation + visitUnaryNode
    * from Spark code directory).
    *
@@ -251,14 +337,60 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     // Row overhead constant, matching EstimationUtils.getSizePerRow (from Spark)
     final int ROW_OVERHEAD = 8;
 
-    // TODO(#5952): update below with column stats from catalog when it becomes available
+    // Use avgLen from catalog column stats when available for more accurate estimation
+    Map<String, OptionalLong> avgLenByColumn = getAvgLenByColumn();
+
     final long fullSchemaRowSize =
-        ROW_OVERHEAD + dataSchema.defaultSize() + partitionSchema.defaultSize();
-    final long outputRowSize = ROW_OVERHEAD + readSchema().defaultSize();
+        ROW_OVERHEAD
+            + getSchemaSize(dataSchema, avgLenByColumn)
+            + getSchemaSize(partitionSchema, avgLenByColumn);
+    final long outputRowSize = ROW_OVERHEAD + getSchemaSize(readSchema(), avgLenByColumn);
 
     long estimatedBytes = (totalBytes * outputRowSize) / fullSchemaRowSize;
 
     return Math.max(1L, estimatedBytes);
+  }
+
+  /**
+   * Returns a map of column name to avgLen from catalog column stats, used to improve size
+   * estimation accuracy when catalog stats are available.
+   */
+  private Map<String, OptionalLong> getAvgLenByColumn() {
+    if (!catalogStats.isPresent()) {
+      return Collections.emptyMap();
+    }
+    Map<NamedReference, ColumnStatistics> colStats = catalogStats.get().columnStats();
+    if (colStats.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    Map<String, OptionalLong> result = new HashMap<>();
+    for (Map.Entry<NamedReference, ColumnStatistics> entry : colStats.entrySet()) {
+      result.put(entry.getKey().fieldNames()[0], entry.getValue().avgLen());
+    }
+    return result;
+  }
+
+  /**
+   * Computes the estimated in-memory size for a schema, using avgLen from catalog stats when
+   * available, falling back to defaultSize(). Mirrors EstimationUtils.getSizePerRow(). For
+   * StringType columns with avgLen, adds UTF8String overhead (base + offset + numBytes = 12 bytes).
+   */
+  private static long getSchemaSize(StructType schema, Map<String, OptionalLong> avgLenByColumn) {
+    long size = 0;
+    for (StructField field : schema.fields()) {
+      OptionalLong avgLen = avgLenByColumn.getOrDefault(field.name(), OptionalLong.empty());
+      if (avgLen.isPresent()) {
+        if (field.dataType() instanceof StringType) {
+          // UTF8String: base + offset + numBytes (matching EstimationUtils.getSizePerRow)
+          size += avgLen.getAsLong() + 8 + 4;
+        } else {
+          size += avgLen.getAsLong();
+        }
+      } else {
+        size += field.dataType().defaultSize();
+      }
+    }
+    return size;
   }
 
   /**
@@ -439,6 +571,41 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     }
   }
 
+  /**
+   * Reports partition key expressions to Spark so it can recognize partition-aligned data layout.
+   * Called by V2ScanPartitioningAndOrdering during logical optimization to extract partition keys.
+   * Together with HasPartitionKey on DeltaInputPartition, this enables Spark to eliminate shuffles
+   * for joins and aggregations on partition columns.
+   *
+   * <p>Note: This method triggers scan file materialization via {@link #ensurePlanned()} because
+   * {@code numPartitions} is derived from the planned file count. Since Spark calls this during
+   * logical optimization (before {@link #toBatch()}), this changes when planning occurs compared to
+   * the non-partitioned path. This is functionally correct as {@code ensurePlanned} is idempotent.
+   */
+  @Override
+  public Partitioning outputPartitioning() {
+    // If no partition columns, return unknown partitioning
+    if (partitionSchema.fields().length == 0) {
+      return new UnknownPartitioning(0);
+    }
+
+    ensurePlanned();
+
+    // Create partition key expressions from partition schema
+    org.apache.spark.sql.connector.expressions.Expression[] keys =
+        Arrays.stream(partitionSchema.fields())
+            .map(
+                field ->
+                    (org.apache.spark.sql.connector.expressions.Expression)
+                        FieldReference.column(field.name()))
+            .toArray(org.apache.spark.sql.connector.expressions.Expression[]::new);
+
+    // numPartitions is not used by Spark's KeyGroupedPartitioning handling (Spark derives
+    // partition count from the actual InputPartition[] with HasPartitionKey), so we use the
+    // file count as a reasonable upper-bound estimate.
+    return new KeyGroupedPartitioning(keys, partitionedFiles.size());
+  }
+
   @Override
   public boolean equals(Object o) {
     if (this == o) {
@@ -458,13 +625,15 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
-        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates);
+        && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
+        && Objects.equals(catalogStats, that.catalogStats);
   }
 
   @Override
   public int hashCode() {
     int result =
         Objects.hash(
+            catalogStats,
             initialSnapshot.getPath(),
             initialSnapshot.getVersion(),
             dataSchema,
