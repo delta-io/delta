@@ -18,7 +18,8 @@ package org.apache.spark.sql.delta.commands
 
 // scalastyle:off import.ordering.noEmptyLine
 import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
-import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog}
+import org.apache.spark.sql.delta.{DeltaErrors, DeltaLog, DeltaTableUtils}
+import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.actions.Action
 import org.apache.spark.sql.delta.actions.AddCDCFile
@@ -32,6 +33,7 @@ import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
 import org.apache.spark.sql.catalyst.expressions.Expression
@@ -41,7 +43,7 @@ import org.apache.spark.sql.types.StructType
 /**
  * An interface for writing [[data]] into Delta tables.
  */
-trait WriteIntoDeltaLike {
+trait WriteIntoDeltaLike extends DeltaCommand {
   /**
    * A helper method to create a new instances of [[WriteIntoDeltaLike]] with
    * updated [[configuration]].
@@ -200,6 +202,98 @@ trait WriteIntoDeltaLike {
             Check(arbitraryExpression.name, arbitraryExpression.expression)
         }
       }
+    }
+  }
+
+  protected case class ReplaceWhereExprsAndDataFilterPresenceInExprs(
+      maybeAliasedReplaceWhereExprsOpt: Option[Seq[Expression]],
+      containsDataFilters: Boolean)
+
+  /**
+   * Strips any targetAlias qualifier from column references in predicate expressions.
+   * For example, with targetAlias "t", `t.col` becomes `col`.
+   */
+  protected def stripTargetAliasIfExists(
+      sparkSession: SparkSession,
+      exprs: Seq[Expression],
+      targetAlias: Option[String]): Seq[Expression] = {
+    targetAlias match {
+      case Some(alias) =>
+        val resolver = sparkSession.sessionState.conf.resolver
+        exprs.map(_.transform {
+          case u: UnresolvedAttribute
+              if u.nameParts.length > 1 && resolver(u.nameParts.head, alias) =>
+            UnresolvedAttribute(u.nameParts.tail)
+        })
+      case None => exprs
+    }
+  }
+
+  /**
+   * Parses the expressions for the `.option("replaceWhere")` and determines whether
+   * there is a data filter present in the parsed expressions.
+   *
+   * Returns two pieces of information:
+   * 1. The list of expressions (possibly aliased when targetAlias is set).
+   * 2. A flag indicating the presence of a data filter in the expressions list.
+   *
+   * The information regarding the existence of a data filter is needed for CDF
+   * generation.
+   */
+  protected def getReplaceWhereExprsAndDataFilterPresenceInExprs(
+      sparkSession: SparkSession,
+      txn: OptimisticTransaction,
+      options: DeltaOptions,
+      replaceWhereOnDataColsEnabled: Boolean,
+      mode: SaveMode): ReplaceWhereExprsAndDataFilterPresenceInExprs = {
+    options.replaceWhere match {
+      case Some(replaceWhereStr) =>
+        val parsedPredicatesMaybeAliased = parsePredicates(sparkSession, replaceWhereStr)
+        val strippedTargetAliasPredicates =
+          stripTargetAliasIfExists(
+            sparkSession = sparkSession,
+            exprs = parsedPredicatesMaybeAliased,
+            targetAlias = options.targetAlias)
+        if (replaceWhereOnDataColsEnabled) {
+          // Use alias-stripped predicates because
+          // [[DeltaTableUtils.splitMetadataAndDataPredicates]]
+          // compares against non-aliased partition column names.
+          val (metadataPredicates, dataFilters) = DeltaTableUtils.splitMetadataAndDataPredicates(
+            condition = strippedTargetAliasPredicates.head,
+            partitionColumns = txn.metadata.partitionColumns,
+            spark = sparkSession)
+          if (options.rearrangeOnly && dataFilters.nonEmpty) {
+            throw DeltaErrors.replaceWhereWithFilterDataChangeUnset(dataFilters.mkString(","))
+          }
+
+          val containsDataFilters = dataFilters.nonEmpty
+
+          ReplaceWhereExprsAndDataFilterPresenceInExprs(
+            maybeAliasedReplaceWhereExprsOpt =
+              if (options.targetAlias.isDefined) {
+                Some(parsedPredicatesMaybeAliased)
+              } else {
+                Some(metadataPredicates ++ dataFilters)
+              },
+            containsDataFilters = containsDataFilters)
+        } else if (mode == SaveMode.Overwrite) {
+          // Use stripped predicates for partition validation.
+          verifyPartitionPredicates(
+            spark = sparkSession,
+            partitionColumns = txn.metadata.partitionColumns,
+            predicates = strippedTargetAliasPredicates)
+          ReplaceWhereExprsAndDataFilterPresenceInExprs(
+            maybeAliasedReplaceWhereExprsOpt = Some(parsedPredicatesMaybeAliased),
+            containsDataFilters = false)
+        } else {
+          ReplaceWhereExprsAndDataFilterPresenceInExprs(
+            maybeAliasedReplaceWhereExprsOpt = None,
+            containsDataFilters = false)
+        }
+      case None =>
+        ReplaceWhereExprsAndDataFilterPresenceInExprs(
+          maybeAliasedReplaceWhereExprsOpt = None,
+          containsDataFilters = false)
     }
   }
 
