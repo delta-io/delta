@@ -256,18 +256,19 @@ class TransactionSuite extends AnyFunSuite with VectorTestUtils with MockEngineU
   }
 
   Seq("name", "id").foreach { cmMode =>
-    test(s"getWriteContext: CM tables are blocked: $cmMode") {
+    test(s"getWriteContext: CM tables are allowed: cmMode=$cmMode") {
       val txnState = testTxnState(new StructType(), cmMode = cmMode)
       val engine = mockEngine()
 
-      val ex = intercept[UnsupportedOperationException] {
-        getWriteContext(
-          engine,
-          txnState,
-          Map.empty[String, Literal].asJava /* partition values */ )
-      }
-      assert(ex.getMessage.contains(
-        "Writing into column mapping enabled table is not supported yet."))
+      // getWriteContext should succeed for column-mapped tables since it only provides
+      // the target directory and partition metadata -- column name translation is the
+      // caller's responsibility. The transformLogicalData tests above continue to
+      // confirm that CM tables are blocked on Kernel's own Parquet write path.
+      val writeContext = getWriteContext(
+        engine,
+        txnState,
+        Map.empty[String, Literal].asJava /* partition values */ )
+      assert(writeContext.getTargetDirectory.nonEmpty)
     }
   }
 
