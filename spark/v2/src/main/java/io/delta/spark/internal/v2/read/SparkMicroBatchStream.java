@@ -935,10 +935,13 @@ public class SparkMicroBatchStream
       }
     }
 
-    // TODO(#5319): Implement ignoreChanges & ignoreFileDeletion (deprecated)
-    // A check on the source table that disallows changes on the source data.
-    boolean shouldAllowChanges = skipChangeCommits;
-    // A check on the source table that disallows commits that only include deletes to the data.
+    // TODO(#5319): Implement ignoreFileDeletion (deprecated)
+    // "Changes" are commits that contain both AddFile and RemoveFile actions (e.g. UPDATE,
+    // MERGE that rewrites data files). Allowing changes means these commits won't cause failures.
+    boolean shouldAllowChanges = options.ignoreChanges() || skipChangeCommits;
+    // "Deletes" are commits that contain only RemoveFile actions without any AddFile actions
+    // (e.g. DELETE that purely removes data). This is a subset of changes, so allowing changes
+    // implies allowing deletes.
     boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
 
     boolean hasFileAdd = false;

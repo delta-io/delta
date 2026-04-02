@@ -69,7 +69,11 @@ public class StatsSchemaHelper {
         ||
         // StringType is eligible, but since its string can include collation info, it needs to
         // be matched separately.
-        dataType instanceof StringType;
+        dataType instanceof StringType
+        // Geometry/geography types are eligible but need separate matching
+        // due to SRID (and algorithm) parameters
+        || dataType instanceof GeometryType
+        || dataType instanceof GeographyType;
   }
 
   /**

@@ -50,8 +50,22 @@ trait DeltaWriteOptions
 
   import DeltaOptions._
 
+  val replaceOn: Option[String] = options.get(REPLACE_ON_OPTION)
+
+  val replaceUsing: Option[String] = options.get(REPLACE_USING_OPTION)
+
+  def isReplaceOnOrUsingDefined: Boolean =
+    replaceOn.isDefined || replaceUsing.isDefined
+
+  val targetAlias: Option[String] = options.get(TARGET_ALIAS_OPTION)
+
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
   val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
+
+  val useNullIntolerantEqualityWithDPO: Option[Boolean] =
+    options
+      .get(USE_NULL_INTOLERANT_EQUALITY_WITH_DPO)
+      .map(toBoolean(_, USE_NULL_INTOLERANT_EQUALITY_WITH_DPO))
 
   /**
    * Whether to add an adaptive shuffle before writing out the files to break skew, and coalesce
@@ -250,6 +264,27 @@ object DeltaOptions extends DeltaLogging {
   val IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE =
     SupportsV1OverwriteWithSaveAsTable.OPTION_NAME
 
+  /**
+   * An option, which contains a matching condition, between the table and the inserting data,
+   * to determine which table rows are to be replaced by the inserting data.
+   */
+  val REPLACE_ON_OPTION = "replaceOn"
+
+  /**
+   * An option, which contains a list of columns, between the table and the inserting data,
+   * to determine which table rows are to be replaced by the inserting data,
+   * by comparing equality for the list of columns, where each column must exist in both the
+   * table and the query.
+   */
+  val REPLACE_USING_OPTION = "replaceUsing"
+
+  /**
+   * An option to alias the target table in replaceOn/replaceWhere conditions.
+   * Allows users to reference target table columns using the alias in conditions,
+   * e.g., .option("targetAlias", "t").option("replaceOn", "t.id = s.id").
+   */
+  val TARGET_ALIAS_OPTION = "targetAlias"
+
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
   /** An option to allow automatic schema merging during a write operation. */
@@ -258,6 +293,12 @@ object DeltaOptions extends DeltaLogging {
   val OVERWRITE_SCHEMA_OPTION = "overwriteSchema"
   /** An option to specify user-defined metadata in commitInfo */
   val USER_METADATA_OPTION = "userMetadata"
+
+  /**
+   * An option to ignore overwriting partitions that contain NULL in
+   * Dynamic Partition Overwrite, used by INSERT INTO ... REPLACE USING (...).
+   */
+  val USE_NULL_INTOLERANT_EQUALITY_WITH_DPO = "useNullIntolerantEqualityWithDPO"
 
   val PARTITION_OVERWRITE_MODE_OPTION = "partitionOverwriteMode"
   val PARTITION_OVERWRITE_MODE_DYNAMIC = "DYNAMIC"
@@ -320,11 +361,15 @@ object DeltaOptions extends DeltaLogging {
 
   val validOptionKeys : Set[String] = Set(
     IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
+    REPLACE_ON_OPTION,
+    REPLACE_USING_OPTION,
+    TARGET_ALIAS_OPTION,
     REPLACE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
     OVERWRITE_SCHEMA_OPTION,
     USER_METADATA_OPTION,
+    USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
     PARTITION_OVERWRITE_MODE_OPTION,
     MAX_FILES_PER_TRIGGER_OPTION,
     IGNORE_FILE_DELETION_OPTION,

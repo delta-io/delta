@@ -61,7 +61,7 @@ import org.apache.spark.sql.catalyst.trees.TreeNodeTag
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttribute
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.catalyst.util.CaseInsensitiveMap
-import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog}
+import org.apache.spark.sql.connector.catalog.{CatalogV2Util, Identifier, TableCatalog, TableWritePrivilege}
 import org.apache.spark.sql.connector.catalog.CatalogV2Implicits._
 import org.apache.spark.sql.connector.expressions.{FieldReference, IdentityTransform, Transform}
 import org.apache.spark.sql.errors.QueryCompilationErrors
@@ -1549,6 +1549,12 @@ case class DeltaDynamicPartitionOverwriteCommand(
     isByName: Boolean,
     analyzedQuery: Option[LogicalPlan] = None) extends RunnableCommand with V2WriteCommand {
 
+  val withSchemaEvolution: Boolean =
+    new DeltaOptions(deltaTable.options ++ writeOptions, conf).canMergeSchema
+
+  val writePrivileges: Set[TableWritePrivilege] =
+    Set(TableWritePrivilege.INSERT, TableWritePrivilege.DELETE)
+
   override def child: LogicalPlan = query
 
   override def withNewQuery(newQuery: LogicalPlan): DeltaDynamicPartitionOverwriteCommand = {
@@ -1575,6 +1581,18 @@ case class DeltaDynamicPartitionOverwriteCommand(
 
     // TODO: The configuration can be fetched directly from WriteIntoDelta's txn. Don't pass
     //  in the default snapshot's metadata config here.
+    if (deltaOptions.isReplaceOnOrUsingDefined) {
+      if (deltaOptions.replaceOn.isDefined && !sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else if (deltaOptions.replaceUsing.isDefined &&
+          !sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+      // replaceOn/replaceUsing is incompatible with dynamic partition overwrite.
+      throw DeltaErrors.dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError()
+    }
     WriteIntoDelta(
       deltaTable.deltaLog,
       SaveMode.Overwrite,

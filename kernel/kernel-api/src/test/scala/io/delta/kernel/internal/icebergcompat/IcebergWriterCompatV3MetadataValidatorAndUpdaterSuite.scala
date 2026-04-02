@@ -438,7 +438,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
     validateAndUpdateIcebergWriterCompatV3Metadata(false, metadata, protocol, Optional.empty())
   }
 
-  Seq("collations", "defaultColumns").foreach { unsupportedIncompatibleFeature =>
+  Seq("defaultColumns").foreach { unsupportedIncompatibleFeature =>
     test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
       // We add this test here so that it will fail when we add Kernel support for these features
       // When this happens -> add the feature to the test above
