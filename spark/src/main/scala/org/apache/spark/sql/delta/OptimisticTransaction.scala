@@ -52,6 +52,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.CatalogTrackedInfo
 import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -2072,7 +2073,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
-          attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+          attemptVersion,
+          jsonActions,
+          updatedActions,
+          catalogTable.map(_.identifier),
+          CatalogTrackedInfo.EMPTY
+        )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
@@ -2780,7 +2786,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
-        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+        attemptVersion,
+        jsonActions,
+        updatedActions,
+        catalogTable.map(_.identifier),
+        CatalogTrackedInfo.EMPTY)
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri

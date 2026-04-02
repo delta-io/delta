@@ -46,6 +46,8 @@ import io.delta.storage.commit.{
 import io.delta.storage.commit.uccommitcoordinator.{
   UCCommitCoordinatorClient,
   UCCoordinatedCommitsUsageLogs}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.CatalogTrackedInfo
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, FileSystem, LocalFileSystem, Path}
 import org.mockito.ArgumentMatchers.anyString
@@ -218,6 +220,31 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       }
       assertUsageLogsContains(usageLogs, UCCoordinatedCommitsUsageLogs.UC_ATTEMPT_FULL_BACKFILL)
       validateBackfillStrategy(tcc1, logPath, version = 11)
+    }
+  }
+
+  test("CatalogTrackedInfo.deltaUniformIceberg is propagated to UCClient.commit") {
+    withTempTableDir { tempDir =>
+      val log = DeltaLog.forTable(spark, tempDir.toString)
+      val logPath = log.logPath
+      val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
+      writeCommitZero(logPath)
+
+      val icebergMetadata = new IcebergMetadata("s3://bucket/metadata/v1.json", 1L, "2025-01-01")
+      val uniformMetadata = new UniformMetadata(icebergMetadata)
+      val catalogTrackedInfo = new CatalogTrackedInfo(Optional.of(uniformMetadata))
+
+      val commitInfo = org.apache.spark.sql.delta.actions.CommitInfo
+        .empty(version = Some(1)).withTimestamp(1)
+      val updatedActions = getUpdatedActionsForNonZerothCommit(commitInfo)
+      tableCommitCoordinatorClient.commit(
+        1L, Iterator(commitInfo.json), updatedActions, tableIdentifierOpt = None, catalogTrackedInfo)
+      waitForBackfill(1, tableCommitCoordinatorClient)
+
+      val stored = ucCommitCoordinator.getUniformMetadata(tableUUID.toString)
+      assert(stored.isDefined)
+      assert(stored.get.getIcebergMetadata.isPresent)
+      assert(stored.get.getIcebergMetadata.get.getMetadataLocation == "s3://bucket/metadata/v1.json")
     }
   }
 

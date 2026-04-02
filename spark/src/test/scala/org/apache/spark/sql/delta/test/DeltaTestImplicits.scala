@@ -31,6 +31,8 @@ import org.apache.spark.sql.delta.files.TahoeLogFileIndex
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import io.delta.storage.commit.{CommitResponse, GetCommitsResponse, UpdatedActions}
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.CatalogTrackedInfo
 import org.apache.hadoop.fs.{FileStatus, Path}
 
 import org.apache.spark.sql.{SaveMode, SparkSession}
@@ -131,7 +133,7 @@ object DeltaTestImplicits {
         actions: Iterator[String],
         updatedActions: UpdatedActions): CommitResponse = {
       tableCommitCoordinatorClient.commit(
-        commitVersion, actions, updatedActions, tableIdentifierOpt = None)
+        commitVersion, actions, updatedActions, tableIdentifierOpt = None, CatalogTrackedInfo.EMPTY)
     }
 
     def getCommits(
