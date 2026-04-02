@@ -2556,8 +2556,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("type widening: restarting with new DataFrame should recover") {
     withSQLConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
-      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true") {
       withTempDirs { (inputDir, outputDir, checkpointDir) =>
         sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
           "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
@@ -2615,8 +2614,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
   test("type widening: restarting with stale DataFrame should recover") {
     withSQLConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING.key -> "false",
-      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true",
-      DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key -> "true") {
+      DeltaConfigs.ENABLE_TYPE_WIDENING.defaultTablePropertyKey -> "true") {
       withTempDirs { (inputDir, outputDir, checkpointDir) =>
         sql(s"CREATE TABLE delta.`${inputDir.getCanonicalPath}` (id INT) " +
           "USING DELTA TBLPROPERTIES ('delta.enableTypeWidening' = 'true')")
