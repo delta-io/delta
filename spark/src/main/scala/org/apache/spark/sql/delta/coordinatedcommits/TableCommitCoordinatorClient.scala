@@ -27,6 +27,8 @@ import io.delta.storage.commit.{
   TableDescriptor,
   UpdatedActions
 }
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.CatalogTrackedInfo
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
@@ -61,14 +63,27 @@ case class TableCommitCoordinatorClient(
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions,
-      tableIdentifierOpt: Option[CatalystTableIdentifier]): CommitResponse = {
-    commitCoordinatorClient.commit(
-      LogStoreInverseAdaptor(logStore, hadoopConf),
-      hadoopConf,
-      makeTableDesc(tableIdentifierOpt),
-      commitVersion,
-      actions.asJava,
-      updatedActions)
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
+      catalogTrackedInfo: CatalogTrackedInfo): CommitResponse = {
+    commitCoordinatorClient match {
+      case ucClient: UCCommitCoordinatorClient =>
+        ucClient.commit(
+          LogStoreInverseAdaptor(logStore, hadoopConf),
+          hadoopConf,
+          makeTableDesc(tableIdentifierOpt),
+          commitVersion,
+          actions.asJava,
+          catalogTrackedInfo,
+          updatedActions)
+      case _ =>
+        commitCoordinatorClient.commit(
+          LogStoreInverseAdaptor(logStore, hadoopConf),
+          hadoopConf,
+          makeTableDesc(tableIdentifierOpt),
+          commitVersion,
+          actions.asJava,
+          updatedActions)
+    }
   }
 
   def getCommits(
