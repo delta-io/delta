@@ -522,24 +522,24 @@ def normalizeColumnNamesInDataType(
     }
 
     def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
-      val existingFields = toFieldMap(existing)
       // scalastyle:off caselocale
+      def checkNoDuplicateColumns(schema: StructType, colType: String): Unit = {
+        val fieldNames = schema.fieldNames
+        val lowercaseNames = fieldNames.map(_.toLowerCase).toSet
+        if (lowercaseNames.size != fieldNames.length) {
+          val duplicates = fieldNames.groupBy(_.toLowerCase).collect {
+            case (_, names) if names.length > 1 => names.mkString(", ")
+          }
+          throw DeltaErrors.foundDuplicateColumnsException(colType,
+            duplicates.mkString(", "))
+        }
+      }
+
+      val existingFields = toFieldMap(existing)
+      checkNoDuplicateColumns(existing, "in the existing schema")
       val existingFieldNames = existing.fieldNames.map(_.toLowerCase).toSet
-      if (existingFieldNames.size != existing.length) {
-        val duplicates = existing.fieldNames.groupBy(_.toLowerCase).collect {
-          case (_, names) if names.length > 1 => names.mkString(", ")
-        }
-        throw DeltaErrors.foundDuplicateColumnsException("in the existing schema",
-          duplicates.mkString("; "))
-      }
+      checkNoDuplicateColumns(newtype, "in the read schema")
       val newFields = newtype.fieldNames.map(_.toLowerCase).toSet
-      if (newFields.size != newtype.length) {
-        val duplicates = newtype.fieldNames.groupBy(_.toLowerCase).collect {
-          case (_, names) if names.length > 1 => names.mkString(", ")
-        }
-        throw DeltaErrors.foundDuplicateColumnsException("in the read schema",
-          duplicates.mkString("; "))
-      }
       // scalastyle:on caselocale
 
       if (!allowMissingColumns &&
