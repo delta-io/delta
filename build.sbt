@@ -723,7 +723,7 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = "0.4.0"
+val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.0")
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
@@ -1406,9 +1406,9 @@ lazy val flink = (project in file("flink"))
   .settings(
     name := "delta-flink",
     commonSettings,
-    skipReleaseSettings,
+    releaseSettings,
     javafmtCheckSettings(),
-    publishArtifact := scalaBinaryVersion.value == "2.12", // only publish once
+    publishArtifact := scalaBinaryVersion.value == "2.13", // only publish once
     autoScalaLibrary := false, // exclude scala-library from dependencies
     assembly / assemblyJarName := s"delta-flink-$flinkVersion-${version.value}.jar",
     assembly / assemblyMergeStrategy := {

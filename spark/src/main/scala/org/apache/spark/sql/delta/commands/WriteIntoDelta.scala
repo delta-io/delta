@@ -218,6 +218,10 @@ case class WriteIntoDelta(
       throw DeltaErrors.overwriteSchemaUsedWithDynamicPartitionOverwrite()
     }
 
+    if (options.isReplaceOnOrUsingDefined) {
+      validateReplaceOnOrUsingOptionCombinations(options, isOverwriteOperation)
+    }
+
     // Validate partition predicates
     var containsDataFilters = false
     val replaceWhere = options.replaceWhere.flatMap { replace =>
@@ -414,9 +418,7 @@ case class WriteIntoDelta(
       spark: SparkSession,
       txn: OptimisticTransaction,
       conditions: Seq[Expression]): Seq[Action] = {
-    val relation = LogicalRelation(
-        txn.deltaLog.createRelation(snapshotToUseOpt = Some(txn.snapshot),
-          catalogTableOpt = txn.catalogTable))
+    val relation = createTableRelation(txn, tableAliasOpt = None)
     val processedCondition = conditions.reduceOption(And)
     val command = spark.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))

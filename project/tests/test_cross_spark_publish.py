@@ -57,6 +57,7 @@ NON_SPARK_RELATED_JAR_TEMPLATES = [
     "delta-kernel-defaults-{version}.jar",
     "delta-storage-s3-dynamodb-{version}.jar",
     "delta-kernel-unitycatalog-{version}.jar",
+    "delta-flink-{version}.jar",
     "delta-contribs_2.13-{version}.jar",
 ]
 
