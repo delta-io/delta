@@ -213,9 +213,6 @@ trait WriteIntoDeltaLike extends DeltaCommand {
   /**
    * Strips any targetAlias qualifier from column references in predicate expressions.
    * For example, with targetAlias "t", `t.col` becomes `col`.
-   * Note: alias references inside subquery expressions are NOT stripped, as the table
-   * relation is constructed with the targetAlias at delete time to disambiguate from
-   * subquery sources that may share the same schema as the table.
    */
   protected def stripTargetAliasIfExists(
       sparkSession: SparkSession,
