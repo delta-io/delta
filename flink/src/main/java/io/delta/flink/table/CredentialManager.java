@@ -70,10 +70,8 @@ public class CredentialManager {
    * Determines whether the given exception indicates a credential-related failure.
    *
    * <p>This predicate can be used by callers to detect failures that should trigger a credential
-   * refresh or retry logic.
-   *
-   * @return a Predicate that returns {@code true} if the exception is related to invalid or expired
-   *     credentials; {@code false} otherwise
+   * refresh or retry logic. Returns {@code true} if the exception is related to invalid or expired
+   * credentials; {@code false} otherwise.
    */
   public static Predicate<Throwable> isCredentialsExpired =
       ExceptionUtils.recursiveCheck(ex -> ex instanceof java.nio.file.AccessDeniedException);
