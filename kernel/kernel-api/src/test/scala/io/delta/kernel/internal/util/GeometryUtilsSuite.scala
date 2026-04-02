@@ -293,4 +293,5 @@ class GeometryUtilsSuite extends AnyFunSuite {
     }
     assert(e2.getMessage.contains("out of range"))
   }
+
 }

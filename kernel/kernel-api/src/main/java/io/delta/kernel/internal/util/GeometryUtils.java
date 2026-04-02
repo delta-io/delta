@@ -162,7 +162,7 @@ public class GeometryUtils {
    * if out of range.
    */
   public static void validateGeographyCoordinates(double lon, double lat, String wkt) {
-    // POINT EMPTY produces NaN -- skip range check
+    // POINT EMPTY produces NaN — skip range check
     if (Double.isNaN(lon) && Double.isNaN(lat)) {
       return;
     }

@@ -378,16 +378,9 @@ public class DataFileStatistics {
    * @throws KernelException if the data types don't match
    */
   private void validateLiteralType(StructField field, Literal literal) {
-    DataType fieldType = field.getDataType();
-    // Geometry/geography stats are stored as WKT string literals
-    if (fieldType instanceof GeometryType || fieldType instanceof GeographyType) {
-      if (!(literal.getDataType() instanceof StringType)) {
-        throw DeltaErrors.statsTypeMismatch(field.getName(), fieldType, literal.getDataType());
-      }
-      return;
-    }
-    // Variant stats are Z85-encoded strings
-    DataType expectedLiteralType = fieldType instanceof VariantType ? StringType.STRING : fieldType;
+    // Variant stats in JSON are Z85 encoded strings, all other stats should match the field type
+    DataType expectedLiteralType =
+        field.getDataType() instanceof VariantType ? StringType.STRING : field.getDataType();
     if (literal.getDataType() == null
         || !expectedLiteralType.isWriteCompatible(literal.getDataType())) {
       throw DeltaErrors.statsTypeMismatch(
