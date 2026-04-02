@@ -75,6 +75,11 @@ public class IndexedFile implements AdmittableFile {
     return cdcFile;
   }
 
+  /** Returns true if this IndexedFile contains an explicit CDC file (AddCDCFile action). */
+  public boolean isCDCFile() {
+    return cdcFile != null && cdcFile.isExplicit();
+  }
+
   @Override
   public boolean hasFileAction() {
     return addFile != null || cdcFile != null;

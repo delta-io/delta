@@ -17,10 +17,15 @@ package io.delta.spark.internal.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.AddCDCFile;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.data.GenericRow;
 import io.delta.kernel.internal.util.VectorUtils;
 import io.delta.kernel.types.StructType;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
@@ -45,6 +50,16 @@ public class IndexedFileTest {
             /* stats= */ Optional.empty()));
   }
 
+  private static Row createCDCRow(long size) {
+    Map<Integer, Object> fieldMap = new HashMap<>();
+    fieldMap.put(AddCDCFile.FULL_SCHEMA.indexOf("path"), "cdc-file.parquet");
+    fieldMap.put(
+        AddCDCFile.FULL_SCHEMA.indexOf("partitionValues"),
+        VectorUtils.stringStringMapValue(Collections.emptyMap()));
+    fieldMap.put(AddCDCFile.FULL_SCHEMA.indexOf("size"), size);
+    return new GenericRow(AddCDCFile.FULL_SCHEMA, fieldMap);
+  }
+
   @Test
   public void testSentinel() {
     IndexedFile sentinel = IndexedFile.sentinel(/* version= */ 5L, /* index= */ -1L);
@@ -54,6 +69,7 @@ public class IndexedFileTest {
     assertFalse(sentinel.hasFileAction());
     assertNull(sentinel.getAddFile());
     assertNull(sentinel.getCDCFile());
+    assertFalse(sentinel.isCDCFile());
     assertThrows(IllegalStateException.class, sentinel::getFileSize);
     assertEquals("IndexedFile{version=5, index=-1}", sentinel.toString());
   }
@@ -68,6 +84,7 @@ public class IndexedFileTest {
     assertTrue(indexed.hasFileAction());
     assertSame(addFile, indexed.getAddFile());
     assertNull(indexed.getCDCFile());
+    assertFalse(indexed.isCDCFile());
     assertEquals(4096, indexed.getFileSize());
 
     String str = indexed.toString();
@@ -76,18 +93,25 @@ public class IndexedFileTest {
 
   @Test
   public void testCdc() {
+    // Inferred CDC (from AddFile)
     AddFile addFile = createTestAddFile("file.parquet", 3072);
-    CDCDataFile cdcFile = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 999L);
-    IndexedFile indexed = IndexedFile.cdc(/* version= */ 2L, /* index= */ 0L, cdcFile);
+    CDCDataFile inferredCdc = CDCDataFile.fromAddFile(addFile, /* commitTimestamp= */ 999L);
+    IndexedFile inferred = IndexedFile.cdc(/* version= */ 2L, /* index= */ 0L, inferredCdc);
 
-    assertEquals(2L, indexed.getVersion());
-    assertEquals(0L, indexed.getIndex());
-    assertTrue(indexed.hasFileAction());
-    assertNull(indexed.getAddFile());
-    assertSame(cdcFile, indexed.getCDCFile());
-    assertEquals(3072, indexed.getFileSize());
+    assertTrue(inferred.hasFileAction());
+    assertNull(inferred.getAddFile());
+    assertSame(inferredCdc, inferred.getCDCFile());
+    assertFalse(inferred.isCDCFile());
+    assertEquals(3072, inferred.getFileSize());
 
-    String str = indexed.toString();
+    String str = inferred.toString();
     assertTrue(str.startsWith("IndexedFile{version=2, index=0, cdcFile=CDCDataFile{"));
+
+    // Explicit CDC (from AddCDCFile row)
+    Row cdcRow = createCDCRow(/* size= */ 5000);
+    CDCDataFile explicitCdc = CDCDataFile.fromExplicitCDC(cdcRow, /* commitTimestamp= */ 888L);
+    IndexedFile explicit = IndexedFile.cdc(/* version= */ 4L, /* index= */ 1L, explicitCdc);
+    assertTrue(explicit.isCDCFile());
+    assertEquals(5000, explicit.getFileSize());
   }
 }

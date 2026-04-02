@@ -15,30 +15,80 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import io.delta.kernel.data.Row;
+import io.delta.kernel.internal.actions.AddCDCFile;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.RemoveFile;
+import javax.annotation.Nullable;
 import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 
-/** Wrapper for inferred CDF files. */
+/**
+ * Wrapper for all CDC file variants: inferred from AddFile (insert/update), inferred from
+ * RemoveFile (delete), or explicit AddCDCFile actions.
+ */
 public class CDCDataFile {
-  private final AddFile addFile;
-  private final String changeType;
+  @Nullable private final AddFile addFile;
+  @Nullable private final RemoveFile removeFile;
+  private final boolean isExplicit;
+  @Nullable private final String changeType;
   private final long commitTimestamp;
+  private final long fileSize;
 
-  /** Creates a CDC file representing an insert (initial snapshot or new AddFile). */
-  public static CDCDataFile fromAddFile(AddFile addFile, long commitTimestamp) {
-    return new CDCDataFile(addFile, CDCReader.CDC_TYPE_INSERT(), commitTimestamp);
-  }
-
-  private CDCDataFile(AddFile addFile, String changeType, long commitTimestamp) {
+  private CDCDataFile(
+      @Nullable AddFile addFile,
+      @Nullable RemoveFile removeFile,
+      boolean isExplicit,
+      @Nullable String changeType,
+      long commitTimestamp,
+      long fileSize) {
     this.addFile = addFile;
+    this.removeFile = removeFile;
+    this.isExplicit = isExplicit;
     this.changeType = changeType;
     this.commitTimestamp = commitTimestamp;
+    this.fileSize = fileSize;
   }
 
+  /** Create a CDCDataFile inferred from an AddFile action (always "insert"). */
+  public static CDCDataFile fromAddFile(AddFile addFile, long commitTimestamp) {
+    return new CDCDataFile(
+        addFile,
+        /* removeFile= */ null,
+        /* isExplicit= */ false,
+        CDCReader.CDC_TYPE_INSERT(),
+        commitTimestamp,
+        addFile.getSize());
+  }
+
+  /** Create a CDCDataFile inferred from a RemoveFile action (always "delete"). */
+  public static CDCDataFile fromRemoveFile(RemoveFile removeFile, long commitTimestamp) {
+    return new CDCDataFile(
+        /* addFile= */ null,
+        removeFile,
+        /* isExplicit= */ false,
+        CDCReader.CDC_TYPE_DELETE_STRING(),
+        commitTimestamp,
+        removeFile.getSize().orElse(0L));
+  }
+
+  /** Create a CDCDataFile for an explicit AddCDCFile action. */
+  public static CDCDataFile fromExplicitCDC(Row cdcRow, long commitTimestamp) {
+    long size = cdcRow.getLong(AddCDCFile.FULL_SCHEMA.indexOf("size"));
+    return new CDCDataFile(
+        /* addFile= */ null,
+        /* removeFile= */ null,
+        /* isExplicit= */ true,
+        /* changeType= */ null,
+        commitTimestamp,
+        size);
+  }
+
+  @Nullable
   public AddFile getAddFile() {
     return addFile;
   }
 
+  @Nullable
   public String getChangeType() {
     return changeType;
   }
@@ -48,14 +98,27 @@ public class CDCDataFile {
   }
 
   public long getFileSize() {
-    return addFile.getSize();
+    return fileSize;
+  }
+
+  /** Returns true if this is an explicit CDC file (from AddCDCFile action). */
+  public boolean isExplicit() {
+    return isExplicit;
   }
 
   @Override
   public String toString() {
     StringBuilder sb = new StringBuilder("CDCDataFile{");
-    sb.append("addFile=").append(addFile);
-    sb.append(", changeType='").append(changeType).append("'");
+    if (addFile != null) {
+      sb.append("addFile=").append(addFile);
+    } else if (removeFile != null) {
+      sb.append("removeFile=").append(removeFile);
+    } else {
+      sb.append("explicit=true");
+    }
+    if (changeType != null) {
+      sb.append(", changeType='").append(changeType).append("'");
+    }
     sb.append(", commitTimestamp=").append(commitTimestamp);
     sb.append("}");
     return sb.toString();
