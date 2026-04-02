@@ -235,7 +235,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       val catalogTrackedInfo = new CatalogTrackedInfo(Optional.of(uniformMetadata))
 
       val commitInfo = org.apache.spark.sql.delta.actions.CommitInfo
-        .empty(version = Some(1)).withTimestamp(1)
+        .empty(version = Some(1)).withTimestamp(1).copy(inCommitTimestamp = Some(1))
       val updatedActions = getUpdatedActionsForNonZerothCommit(commitInfo)
       tableCommitCoordinatorClient.commit(
         1L,
