@@ -57,8 +57,8 @@ trait DeltaWriteOptions
   def isReplaceOnOrUsingDefined: Boolean =
     replaceOn.isDefined || replaceUsing.isDefined
 
-
   val targetAlias: Option[String] = options.get(TARGET_ALIAS_OPTION)
+
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
   val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
 
@@ -277,7 +277,6 @@ object DeltaOptions extends DeltaLogging {
    * table and the query.
    */
   val REPLACE_USING_OPTION = "replaceUsing"
-
 
   /**
    * An option to alias the target table in replaceOn/replaceWhere conditions.
