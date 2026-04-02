@@ -119,6 +119,39 @@ public class DeltaV2Mode {
   }
 
   /**
+   * Determines if CREATE TABLE should use the DSv2 + Kernel + CCv2 path.
+   *
+   * <p>Routing:
+   * <ul>
+   *   <li>STRICT: always use Kernel create path (for testing)</li>
+   *   <li>AUTO: use Kernel create path only for Unity Catalog catalog-managed tables</li>
+   *   <li>NONE (default): use V1 path</li>
+   * </ul>
+   *
+   * @param isUnityCatalog whether the delegate catalog is Unity Catalog
+   * @param tableProperties the table properties from the CREATE TABLE statement (may be null)
+   * @return true if the Kernel create path should be used
+   */
+  public boolean shouldUseKernelForCreateTable(
+      boolean isUnityCatalog, Map<String, String> tableProperties) {
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        if (!isUnityCatalog) {
+          return false;
+        }
+        if (tableProperties == null || tableProperties.isEmpty()) {
+          return false;
+        }
+        return CatalogTableUtils.isCatalogManagedFeatureEnabled(
+                tableProperties, CatalogTableUtils.FEATURE_CATALOG_MANAGED);
+      default:
+        return false;
+    }
+  }
+
+  /**
    * Gets the current mode string (for logging/debugging).
    */
   public String getMode() {

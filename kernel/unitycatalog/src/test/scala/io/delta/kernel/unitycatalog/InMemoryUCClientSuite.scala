@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
 
 import io.delta.storage.commit.{Commit, CommitFailedException}
-import io.delta.storage.commit.uccommitcoordinator.InvalidTargetTableException
+import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -117,6 +117,64 @@ class InMemoryUCClientSuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       startVersionOpt = Optional.of(2L),
       endVersionOpt = Optional.of(4L),
       expectedVersions = 2L to 4L)
+  }
+
+  private def makeColumns(specs: (String, String, String)*): java.util.List[UCClient.ColumnDef] = {
+    val cols = new java.util.ArrayList[UCClient.ColumnDef]()
+    specs.zipWithIndex.foreach { case ((name, typeName, typeText), idx) =>
+      cols.add(new UCClient.ColumnDef(name, typeName, typeText, s""""$typeText"""", true, idx))
+    }
+    cols
+  }
+
+  private val testColumns = makeColumns(("id", "INT", "int"), ("name", "STRING", "string"))
+
+  private val testProperties: java.util.Map[String, String] = {
+    val m = new java.util.HashMap[String, String]()
+    m.put("delta.lastUpdateVersion", "0")
+    m
+  }
+
+  test("finalizeCreate then commit and getCommits works end-to-end") {
+    val client = new InMemoryUCClient("ucMetastoreId")
+    val fqn = "cat.sch.tbl"
+
+    client.finalizeCreate(
+      "tbl",
+      "cat",
+      "sch",
+      "s3://bucket/tbl",
+      testColumns,
+      testProperties)
+
+    client.commitWithDefaults(fqn, fakeURI, Optional.of(createCommit(1L)))
+    client.commitWithDefaults(fqn, fakeURI, Optional.of(createCommit(2L)))
+
+    val response = client.getCommits(fqn, fakeURI, Optional.empty(), Optional.empty())
+    assert(response.getCommits.size() == 2)
+    assert(response.getLatestTableVersion == 2L)
+  }
+
+  test("finalizeCreate throws on duplicate table name") {
+    val client = new InMemoryUCClient("ucMetastoreId")
+    client.finalizeCreate(
+      "tbl",
+      "cat",
+      "sch",
+      "s3://bucket/tbl",
+      testColumns,
+      testProperties)
+
+    val ex = intercept[IllegalArgumentException] {
+      client.finalizeCreate(
+        "tbl",
+        "cat",
+        "sch",
+        "s3://bucket/tbl2",
+        testColumns,
+        testProperties)
+    }
+    assert(ex.getMessage.contains("cat.sch.tbl already exists"))
   }
 
 }

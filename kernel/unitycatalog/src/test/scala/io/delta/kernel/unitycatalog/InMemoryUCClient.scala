@@ -18,7 +18,7 @@ package io.delta.kernel.unitycatalog
 
 import java.lang.{Long => JLong}
 import java.net.URI
-import java.util.Optional
+import java.util.{List => JList, Map => JMap, Optional}
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -202,6 +202,20 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     val tableData = getTableDataElseThrow(tableId)
     val filteredCommits = tableData.getCommitsInRange(startVersion, endVersion)
     new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
+  }
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: JList[UCClient.ColumnDef],
+      properties: JMap[String, String]): Unit = {
+    // Keyed by FQN; callers must pass this same FQN as tableId to commit/getCommits.
+    // In production, UC assigns a UUID that serves as tableId — this mock skips that.
+    val fqn = s"$catalogName.$schemaName.$tableName"
+    Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"Table $fqn already exists"))
   }
 
   override def close(): Unit = {}
