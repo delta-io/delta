@@ -238,13 +238,18 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         .empty(version = Some(1)).withTimestamp(1)
       val updatedActions = getUpdatedActionsForNonZerothCommit(commitInfo)
       tableCommitCoordinatorClient.commit(
-        1L, Iterator(commitInfo.json), updatedActions, tableIdentifierOpt = None, catalogTrackedInfo)
+        1L,
+        Iterator(commitInfo.json),
+        updatedActions,
+        tableIdentifierOpt = None,
+        catalogTrackedInfo)
       waitForBackfill(1, tableCommitCoordinatorClient)
 
       val stored = ucCommitCoordinator.getUniformMetadata(tableUUID.toString)
       assert(stored.isDefined)
       assert(stored.get.getIcebergMetadata.isPresent)
-      assert(stored.get.getIcebergMetadata.get.getMetadataLocation == "s3://bucket/metadata/v1.json")
+      assert(stored.get.getIcebergMetadata.get.getMetadataLocation ==
+        "s3://bucket/metadata/v1.json")
     }
   }
 
