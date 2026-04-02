@@ -194,8 +194,7 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
           idCol,
           Literal.ofInt(5)))
       assert(collectScanFileRows(
-        snapshot.getScanBuilder().withFilter(geoAndId).build()
-      ).size == 2)
+        snapshot.getScanBuilder().withFilter(geoAndId).build()).size == 2)
 
       // NE geo + id>=15: f1 matches both, f2(null) included
       val geoAndId2 = new io.delta.kernel.expressions.And(
@@ -208,8 +207,7 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
           idCol,
           Literal.ofInt(15)))
       assert(collectScanFileRows(
-        snapshot.getScanBuilder().withFilter(geoAndId2).build()
-      ).size == 2)
+        snapshot.getScanBuilder().withFilter(geoAndId2).build()).size == 2)
 
       // Center geo: both data files skipped, only f2(null)
       val geoCenterAny = new StGeometryBoxesIntersect(
@@ -217,8 +215,7 @@ class GeometryDataSkippingSuite extends AnyFunSuite with WriteUtils {
         Literal.ofGeospatialWKT("POINT (4.0 4.0)", colType),
         Literal.ofGeospatialWKT("POINT (6.0 6.0)", colType))
       assert(collectScanFileRows(
-        snapshot.getScanBuilder().withFilter(geoCenterAny).build()
-      ).size == 1)
+        snapshot.getScanBuilder().withFilter(geoCenterAny).build()).size == 1)
     }
   }
 
