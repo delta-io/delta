@@ -92,5 +92,13 @@ class InMemoryUCClient(
       Option(endVersion.orElse(null)).map(_.toLong))
   }
 
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {}
+
   override def close(): Unit = {}
 }
