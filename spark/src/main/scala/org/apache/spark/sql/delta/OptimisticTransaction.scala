@@ -1838,7 +1838,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
-      setCommitted(commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
+      // committedActions mirrors the committed log JSON (CommitInfo first),
+      // so post-commit hooks can read operationMetrics without re-parsing.
+      setCommitted(commitVersion, postCommitSnapshot,
+        updatedCurrentTransactionInfo.finalActionsToCommit)
       logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
         log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
       commitVersion
