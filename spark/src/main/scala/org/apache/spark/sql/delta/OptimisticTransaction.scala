@@ -1021,7 +1021,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def assertMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
-    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
+    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "METADATA_UPDATE")
     if (metadata.columnMappingMode == NoMapping) {
       SchemaUtils.checkSchemaFieldNames(metadata.dataSchema, metadata.columnMappingMode)
       val partitionColCheckIsFatal =

@@ -913,8 +913,65 @@
   },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
-      "Found duplicate column(s) <coltype>: <duplicateCols>"
+      "Found duplicate column(s): <duplicateCols>."
     ],
+    "subClass" : {
+      "ADDING_COLUMNS" : {
+        "message" : [
+          "Duplicate found while adding columns."
+        ]
+      },
+      "CLUSTER_BY" : {
+        "message" : [
+          "Duplicate found in CLUSTER BY."
+        ]
+      },
+      "DATA" : {
+        "message" : [
+          "Duplicate found in the data to save."
+        ]
+      },
+      "EXISTING_SCHEMA" : {
+        "message" : [
+          "Duplicate found in the existing schema."
+        ]
+      },
+      "METADATA_UPDATE" : {
+        "message" : [
+          "Duplicate found in the metadata update."
+        ]
+      },
+      "PARTITION_COLUMNS" : {
+        "message" : [
+          "Duplicate found in the partition columns."
+        ]
+      },
+      "PARTITION_SCHEMA" : {
+        "message" : [
+          "Duplicate found in the partition schema."
+        ]
+      },
+      "READ_SCHEMA" : {
+        "message" : [
+          "Duplicate found in the read schema."
+        ]
+      },
+      "REPLACING_COLUMNS" : {
+        "message" : [
+          "Duplicate found while replacing columns."
+        ]
+      },
+      "SPECIFIED_COLUMNS" : {
+        "message" : [
+          "Duplicate found in the specified columns."
+        ]
+      },
+      "TABLE_SCHEMA" : {
+        "message" : [
+          "Duplicate found in the table schema."
+        ]
+      }
+    },
     "sqlState" : "42711"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_INSERT" : {

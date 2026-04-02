@@ -300,7 +300,7 @@ class DeltaLog private(
 
     val txn = startTransaction(catalogTable, Some(snapshot))
     try {
-      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
+      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "TABLE_SCHEMA")
     } catch {
       case e: AnalysisException =>
         throw DeltaErrors.duplicateColumnsOnUpdateTable(e)
