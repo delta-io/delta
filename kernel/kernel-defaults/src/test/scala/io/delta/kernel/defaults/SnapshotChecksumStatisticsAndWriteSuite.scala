@@ -39,10 +39,6 @@ import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.FileStatus
 
-import org.apache.spark.sql.delta.DeltaLog
-import org.apache.spark.sql.delta.actions.CommitInfo
-
-import org.apache.hadoop.fs.Path
 import org.scalatest.funsuite.AnyFunSuite
 
 class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils {
@@ -442,24 +438,24 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
   test("getTableStats: CRC between checkpoint and current, " +
     "remove without size => empty") {
     withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(path))
-      deltaLog
-        .startTransaction()
-        .commitManuallyWithValidation(
-          CommitInfo(
-            time = 12345,
-            operation = "REPLACE TABLE",
-            inCommitTimestamp = Some(12345),
-            operationParameters = Map.empty,
-            commandContext = Map.empty,
-            readVersion = Some(14),
-            isolationLevel = None,
-            isBlindAppend = None,
-            operationMetrics = None,
-            userMetadata = None,
-            tags = None,
-            txnId = None),
-          deltaLog.getSnapshotAt(14).allFiles.head().remove.copy(size = None).wrap.unwrap)
+      val snapshot14 = TableManager.loadSnapshot(path).build(engine)
+      val scanFileRows = collectScanFileRows(snapshot14.getScanBuilder.build())
+      val removePath = InternalScanFileUtils.getFilePath(scanFileRows.head)
+      val removeRow = new GenericRow(
+        RemoveFile.FULL_SCHEMA,
+        Map[Integer, Object](
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> removePath,
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) ->
+            Long.box(System.currentTimeMillis()),
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) ->
+            Boolean.box(true)).asJava)
+      val txn = snapshot14
+        .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
+      txn.commit(
+        engine,
+        inMemoryIterable(
+          singletonCloseableIterator(SingleAction.createRemoveFileSingleAction(removeRow))))
+
       deleteChecksumFileForTable(path, Seq(15))
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 15)
       assert(!snapshot.getStatistics.getTableStats(engine).isPresent)
@@ -469,24 +465,11 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
   test("getTableStats: CRC between checkpoint and current, " +
     "unsupported operation => empty") {
     withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
-      val deltaLog = DeltaLog.forTable(spark, new Path(path))
-      deltaLog
-        .startTransaction()
-        .commitManuallyWithValidation(
-          CommitInfo(
-            time = 12345,
-            operation = "MANUAL UPDATE",
-            inCommitTimestamp = Some(12345),
-            operationParameters = Map.empty,
-            commandContext = Map.empty,
-            readVersion = Some(14),
-            isolationLevel = None,
-            isBlindAppend = None,
-            operationMetrics = None,
-            userMetadata = None,
-            tags = None,
-            txnId = None),
-          deltaLog.getSnapshotAt(14).allFiles.head().copy(dataChange = false).wrap.unwrap)
+      val snapshot14 = TableManager.loadSnapshot(path).build(engine)
+      val txn = snapshot14
+        .buildUpdateTableTransaction("x", Operation.MANUAL_UPDATE).build(engine)
+      txn.commit(engine, emptyIterable())
+
       deleteChecksumFileForTable(path, Seq(15))
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 15)
       assert(!snapshot.getStatistics.getTableStats(engine).isPresent)
