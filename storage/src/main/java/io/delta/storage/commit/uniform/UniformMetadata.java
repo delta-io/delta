@@ -46,8 +46,5 @@ public class UniformMetadata {
     return Optional.ofNullable(icebergMetadata);
   }
 
-
-
   // Future: public Optional<HudiMetadata> getHudiMetadata() { ... }
-
 }

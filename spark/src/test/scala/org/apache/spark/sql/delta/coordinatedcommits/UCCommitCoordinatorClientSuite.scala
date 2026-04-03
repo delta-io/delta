@@ -223,7 +223,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
     }
   }
 
-  test("Support deltaUniformIceberg for tableCommitCoordinatorClient") {
+  test("Support UniForm update for tableCommitCoordinatorClient") {
     withTempTableDir { tempDir =>
       val log = DeltaLog.forTable(spark, tempDir.toString)
       val logPath = log.logPath
@@ -247,8 +247,10 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       val stored = ucCommitCoordinator.getUniformMetadata(tableUUID.toString)
       assert(stored.isDefined)
       assert(stored.get.getIcebergMetadata.isPresent)
-      assert(stored.get.getIcebergMetadata.get.getMetadataLocation ==
-        "s3://bucket/metadata/v1.json")
+      val storedIceberg = stored.get.getIcebergMetadata.get
+      assert(storedIceberg.getMetadataLocation == "s3://bucket/metadata/v1.json")
+      assert(storedIceberg.getConvertedDeltaVersion == 1L)
+      assert(storedIceberg.getConvertedDeltaTimestamp == "2025-01-01")
     }
   }
 
