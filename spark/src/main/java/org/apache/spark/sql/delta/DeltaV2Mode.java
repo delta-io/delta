@@ -19,6 +19,7 @@ package org.apache.spark.sql.delta;
 import java.util.Map;
 import java.util.Optional;
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf$;
 import org.apache.spark.sql.delta.util.CatalogTableUtils;
@@ -116,6 +117,41 @@ public class DeltaV2Mode {
         // NONE or unknown: always validate schema via DeltaLog
         return false;
     }
+  }
+
+  /**
+   * Determines if metadata-only CREATE TABLE should use the Kernel-based version-0 commit path.
+   *
+   * <p>STRICT enables the path for all Delta tables. AUTO only enables it for Unity Catalog
+   * managed tables so regular path-based and non-UC catalog creates continue to use the V1
+   * implementation.
+   */
+  public boolean shouldUseKernelMetadataOnlyCreate(Map<String, String> properties) {
+    switch (mode()) {
+      case STRICT:
+        return true;
+      case AUTO:
+        return CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)
+            || isLegacyUnityCatalogManagedTable(properties);
+      default:
+        return false;
+    }
+  }
+
+  private boolean isLegacyUnityCatalogManagedTable(Map<String, String> properties) {
+    if (properties == null || properties.isEmpty()) {
+      return false;
+    }
+    boolean isUCBacked = properties.containsKey(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    return isUCBacked
+        && (hasSupportedCatalogManagedFeature(properties, "delta.feature.catalogManaged")
+            || hasSupportedCatalogManagedFeature(
+                properties, "delta.feature.catalogOwned-preview"));
+  }
+
+  private boolean hasSupportedCatalogManagedFeature(Map<String, String> properties, String key) {
+    String value = properties.get(key);
+    return value != null && value.equalsIgnoreCase("supported");
   }
 
   /**

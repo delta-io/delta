@@ -16,15 +16,24 @@
 
 package org.apache.spark.sql.delta.catalog;
 
+import io.delta.kernel.utils.CloseableIterable;
+import io.delta.spark.internal.v2.catalog.CommittedCreateTableOperation;
+import io.delta.spark.internal.v2.catalog.CreateTableCatalogPublication;
+import io.delta.spark.internal.v2.catalog.CreateTableCatalogPublisher;
+import io.delta.spark.internal.v2.catalog.CreateTableOperationExecutor;
+import io.delta.spark.internal.v2.catalog.CreateTableOperationPlanner;
+import io.delta.spark.internal.v2.catalog.PreparedCreateTableOperation;
 import io.delta.spark.internal.v2.catalog.SparkTable;
-import org.apache.spark.sql.delta.DeltaV2Mode;
 import java.util.HashMap;
 import java.util.function.Supplier;
-import org.apache.hadoop.fs.Path;
-import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.connector.catalog.CatalogV2Util;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.catalog.Table;
+import org.apache.spark.sql.delta.DeltaV2Mode;
+import org.apache.spark.sql.delta.sources.DeltaSourceUtils;
+import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.connector.expressions.Transform;
 
 /**
  * A Spark catalog plugin for Delta Lake tables that implements the Spark DataSource V2 Catalog API.
@@ -63,6 +72,59 @@ import org.apache.spark.sql.connector.catalog.Table;
  * <p>See {@link DeltaV2Mode} for V1 vs V2 connector definitions and enable mode configuration.</p>
  */
 public class DeltaCatalog extends AbstractDeltaCatalog {
+  static final String ENGINE_INFO = "kernel-spark-dsv2";
+
+  private static final CreateTableOperationPlanner CREATE_TABLE_PLANNER =
+      new CreateTableOperationPlanner();
+  private static final CreateTableOperationExecutor CREATE_TABLE_EXECUTOR =
+      new CreateTableOperationExecutor();
+  private static final CreateTableCatalogPublisher CREATE_TABLE_PUBLISHER =
+      new CreateTableCatalogPublisher();
+
+  @Override
+  public Table createTable(
+      Identifier ident,
+      StructType schema,
+      Transform[] partitions,
+      java.util.Map<String, String> properties) {
+    DeltaV2Mode mode = new DeltaV2Mode(spark().sessionState().conf());
+    boolean shouldUseKernelCreate =
+        mode.shouldUseKernelMetadataOnlyCreate(properties)
+            && DeltaSourceUtils.isDeltaDataSourceName(getProvider(properties))
+            && (isUnityCatalog() || isPathIdentifier(ident))
+            && CreateTableOperationPlanner.canRepresentWithKernel(partitions);
+
+    if (!shouldUseKernelCreate) {
+      return super.createTable(ident, schema, partitions, properties);
+    }
+
+    boolean isPathTable = isPathIdentifier(ident);
+    try {
+      PreparedCreateTableOperation prepared =
+          CREATE_TABLE_PLANNER.planCreateTable(
+              ident, schema, partitions, properties, spark(), name(), isPathTable);
+      CommittedCreateTableOperation committed =
+          CREATE_TABLE_EXECUTOR.commitPreparedCreate(
+              prepared, ENGINE_INFO, CloseableIterable.emptyIterable());
+
+      if (!isPathTable) {
+        CreateTableCatalogPublication publication =
+            CREATE_TABLE_PUBLISHER.buildCatalogPublication(properties, committed);
+        createCatalogTable(
+            ident,
+            CatalogV2Util.v2ColumnsToStructType(publication.getColumns()),
+            publication.getPartitions(),
+            publication.getProperties());
+        return loadTable(ident);
+      }
+      return loadPathTable(ident);
+    } catch (RuntimeException e) {
+      if (CreateTableOperationPlanner.shouldFallbackToV1Create(e)) {
+        return super.createTable(ident, schema, partitions, properties);
+      }
+      throw e;
+    }
+  }
 
   /**
    * Loads a Delta table that is registered in the catalog.
