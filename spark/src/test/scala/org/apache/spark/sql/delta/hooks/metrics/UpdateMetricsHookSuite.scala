@@ -24,6 +24,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
 import org.apache.spark.sql.delta.{CommittedTransaction, DeltaLog}
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{CatalogTableUtils, JsonUtils}
 
@@ -39,6 +40,22 @@ class UpdateMetricsHookSuite extends QueryTest
   with DeltaSQLCommandTest {
   private val TEST_CATALOG_NAME = "test_catalog"
   private val TEST_UC_TABLE_ID = "uc-table-id-abc"
+  private val CONF_KEY = DeltaSQLConf.DELTA_UC_COMMIT_METRICS_ENABLED.key
+
+  private def makeTxn(
+      deltaLog: DeltaLog,
+      catalogTable: CatalogTable,
+      actions: Seq[Action] = Seq.empty): CommittedTransaction = {
+    CommittedTransaction(
+      txnId = "test-txn", deltaLog = deltaLog,
+      catalogTable = Some(catalogTable),
+      readSnapshot = deltaLog.snapshot,
+      committedVersion = 0L, committedActions = actions,
+      postCommitSnapshot = deltaLog.snapshot,
+      postCommitHooks = Seq.empty, txnExecutionTimeMs = 0L,
+      needsCheckpoint = false, partitionsAddedToOpt = None,
+      isBlindAppend = true)
+  }
 
   private def ucStorageFormat(ucTableId: String = TEST_UC_TABLE_ID): CatalogStorageFormat = {
     CatalogStorageFormat(
@@ -52,6 +69,41 @@ class UpdateMetricsHookSuite extends QueryTest
         "delta.feature.catalogManaged" -> "supported"
       )
     )
+  }
+
+  private def withMockMetricsServer(
+      responseCode: Int = 200,
+      responseDelay: Int = 0,
+      enableFlag: Boolean = true)(
+      testBody: (SimpleMockServer, DeltaLog, CatalogTable) => Unit): Unit = {
+    val mockServer = new SimpleMockServer(0)
+    mockServer.setResponseCode(responseCode)
+    if (responseDelay > 0) { mockServer.setResponseDelay(responseDelay) }
+    mockServer.start()
+    try {
+      spark.conf.set(CONF_KEY, enableFlag.toString)
+      spark.conf.set("spark.sql.catalog.spark_catalog",
+        "io.unitycatalog.spark.UCSingleCatalog")
+      spark.conf.set("spark.sql.catalog.spark_catalog.uri",
+        s"http://localhost:${mockServer.getPort()}")
+      spark.conf.set("spark.sql.catalog.spark_catalog.token",
+        "test-token")
+      withTempDir { dir =>
+        spark.range(1).write.format("delta")
+          .save(dir.getCanonicalPath)
+        val deltaLog = DeltaLog.forTable(
+          spark, dir.getCanonicalPath)
+        val ct = CatalogTable(
+          identifier = TableIdentifier(
+            "t", Some("d"), Some("spark_catalog")),
+          tableType = CatalogTableType.MANAGED,
+          storage = ucStorageFormat(), schema = new StructType())
+        testBody(mockServer, deltaLog, ct)
+      }
+    } finally {
+      spark.conf.set(CONF_KEY, "false")
+      mockServer.stop()
+    }
   }
 
   override protected def sparkConf: SparkConf = {
@@ -432,179 +484,117 @@ class UpdateMetricsHookSuite extends QueryTest
     }
   }
 
-  test("run(): fires HTTP POST for UC-managed table") {
-    val mockServer = new SimpleMockServer(0)
-    try {
-      mockServer.setResponseCode(200)
-      mockServer.start()
+  // Async dispatch tests: verify end-to-end send with payload
+  // validation, feature-flag gating, non-blocking
+  // behavior, error resilience, and skip logic for non-UC /
+  // missing-table-ID tables.
 
-      withTempDir { dir =>
-        spark.range(10).write.format("delta").save(dir.getCanonicalPath)
-        val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
-        val snapshot = deltaLog.snapshot
-
-        spark.conf.set(
-          "spark.sql.catalog.spark_catalog",
-          "io.unitycatalog.spark.UCSingleCatalog")
-        spark.conf.set(
-          "spark.sql.catalog.spark_catalog.uri",
-          s"http://localhost:${mockServer.getPort()}")
-        spark.conf.set(
-          "spark.sql.catalog.spark_catalog.token", "smoke-token")
-
-        val catalogTable = CatalogTable(
-          identifier = TableIdentifier(
-            "t", Some("default"), Some("spark_catalog")),
-          tableType = CatalogTableType.MANAGED,
-          storage = ucStorageFormat(),
-          schema = new StructType()
-        )
-
-        val addFile = AddFile("f1.parquet", Map.empty, 4096L, 0L,
-          dataChange = true, stats = """{"numRecords":50}""")
-        val commitInfo = CommitInfo(
-          version = Some(0L),
-          inCommitTimestamp = None,
-          timestamp = new java.sql.Timestamp(System.currentTimeMillis()),
-          userId = None, userName = None,
-          operation = "WRITE",
-          operationParameters = Map.empty,
-          job = None, notebook = None, clusterId = None,
-          readVersion = None, isolationLevel = None,
-          isBlindAppend = Some(true),
-          operationMetrics = Some(Map("numOutputRows" -> "50")),
-          userMetadata = None, tags = None, engineInfo = None, txnId = None)
-
-        val txn = CommittedTransaction(
-          txnId = "smoke-txn",
-          deltaLog = deltaLog,
-          catalogTable = Some(catalogTable),
-          readSnapshot = snapshot,
-          committedVersion = 0L,
-          committedActions = Seq(commitInfo, addFile),
-          postCommitSnapshot = snapshot,
-          postCommitHooks = Seq.empty,
-          txnExecutionTimeMs = 0L,
-          needsCheckpoint = false,
-          partitionsAddedToOpt = None,
-          isBlindAppend = true
-        )
-
-        UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
-
-        assert(mockServer.getRequestCount() == 1,
-          "Expected exactly 1 HTTP POST")
-        val body = mockServer.getLastRequestBody()
-        val expectedRequest = UpdateMetricsHook.buildRequest(
-          TEST_UC_TABLE_ID, Seq(commitInfo, addFile), 0L)
-        val actualPayload =
-          JsonUtils.fromJson[Map[String, Any]](body)
-        val expectedPayload =
-          JsonUtils.fromJson[Map[String, Any]](
-            JsonUtils.toJson(expectedRequest))
-        assert(actualPayload == expectedPayload,
-          "smoke test payload should match expected JSON")
-      }
-    } finally {
-      mockServer.stop()
+  test("run(): skips when commitMetrics.enabled is false") {
+    withMockMetricsServer(enableFlag = false) {
+        (mockServer, deltaLog, ct) =>
+      UpdateMetricsHook(Some(ct)).run(
+        spark, makeTxn(deltaLog, ct))
+      UpdateMetricsHook.awaitCompletion(5000)
+      assert(mockServer.getRequestCount() == 0,
+        "no HTTP request when feature flag is disabled")
     }
   }
 
-  test("run(): hook does not crash on HTTP 5xx (best-effort)") {
-    val mockServer = new SimpleMockServer(0)
-    try {
-      mockServer.setResponseCode(500)
-      mockServer.start()
+  test("run(): sends metrics asynchronously for UC-managed table") {
+    withMockMetricsServer() { (mockServer, deltaLog, ct) =>
+      val addFile = AddFile("f1.parquet", Map.empty, 4096L, 0L,
+        dataChange = true, stats = """{"numRecords":50}""")
+      val commitInfo = CommitInfo(version = Some(0L),
+        inCommitTimestamp = None,
+        timestamp = new java.sql.Timestamp(System.currentTimeMillis()),
+        userId = None, userName = None, operation = "WRITE",
+        operationParameters = Map.empty, job = None, notebook = None,
+        clusterId = None, readVersion = None, isolationLevel = None,
+        isBlindAppend = Some(true),
+        operationMetrics = Some(Map("numOutputRows" -> "50")),
+        userMetadata = None, tags = None, engineInfo = None,
+        txnId = None)
+      val txn = makeTxn(deltaLog, ct, Seq(commitInfo, addFile))
+      UpdateMetricsHook(Some(ct)).run(spark, txn)
+      assert(UpdateMetricsHook.awaitCompletion(10000),
+        "async send should complete within timeout")
+      assert(mockServer.getRequestCount() == 1,
+        "Expected exactly 1 HTTP POST")
+      val body = mockServer.getLastRequestBody()
+      val expected = UpdateMetricsHook.buildRequest(
+        TEST_UC_TABLE_ID, Seq(commitInfo, addFile), 0L)
+      assert(
+        JsonUtils.fromJson[Map[String, Any]](body) ==
+          JsonUtils.fromJson[Map[String, Any]](
+            JsonUtils.toJson(expected)),
+        "payload should match expected JSON")
+    }
+  }
 
-      withTempDir { dir =>
-        spark.range(10).write.format("delta")
-          .save(dir.getCanonicalPath)
-        val deltaLog = DeltaLog.forTable(
-          spark, dir.getCanonicalPath)
-        val snapshot = deltaLog.snapshot
+  test("run(): async error path logs warning without crashing") {
+    withMockMetricsServer(responseCode = 500) {
+        (mockServer, deltaLog, ct) =>
+      UpdateMetricsHook(Some(ct)).run(
+        spark, makeTxn(deltaLog, ct))
+      assert(UpdateMetricsHook.awaitCompletion(10000),
+        "async send should complete even on error")
+      assert(mockServer.getRequestCount() == 1,
+        "request should have been sent despite 5xx")
+      assert(UpdateMetricsHook.activeRequests.get() == 0,
+        "activeRequests must return to 0 after error")
+    }
+  }
 
-        spark.conf.set(
-          "spark.sql.catalog.spark_catalog",
-          "io.unitycatalog.spark.UCSingleCatalog")
-        spark.conf.set(
-          "spark.sql.catalog.spark_catalog.uri",
-          s"http://localhost:${mockServer.getPort()}")
-        spark.conf.set(
-          "spark.sql.catalog.spark_catalog.token",
-          "error-token")
+  test("run(): returns immediately (async) even with slow server") {
+    withMockMetricsServer(responseDelay = 3000) {
+        (mockServer, deltaLog, ct) =>
+      val startMs = System.currentTimeMillis()
+      UpdateMetricsHook(Some(ct)).run(
+        spark, makeTxn(deltaLog, ct))
+      val elapsedMs = System.currentTimeMillis() - startMs
+      assert(elapsedMs < 1000,
+        s"run() should return immediately but took ${elapsedMs}ms")
+      assert(UpdateMetricsHook.awaitCompletion(10000),
+        "async send should eventually complete")
+      assert(mockServer.getRequestCount() == 1,
+        "request should arrive after async completion")
+    }
+  }
 
-        val catalogTable = CatalogTable(
-          identifier = TableIdentifier(
-            "t", Some("default"), Some("spark_catalog")),
-          tableType = CatalogTableType.MANAGED,
-          storage = ucStorageFormat(),
-          schema = new StructType()
-        )
-
-        val txn = CommittedTransaction(
-          txnId = "error-txn",
-          deltaLog = deltaLog,
-          catalogTable = Some(catalogTable),
-          readSnapshot = snapshot,
-          committedVersion = 0L,
-          committedActions = Seq.empty,
-          postCommitSnapshot = snapshot,
-          postCommitHooks = Seq.empty,
-          txnExecutionTimeMs = 0L,
-          needsCheckpoint = false,
-          partitionsAddedToOpt = None,
-          isBlindAppend = true
-        )
-
-        UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
-
-        assert(mockServer.getRequestCount() == 1,
-          "request should still be sent on 5xx")
-      }
-    } finally {
-      mockServer.stop()
+  test("run(): skips metrics for non-UC-managed table") {
+    withMockMetricsServer() { (mockServer, deltaLog, _) =>
+      val nonUcTable = CatalogTable(
+        identifier = TableIdentifier(
+          "t", Some("d"), Some("spark_catalog")),
+        tableType = CatalogTableType.MANAGED,
+        storage = CatalogStorageFormat.empty,
+        schema = new StructType())
+      UpdateMetricsHook(Some(nonUcTable)).run(
+        spark, makeTxn(deltaLog, nonUcTable))
+      UpdateMetricsHook.awaitCompletion(5000)
+      assert(mockServer.getRequestCount() == 0,
+        "no HTTP request for non-UC-managed table")
     }
   }
 
   test("run(): skips metrics when table ID not in storage properties") {
-    withTempDir { dir =>
-      spark.range(1).write.format("delta").save(dir.getCanonicalPath)
-      val deltaLog = DeltaLog.forTable(spark, dir.getCanonicalPath)
-      val snapshot = deltaLog.snapshot
-
-      val catalogTable = CatalogTable(
+    withMockMetricsServer() { (mockServer, deltaLog, _) =>
+      val noIdTable = CatalogTable(
         identifier = TableIdentifier(
-          "t", Some("default"), Some("spark_catalog")),
+          "t", Some("d"), Some("spark_catalog")),
         tableType = CatalogTableType.MANAGED,
         storage = CatalogStorageFormat(
-          locationUri = None,
-          inputFormat = None,
-          outputFormat = None,
-          serde = None,
+          locationUri = None, inputFormat = None,
+          outputFormat = None, serde = None,
           compressed = false,
           properties = Map(
-            "delta.feature.catalogManaged" -> "supported"
-          )
-        ),
-        schema = new StructType()
-      )
-
-      val txn = CommittedTransaction(
-        txnId = "skip-txn",
-        deltaLog = deltaLog,
-        catalogTable = Some(catalogTable),
-        readSnapshot = snapshot,
-        committedVersion = 0L,
-        committedActions = Seq.empty,
-        postCommitSnapshot = snapshot,
-        postCommitHooks = Seq.empty,
-        txnExecutionTimeMs = 0L,
-        needsCheckpoint = false,
-        partitionsAddedToOpt = None,
-        isBlindAppend = true
-      )
-
-      UpdateMetricsHook(Some(catalogTable)).run(spark, txn)
+            "delta.feature.catalogManaged" -> "supported")),
+        schema = new StructType())
+      UpdateMetricsHook(Some(noIdTable)).run(
+        spark, makeTxn(deltaLog, noIdTable))
+      UpdateMetricsHook.awaitCompletion(5000)
+      assert(mockServer.getRequestCount() == 0,
+        "no HTTP request when table ID is missing")
     }
   }
 }
@@ -614,12 +604,14 @@ class SimpleMockServer(port: Int) {
   private var serverThread: Thread = _
   @volatile private var running = false
   private var responseCode = 200
+  private var responseDelay = 0
   private val requestCount = new AtomicInteger(0)
   @volatile private var lastRequestBody = ""
   @volatile private var lastHeaders = Map[String, String]()
   private var actualPort = port
 
   def setResponseCode(code: Int): Unit = { responseCode = code }
+  def setResponseDelay(delayMs: Int): Unit = { responseDelay = delayMs }
 
   def getPort(): Int = actualPort
 
@@ -677,6 +669,8 @@ class SimpleMockServer(port: Int) {
 
       val body = new Array[Char](contentLength)
       if (contentLength > 0) in.read(body, 0, contentLength)
+
+      if (responseDelay > 0) Thread.sleep(responseDelay)
 
       requestCount.incrementAndGet()
       lastRequestBody = new String(body)
