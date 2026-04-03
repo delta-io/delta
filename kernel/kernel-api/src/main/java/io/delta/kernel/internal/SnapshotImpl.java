@@ -441,9 +441,9 @@ public class SnapshotImpl implements Snapshot {
   /**
    * Value-based equality on table path and snapshot version. Two SnapshotImpl instances for the
    * same table at the same version are logically equivalent. Without this, independently created
-   * Snapshot objects (e.g., from separate catalog lookups via DeltaCatalog.loadTable()) would fail
-   * reference equality, breaking downstream consumers that compare Snapshot-containing objects for
-   * deduplication (e.g., SparkBatch.equals used by ReuseSubquery).
+   * Snapshot objects (e.g., from separate catalog lookups) would use Java's default reference
+   * equality, causing downstream consumers that embed Snapshot in equality-sensitive containers
+   * (e.g., Batch implementations, hash maps) to treat logically identical snapshots as different.
    */
   @Override
   public boolean equals(Object o) {
