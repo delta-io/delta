@@ -21,6 +21,7 @@ import java.time.Instant
 import java.time.format.DateTimeParseException
 
 import scala.collection.JavaConverters._
+import scala.reflect.runtime.{universe => ru}
 import scala.util.control.NonFatal
 
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
@@ -30,7 +31,7 @@ import org.apache.spark.sql.delta.util.PartitionUtils.{timestampPartitionPattern
 import org.apache.spark.sql.delta.util.TimestampFormatter
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
-import shadedForDelta.org.apache.iceberg.{DataFile, DataFiles, FileFormat, MetadataUpdate, PartitionSpec, Schema => IcebergSchema}
+import shadedForDelta.org.apache.iceberg.{BaseTransaction, DataFile, DataFiles, FileFormat, MetadataUpdate, PartitionSpec, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.Metrics
 import shadedForDelta.org.apache.iceberg.StructLike
 import shadedForDelta.org.apache.iceberg.catalog.{Namespace, TableIdentifier => IcebergTableIdentifier}
@@ -47,6 +48,55 @@ object IcebergTransactionUtils
   /////////////////
   // Public APIs //
   /////////////////
+
+  /**
+   * Use Scala reflection to overwrite schemas and schemasById in the transaction's current
+   * TableMetadata. Iceberg reassigns field IDs during CREATE_TABLE, so we patch them back
+   * to be consistent with Delta's field IDs before any file operations write manifests.
+   */
+  def setIcebergTxnSchema(txn: IcebergTransaction, schema: IcebergSchema): Unit = {
+    Option(txn.asInstanceOf[BaseTransaction].currentMetadata()).foreach { metadata =>
+      val mirror = ru.runtimeMirror(getClass.getClassLoader)
+      val instanceMirror = mirror.reflect(metadata)
+
+      val currentSchemas = metadata.asInstanceOf[TableMetadata].schemas()
+      assert(currentSchemas.size() == 1)
+      val currentSchemaId = metadata.asInstanceOf[TableMetadata].currentSchemaId()
+      val newSchemas = java.util.Collections.singletonList(schema)
+      val newSchemasById = java.util.Collections.singletonMap(currentSchemaId, schema)
+
+      val schemasField = ru.typeOf[TableMetadata]
+        .decl(ru.TermName("schemas")).asTerm
+      val schemasByIdField = ru.typeOf[TableMetadata]
+        .decl(ru.TermName("schemasById")).asTerm
+      instanceMirror.reflectField(schemasField).set(newSchemas)
+      instanceMirror.reflectField(schemasByIdField).set(newSchemasById)
+    }
+  }
+
+  /**
+   * Use Scala reflection to overwrite specs and specsById in the transaction's current
+   * TableMetadata, for the same reason as setIcebergTxnSchema.
+   */
+  def setIcebergTxnPartitionSpec(txn: IcebergTransaction, spec: PartitionSpec): Unit = {
+    Option(txn.asInstanceOf[BaseTransaction].currentMetadata()).foreach { metadata =>
+      val mirror = ru.runtimeMirror(getClass.getClassLoader)
+      val instanceMirror = mirror.reflect(metadata)
+
+      val currentSpecs = metadata.asInstanceOf[TableMetadata].specs()
+      assert(currentSpecs.size() == 1)
+      val currentSpecId = metadata.asInstanceOf[TableMetadata].defaultSpecId()
+      val newSpecs = java.util.Collections.singletonList(spec)
+      val newSpecsById = java.util.Collections.singletonMap(currentSpecId, spec)
+
+      val specsField = ru.typeOf[TableMetadata]
+        .decl(ru.TermName("specs")).asTerm
+      val specsByIdField = ru.typeOf[TableMetadata]
+        .decl(ru.TermName("specsById")).asTerm
+      instanceMirror.reflectField(specsField).set(newSpecs)
+      instanceMirror.reflectField(specsByIdField).set(newSpecsById)
+    }
+  }
 
   def createPartitionSpec(
       icebergSchema: IcebergSchema,

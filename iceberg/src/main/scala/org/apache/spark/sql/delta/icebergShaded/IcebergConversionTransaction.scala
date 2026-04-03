@@ -36,7 +36,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
 import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.MetadataUpdate
-import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
+import shadedForDelta.org.apache.iceberg.MetadataUpdate.AddSchema
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
 import shadedForDelta.org.apache.iceberg.mapping.NameMappingParser
 import shadedForDelta.org.apache.iceberg.unityCatalog.{UnityCatalog, UnityCatalogTableOperations}
@@ -437,20 +437,6 @@ class IcebergConversionTransaction(
       )
     }
     try {
-      // Iceberg CREATE_TABLE reassigns the field id in schema, which
-      // is overwritten by setting Delta schema with Delta generated field id to ensure
-      // consistency between field id in Iceberg schema after conversion and field id in
-      // parquet files written by Delta.
-      if (tableOp == CREATE_TABLE) {
-        metadataUpdates.add(
-          new AddSchema(icebergSchema, postCommitSnapshot.metadata.columnMappingMaxId.toInt)
-        )
-        if (postCommitSnapshot.metadata.partitionColumns.nonEmpty) {
-          metadataUpdates.add(
-            new AddPartitionSpec(partitionSpec)
-          )
-        }
-      }
       txn.commitTransaction()
       recordIcebergCommit()
     } catch {
@@ -539,9 +525,17 @@ class IcebergConversionTransaction(
         if (tableExists) {
           throw new IllegalStateException(s"Cannot create table $tablePath. Table already exists.")
         } else {
-          recordFrameProfile("IcebergConversionTransaction", "createTable") {
+          val createTxn = recordFrameProfile("IcebergConversionTransaction", "createTable") {
             tableBuilder.createTransaction()
           }
+          // Iceberg reassigns field IDs during CREATE_TABLE. Overwrite the transaction's
+          // current metadata with Delta's schema and partition spec so that manifests
+          // written by subsequent file operations use the correct Delta field IDs.
+          IcebergTransactionUtils.setIcebergTxnSchema(createTxn, icebergSchema)
+          if (postCommitSnapshot.metadata.partitionColumns.nonEmpty) {
+            IcebergTransactionUtils.setIcebergTxnPartitionSpec(createTxn, partitionSpec)
+          }
+          createTxn
         }
       case REPLACE_TABLE =>
         if (tableExists) {
