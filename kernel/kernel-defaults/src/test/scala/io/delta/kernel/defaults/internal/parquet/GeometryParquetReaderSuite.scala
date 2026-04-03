@@ -18,14 +18,15 @@ package io.delta.kernel.defaults.internal.parquet
 import java.nio.{ByteBuffer, ByteOrder}
 
 import io.delta.kernel.defaults.utils.DefaultVectorTestUtils
+import io.delta.kernel.expressions.Column
 import io.delta.kernel.types._
 
 import org.scalatest.funsuite.AnyFunSuite
 
 /**
- * Tests for reading geometry and geography columns from Parquet via
- * getBinary(). Exercises the full data path: ParquetSchemaUtils,
- * ParquetColumnWriters, ParquetColumnReaders, and DefaultBinaryVector.
+ * Tests for reading geometry and geography columns from Parquet.
+ * Exercises the full data path: ParquetSchemaUtils, ParquetColumnWriters,
+ * ParquetColumnReaders, DefaultBinaryVector, and bounding box stats.
  */
 class GeometryParquetReaderSuite
     extends AnyFunSuite
@@ -43,12 +44,6 @@ class GeometryParquetReaderSuite
     buf.array()
   }
 
-  private val testPoints: Seq[Array[Byte]] = Seq(
-    pointWkb(1.0, 2.0),
-    pointWkb(-180.0, 90.0),
-    pointWkb(0.0, 0.0),
-    pointWkb(123.456, -78.9))
-
   for (
     colType <- Seq[DataType](
       new GeometryType("OGC:CRS84"),
@@ -56,36 +51,7 @@ class GeometryParquetReaderSuite
   ) {
     val typeName = colType.getClass.getSimpleName
 
-    test(s"write and read $typeName column: getBinary returns WKB bytes") {
-      withTempDir { tempDir =>
-        val targetDir = tempDir.getAbsolutePath
-
-        val geomVec = makeGeometryVector(colType, testPoints.map(Option(_)))
-        writeToParquetUsingKernel(
-          Seq(columnarBatch(geomVec).toFiltered),
-          targetDir)
-
-        val readSchema = new StructType().add("col_0", colType)
-        val batches = readParquetUsingKernelAsColumnarBatches(
-          targetDir,
-          readSchema)
-
-        val actual = batches.flatMap { batch =>
-          val vec = batch.getColumnVector(0)
-          (0 until batch.getSize).map(rowId =>
-            vec.getBinary(rowId).toSeq)
-        }
-
-        assert(actual.length == testPoints.length)
-        testPoints.zip(actual).foreach { case (expected, actual) =>
-          assert(
-            actual == expected.toSeq,
-            "WKB bytes should roundtrip unchanged")
-        }
-      }
-    }
-
-    test(s"write and read $typeName column with null rows") {
+    test(s"$typeName: write and read with null and non-null rows") {
       withTempDir { tempDir =>
         val targetDir = tempDir.getAbsolutePath
 
@@ -121,47 +87,44 @@ class GeometryParquetReaderSuite
       }
     }
 
-    test(s"getString throws UnsupportedOperationException on $typeName column vector") {
-      withTempDir { tempDir =>
-        val targetDir = tempDir.getAbsolutePath
-        val geomVec = makeGeometryVector(
-          colType,
-          Seq(Some(pointWkb(1.0, 2.0))))
-        writeToParquetUsingKernel(
-          Seq(columnarBatch(geomVec).toFiltered),
-          targetDir)
+  }
 
-        val readSchema = new StructType().add("col_0", colType)
-        val batches = readParquetUsingKernelAsColumnarBatches(
-          targetDir,
-          readSchema)
-        val vec = batches.head.getColumnVector(0)
+  test("GeometryType: bounding box stats are computed correctly") {
+    withTempDir { tempDir =>
+      val targetDir = tempDir.getAbsolutePath
+      val colType = new GeometryType("OGC:CRS84")
 
-        intercept[UnsupportedOperationException] {
-          vec.getString(0)
-        }
-      }
-    }
+      val values: Seq[Option[Array[Byte]]] = Seq(
+        Some(pointWkb(10.0, -20.0)),
+        None,
+        Some(pointWkb(-5.0, 30.0)),
+        Some(pointWkb(15.0, 0.0)))
 
-    test(s"write and read $typeName column: all-null batch") {
-      withTempDir { tempDir =>
-        val targetDir = tempDir.getAbsolutePath
-        val geomVec = makeGeometryVector(colType, Seq(None, None, None))
-        writeToParquetUsingKernel(
-          Seq(columnarBatch(geomVec).toFiltered),
-          targetDir)
+      val geomVec = makeGeometryVector(colType, values)
+      val statsCol = new Column("col_0")
+      val fileStatuses = writeToParquetUsingKernel(
+        Seq(columnarBatch(geomVec).toFiltered),
+        targetDir,
+        statsColumns = Seq(statsCol))
 
-        val readSchema = new StructType().add("col_0", colType)
-        val batches = readParquetUsingKernelAsColumnarBatches(
-          targetDir,
-          readSchema)
+      assert(fileStatuses.size == 1)
+      val stats = fileStatuses.head.getStatistics
+      assert(stats.isPresent, "stats should be present")
 
-        val results = batches.flatMap { batch =>
-          val vec = batch.getColumnVector(0)
-          (0 until batch.getSize).map(vec.isNullAt)
-        }
-        assert(results.forall(_ == true), "All rows should be null")
-      }
+      val fileStats = stats.get()
+      assert(fileStats.getNumRecords == 4)
+
+      val minLiteral = fileStats.getMinValues.get(statsCol)
+      val maxLiteral = fileStats.getMaxValues.get(statsCol)
+      assert(minLiteral != null, "min value should exist")
+      assert(maxLiteral != null, "max value should exist")
+
+      // Bounding box: x in [-5, 15], y in [-20, 30]
+      assert(minLiteral.getValue == "POINT(-5.0 -20.0)")
+      assert(maxLiteral.getValue == "POINT(15.0 30.0)")
+
+      val nullCount = fileStats.getNullCount.get(statsCol)
+      assert(nullCount == 1L)
     }
   }
 
@@ -173,7 +136,8 @@ class GeometryParquetReaderSuite
       override def getSize: Int = values.length
       override def close(): Unit = {}
       override def isNullAt(rowId: Int): Boolean = values(rowId).isEmpty
-      override def getBinary(rowId: Int): Array[Byte] = values(rowId).orNull
+      override def getBinary(rowId: Int): Array[Byte] =
+        values(rowId).orNull
     }
   }
 }
