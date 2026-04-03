@@ -24,6 +24,7 @@ object SparkMimaExcludes {
   val ignoredABIProblems = Seq(
       // scalastyle:off line.size.limit
       ProblemFilters.exclude[Problem]("org.*"),
+      ProblemFilters.exclude[Problem]("io.delta.internal.*"),
       ProblemFilters.exclude[Problem]("io.delta.spark.internal.*"),
       ProblemFilters.exclude[Problem]("io.delta.sql.parser.*"),
       ProblemFilters.exclude[Problem]("io.delta.tables.execution.*"),
