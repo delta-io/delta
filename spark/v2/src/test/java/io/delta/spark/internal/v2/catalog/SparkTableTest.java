@@ -20,7 +20,7 @@ import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
@@ -489,16 +489,13 @@ public class SparkTableTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testNewWriteBuilderThrowsUnsupported(@TempDir File tempDir) throws Exception {
+  public void testNewWriteBuilderReturnsWriteBuilder(@TempDir File tempDir) throws Exception {
     String path = tempDir.getAbsolutePath();
     spark.sql(
-        String.format(
-            "CREATE TABLE test_write_builder_unsupported (id INT) USING delta LOCATION '%s'",
-            path));
+        String.format("CREATE TABLE test_write_builder (id INT) USING delta LOCATION '%s'", path));
 
     SparkTable table =
-        new SparkTable(
-            Identifier.of(new String[] {"default"}, "test_write_builder_unsupported"), path);
+        new SparkTable(Identifier.of(new String[] {"default"}, "test_write_builder"), path);
     LogicalWriteInfo writeInfo =
         new LogicalWriteInfo() {
           @Override
@@ -517,10 +514,6 @@ public class SparkTableTest extends DeltaV2TestBase {
           }
         };
 
-    UnsupportedOperationException ex =
-        assertThrows(UnsupportedOperationException.class, () -> table.newWriteBuilder(writeInfo));
-    assertEquals(
-        "Batch write for Delta tables via the DSv2 connector is not yet supported.",
-        ex.getMessage());
+    assertNotNull(table.newWriteBuilder(writeInfo), "newWriteBuilder should return non-null");
   }
 }

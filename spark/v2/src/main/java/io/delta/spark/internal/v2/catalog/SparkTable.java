@@ -27,6 +27,7 @@ import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.write.DeltaV2WriteBuilder;
 import java.util.*;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -63,6 +64,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   private final Snapshot initialSnapshot;
 
   private final Configuration hadoopConf;
+  private final Engine kernelEngine;
 
   private final SchemaProvider schemaProvider;
   private final Optional<CatalogTable> catalogTable;
@@ -147,7 +149,7 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
 
     this.hadoopConf =
         SparkSession.active().sessionState().newHadoopConfWithOptions(toScalaMap(options));
-    Engine kernelEngine = DefaultEngine.create(this.hadoopConf);
+    this.kernelEngine = DefaultEngine.create(this.hadoopConf);
     this.snapshotManager = SnapshotManagerFactory.create(tablePath, kernelEngine, catalogTable);
     // Load the initial snapshot through the manager
     this.initialSnapshot = snapshotManager.loadLatestSnapshot();
@@ -259,17 +261,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         merged);
   }
 
-  /**
-   * Batch write for Delta tables via the DSv2 connector is not yet supported.
-   *
-   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
-   * follow-up changes land the full write implementation.
-   */
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    throw new UnsupportedOperationException(
-        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
+    return new DeltaV2WriteBuilder(kernelEngine, tablePath, hadoopConf, initialSnapshot, info);
   }
 
   @Override
