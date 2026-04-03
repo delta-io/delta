@@ -167,6 +167,18 @@ public interface TransactionBuilder {
   TransactionBuilder withDomainMetadataSupported();
 
   /**
+   * Set custom tags to be written to {@code commitInfo.tags} in the Delta log. Tags are arbitrary
+   * key-value pairs that can be used to track metadata for tools such as table synchronization
+   * utilities.
+   *
+   * <p>If this method is not called, no tags will be written to the Delta log.
+   *
+   * @param tags a non-null map of tag key-value pairs to include in the commit info
+   * @return updated {@link TransactionBuilder} instance
+   */
+  TransactionBuilder withCommitTags(Map<String, String> tags);
+
+  /**
    * Build the transaction. Also validates the given info to ensure that a valid transaction can be
    * created.
    *
