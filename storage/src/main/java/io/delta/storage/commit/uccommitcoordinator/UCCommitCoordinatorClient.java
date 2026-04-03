@@ -294,7 +294,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       commitVersion,
       actions,
       CatalogTrackedInfo.EMPTY
-      updatedActions);
+      , updatedActions);
   }
 
   public CommitResponse commit(
@@ -667,7 +667,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
       CatalogTrackedInfo.EMPTY
-      true /* disown */,
+      , true /* disown */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* newProtocol */
     );

@@ -1,4 +1,4 @@
-package io.delta.storage.commit.uccommitcoordinator;
+package org.apache.spark.sql.delta.coordinatedcommits;
 
 import io.delta.storage.commit.uniform.UniformMetadata;
 
