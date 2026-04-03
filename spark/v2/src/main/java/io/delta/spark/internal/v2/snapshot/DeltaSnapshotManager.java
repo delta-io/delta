@@ -17,9 +17,13 @@ package io.delta.spark.internal.v2.snapshot;
 
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Snapshot;
+import io.delta.kernel.Transaction;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaHistoryManager;
+import io.delta.kernel.transaction.DataLayoutSpec;
+import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.exception.VersionNotFoundException;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.annotation.Experimental;
 
@@ -107,5 +111,24 @@ public interface DeltaSnapshotManager {
    * @param endVersion optional ending version (inclusive); if not provided, extends to latest
    * @return a CommitRange representing the specified range of commits
    */
-  CommitRange getTableChanges(Engine engine, long startVersion, Optional<Long> endVersion);
+  CommitRange getTableChanges(Engine kernelEngine, long startVersion, Optional<Long> endVersion);
+
+  /**
+   * Builds a create-table transaction for version 0 commits.
+   *
+   * <p>This method intentionally returns a {@link Transaction} so callers can commit with either
+   * empty actions (metadata-only CREATE TABLE) or non-empty actions (future CTAS/RTAS/REPLACE
+   * flows).
+   *
+   * @param schema the Delta Kernel schema for the new table
+   * @param tableProperties table properties to persist in metadata
+   * @param dataLayoutSpec optional layout spec such as partitioning
+   * @param engineInfo engine info string to persist in commit metadata
+   * @return a create-table transaction ready to commit
+   */
+  Transaction buildCreateTableTransaction(
+      StructType kernelSchema,
+      Map<String, String> tableProperties,
+      Optional<DataLayoutSpec> dataLayoutSpec,
+      String engineInfo);
 }

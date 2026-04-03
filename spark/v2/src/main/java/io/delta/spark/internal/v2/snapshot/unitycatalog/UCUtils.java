@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
+import org.apache.spark.sql.connector.catalog.TableCatalog;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCatalogConfig;
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder$;
 import org.apache.spark.sql.delta.util.CatalogTableUtils;
@@ -69,25 +70,60 @@ public final class UCUtils {
     }
     String catalogName = catalogOption.get();
 
-    // Get UC endpoint and token from Spark configs
-    scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
-        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+    UCCatalogConfig config = resolveCatalogConfig(catalogName, spark);
+    return Optional.of(
+        new UCTableInfo(tableId, tablePath, config.uri(), asJava(config.authConfig())));
+  }
 
-    scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
+  /**
+   * Extracts Unity Catalog table information from CREATE TABLE properties.
+   *
+   * @param tablePath table path resolved for the CREATE TABLE operation
+   * @param properties table properties passed from catalog create flow
+   * @param catalogName Spark catalog name used to resolve UC config
+   * @param spark SparkSession for resolving Unity Catalog configurations
+   * @return table info if the properties correspond to a UC-managed table, empty otherwise
+   */
+  public static Optional<UCTableInfo> extractTableInfoForCreate(
+      String tablePath, Map<String, String> properties, String catalogName, SparkSession spark) {
+    requireNonNull(tablePath, "tablePath is null");
+    requireNonNull(properties, "properties is null");
+    requireNonNull(catalogName, "catalogName is null");
+    requireNonNull(spark, "spark is null");
 
-    if (configOpt.isEmpty()) {
-      throw new IllegalArgumentException(
-          "Cannot create UC client for table "
-              + catalogTable.identifier()
-              + ": Unity Catalog configuration not found for catalog '"
-              + catalogName
-              + "'.");
+    if (!CatalogTableUtils.isUnityCatalogManagedTableFromProperties(properties)) {
+      return Optional.empty();
     }
 
-    UCCatalogConfig config = configOpt.get();
-    String ucUri = config.uri();
+    String ucTableId = extractUCTableIdFromProperties(properties);
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      throw new IllegalArgumentException("Cannot extract ucTableId from create table properties");
+    }
 
-    return Optional.of(new UCTableInfo(tableId, tablePath, ucUri, asJava(config.authConfig())));
+    UCCatalogConfig config = resolveCatalogConfig(catalogName, spark);
+    return Optional.of(
+        new UCTableInfo(ucTableId, tablePath, config.uri(), asJava(config.authConfig())));
+  }
+
+  /**
+   * Resolves the Unity Catalog configuration for the given catalog name from Spark session configs.
+   *
+   * @param catalogName the Spark catalog name (e.g., "unity")
+   * @param spark SparkSession containing the catalog configurations
+   * @return the UC catalog configuration (URI + auth config)
+   * @throws IllegalArgumentException if no UC configuration is found for the catalog name
+   */
+  public static UCCatalogConfig resolveCatalogConfig(String catalogName, SparkSession spark) {
+    requireNonNull(catalogName, "catalogName is null");
+    requireNonNull(spark, "spark is null");
+    scala.collection.immutable.Map<String, UCCatalogConfig> ucConfigs =
+        UCCommitCoordinatorBuilder$.MODULE$.getCatalogConfigMap(spark);
+    scala.Option<UCCatalogConfig> configOpt = ucConfigs.get(catalogName);
+    if (configOpt.isEmpty()) {
+      throw new IllegalArgumentException(
+          "Unity Catalog configuration not found for catalog '" + catalogName + "'.");
+    }
+    return configOpt.get();
   }
 
   private static String extractUCTableId(CatalogTable catalogTable) {
@@ -99,6 +135,23 @@ public final class UCUtils {
     if (ucTableId == null || ucTableId.isEmpty()) {
       throw new IllegalArgumentException(
           "Cannot extract ucTableId from table " + catalogTable.identifier());
+    }
+    return ucTableId;
+  }
+
+  private static String extractUCTableIdFromProperties(Map<String, String> properties) {
+    String ucTableId = properties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      ucTableId =
+          properties.get(TableCatalog.OPTION_PREFIX + UCCommitCoordinatorClient.UC_TABLE_ID_KEY);
+    }
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      ucTableId = properties.get(UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
+    }
+    if (ucTableId == null || ucTableId.isEmpty()) {
+      ucTableId =
+          properties.get(
+              TableCatalog.OPTION_PREFIX + UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD);
     }
     return ucTableId;
   }
