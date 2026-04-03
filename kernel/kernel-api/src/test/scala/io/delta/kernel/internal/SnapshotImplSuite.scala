@@ -29,7 +29,8 @@ class SnapshotImplSuite extends AnyFunSuite with MockSnapshotUtils {
 
     assert(!(snap1 eq snap2), "Expected different object references")
     assert(snap1 == snap2, "Snapshots with same path and version should be equal")
-    assert(snap1.hashCode == snap2.hashCode,
+    assert(
+      snap1.hashCode == snap2.hashCode,
       "Equal snapshots should have the same hashCode")
   }
 
