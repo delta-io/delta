@@ -413,11 +413,13 @@ case class DeltaFormatSharingSource(
         case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
         case None => (None, false)
       }
-    // When DVs are enabled on a shared table with an existing
-    // LegacySource streaming query, the query fails. On restart
-    // this Source is freshly instantiated so
-    // latestProcessedEndOffsetOption is None. We must use the
-    // legacy offset as the starting point to fetch files.
+    // The engine always calls getBatch for priming on restart, so
+    // latestProcessedEndOffsetOption is normally valid here and points to the last processed end
+    // offset in legacy format.
+    // As a safeguard in case the engine changes behavior, fall back to
+    // the starting offset from the legacy offset. This matters when DVs are enabled on a shared
+    // table with an existing LegacySource streaming query: the query fails, and on restart we
+    // must use the legacy offset to fetch files.
     val deltaSourceOffset =
       if (latestProcessedEndOffsetOption.isEmpty &&
         startDeltaSourceOffsetOpt.nonEmpty && wasConvertedFromLegacy) {
@@ -430,7 +432,18 @@ case class DeltaFormatSharingSource(
       return null
     }
 
-    maybeGetLatestFileChangesFromServer(deltaSourceOffset, wasConvertedFromLegacy)
+    // When converting from legacy to new format, if conversion happens at mid-version, we need
+    // to finish the current version in the legacy format. Because the engine primes getBatch on
+    // restart before calling latestOffset, the current version is already fetched in the local
+    // block manager, so this call is a no-op for mid-version conversion.
+    // If the conversion happens at index boundary, this call fetches up to maxVersionsPerRpc
+    // versions as usual.
+    maybeGetLatestFileChangesFromServer(
+      startingOffset = deltaSourceOffset,
+      startConvertedFromLegacy = wasConvertedFromLegacy,
+      endOffset = None,
+      endConvertedFromLegacy = false
+    )
 
     val endOffset =
       maybeMoveToNextVersion(
@@ -515,38 +528,58 @@ case class DeltaFormatSharingSource(
    *                       2 usages: 1) used to compare with latestTableVersionInLocalDeltaLogOpt to
    *                       check whether new files are needed. 2) used for getTableFileChanges,
    *                       check more details in the function header.
-   * @param wasConvertedFromLegacy true when the startingOffset was converted from a legacy
-   *                               DeltaSharingSourceOffset checkpoint.
+   * @param startConvertedFromLegacy true when the startingOffset was converted from a legacy
+   *                                 DeltaSharingSourceOffset checkpoint.
+   * @param endOffset end offset from getBatch.
+   * @param endConvertedFromLegacy true when the endOffset was converted from a legacy
+   *                               DeltaSharingSourceOffset checkpoint. If true, endOffset must
+   *                               be defined.
    */
   private def maybeGetLatestFileChangesFromServer(
       startingOffset: DeltaSourceOffset,
-      wasConvertedFromLegacy: Boolean): Unit = {
+      startConvertedFromLegacy: Boolean,
+      endOffset: Option[DeltaSourceOffset],
+      endConvertedFromLegacy: Boolean): Unit = {
     // Use a local variable to avoid a difference in the two usages below.
     val latestTableVersion = getOrUpdateLatestTableVersion
 
     if (needNewFilesFromServer(startingOffset, latestTableVersion)) {
-      // Lucky case: offset conversion lands on a version
-      // boundary -- fetch file IDs with sha256 and pull up to
-      // maxVersionsPerRpc versions as a regular batch.
-      //
-      // Unlucky case: offset conversion is mid-version -- fetch
-      // file IDs with md5 and restrict to 1 version so the
-      // batch finishes the version and lands on a boundary.
-      val isLegacyMidVersion = wasConvertedFromLegacy &&
+      val isLegacyMidVersion =
+        startConvertedFromLegacy &&
         startingOffset.index != DeltaSourceOffset.BASE_INDEX
-      val endingVersionForQuery = if (isLegacyMidVersion) {
+
+      val endingVersionForQuery = if (endConvertedFromLegacy) {
+        // getBatch priming during legacy to new format transition:
+        // 1. Both start and end offsets are from legacy checkpoints.
+        // 2. Start offset is None and end offset is from a legacy checkpoint.
+        // We need to build DataFrame from start to end version.
+        endOffset match {
+          case Some(offset) => offset.reservoirVersion
+          case None =>
+            throw new IllegalStateException(
+              "endOffset must be defined when endConvertedFromLegacy is true.")
+        }
+      } else if (isLegacyMidVersion) {
+        // Mid-version legacy: start offset is
+        // mid-version from a legacy checkpoint. Use MD5 and restrict
+        // to a single version so the batch lands on a boundary.
         startingOffset.reservoirVersion
       } else {
         getEndingVersionForRpc(startingOffset, latestTableVersion)
       }
 
-      val fileIdHash: Option[String] = if (isLegacyMidVersion) {
+      val autoResolve = sqlConf.getConf(
+        DeltaSQLConf.DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT)
+      val fileIdHash: Option[String] = if (!autoResolve) {
+        None
+      } else if (endConvertedFromLegacy || isLegacyMidVersion) {
         Some(DeltaSharingRestClient.FILEIDHASH_MD5)
       } else {
         Some(DeltaSharingRestClient.FILEIDHASH_SHA256)
       }
 
-      logInfo(s"Legacy transition state: wasConvertedFromLegacy=$wasConvertedFromLegacy, " +
+      logInfo(s"Legacy transition state: startConvertedFromLegacy=$startConvertedFromLegacy, " +
+        s"endConvertedFromLegacy=$endConvertedFromLegacy, " +
         s"isLegacyMidVersion=$isLegacyMidVersion, fileIdHash=$fileIdHash, " +
         s"endingVersionForQuery=$endingVersionForQuery")
 
@@ -673,6 +706,20 @@ case class DeltaFormatSharingSource(
     )
   }
 
+  // Streaming query execution flow varies by trigger type:
+  //
+  // Trigger.Once (batch-style triggers):
+  //   Each restart replays the last committed offset before advancing:
+  //   - Start 1: latestOffset(None)       -> getBatch(None,    offset1)
+  //   - Restart 2: getBatch(None,   offset1) -> latestOffset(offset1) -> getBatch(offset1, offset2)
+  //   - Restart 3: getBatch(offset1, offset2) -> latestOffset(offset2) -> getBatch(offset2, offset3)
+  //
+  // Trigger.ProcessingTime / Trigger.Continuous / Trigger.AvailableNow (continuous triggers):
+  //   The query runs until interrupted; each micro-batch advances the offset:
+  //   - Start 1: latestOffset(None)        -> getBatch(None,    offset1)
+  //   - Batch 2: latestOffset(offset1)     -> getBatch(offset1, offset2)
+  //   - Batch 3: latestOffset(offset2)     -> getBatch(offset2, offset3)
+  //   - On restart: resumes from last committed offset (getBatch priming applies here too)
   override def getBatch(startOffsetOption: Option[Offset], end: Offset): DataFrame = {
     logInfo(s"getBatch with startOffsetOption($startOffsetOption) and end($end)," +
       getTableInfoForLogging)
@@ -692,19 +739,23 @@ case class DeltaFormatSharingSource(
         case Some((offset, fromLegacy)) => (Some(offset), fromLegacy)
         case None => (None, false)
       }
-    // Possible legacy conversion scenarios:
-    // 1. start=None, end=legacy: initial snapshot restart.
-    // 2. start=legacy, end=new: post-snapshot, version
-    //    boundary reached in one batch.
-    // 3. start=legacy, end=legacy: post-snapshot, version
-    //    too large for a single batch.
-    val wasConvertedFromLegacy = startConvertedFromLegacy || endConvertedFromLegacy
     val startingOffset = getStartingOffset(startDeltaOffsetOption, Some(endOffset))
 
-    // For most cases, files should already be fetched in latestOffset. When latestOffset
-    // succeeded but getBatch failed, on restart, Spark engine skips latestOffset, so we need to
-    // fetch files here.
-    maybeGetLatestFileChangesFromServer(startingOffset, wasConvertedFromLegacy)
+    // Cases where getBatch needs to fetch files from the server:
+    // 1. On any streaming query restart, the engine always calls getBatch (priming with previous
+    //    start and end offsets) -> latestOffset -> getBatch.
+    // 2. When latestOffset succeeded but getBatch failed, on restart the engine calls getBatch
+    //    directly.
+    //
+    // In both cases, if start and end offsets are both from legacy checkpoints, we fetch files
+    // using MD5 to match the legacy source's ordering.
+    // Possible legacy conversion scenarios:
+    // 1. start=None, end=legacy: initial snapshot, priming.
+    // 2. start=legacy, end=legacy: post-snapshot, priming or version too large for one batch.
+    // 3. start=legacy, end=new: post-snapshot, version boundary reached in one batch.
+    maybeGetLatestFileChangesFromServer(
+      startingOffset, startConvertedFromLegacy, Some(endOffset), endConvertedFromLegacy)
+
     // Reset latestProcessedEndOffsetOption only when endOffset is larger.
     // Because with microbatch pipelining, we may get getBatch requests out of order.
     if (latestProcessedEndOffsetOption.isEmpty ||
