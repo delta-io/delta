@@ -544,7 +544,8 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       true,
       "cb009f42-5da1-4e7e-b4fa-09de3332f52a",
       Map("numFiles" -> "1", "serializedAsNumber" -> "2", "serializedAsBoolean" -> "true"),
-      null) // tags
+      null
+    ) // tags
 
     checkAnswer(Seq(actResult), Seq(expResult))
   }
@@ -581,7 +582,8 @@ class DefaultJsonHandlerSuite extends AnyFunSuite with TestUtils with DefaultVec
       null, // isBlindAppend is missing from JSON, should be null
       "cb009f42-5da1-4e7e-b4fa-09de3332f52a",
       Map("numFiles" -> "1"),
-      null) // tags
+      null
+    ) // tags
 
     checkAnswer(Seq(actResult), Seq(expResult))
   }
