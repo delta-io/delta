@@ -27,7 +27,6 @@ import io.unitycatalog.client.model.ColumnInfo;
 import io.unitycatalog.client.model.DataSourceFormat;
 import io.unitycatalog.client.model.TableInfo;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -96,9 +95,19 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
    * in columns and partition index.
    */
   private static boolean isUcSparkNewerThan040() {
-    final int[] VER_0_4_0 = {0, 4, 0};
-    int[] ucSparkVersion = getUnityCatalogSparkVersion();
-    return Arrays.compare(ucSparkVersion, VER_0_4_0) > 0;
+    return isUnityCatalogSparkAtLeast(0, 4, 1);
+  }
+
+  private static boolean supportsManagedCreateOrReplace() {
+    return isUnityCatalogSparkAtLeast(0, 4, 1);
+  }
+
+  private static boolean translatesDeprecatedUcTableIdOnManagedCreate() {
+    return isUnityCatalogSparkAtLeast(0, 4, 1);
+  }
+
+  private static String expectedUcTableIdValidationKey(String providedKey) {
+    return isUnityCatalogSparkAtLeast(0, 4, 1) ? UC_TABLE_ID_KEY : providedKey;
   }
 
   String tempDir;
@@ -364,7 +373,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @Test
-  public void testCreateManagedTableErrors() {
+  public void testCreateManagedTableErrors() throws Exception {
     String tableName = "test_delta_errors";
     UnityCatalogInfo uc = unityCatalogInfo();
     String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
@@ -386,14 +395,36 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         .hasMessageContaining(
             String.format("Invalid property value 'disabled' for '%s'", DELTA_CATALOG_MANAGED_KEY));
 
-    // Test 3: Cannot set UC table ID manually
-    for (String ucTableIdProperty : List.of(UC_TABLE_ID_KEY, UC_TABLE_ID_KEY_OLD)) {
+    // Test 3: Canonical UC table ID cannot be set manually.
+    assertThatThrownBy(
+            () ->
+                sql(
+                    "CREATE TABLE %s(name STRING) USING delta "
+                        + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
+                    fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY))
+        .hasMessageContaining(expectedUcTableIdValidationKey(UC_TABLE_ID_KEY));
+
+    // The deprecated key is rejected on older UC Spark versions. Starting in UC Spark 0.4.1 it is
+    // normalized away before create, so managed table creation succeeds and the old key does not
+    // survive as a user-visible property.
+    if (translatesDeprecatedUcTableIdOnManagedCreate()) {
+      try {
+        sql(
+            "CREATE TABLE %s(name STRING) USING delta "
+                + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
+            fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY_OLD);
+        assertUCTableInfo(TableType.MANAGED, fullTableName, List.of("name"), Map.of(), null, null);
+      } finally {
+        sql("DROP TABLE IF EXISTS %s", fullTableName);
+      }
+    } else {
       assertThatThrownBy(
               () ->
                   sql(
-                      "CREATE TABLE %s(name STRING) USING delta TBLPROPERTIES ('%s' = 'some_id')",
-                      fullTableName, ucTableIdProperty))
-          .hasMessageContaining(ucTableIdProperty);
+                      "CREATE TABLE %s(name STRING) USING delta "
+                          + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
+                      fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY_OLD))
+          .hasMessageContaining(expectedUcTableIdValidationKey(UC_TABLE_ID_KEY_OLD));
     }
 
     // Test 4: Cannot set is_managed_location to false for managed tables
@@ -419,10 +450,25 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     withTempDir(
         (Path dir) -> {
           try {
-            // TODO: Once the UC and delta support the stageCreateOrReplace, then we should remove
-            // the failure assertion. Please see https://github.com/delta-io/delta/issues/6013.
-            // CREATE OR REPLACE with new schema
-            if (tableType == TableType.MANAGED) {
+            // UC Spark 0.4.1 added the managed CREATE OR REPLACE path. Older UC versions still
+            // fail here before Delta can commit the operation.
+            if (tableType == TableType.MANAGED && supportsManagedCreateOrReplace()) {
+              sql(
+                  "CREATE OR REPLACE TABLE %s (id INT, name STRING) USING DELTA %s ",
+                  tableName, MANAGED_TBLPROPERTIES_CLAUSE);
+              sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
+              check(tableName, List.of(List.of("1", "Alice")));
+              assertUCTableInfo(
+                  tableType,
+                  tableName,
+                  List.of("id", "name"),
+                  Map.of("Foo", "Bar"),
+                  null,
+                  null,
+                  false,
+                  Optional.empty(),
+                  Optional.empty());
+            } else if (tableType == TableType.MANAGED) {
               assertThatThrownBy(
                   () ->
                       sql(
@@ -436,15 +482,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                           tableName, dir.toString()));
             }
 
-            // TODO: Uncommon those code once support the stageCreateOrReplace, as said above.
-
-            // Assert the unity catalog table information.
-            // assertUCTableInfo(
-            //     tableType, tableName, List.of("id", "name"), Map.of("Foo", "Bar"), null, null);
-
-            // Insert data to verify new schema
-            // sql("INSERT INTO %s VALUES (1, 'Alice')", tableName);
-            // check(tableName, List.of(List.of("1", "Alice")));
           } finally {
             sql("DROP TABLE IF EXISTS %s", tableName);
           }
