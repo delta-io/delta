@@ -710,9 +710,11 @@ case class DeltaFormatSharingSource(
   //
   // Trigger.Once (batch-style triggers):
   //   Each restart replays the last committed offset before advancing:
-  //   - Start 1: latestOffset(None)       -> getBatch(None,    offset1)
-  //   - Restart 2: getBatch(None,   offset1) -> latestOffset(offset1) -> getBatch(offset1, offset2)
-  //   - Restart 3: getBatch(offset1, offset2) -> latestOffset(offset2) -> getBatch(offset2, offset3)
+  //   - Start 1: latestOffset(None) -> getBatch(None, offset1)
+  //   - Restart 2: getBatch(None, offset1)
+  //       -> latestOffset(offset1) -> getBatch(offset1, offset2)
+  //   - Restart 3: getBatch(offset1, offset2)
+  //       -> latestOffset(offset2) -> getBatch(offset2, offset3)
   //
   // Trigger.ProcessingTime / Trigger.Continuous / Trigger.AvailableNow (continuous triggers):
   //   The query runs until interrupted; each micro-batch advances the offset:
