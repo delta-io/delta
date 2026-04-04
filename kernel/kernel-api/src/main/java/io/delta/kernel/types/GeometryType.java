@@ -70,11 +70,6 @@ public final class GeometryType extends DataType {
     return srid;
   }
 
-  @Override
-  public boolean isNested() {
-    return false;
-  }
-
   /**
    * Serialize this GeometryType to its string representation with minimal info.
    *
