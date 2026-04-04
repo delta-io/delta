@@ -2846,8 +2846,8 @@ class SchemaUtilsSuite extends QueryTest
       .add("c", DecimalType(2, 1))
       .add("d", DecimalType(2, 1))
     val wider = new StructType()
-      .add("a", DecimalType(4, 1))
-      .add("b", DecimalType(6, 1))
+      .add("a", DecimalType(11, 1))
+      .add("b", DecimalType(11, 1))
       .add("c", DecimalType(11, 1))
       .add("d", DecimalType(21, 1))
 
