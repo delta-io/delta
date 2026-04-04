@@ -415,6 +415,30 @@ class CheckpointsSuite
     }
   }
 
+  testDifferentV2Checkpoints("v2 checkpoint write when sidecar directory does not exist") {
+    withTempDir { tempDir =>
+      val path = tempDir.getCanonicalPath
+      withSQLConf(
+        DeltaSQLConf.DELTA_CHECKPOINT_PART_SIZE.key -> "10",
+        DeltaConfigs.CHECKPOINT_INTERVAL.defaultTablePropertyKey -> "100") {
+        spark.range(10).repartition(1).write.format("delta").save(path)
+        spark.range(10).repartition(1).write.format("delta").mode("append").save(path)
+        val deltaLog = DeltaLog.forTable(spark, path)
+
+        val fs = deltaLog.sidecarDirPath.getFileSystem(deltaLog.newDeltaHadoopConf())
+        // Ensure sidecar directory does not exist before checkpoint
+        assert(!fs.exists(deltaLog.sidecarDirPath))
+
+        deltaLog.checkpoint()
+
+        // Verify checkpoint succeeded and sidecar directory was created
+        assert(fs.exists(deltaLog.sidecarDirPath))
+        val provider = getV2CheckpointProvider(deltaLog)
+        assert(provider.sidecarFileStatuses.nonEmpty)
+      }
+    }
+  }
+
   test("checkpoint does not contain CDC field") {
     withSQLConf(
         DeltaConfigs.CHANGE_DATA_FEED.defaultTablePropertyKey -> "true"
