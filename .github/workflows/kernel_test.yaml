@@ -2,10 +2,12 @@ name: "Delta Kernel"
 
 on:
   push:
+    branches: [master]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
+    branches: [master]
     paths-ignore:
       - '**.md'
       - '**.txt'
@@ -51,14 +53,13 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
-      - name: Cache SBT and dependencies
+      - name: Restore SBT cache
         id: cache-sbt
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/.sbt
-            ~/.ivy2/cache
-            ~/.coursier/cache
+            ~/.ivy2
             ~/.cache/coursier
           key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}
       - name: Check cache status
@@ -71,6 +72,15 @@ jobs:
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
+      - name: Save SBT cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.cache/coursier
+          key: sbt-kernel-${{ runner.os }}-scala${{ env.SCALA_VERSION }}
 
   integration-test:
     name: "DK: Integration"

@@ -38,6 +38,8 @@ import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
+import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
+import org.apache.spark.sql.delta.util.CatalogTableUtils
 import org.apache.spark.sql.delta.implicits.addFileEncoder
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -449,6 +451,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
   registerPostCommitHook(ChecksumHook)
   catalogTable.foreach { ct =>
     registerPostCommitHook(UpdateCatalogFactory.getUpdateCatalogHook(ct, spark))
+    if (CatalogTableUtils.isUnityCatalogManagedTable(ct)) {
+      registerPostCommitHook(UpdateMetricsHook(Some(ct)))
+    }
   }
   // The CheckpointHook will only checkpoint if necessary, so always register it to run.
   registerPostCommitHook(CheckpointHook)
@@ -1833,7 +1838,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
       val (commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo) =
         doCommitRetryIteratively(firstAttemptVersion, currentTransactionInfo, isolationLevelToUse)
-      setCommitted(commitVersion, postCommitSnapshot, updatedCurrentTransactionInfo.actions)
+      // committedActions mirrors the committed log JSON (CommitInfo first),
+      // so post-commit hooks can read operationMetrics without re-parsing.
+      setCommitted(commitVersion, postCommitSnapshot,
+        updatedCurrentTransactionInfo.finalActionsToCommit)
       logInfo(log"Committed delta #${MDC(DeltaLogKeys.VERSION, commitVersion)} to " +
         log"${MDC(DeltaLogKeys.PATH, deltaLog.logPath)}")
       commitVersion
