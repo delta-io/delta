@@ -401,7 +401,8 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
 
   test("all supported features are allowed") {
     val readerFeatures =
-      Set("columnMapping", "timestampNtz", "v2Checkpoint", "vacuumProtocolCheck", "rowTracking")
+      Set("columnMapping", "timestampNtz", "v2Checkpoint", "vacuumProtocolCheck", "rowTracking",
+        "geospatial")
     val writerFeatures = Set(
       // Legacy incompatible features (allowed as long as they are inactive)
       "invariants",
@@ -429,6 +430,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "variantType-preview",
       "variantShredding",
       "variantShredding-preview",
+      "geospatial",
       "icebergCompatV2",
       "icebergWriterCompatV1",
       "catalogManaged")
