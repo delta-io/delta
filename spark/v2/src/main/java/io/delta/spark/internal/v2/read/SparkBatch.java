@@ -46,6 +46,7 @@ public class SparkBatch implements Batch {
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  // Normalized forms of pushedToKernelFilters and dataFilters, used only in equals/hashCode
   private final Set<String> canonicalKernelFilters;
   private final Set<String> canonicalDataFilters;
   private final Configuration hadoopConf;
