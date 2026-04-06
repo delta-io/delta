@@ -17,19 +17,24 @@
 package org.apache.spark.sql.delta.hooks.metrics
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.util.concurrent.atomic.AtomicInteger
+
 import scala.collection.JavaConverters._
+import scala.concurrent.{ExecutionContext, Future}
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
 
 import org.apache.spark.sql.delta.CommittedTransaction
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, RemoveFile}
-import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.coordinatedcommits.UCCommitCoordinatorBuilder
 import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.stats.FileSizeHistogram
 import org.apache.spark.sql.delta.util.{CatalogTableUtils, JsonUtils}
+import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 
 import io.unitycatalog.client.auth.TokenProvider
 import org.apache.http.HttpHeaders
@@ -42,7 +47,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 
-// Payload case classes (JSON-serialized via Jackson @JsonProperty)
+// Payload case classes
 
 case class ReportDeltaMetricsRequest(
     @JsonProperty("table_id") tableId: String,
@@ -77,8 +82,9 @@ case class FileSizeHistogramPayload(
  * Post-commit hook that sends commit metrics to Unity Catalog
  * for UC-managed Delta tables.
  *
- * Best-effort: failures are logged as warnings and never fail
- * the commit.
+ * Metrics are dispatched asynchronously to a background thread
+ * pool and never block or fail the commit. Gated by
+ * [[DeltaSQLConf.DELTA_UC_COMMIT_METRICS_ENABLED]].
  *
  * @param catalogTable catalog metadata for UC-managed detection
  */
@@ -90,6 +96,10 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
   override def run(
       spark: SparkSession,
       txn: CommittedTransaction): Unit = {
+    if (!spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_UC_COMMIT_METRICS_ENABLED)) {
+      return
+    }
     val ct = catalogTable.orNull
     if (ct == null ||
         !CatalogTableUtils.isUnityCatalogManagedTable(ct)) {
@@ -97,33 +107,78 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     }
     val tableId = ct.storage.properties(
       UCCommitCoordinatorClient.UC_TABLE_ID_KEY)
+    sendMetricsAsync(spark, tableId, ct, txn)
+  }
 
-    try {
+  private def sendMetricsAsync(
+      spark: SparkSession,
+      tableId: String,
+      ct: CatalogTable,
+      txn: CommittedTransaction): Unit = {
+    val catalogName = ct.identifier.catalog
+    val actions = txn.committedActions
+    val version = txn.committedVersion
+    val logPath = txn.deltaLog.logPath
+
+    implicit val ec: ExecutionContext =
+      UpdateMetricsHook.getOrCreateExecutionContext(spark)
+    UpdateMetricsHook.activeRequests.incrementAndGet()
+    Future {
       val request = UpdateMetricsHook.buildRequest(
-        tableId, txn.committedActions, txn.committedVersion)
-      val catalogName = ct.identifier.catalog
+        tableId, actions, version)
       UpdateMetricsHook.sendMetrics(
-        spark, request, catalogName = catalogName)
-
+        spark, request, catalogName)
       logDebug(
         log"Successfully sent UC metrics for table " +
-        log"${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
+        log"${MDC(DeltaLogKeys.PATH, logPath)} " +
         log"version " +
-        log"${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}")
-
-    } catch {
+        log"${MDC(DeltaLogKeys.VERSION, version)}")
+    }.recover {
       case e: Exception =>
         logWarning(
           log"Failed to send UC metrics for table " +
-          log"${MDC(DeltaLogKeys.PATH, txn.deltaLog.logPath)} " +
+          log"${MDC(DeltaLogKeys.PATH, logPath)} " +
           log"version " +
-          log"${MDC(DeltaLogKeys.VERSION, txn.committedVersion)}" +
-          log": ${MDC(DeltaLogKeys.ERROR, e.getMessage)}", e)
+          log"${MDC(DeltaLogKeys.VERSION, version)}" +
+          log": ${MDC(DeltaLogKeys.ERROR, e.getMessage)}",
+          e)
+    }.onComplete { _ =>
+      UpdateMetricsHook.activeRequests.decrementAndGet()
     }
   }
 }
 
+// Follows the same async dispatch pattern as UpdateCatalog.
 object UpdateMetricsHook {
+
+  // -- Async thread pool --
+
+  @volatile private var tp: ExecutionContext = _
+
+  private def getOrCreateExecutionContext(
+      spark: SparkSession): ExecutionContext = synchronized {
+    if (tp == null) {
+      val poolSize = spark.sessionState.conf.getConf(
+        DeltaSQLConf.DELTA_UC_COMMIT_METRICS_THREAD_POOL_SIZE)
+      tp = ExecutionContext.fromExecutorService(
+        DeltaThreadPool.newDaemonCachedThreadPool(
+          "uc-metrics-sender", poolSize))
+    }
+    tp
+  }
+
+  private[metrics] val activeRequests = new AtomicInteger(0)
+
+  // Test only.
+  private[metrics] def awaitCompletion(
+      timeoutMs: Long): Boolean = {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (activeRequests.get() > 0 &&
+           System.currentTimeMillis() < deadline) {
+      Thread.sleep(50)
+    }
+    activeRequests.get() == 0
+  }
 
   // -- Payload builder --
 
@@ -135,7 +190,6 @@ object UpdateMetricsHook {
       committedActions.collectFirst { case ci: CommitInfo => ci }
     val opMetrics =
       commitInfo.flatMap(_.operationMetrics).getOrElse(Map.empty)
-
     val addFiles =
       committedActions.collect { case a: AddFile => a }
     val removeFiles =
@@ -252,7 +306,6 @@ object UpdateMetricsHook {
       val httpPost = new HttpPost(endpointUrl)
       httpPost.setHeader(
         HttpHeaders.AUTHORIZATION, s"Bearer $authToken")
-
       val jsonPayload = JsonUtils.toJson(request)
       httpPost.setEntity(
         new StringEntity(

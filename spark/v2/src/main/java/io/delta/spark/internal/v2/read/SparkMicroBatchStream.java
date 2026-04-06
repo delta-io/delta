@@ -102,6 +102,7 @@ public class SparkMicroBatchStream
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final boolean ignoreFileDeletion;
   private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
@@ -188,6 +189,11 @@ public class SparkMicroBatchStream
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
+    this.ignoreFileDeletion = this.options.ignoreFileDeletion();
+    // Deprecated. Please use `skipChangeCommits` from now on.
+    if (this.ignoreFileDeletion) {
+      logger.warn(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(this.spark));
+    }
     this.skipChangeCommits = this.options.skipChangeCommits();
     // Normalize tablePath to ensure it ends with "/" for consistent path construction
     String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
@@ -935,10 +941,9 @@ public class SparkMicroBatchStream
       }
     }
 
-    // TODO(#5319): Implement ignoreFileDeletion (deprecated)
     // "Changes" are commits that contain both AddFile and RemoveFile actions (e.g. UPDATE,
     // MERGE that rewrites data files). Allowing changes means these commits won't cause failures.
-    boolean shouldAllowChanges = options.ignoreChanges() || skipChangeCommits;
+    boolean shouldAllowChanges = options.ignoreChanges() || ignoreFileDeletion || skipChangeCommits;
     // "Deletes" are commits that contain only RemoveFile actions without any AddFile actions
     // (e.g. DELETE that purely removes data). This is a subset of changes, so allowing changes
     // implies allowing deletes.
