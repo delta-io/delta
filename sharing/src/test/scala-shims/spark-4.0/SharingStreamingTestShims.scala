@@ -31,6 +31,7 @@ import org.apache.spark.sql.execution.streaming.{
  * the constants directly.
  */
 object SharingStreamingTestShims {
+  type CheckpointFileManager = CheckpointFileManagerShim
   val CheckpointFileManager: CheckpointFileManagerShim.type =
     CheckpointFileManagerShim
   val CommitMetadata: CommitMetadataShim.type = CommitMetadataShim
