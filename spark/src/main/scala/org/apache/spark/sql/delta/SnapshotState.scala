@@ -24,7 +24,7 @@ import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogram
 import org.apache.spark.sql.delta.stats.DeletedRecordCountsHistogramUtils
-import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 
 import org.apache.spark.sql.{Column, DataFrame}
 import org.apache.spark.sql.functions.{coalesce, col, collect_set, count, last, lit, sum, when}
@@ -188,7 +188,15 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
       "domainMetadata" -> collect_set(col("domainMetadata")),
       "metadata" -> last(col("metaData"), ignoreNulls = true),
       "protocol" -> last(col("protocol"), ignoreNulls = true),
-      "fileSizeHistogram" -> lit(null).cast(FileSizeHistogram.schema)
+      "fileSizeHistogram" -> {
+        if (spark.sessionState.conf.getConf(
+            DeltaSQLConf.DELTA_UC_COMMIT_METRICS_ENABLED)) {
+          FileSizeHistogramUtils.histogramAggregate(
+            coalesce(col("add.size"), lit(-1L)).expr)
+        } else {
+          lit(null).cast(FileSizeHistogram.schema)
+        }
+      }
     ) ++ persistentDVsAggs ++ histogramDVsAgg
   }
 

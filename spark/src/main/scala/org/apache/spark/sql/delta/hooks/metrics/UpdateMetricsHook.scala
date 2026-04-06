@@ -32,7 +32,7 @@ import org.apache.spark.sql.delta.hooks.PostCommitHook
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
-import org.apache.spark.sql.delta.stats.FileSizeHistogram
+import org.apache.spark.sql.delta.stats.{FileSizeHistogram, FileSizeHistogramUtils}
 import org.apache.spark.sql.delta.util.{CatalogTableUtils, JsonUtils}
 import org.apache.spark.sql.delta.util.threads.DeltaThreadPool
 
@@ -119,13 +119,14 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     val actions = txn.committedActions
     val version = txn.committedVersion
     val logPath = txn.deltaLog.logPath
+    val snapshotHistogram = txn.postCommitSnapshot.fileSizeHistogram
 
     implicit val ec: ExecutionContext =
       UpdateMetricsHook.getOrCreateExecutionContext(spark)
     UpdateMetricsHook.activeRequests.incrementAndGet()
     Future {
       val request = UpdateMetricsHook.buildRequest(
-        tableId, actions, version)
+        tableId, actions, version, snapshotHistogram)
       UpdateMetricsHook.sendMetrics(
         spark, request, catalogName)
       logDebug(
@@ -185,7 +186,9 @@ object UpdateMetricsHook {
   private[metrics] def buildRequest(
       tableId: String,
       committedActions: Seq[Action],
-      committedVersion: Long): ReportDeltaMetricsRequest = {
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram] = None
+      ): ReportDeltaMetricsRequest = {
     val commitInfo =
       committedActions.collectFirst { case ci: CommitInfo => ci }
     val opMetrics =
@@ -205,8 +208,16 @@ object UpdateMetricsHook {
       numRowsRemoved =
         extractRowsRemoved(opMetrics, removeFiles),
       numRowsUpdated = extractRowsUpdated(opMetrics),
-      fileSizeHistogram =
-        buildFileSizeHistogram(addFiles, committedVersion)
+      fileSizeHistogram = snapshotHistogram match {
+        case Some(h) =>
+          FileSizeHistogramPayload(
+            sortedBinBoundaries = h.sortedBinBoundaries,
+            fileCounts = h.fileCounts.toSeq,
+            totalBytes = h.totalBytes.toSeq,
+            commitVersion = committedVersion)
+        case None =>
+          buildFileSizeHistogram(addFiles, committedVersion)
+      }
     )
 
     ReportDeltaMetricsRequest(
@@ -261,7 +272,7 @@ object UpdateMetricsHook {
   private def buildFileSizeHistogram(
       addFiles: Seq[AddFile],
       committedVersion: Long): FileSizeHistogramPayload = {
-    val histogram = FileSizeHistogram.emptyHistogram
+    val histogram = FileSizeHistogramUtils.emptyHistogram
     addFiles.foreach(f => histogram.insert(f.size))
     FileSizeHistogramPayload(
       sortedBinBoundaries = histogram.sortedBinBoundaries,
