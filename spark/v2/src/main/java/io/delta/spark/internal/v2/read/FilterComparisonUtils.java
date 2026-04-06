@@ -17,11 +17,12 @@ package io.delta.spark.internal.v2.read;
 
 import io.delta.kernel.expressions.Expression;
 import io.delta.kernel.expressions.Predicate;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
-import Function;
+import java.util.function.Function;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.sources.Or;
@@ -80,25 +81,15 @@ final class FilterComparisonUtils {
   }
 
   /**
-   * Semantic comparison of filter arrays, insensitive to Or/And nesting order within each element.
+   * Compute the canonical string set for a filter array. Each filter is canonicalized
+   * (Or/And trees flattened and sorted) and collected into an unmodifiable set.
+   * Intended to be stored as a field for O(1) equals/hashCode via Set.equals/Set.hashCode.
    */
-  static boolean semanticFilterEquals(Filter[] a, Filter[] b) {
-    if (a == b) return true;
-    if (a == null || b == null) return false;
-    if (a.length != b.length) return false;
-    Set<String> setA = new HashSet<>();
-    Set<String> setB = new HashSet<>();
-    for (Filter f : a) setA.add(canonicalize(f));
-    for (Filter f : b) setB.add(canonicalize(f));
-    return setA.equals(setB);
-  }
-
-  /** Semantic hash for filter arrays, insensitive to Or/And nesting order. */
-  static int semanticFilterHash(Filter[] arr) {
-    if (arr == null) return 0;
-    Set<String> canonSet = new HashSet<>();
-    for (Filter f : arr) canonSet.add(canonicalize(f));
-    return canonSet.hashCode();
+  static Set<String> canonicalFilterSet(Filter[] filters) {
+    if (filters == null || filters.length == 0) return Collections.emptySet();
+    Set<String> result = new HashSet<>();
+    for (Filter f : filters) result.add(canonicalize(f));
+    return Collections.unmodifiableSet(result);
   }
 
   // --- Kernel Predicate equivalents ---
@@ -139,23 +130,14 @@ final class FilterComparisonUtils {
     }
   }
 
-  /** Semantic comparison of kernel predicate arrays, insensitive to Or/And nesting order. */
-  static boolean semanticPredicateEquals(Predicate[] a, Predicate[] b) {
-    if (a == b) return true;
-    if (a == null || b == null) return false;
-    if (a.length != b.length) return false;
-    Set<String> setA = new HashSet<>();
-    Set<String> setB = new HashSet<>();
-    for (Predicate p : a) setA.add(canonicalize(p));
-    for (Predicate p : b) setB.add(canonicalize(p));
-    return setA.equals(setB);
-  }
-
-  /** Semantic hash for kernel predicate arrays, insensitive to Or/And nesting order. */
-  static int semanticPredicateHash(Predicate[] arr) {
-    if (arr == null) return 0;
-    Set<String> canonSet = new HashSet<>();
-    for (Predicate p : arr) canonSet.add(canonicalize(p));
-    return canonSet.hashCode();
+  /**
+   * Compute the canonical string set for a kernel predicate array.
+   * Intended to be stored as a field for O(1) equals/hashCode via Set.equals/Set.hashCode.
+   */
+  static Set<String> canonicalPredicateSet(Predicate[] predicates) {
+    if (predicates == null || predicates.length == 0) return Collections.emptySet();
+    Set<String> result = new HashSet<>();
+    for (Predicate p : predicates) result.add(canonicalize(p));
+    return Collections.unmodifiableSet(result);
   }
 }

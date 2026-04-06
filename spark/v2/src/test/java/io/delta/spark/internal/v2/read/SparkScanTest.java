@@ -1690,7 +1690,9 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     Filter[] arr1 = new Filter[] { new Or(a, new Or(b, c)) };
     Filter[] arr2 = new Filter[] { new Or(new Or(a, b), c) };
-    assertTrue(FilterComparisonUtils.semanticFilterEquals(arr1, arr2),
+    assertEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1),
+        FilterComparisonUtils.canonicalFilterSet(arr2),
         "Differently nested Or trees with same leaves should be equal");
   }
 
@@ -1702,7 +1704,9 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     Filter[] arr1 = new Filter[] { new And(a, new And(b, c)) };
     Filter[] arr2 = new Filter[] { new And(new And(a, b), c) };
-    assertTrue(FilterComparisonUtils.semanticFilterEquals(arr1, arr2),
+    assertEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1),
+        FilterComparisonUtils.canonicalFilterSet(arr2),
         "Differently nested And trees with same leaves should be equal");
   }
 
@@ -1714,7 +1718,9 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     Filter[] arr1 = new Filter[] { new Or(a, b) };
     Filter[] arr2 = new Filter[] { new Or(a, c) };
-    assertFalse(FilterComparisonUtils.semanticFilterEquals(arr1, arr2),
+    assertNotEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1),
+        FilterComparisonUtils.canonicalFilterSet(arr2),
         "Filters with different leaves should not be equal");
   }
 
@@ -1723,9 +1729,10 @@ public class SparkScanTest extends DeltaV2TestBase {
     Filter a = new EqualTo("id", 1);
     Filter[] arr = new Filter[] { a };
 
-    assertTrue(FilterComparisonUtils.semanticFilterEquals(null, null));
-    assertFalse(FilterComparisonUtils.semanticFilterEquals(arr, null));
-    assertFalse(FilterComparisonUtils.semanticFilterEquals(null, arr));
+    assertEquals(Collections.emptySet(), FilterComparisonUtils.canonicalFilterSet(null));
+    assertNotEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr),
+        FilterComparisonUtils.canonicalFilterSet(null));
   }
 
   @Test
@@ -1737,10 +1744,10 @@ public class SparkScanTest extends DeltaV2TestBase {
     Filter[] arr1 = new Filter[] { new Or(a, new Or(b, c)) };
     Filter[] arr2 = new Filter[] { new Or(new Or(a, b), c) };
     assertEquals(
-        FilterComparisonUtils.semanticFilterHash(arr1),
-        FilterComparisonUtils.semanticFilterHash(arr2),
+        FilterComparisonUtils.canonicalFilterSet(arr1).hashCode(),
+        FilterComparisonUtils.canonicalFilterSet(arr2).hashCode(),
         "Equal filter arrays must have the same hashCode");
-    assertEquals(0, FilterComparisonUtils.semanticFilterHash(null));
+    assertEquals(0, FilterComparisonUtils.canonicalFilterSet(null).hashCode());
   }
 
   // --- FilterComparisonUtils tests: Kernel Predicate canonicalization ---
@@ -1778,7 +1785,9 @@ public class SparkScanTest extends DeltaV2TestBase {
     io.delta.kernel.expressions.Predicate[] arr2 = new io.delta.kernel.expressions.Predicate[] {
         new io.delta.kernel.expressions.Predicate("OR",
             new io.delta.kernel.expressions.Predicate("OR", a, b), c) };
-    assertTrue(FilterComparisonUtils.semanticPredicateEquals(arr1, arr2));
+    assertEquals(
+        FilterComparisonUtils.canonicalPredicateSet(arr1),
+        FilterComparisonUtils.canonicalPredicateSet(arr2));
   }
 
   @Test
@@ -1797,8 +1806,8 @@ public class SparkScanTest extends DeltaV2TestBase {
         new io.delta.kernel.expressions.Predicate("OR",
             new io.delta.kernel.expressions.Predicate("OR", a, b), c) };
     assertEquals(
-        FilterComparisonUtils.semanticPredicateHash(arr1),
-        FilterComparisonUtils.semanticPredicateHash(arr2));
-    assertEquals(0, FilterComparisonUtils.semanticPredicateHash(null));
+        FilterComparisonUtils.canonicalPredicateSet(arr1).hashCode(),
+        FilterComparisonUtils.canonicalPredicateSet(arr2).hashCode());
+    assertEquals(0, FilterComparisonUtils.canonicalPredicateSet(null).hashCode());
   }
 }

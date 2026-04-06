@@ -107,6 +107,8 @@ public class SparkScan
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  private final Set<String> canonicalKernelFilters;
+  private final Set<String> canonicalDataFilters;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
@@ -147,6 +149,10 @@ public class SparkScan
     this.pushedToKernelFilters =
         pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.canonicalKernelFilters =
+        FilterComparisonUtils.canonicalPredicateSet(this.pushedToKernelFilters);
+    this.canonicalDataFilters =
+        FilterComparisonUtils.canonicalFilterSet(this.dataFilters);
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
@@ -620,9 +626,8 @@ public class SparkScan
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && FilterComparisonUtils.semanticPredicateEquals(
-            pushedToKernelFilters, that.pushedToKernelFilters)
-        && FilterComparisonUtils.semanticFilterEquals(dataFilters, that.dataFilters)
+        && canonicalKernelFilters.equals(that.canonicalKernelFilters)
+        && canonicalDataFilters.equals(that.canonicalDataFilters)
         // ignoring kernelScan because it is derived from Snapshot with pushed down filters
         // that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
@@ -642,8 +647,8 @@ public class SparkScan
             readDataSchema,
             options,
             appliedRuntimePredicates);
-    result = 31 * result + FilterComparisonUtils.semanticPredicateHash(pushedToKernelFilters);
-    result = 31 * result + FilterComparisonUtils.semanticFilterHash(dataFilters);
+    result = 31 * result + canonicalKernelFilters.hashCode();
+    result = 31 * result + canonicalDataFilters.hashCode();
     return result;
   }
 

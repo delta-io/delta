@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -45,6 +46,8 @@ public class SparkBatch implements Batch {
   private final StructType partitionSchema;
   private final Predicate[] pushedToKernelFilters;
   private final Filter[] dataFilters;
+  private final Set<String> canonicalKernelFilters;
+  private final Set<String> canonicalDataFilters;
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final long totalBytes;
@@ -76,6 +79,10 @@ public class SparkBatch implements Batch {
             : new Predicate[0];
     this.dataFilters =
         dataFilters != null ? Arrays.copyOf(dataFilters, dataFilters.length) : new Filter[0];
+    this.canonicalKernelFilters =
+        FilterComparisonUtils.canonicalPredicateSet(this.pushedToKernelFilters);
+    this.canonicalDataFilters =
+        FilterComparisonUtils.canonicalFilterSet(this.dataFilters);
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
@@ -166,9 +173,8 @@ public class SparkBatch implements Batch {
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
-        && FilterComparisonUtils.semanticPredicateEquals(
-            this.pushedToKernelFilters, that.pushedToKernelFilters)
-        && FilterComparisonUtils.semanticFilterEquals(this.dataFilters, that.dataFilters)
+        && this.canonicalKernelFilters.equals(that.canonicalKernelFilters)
+        && this.canonicalDataFilters.equals(that.canonicalDataFilters)
         && partitionedFiles.size() == that.partitionedFiles.size();
   }
 
@@ -178,8 +184,8 @@ public class SparkBatch implements Batch {
     result = 31 * result + readDataSchema.hashCode();
     result = 31 * result + dataSchema.hashCode();
     result = 31 * result + partitionSchema.hashCode();
-    result = 31 * result + FilterComparisonUtils.semanticPredicateHash(pushedToKernelFilters);
-    result = 31 * result + FilterComparisonUtils.semanticFilterHash(dataFilters);
+    result = 31 * result + canonicalKernelFilters.hashCode();
+    result = 31 * result + canonicalDataFilters.hashCode();
     result = 31 * result + Integer.hashCode(partitionedFiles.size());
     return result;
   }
