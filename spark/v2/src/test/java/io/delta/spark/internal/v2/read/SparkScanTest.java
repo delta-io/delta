@@ -40,13 +40,13 @@ import org.apache.spark.sql.connector.read.partitioning.KeyGroupedPartitioning;
 import org.apache.spark.sql.connector.read.partitioning.Partitioning;
 import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.delta.DeltaOptions;
+import org.apache.spark.sql.execution.datasources.FilePartition;
+import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.sources.And;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.sources.GreaterThan;
 import org.apache.spark.sql.sources.Or;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -593,9 +593,10 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Verify exact error message - only the blocked option should appear
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
-        "The following streaming options are not supported: [readchangefeed]. "
-            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex].",
+        "The following streaming options are not supported: [readchangefeed]. Supported options"
+            + " are: [startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger,"
+            + " ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits,"
+            + " excludeRegex].",
         exception.getMessage());
   }
 
@@ -1616,9 +1617,10 @@ public class SparkScanTest extends DeltaV2TestBase {
     Batch batch2 = table2.newScanBuilder(OPTIONS).build().toBatch();
 
     assertNotSame(batch1, batch2, "Expected different SparkBatch instances");
-    assertEquals(batch1, batch2,
-        "SparkBatch instances for the same table should be equal");
-    assertEquals(batch1.hashCode(), batch2.hashCode(),
+    assertEquals(batch1, batch2, "SparkBatch instances for the same table should be equal");
+    assertEquals(
+        batch1.hashCode(),
+        batch2.hashCode(),
         "Equal SparkBatch instances should have the same hashCode");
   }
 
@@ -1630,8 +1632,7 @@ public class SparkScanTest extends DeltaV2TestBase {
         String.format(
             "CREATE TABLE %s (id INT, value DOUBLE) USING delta LOCATION '%s'",
             otherName, otherPath));
-    spark.sql(
-        String.format("INSERT INTO %s VALUES (1, 10.0)", otherName));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 10.0)", otherName));
 
     Identifier id1 = Identifier.of(new String[] {"spark_catalog", "default"}, tableName);
     Identifier id2 = Identifier.of(new String[] {"spark_catalog", "default"}, otherName);
@@ -1641,8 +1642,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     Batch batch1 = table1.newScanBuilder(OPTIONS).build().toBatch();
     Batch batch2 = table2.newScanBuilder(OPTIONS).build().toBatch();
 
-    assertNotEquals(batch1, batch2,
-        "SparkBatch instances for different tables should not be equal");
+    assertNotEquals(
+        batch1, batch2, "SparkBatch instances for different tables should not be equal");
   }
 
   // --- FilterComparisonUtils tests: Filter canonicalization ---
@@ -1688,8 +1689,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     Filter b = new EqualTo("id", 2);
     Filter c = new EqualTo("id", 3);
 
-    Filter[] arr1 = new Filter[] { new Or(a, new Or(b, c)) };
-    Filter[] arr2 = new Filter[] { new Or(new Or(a, b), c) };
+    Filter[] arr1 = new Filter[] {new Or(a, new Or(b, c))};
+    Filter[] arr2 = new Filter[] {new Or(new Or(a, b), c)};
     assertEquals(
         FilterComparisonUtils.canonicalFilterSet(arr1),
         FilterComparisonUtils.canonicalFilterSet(arr2),
@@ -1702,8 +1703,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     Filter b = new EqualTo("id", 2);
     Filter c = new EqualTo("id", 3);
 
-    Filter[] arr1 = new Filter[] { new And(a, new And(b, c)) };
-    Filter[] arr2 = new Filter[] { new And(new And(a, b), c) };
+    Filter[] arr1 = new Filter[] {new And(a, new And(b, c))};
+    Filter[] arr2 = new Filter[] {new And(new And(a, b), c)};
     assertEquals(
         FilterComparisonUtils.canonicalFilterSet(arr1),
         FilterComparisonUtils.canonicalFilterSet(arr2),
@@ -1716,8 +1717,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     Filter b = new EqualTo("id", 2);
     Filter c = new GreaterThan("value", 10);
 
-    Filter[] arr1 = new Filter[] { new Or(a, b) };
-    Filter[] arr2 = new Filter[] { new Or(a, c) };
+    Filter[] arr1 = new Filter[] {new Or(a, b)};
+    Filter[] arr2 = new Filter[] {new Or(a, c)};
     assertNotEquals(
         FilterComparisonUtils.canonicalFilterSet(arr1),
         FilterComparisonUtils.canonicalFilterSet(arr2),
@@ -1727,7 +1728,7 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testSemanticFilterEqualsNullHandling() {
     Filter a = new EqualTo("id", 1);
-    Filter[] arr = new Filter[] { a };
+    Filter[] arr = new Filter[] {a};
 
     assertEquals(Collections.emptySet(), FilterComparisonUtils.canonicalFilterSet(null));
     assertNotEquals(
@@ -1741,8 +1742,8 @@ public class SparkScanTest extends DeltaV2TestBase {
     Filter b = new EqualTo("id", 2);
     Filter c = new EqualTo("id", 3);
 
-    Filter[] arr1 = new Filter[] { new Or(a, new Or(b, c)) };
-    Filter[] arr2 = new Filter[] { new Or(new Or(a, b), c) };
+    Filter[] arr1 = new Filter[] {new Or(a, new Or(b, c))};
+    Filter[] arr2 = new Filter[] {new Or(new Or(a, b), c)};
     assertEquals(
         FilterComparisonUtils.canonicalFilterSet(arr1).hashCode(),
         FilterComparisonUtils.canonicalFilterSet(arr2).hashCode(),
@@ -1763,11 +1764,11 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     assertEquals(
         FilterComparisonUtils.canonicalize(
-            new io.delta.kernel.expressions.Predicate("OR", a,
-                new io.delta.kernel.expressions.Predicate("OR", b, c))),
+            new io.delta.kernel.expressions.Predicate(
+                "OR", a, new io.delta.kernel.expressions.Predicate("OR", b, c))),
         FilterComparisonUtils.canonicalize(
-            new io.delta.kernel.expressions.Predicate("OR",
-                new io.delta.kernel.expressions.Predicate("OR", a, b), c)));
+            new io.delta.kernel.expressions.Predicate(
+                "OR", new io.delta.kernel.expressions.Predicate("OR", a, b), c)));
   }
 
   @Test
@@ -1779,12 +1780,16 @@ public class SparkScanTest extends DeltaV2TestBase {
     io.delta.kernel.expressions.Predicate c =
         new io.delta.kernel.expressions.Predicate("<", new Column("value"), Literal.ofInt(100));
 
-    io.delta.kernel.expressions.Predicate[] arr1 = new io.delta.kernel.expressions.Predicate[] {
-        new io.delta.kernel.expressions.Predicate("OR", a,
-            new io.delta.kernel.expressions.Predicate("OR", b, c)) };
-    io.delta.kernel.expressions.Predicate[] arr2 = new io.delta.kernel.expressions.Predicate[] {
-        new io.delta.kernel.expressions.Predicate("OR",
-            new io.delta.kernel.expressions.Predicate("OR", a, b), c) };
+    io.delta.kernel.expressions.Predicate[] arr1 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", a, new io.delta.kernel.expressions.Predicate("OR", b, c))
+        };
+    io.delta.kernel.expressions.Predicate[] arr2 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", new io.delta.kernel.expressions.Predicate("OR", a, b), c)
+        };
     assertEquals(
         FilterComparisonUtils.canonicalPredicateSet(arr1),
         FilterComparisonUtils.canonicalPredicateSet(arr2));
@@ -1799,12 +1804,16 @@ public class SparkScanTest extends DeltaV2TestBase {
     io.delta.kernel.expressions.Predicate c =
         new io.delta.kernel.expressions.Predicate("<", new Column("value"), Literal.ofInt(100));
 
-    io.delta.kernel.expressions.Predicate[] arr1 = new io.delta.kernel.expressions.Predicate[] {
-        new io.delta.kernel.expressions.Predicate("OR", a,
-            new io.delta.kernel.expressions.Predicate("OR", b, c)) };
-    io.delta.kernel.expressions.Predicate[] arr2 = new io.delta.kernel.expressions.Predicate[] {
-        new io.delta.kernel.expressions.Predicate("OR",
-            new io.delta.kernel.expressions.Predicate("OR", a, b), c) };
+    io.delta.kernel.expressions.Predicate[] arr1 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", a, new io.delta.kernel.expressions.Predicate("OR", b, c))
+        };
+    io.delta.kernel.expressions.Predicate[] arr2 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", new io.delta.kernel.expressions.Predicate("OR", a, b), c)
+        };
     assertEquals(
         FilterComparisonUtils.canonicalPredicateSet(arr1).hashCode(),
         FilterComparisonUtils.canonicalPredicateSet(arr2).hashCode());

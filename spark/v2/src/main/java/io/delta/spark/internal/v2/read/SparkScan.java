@@ -152,8 +152,7 @@ public class SparkScan
     this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
     this.canonicalKernelFilters =
         FilterComparisonUtils.canonicalPredicateSet(this.pushedToKernelFilters);
-    this.canonicalDataFilters =
-        FilterComparisonUtils.canonicalFilterSet(this.dataFilters);
+    this.canonicalDataFilters = FilterComparisonUtils.canonicalFilterSet(this.dataFilters);
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");

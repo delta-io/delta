@@ -36,8 +36,8 @@ import org.apache.spark.sql.sources.Or;
  *
  * <p><b>Design note:</b> All array elements are canonicalized into a single global set rather than
  * compared per-element. This means {@code [Or(a,b), c]} and {@code [a, Or(b,c)]} would compare as
- * equal despite different array structure. If per-element structural fidelity is ever needed, switch
- * to per-element canonicalization with multiset comparison.
+ * equal despite different array structure. If per-element structural fidelity is ever needed,
+ * switch to per-element canonicalization with multiset comparison.
  */
 final class FilterComparisonUtils {
 
@@ -59,7 +59,9 @@ final class FilterComparisonUtils {
   }
 
   private static <T extends Filter> String flattenBinary(
-      Filter f, Class<T> type, String name,
+      Filter f,
+      Class<T> type,
+      String name,
       Function<Filter, Filter> left,
       Function<Filter, Filter> right) {
     TreeSet<String> children = new TreeSet<>();
@@ -68,7 +70,8 @@ final class FilterComparisonUtils {
   }
 
   private static <T extends Filter> void collectChildren(
-      Filter f, Class<T> type,
+      Filter f,
+      Class<T> type,
       Function<Filter, Filter> left,
       Function<Filter, Filter> right,
       TreeSet<String> result) {
@@ -81,9 +84,9 @@ final class FilterComparisonUtils {
   }
 
   /**
-   * Compute the canonical string set for a filter array. Each filter is canonicalized
-   * (Or/And trees flattened and sorted) and collected into an unmodifiable set.
-   * Intended to be stored as a field for O(1) equals/hashCode via Set.equals/Set.hashCode.
+   * Compute the canonical string set for a filter array. Each filter is canonicalized (Or/And trees
+   * flattened and sorted) and collected into an unmodifiable set. Intended to be stored as a field
+   * for O(1) equals/hashCode via Set.equals/Set.hashCode.
    */
   static Set<String> canonicalFilterSet(Filter[] filters) {
     if (filters == null || filters.length == 0) return Collections.emptySet();
@@ -120,8 +123,7 @@ final class FilterComparisonUtils {
         && children.get(1) instanceof Predicate;
   }
 
-  private static void collectPredicateChildren(
-      Predicate p, String name, TreeSet<String> result) {
+  private static void collectPredicateChildren(Predicate p, String name, TreeSet<String> result) {
     if (isBinaryLogical(p, name)) {
       collectPredicateChildren((Predicate) p.getChildren().get(0), name, result);
       collectPredicateChildren((Predicate) p.getChildren().get(1), name, result);
@@ -131,8 +133,8 @@ final class FilterComparisonUtils {
   }
 
   /**
-   * Compute the canonical string set for a kernel predicate array.
-   * Intended to be stored as a field for O(1) equals/hashCode via Set.equals/Set.hashCode.
+   * Compute the canonical string set for a kernel predicate array. Intended to be stored as a field
+   * for O(1) equals/hashCode via Set.equals/Set.hashCode.
    */
   static Set<String> canonicalPredicateSet(Predicate[] predicates) {
     if (predicates == null || predicates.length == 0) return Collections.emptySet();

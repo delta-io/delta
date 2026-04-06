@@ -82,8 +82,7 @@ public class SparkBatch implements Batch {
         dataFilters != null ? Arrays.copyOf(dataFilters, dataFilters.length) : new Filter[0];
     this.canonicalKernelFilters =
         FilterComparisonUtils.canonicalPredicateSet(this.pushedToKernelFilters);
-    this.canonicalDataFilters =
-        FilterComparisonUtils.canonicalFilterSet(this.dataFilters);
+    this.canonicalDataFilters = FilterComparisonUtils.canonicalFilterSet(this.dataFilters);
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
