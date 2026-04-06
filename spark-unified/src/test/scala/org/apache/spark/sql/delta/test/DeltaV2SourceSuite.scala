@@ -73,6 +73,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming with ignoreDeletes = true still fails on change commits",
     "streaming with skipChangeCommits = true skips both delete and change commits",
     "streaming with ignoreChanges = true allows both delete and change commits",
+    "streaming with ignoreFileDeletion = true allows both delete and change commits",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
