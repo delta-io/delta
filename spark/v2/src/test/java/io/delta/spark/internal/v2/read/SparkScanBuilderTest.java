@@ -27,9 +27,11 @@ import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import java.io.File;
 import java.lang.reflect.Field;
+import java.math.BigDecimal;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.spark.sql.connector.read.Scan;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.sources.*;
@@ -62,6 +64,13 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
@@ -69,6 +78,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             snapshotManager,
             dataSchema,
             partitionSchema,
+            tableSchema,
+            Optional.empty(),
             CaseInsensitiveStringMap.empty());
 
     StructType expectedSparkSchema =
@@ -105,6 +116,13 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
     SparkScanBuilder builder =
         new SparkScanBuilder(
             tableName,
@@ -112,6 +130,8 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
             snapshotManager,
             dataSchema,
             partitionSchema,
+            tableSchema,
+            Optional.empty(),
             CaseInsensitiveStringMap.empty());
     Scan scan = builder.build();
 
@@ -721,15 +741,6 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
   }
 
   private SparkScanBuilder createTestScanBuilder(File tempDir) {
-    String path = tempDir.getAbsolutePath();
-    String tableName = String.format("predicate_test_%d", System.currentTimeMillis());
-    spark.sql(
-        String.format(
-            "CREATE OR REPLACE TABLE %s (id INT, name STRING, dep_id INT) USING delta PARTITIONED BY (dep_id) LOCATION '%s'",
-            tableName, path));
-    PathBasedSnapshotManager snapshotManager =
-        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
-    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     StructType dataSchema =
         DataTypes.createStructType(
             new StructField[] {
@@ -739,12 +750,126 @@ public class SparkScanBuilderTest extends DeltaV2TestBase {
     StructType partitionSchema =
         DataTypes.createStructType(
             new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("id", DataTypes.IntegerType, true),
+              DataTypes.createStructField("name", DataTypes.StringType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+    return createScanBuilder(tempDir, dataSchema, partitionSchema, tableSchema);
+  }
+
+  /**
+   * Integration test: decimal widening end-to-end through pushFilters() → classifyFilter() →
+   * convertComparisonLiteral(). Verifies that a decimal literal Decimal(5,2) is widened to match
+   * column type Decimal(7,2) when pushed through the full filter pushdown path.
+   */
+  @Test
+  public void testPushFilters_decimalWideningEndToEnd(@TempDir File tempDir) throws Exception {
+    SparkScanBuilder builder = createDecimalTestScanBuilder(tempDir);
+
+    // price = 100.00 where literal is Decimal(5,2) and column is Decimal(7,2)
+    Filter[] sparkFilter = new Filter[] {new EqualTo("price", new BigDecimal("100.00"))};
+    Predicate kernelPredicate =
+        new Predicate("=", new Column("price"), Literal.ofDecimal(new BigDecimal("100.00"), 7, 2));
+
+    checkSupportsPushDownFilters(
+        builder,
+        sparkFilter, // input filters
+        sparkFilter, // expected post-scan filters (data filter, stays for row-level eval)
+        sparkFilter, // expected pushed filters
+        new Predicate[] {kernelPredicate}, // expected pushed kernel predicates (widened)
+        sparkFilter, // expected data filters
+        Optional.of(kernelPredicate)); // expected kernelScanBuilder.predicate
+  }
+
+  /**
+   * Integration test: decimal literal with scale exceeding column scale is rejected during
+   * pushFilters(). The filter AND(price > 99.999, price < 200.00) should partially push only the
+   * right side because 99.999 has scale=3 exceeding column's Decimal(7,2) scale=2.
+   */
+  @Test
+  public void testPushFilters_decimalRejectionPartialPushDown(@TempDir File tempDir)
+      throws Exception {
+    SparkScanBuilder builder = createDecimalTestScanBuilder(tempDir);
+
+    // AND(price > 99.999, price < 200.00): left side has scale=3 exceeding column's scale=2
+    Filter[] sparkFilter =
+        new Filter[] {
+          new And(
+              new GreaterThan("price", new BigDecimal("99.999")),
+              new LessThan("price", new BigDecimal("200.00")))
+        };
+    // Only the right side (price < 200.00) is pushed as a kernel predicate
+    Predicate kernelPredicate =
+        new Predicate("<", new Column("price"), Literal.ofDecimal(new BigDecimal("200.00"), 7, 2));
+
+    checkSupportsPushDownFilters(
+        builder,
+        sparkFilter, // input filters
+        sparkFilter, // expected post-scan filters (partial conversion, stays for row-level eval)
+        new Filter[] {}, // expected pushed filters (partial: Spark filter not added)
+        new Predicate[] {kernelPredicate}, // expected pushed kernel predicates
+        sparkFilter, // expected data filters
+        Optional.of(kernelPredicate)); // expected kernelScanBuilder.predicate
+  }
+
+  private SparkScanBuilder createDecimalTestScanBuilder(File tempDir) {
+    StructType dataSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("price", DataTypes.createDecimalType(7, 2), true),
+              DataTypes.createStructField("quantity", DataTypes.IntegerType, true)
+            });
+    StructType partitionSchema =
+        DataTypes.createStructType(
+            new StructField[] {DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)});
+    StructType tableSchema =
+        DataTypes.createStructType(
+            new StructField[] {
+              DataTypes.createStructField("price", DataTypes.createDecimalType(7, 2), true),
+              DataTypes.createStructField("quantity", DataTypes.IntegerType, true),
+              DataTypes.createStructField("dep_id", DataTypes.IntegerType, true)
+            });
+    return createScanBuilder(tempDir, dataSchema, partitionSchema, tableSchema);
+  }
+
+  /**
+   * Shared helper for creating a SparkScanBuilder with the given schemas. Both
+   * createTestScanBuilder and createDecimalTestScanBuilder delegate to this method to avoid
+   * duplicating snapshot loading and builder instantiation logic.
+   */
+  private SparkScanBuilder createScanBuilder(
+      File tempDir, StructType dataSchema, StructType partitionSchema, StructType tableSchema) {
+    String path = tempDir.getAbsolutePath();
+    String tableName = String.format("test_%d", System.currentTimeMillis());
+    // Build CREATE TABLE SQL from the tableSchema and partitionSchema
+    StringBuilder columns = new StringBuilder();
+    Set<String> partitionCols = new HashSet<>();
+    for (StructField f : partitionSchema.fields()) {
+      partitionCols.add(f.name());
+    }
+    for (StructField f : tableSchema.fields()) {
+      if (columns.length() > 0) columns.append(", ");
+      columns.append(f.name()).append(" ").append(f.dataType().sql());
+    }
+    String partitionColNames = String.join(", ", partitionCols);
+    spark.sql(
+        String.format(
+            "CREATE OR REPLACE TABLE %s (%s) USING delta PARTITIONED BY (%s) LOCATION '%s'",
+            tableName, columns, partitionColNames, path));
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(path, spark.sessionState().newHadoopConf());
+    Snapshot snapshot = snapshotManager.loadLatestSnapshot();
     return new SparkScanBuilder(
         tableName,
         snapshot,
         snapshotManager,
         dataSchema,
         partitionSchema,
+        tableSchema,
+        Optional.empty(),
         CaseInsensitiveStringMap.empty());
   }
 

@@ -347,19 +347,6 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
           assertInvalidStreamOption(
               tableName, r -> r.option("startingVersion", -1), "startingVersion");
           assertInvalidStreamOption(tableName, r -> r.option("startingVersion", 999999), "999999");
-
-          if (tableType == TableType.MANAGED) {
-            assertInvalidStreamOption(
-                tableName,
-                r -> r.option("ignoreChanges", "true"),
-                "not supported",
-                "ignoreChanges");
-            assertInvalidStreamOption(
-                tableName,
-                r -> r.option("ignoreDeletes", "true"),
-                "not supported",
-                "ignoreDeletes");
-          }
         });
   }
 

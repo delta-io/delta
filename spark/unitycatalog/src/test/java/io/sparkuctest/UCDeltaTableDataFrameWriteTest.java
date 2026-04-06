@@ -209,13 +209,36 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
     }
   }
 
-  // TODO: Enable testMergeSchema for UC_REMOTE=true once UC managed tables support schema
-  // evolution (mergeSchema). Currently, saveAsTable with mergeSchema triggers a schema change
-  // that requires UC to update the table metadata, which is not yet supported for managed tables.
   @TestAllTableTypes
   public void testMergeSchema(TableType tableType) throws Exception {
     Assumptions.assumeFalse(
         isUCRemoteConfigured(), "mergeSchema not yet supported for UC managed tables remotely");
+    if (tableType == TableType.MANAGED) {
+      // mergeSchema triggers updateMetadata() with a new schema, which the kill switch blocks
+      // on CatalogOwned tables. Assert the failure rather than skipping.
+      withNewTable(
+          "merge_schema_blocked_test",
+          "id INT",
+          tableType,
+          tableName -> {
+            sql("INSERT INTO %s VALUES (1), (2)", tableName);
+            assertThrowsWithCauseContaining(
+                "Metadata changes on Unity Catalog",
+                () ->
+                    spark()
+                        .createDataFrame(
+                            List.of(RowFactory.create(3, "extra")),
+                            new StructType()
+                                .add("id", DataTypes.IntegerType)
+                                .add("name", DataTypes.StringType))
+                        .write()
+                        .format("delta")
+                        .mode("append")
+                        .option("mergeSchema", "true")
+                        .saveAsTable(tableName));
+          });
+      return;
+    }
     withNewTable(
         "merge_schema_test",
         "id INT",

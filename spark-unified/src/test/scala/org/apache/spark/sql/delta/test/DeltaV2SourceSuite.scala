@@ -67,6 +67,14 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "rename column: should throw schema change error with unsafe flag enabled",
     "type widening: should fail with non-additive schema change error when enable schema tracking",
 
+    // === Read options ===
+    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
+    "streaming with ignoreDeletes = true skips delete-only commits",
+    "streaming with ignoreDeletes = true still fails on change commits",
+    "streaming with skipChangeCommits = true skips both delete and change commits",
+    "streaming with ignoreChanges = true allows both delete and change commits",
+    "streaming with ignoreFileDeletion = true allows both delete and change commits",
+
     // ========== startingVersion option tests ==========
     "startingVersion",
     "startingVersion latest",
@@ -100,7 +108,8 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // ========== Error handling tests ==========
     "streaming query should fail when table is deleted and recreated with new id",
-    "SC-46515: deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
     // ========== Misc tests ==========
@@ -116,11 +125,6 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
 
-    // === read options ===
-    "skip change commits",
-    "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "SC-46515: deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
-
     // === Schema Evolution ===
     // TODO(#6232): enable the two tests after spark streaming engine supports leaf node projection
     //  for datasource v2 such that we can adopt the two schema changes without refreshing the
@@ -133,6 +137,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "fail on data loss - gaps of files",
     "fail on data loss - starting from missing files with option off",
     "fail on data loss - gaps of files with option off",
+    "streaming processes 100 sequential single-value commits and contains all values 0 to 99",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch

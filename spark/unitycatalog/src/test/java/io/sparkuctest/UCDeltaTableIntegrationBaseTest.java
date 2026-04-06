@@ -16,10 +16,13 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,11 +35,13 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
+import org.opentest4j.TestAbortedException;
 
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
@@ -75,7 +80,25 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       List<DynamicTest> tests = new ArrayList<>();
       for (TableType tableType : ALL_TABLE_TYPES) {
         String testName = String.format("%s(%s)", method.getName(), tableType);
-        tests.add(DynamicTest.dynamicTest(testName, () -> method.invoke(this, tableType)));
+        tests.add(
+            DynamicTest.dynamicTest(
+                testName,
+                () -> {
+                  try {
+                    method.invoke(this, tableType);
+                  } catch (InvocationTargetException e) {
+                    // Unwrap so JUnit sees the original exception type. Without this,
+                    // TestAbortedException (thrown by Assumptions) gets wrapped and JUnit
+                    // treats the test as failed instead of skipped. Also unwrap
+                    // RuntimeException/Error so assertThrows() in individual tests still
+                    // matches the expected exception class rather than InvocationTargetException.
+                    Throwable cause = e.getCause();
+                    if (cause instanceof TestAbortedException) throw (TestAbortedException) cause;
+                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                    if (cause instanceof Error) throw (Error) cause;
+                    throw e;
+                  }
+                }));
       }
       containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
     }
@@ -317,6 +340,58 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Returns the timestamp of the current (latest) version. */
   protected String currentTimestamp(String tableName) {
     return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains {@code
+   * expectedMessage}.
+   */
+  protected void assertThrowsWithCauseContaining(
+      String expectedMessage, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                if (t.getMessage() != null && t.getMessage().contains(expectedMessage)) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing '"
+                      + expectedMessage
+                      + "' in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains at least one of
+   * the provided messages.
+   */
+  protected void assertThrowsWithCauseContainingAny(
+      List<String> expectedMessages, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                String message = t.getMessage();
+                if (message != null
+                    && expectedMessages.stream().anyMatch(expected -> message.contains(expected))) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing one of "
+                      + expectedMessages
+                      + " in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
   }
 
   /** Helper to build an expected row as a list of string values. */
