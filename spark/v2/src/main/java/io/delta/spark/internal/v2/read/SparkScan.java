@@ -620,10 +620,11 @@ public class SparkScan
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && Arrays.equals(pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(dataFilters, that.dataFilters)
-        // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
-        // with pushed down filters that are also recorded in `pushedToKernelFilters`
+        && FilterComparisonUtils.semanticPredicateEquals(
+            pushedToKernelFilters, that.pushedToKernelFilters)
+        && FilterComparisonUtils.semanticFilterEquals(dataFilters, that.dataFilters)
+        // ignoring kernelScan because it is derived from Snapshot with pushed down filters
+        // that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
         && Objects.equals(appliedRuntimePredicates, that.appliedRuntimePredicates)
         && Objects.equals(catalogStats, that.catalogStats);
@@ -641,8 +642,8 @@ public class SparkScan
             readDataSchema,
             options,
             appliedRuntimePredicates);
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
+    result = 31 * result + FilterComparisonUtils.semanticPredicateHash(pushedToKernelFilters);
+    result = 31 * result + FilterComparisonUtils.semanticFilterHash(dataFilters);
     return result;
   }
 

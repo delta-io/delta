@@ -161,23 +161,25 @@ public class SparkBatch implements Batch {
     if (!(obj instanceof SparkBatch)) return false;
 
     SparkBatch that = (SparkBatch) obj;
-    return Objects.equals(this.snapshot, that.snapshot)
+    return Objects.equals(this.snapshot.getPath(), that.snapshot.getPath())
+        && this.snapshot.getVersion() == that.snapshot.getVersion()
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
-        && Arrays.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(this.dataFilters, that.dataFilters)
+        && FilterComparisonUtils.semanticPredicateEquals(
+            this.pushedToKernelFilters, that.pushedToKernelFilters)
+        && FilterComparisonUtils.semanticFilterEquals(this.dataFilters, that.dataFilters)
         && partitionedFiles.size() == that.partitionedFiles.size();
   }
 
   @Override
   public int hashCode() {
-    int result = snapshot.hashCode();
+    int result = Objects.hash(snapshot.getPath(), snapshot.getVersion());
     result = 31 * result + readDataSchema.hashCode();
     result = 31 * result + dataSchema.hashCode();
     result = 31 * result + partitionSchema.hashCode();
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
+    result = 31 * result + FilterComparisonUtils.semanticPredicateHash(pushedToKernelFilters);
+    result = 31 * result + FilterComparisonUtils.semanticFilterHash(dataFilters);
     result = 31 * result + Integer.hashCode(partitionedFiles.size());
     return result;
   }
