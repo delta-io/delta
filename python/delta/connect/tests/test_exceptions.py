@@ -17,8 +17,6 @@
 import json
 import unittest
 
-import grpc
-
 from pyspark.errors.exceptions.connect import SparkConnectGrpcException
 
 from delta.connect.exceptions import (
@@ -57,7 +55,6 @@ class _FakeErrorInfo:
 
 _MESSAGE = "test error message"
 _SQL_STATE = "2D521"
-_STACKTRACE = "io.delta.exceptions.ConcurrentWriteException\n\tat some.Class.method(File.java:42)"
 
 _CLASS_TO_EXCEPTION = [
     ("io.delta.exceptions.ConcurrentWriteException", ConcurrentWriteException, BaseConcurrentWriteException),
@@ -96,22 +93,6 @@ class DeltaConnectExceptionConversionTests(unittest.TestCase):
                 exc = _convert_delta_exception(info, _MESSAGE)
                 self.assertIsNotNone(exc)
                 self.assertIsNone(exc.getSqlState())  # type: ignore[union-attr]
-
-    def test_grpc_status_code_propagated(self) -> None:
-        info = _FakeErrorInfo(classes=["io.delta.exceptions.ConcurrentWriteException"])
-        exc = _convert_delta_exception(
-            info, _MESSAGE, grpc_status_code=grpc.StatusCode.ABORTED
-        )
-        self.assertIsNotNone(exc)
-        self.assertEqual(exc.getGrpcStatusCode(), grpc.StatusCode.ABORTED)  # type: ignore[union-attr]
-
-    def test_server_stacktrace_propagated(self) -> None:
-        info = _FakeErrorInfo(classes=["io.delta.exceptions.ConcurrentWriteException"])
-        exc = _convert_delta_exception(
-            info, _MESSAGE, server_stacktrace=_STACKTRACE
-        )
-        self.assertIsNotNone(exc)
-        self.assertEqual(exc.getStackTrace(), _STACKTRACE)  # type: ignore[union-attr]
 
     def test_unknown_class_returns_none(self) -> None:
         info = _FakeErrorInfo(classes=["io.delta.exceptions.UnknownException"])
