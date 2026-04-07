@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.ddl;
 import static java.util.Objects.requireNonNull;
 
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.StructType;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
@@ -47,7 +48,7 @@ public final class DDLRequestContext {
   private final DataLayoutSpec dataLayoutSpec;
   private final Engine engine;
   private final Optional<UCTableInfo> ucTableInfo;
-  private final String engineInfo;
+  private final CreateTableTransactionBuilder transactionBuilder;
 
   /**
    * @param ident Spark catalog identifier (namespace + name); used for logging, not Kernel APIs
@@ -59,7 +60,7 @@ public final class DDLRequestContext {
    * @param dataLayoutSpec partitioning / clustering specification
    * @param engine Kernel engine instance (typically {@code DefaultEngine})
    * @param ucTableInfo Unity Catalog metadata when the table is UC-managed, empty otherwise
-   * @param engineInfo version string for commit provenance (e.g. "Delta-Spark-DSv2/3.4.0")
+   * @param transactionBuilder pre-resolved Kernel transaction builder (UC or path-based)
    */
   DDLRequestContext(
       Identifier ident,
@@ -70,7 +71,7 @@ public final class DDLRequestContext {
       DataLayoutSpec dataLayoutSpec,
       Engine engine,
       Optional<UCTableInfo> ucTableInfo,
-      String engineInfo) {
+      CreateTableTransactionBuilder transactionBuilder) {
     this.ident = requireNonNull(ident);
     this.tablePath = requireNonNull(tablePath);
     this.kernelSchema = requireNonNull(kernelSchema);
@@ -79,7 +80,7 @@ public final class DDLRequestContext {
     this.dataLayoutSpec = requireNonNull(dataLayoutSpec);
     this.engine = requireNonNull(engine);
     this.ucTableInfo = requireNonNull(ucTableInfo);
-    this.engineInfo = requireNonNull(engineInfo);
+    this.transactionBuilder = requireNonNull(transactionBuilder);
   }
 
   public Identifier ident() {
@@ -102,7 +103,8 @@ public final class DDLRequestContext {
   /**
    * Table description from {@code COMMENT 'x'}, if provided. Not yet written to the Delta log
    * because Kernel's {@code CreateTableTransactionBuilder} does not yet expose a {@code
-   * withDescription()} method. Preserved here for when that API becomes available.
+   * withDescription()} method. Preserved here for when that API becomes available. TODO(#6473):
+   * Write comment to Delta log once Kernel exposes withDescription().
    */
   public Optional<String> comment() {
     return comment;
@@ -126,7 +128,7 @@ public final class DDLRequestContext {
     return ucTableInfo;
   }
 
-  public String engineInfo() {
-    return engineInfo;
+  public CreateTableTransactionBuilder transactionBuilder() {
+    return transactionBuilder;
   }
 }
