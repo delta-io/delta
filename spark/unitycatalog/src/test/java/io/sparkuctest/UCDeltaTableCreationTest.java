@@ -503,7 +503,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                           tableName, dir.toString()));
             }
 
-
           } finally {
             sql("DROP TABLE IF EXISTS %s", tableName);
           }
