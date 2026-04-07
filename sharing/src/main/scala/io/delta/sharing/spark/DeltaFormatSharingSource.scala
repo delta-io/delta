@@ -538,7 +538,7 @@ case class DeltaFormatSharingSource(
    * @param latestTableVersion the latest table version from the server.
    * @return (endingVersionForQuery, fileIdHash)
    */
-  private def determineVersionAndHashFromGetBatch(
+  private[spark] def determineVersionAndHashFromGetBatch(
       startingOffset: DeltaSourceOffset,
       startConvertedFromLegacy: Boolean,
       endOffset: DeltaSourceOffset,
@@ -588,7 +588,7 @@ case class DeltaFormatSharingSource(
    * @param latestTableVersion the latest table version from the server.
    * @return (endingVersionForQuery, fileIdHash)
    */
-  private def determineVersionAndHashFromLatestOffset(
+  private[spark] def determineVersionAndHashFromLatestOffset(
       startingOffset: DeltaSourceOffset,
       startConvertedFromLegacy: Boolean,
       latestTableVersion: Long): (Long, Option[String]) = {

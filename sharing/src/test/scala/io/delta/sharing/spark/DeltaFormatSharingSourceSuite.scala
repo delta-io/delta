@@ -2432,4 +2432,137 @@ class DeltaFormatSharingSourceSuite
       }
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Targeted unit tests for determineVersionAndHashFromGetBatch and
+  // determineVersionAndHashFromLatestOffset.
+  // ---------------------------------------------------------------------------
+
+  private def makeOffset(
+      version: Long,
+      index: Long,
+      isInitialSnapshot: Boolean = false): DeltaSourceOffset = {
+    DeltaSourceOffset(
+      reservoirId = "test-table-id",
+      reservoirVersion = version,
+      index = index,
+      isInitialSnapshot = isInitialSnapshot
+    )
+  }
+
+  private val MD5 = DeltaSharingRestClient.FILEIDHASH_MD5
+  private val SHA256 = DeltaSharingRestClient.FILEIDHASH_SHA256
+
+  test("determineVersionAndHashFromGetBatch: all branches") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_determine_gb"
+      withTable(deltaTableName) {
+        createTable(deltaTableName)
+        val sharedTableName = "shared_determine_gb"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf((getDeltaSharingClassesSQLConf ++ Seq(
+          autoResolveKey -> "true"
+        )).toSeq: _*) {
+          val source = getSource(
+            Map("path" -> s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          )
+
+          // (description, start, startLegacy, end, endLegacy, latestVer,
+          //  expectedVersion, expectedHash)
+          Seq(
+            // end=legacy with BASE_INDEX -> endVersion = reservoirVersion - 1, MD5
+            ("end legacy BASE_INDEX",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true,
+              makeOffset(5, DeltaSourceOffset.BASE_INDEX), true,
+              10L, Some(4L), MD5),
+            // end=legacy with non-BASE_INDEX -> endVersion = reservoirVersion, MD5
+            ("end legacy non-BASE_INDEX",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true,
+              makeOffset(5, 2L), true,
+              10L, Some(5L), MD5),
+            // start=legacy mid-version, end=new -> endVersion = start.reservoirVersion, MD5
+            ("start legacy mid-version, end new",
+              makeOffset(3, 0L), true,
+              makeOffset(4, DeltaSourceOffset.BASE_INDEX), false,
+              10L, Some(3L), MD5),
+            // start=legacy boundary, end=new -> regular path, SHA256
+            ("start legacy boundary, end new",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true,
+              makeOffset(5, DeltaSourceOffset.BASE_INDEX), false,
+              10L, Some(10L), SHA256),
+            // regular delta format (no legacy) -> SHA256
+            ("regular delta format",
+              makeOffset(5, DeltaSourceOffset.BASE_INDEX), false,
+              makeOffset(7, DeltaSourceOffset.BASE_INDEX), false,
+              10L, Some(10L), SHA256)
+          ).foreach { case (desc, start, startLegacy, end, endLegacy,
+              latestVer, expectedVersion, expectedHash) =>
+            val (endVersion, fileIdHash) = source.determineVersionAndHashFromGetBatch(
+              startingOffset = start,
+              startConvertedFromLegacy = startLegacy,
+              endOffset = end,
+              endConvertedFromLegacy = endLegacy,
+              latestTableVersion = latestVer
+            )
+            expectedVersion.foreach(v =>
+              assert(endVersion === v, s"[$desc] unexpected endVersion"))
+            assert(fileIdHash.contains(expectedHash),
+              s"[$desc] expected $expectedHash but got $fileIdHash")
+          }
+          cleanUpDeltaSharingBlocks()
+        }
+      }
+    }
+  }
+
+  test("determineVersionAndHashFromLatestOffset: all branches") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_determine_lo"
+      withTable(deltaTableName) {
+        createTable(deltaTableName)
+        val sharedTableName = "shared_determine_lo"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf((getDeltaSharingClassesSQLConf ++ Seq(
+          autoResolveKey -> "true"
+        )).toSeq: _*) {
+          val source = getSource(
+            Map("path" -> s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          )
+
+          // (description, start, startLegacy, latestVer, expectedVersion, expectedHash)
+          Seq(
+            // start=legacy mid-version -> endVersion = start.reservoirVersion, MD5
+            ("legacy mid-version",
+              makeOffset(3, 0L), true, 10L, Some(3L), MD5),
+            // start=legacy boundary -> regular path, SHA256
+            ("legacy boundary",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true, 10L, Some(10L), SHA256),
+            // regular delta format -> SHA256
+            ("regular delta format",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), false, 10L, Some(10L), SHA256)
+          ).foreach { case (desc, start, startLegacy, latestVer,
+              expectedVersion, expectedHash) =>
+            val (endVersion, fileIdHash) = source.determineVersionAndHashFromLatestOffset(
+              startingOffset = start,
+              startConvertedFromLegacy = startLegacy,
+              latestTableVersion = latestVer
+            )
+            expectedVersion.foreach(v =>
+              assert(endVersion === v, s"[$desc] unexpected endVersion"))
+            assert(fileIdHash.contains(expectedHash),
+              s"[$desc] expected $expectedHash but got $fileIdHash")
+          }
+          cleanUpDeltaSharingBlocks()
+        }
+      }
+    }
+  }
 }
