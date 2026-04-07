@@ -26,9 +26,7 @@ import io.delta.kernel.annotation.Evolving;
 @Evolving
 public abstract class DataType {
 
-  /**
-   * Returns true if the type value can be interpreted as raw bytes.
-   */
+  /** Returns true if the type value can be interpreted as raw bytes. */
   public static boolean isTypeValueBinaryLike(DataType type) {
     return type instanceof BinaryType
         || type instanceof GeometryType
