@@ -32,6 +32,7 @@ import org.apache.spark.sql.execution.streaming.runtime.{
  * In Spark 4.1, these classes moved to checkpointing and runtime sub-packages.
  */
 object SharingStreamingTestShims {
+  type CheckpointFileManager = CheckpointFileManagerShim
   val CheckpointFileManager: CheckpointFileManagerShim.type =
     CheckpointFileManagerShim
   val CommitMetadata: CommitMetadataShim.type = CommitMetadataShim
