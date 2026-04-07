@@ -20,7 +20,7 @@ import java.util.List;
 import org.junit.jupiter.api.Assumptions;
 
 /**
- * Tests that variant table feature interactions are blocked in Unity Catalog on Spark 4.0.
+ * Tests that variant table feature interactions with different Spark clients.
  *
  * <p>The DeltaCatalog sets {@code variant.disableVariantTableFeatureForSpark40} to true when
  * running under Unity Catalog. On Spark 4.0 (which lacks parquet variant logical type annotation
@@ -59,7 +59,7 @@ public class UCDeltaTableVariantTest extends UCDeltaTableIntegrationBaseTest {
   }
 
   @TestAllTableTypes
-  public void testVariantTableAllowedOnSpark41(TableType tableType) throws Exception {
+  public void testVariantTableAllowedOnNewerSparkVersions(TableType tableType) throws Exception {
     Assumptions.assumeFalse(isSpark40(), "This test only applies to Spark 4.1+");
     withNewTable(
         "variant_allowed_test",
