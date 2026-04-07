@@ -184,12 +184,7 @@ trait SnapshotStateManager extends DeltaLogging { self: Snapshot =>
 
     val histogramDVsAgg = Seq("deletedRecordCountsHistogramOpt" -> histogramDVsAggExpr)
 
-    // The FileSizeHistogram computation doesn't work without whole stage codegen.
-    val avoidHistogramComputationDueToNoWholeStageCodeGen =
-      !spark.conf.get(SQLConf.WHOLESTAGE_CODEGEN_ENABLED)
-    val histogramAgg = if (
-      fileSizeHistogramEnabled && !avoidHistogramComputationDueToNoWholeStageCodeGen
-    ) {
+    val histogramAgg = if (fileSizeHistogramEnabled) {
       FileSizeHistogramUtils.histogramAggregate(coalesce(col("add.size"), lit(-1L)).expr)
     } else {
       lit(null).cast(FileSizeHistogram.schema)
