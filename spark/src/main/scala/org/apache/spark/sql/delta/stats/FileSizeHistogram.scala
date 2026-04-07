@@ -72,6 +72,36 @@ case class FileSizeHistogram(
 
 private[delta] object FileSizeHistogram {
 
+  private val KB = 1024L
+  private val MB = 1024L * KB
+  private val GB = 1024L * MB
+
+  // Exponentially spaced bins with finer resolution around the 128MB region.
+  val DEFAULT_BINS: IndexedSeq[Long] = IndexedSeq(
+    0L,
+    8*KB, 16*KB, 32*KB, 64*KB, 128*KB, 256*KB,
+    512*KB, 1*MB, 2*MB, 4*MB,
+    8*MB, 12*MB, 16*MB, 20*MB, 24*MB, 28*MB,
+    32*MB, 36*MB, 40*MB,
+    48*MB, 56*MB, 64*MB, 72*MB, 80*MB,
+    88*MB, 96*MB, 104*MB, 112*MB, 120*MB,
+    124*MB, 128*MB, 132*MB, 136*MB, 140*MB, 144*MB,
+    160*MB, 176*MB, 192*MB, 208*MB, 224*MB, 240*MB,
+    256*MB, 272*MB, 288*MB, 304*MB, 320*MB, 336*MB,
+    352*MB, 368*MB, 384*MB, 400*MB, 416*MB, 432*MB,
+    448*MB, 464*MB, 480*MB, 496*MB, 512*MB, 528*MB,
+    544*MB, 560*MB, 576*MB,
+    640*MB, 704*MB, 768*MB, 832*MB, 896*MB, 960*MB,
+    1024*MB, 1088*MB, 1152*MB, 1216*MB, 1280*MB,
+    1344*MB, 1408*MB,
+    1536*MB, 1664*MB, 1792*MB, 1920*MB, 2048*MB,
+    2304*MB, 2560*MB, 2816*MB, 3072*MB,
+    3328*MB, 3584*MB, 3840*MB, 4*GB,
+    8*GB, 16*GB, 32*GB, 64*GB, 128*GB, 256*GB
+  )
+
+  def emptyHistogram: FileSizeHistogram = FileSizeHistogram(DEFAULT_BINS)
+
   /**
    * Returns the index of the bin to which given fileSize belongs OR -1 if given fileSize doesn't
    * belongs to any bin
