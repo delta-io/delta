@@ -1900,225 +1900,161 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  test("streaming with ignoreDeletes = true skips delete-only commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      // Write initial data
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+  // ---------- Read-option interaction tests ----------
+  //
+  // The four read options (ignoreDeletes, ignoreChanges, skipChangeCommits,
+  // ignoreFileDeletion) control two independent dimensions:
+  //
+  //   Error suppression - governed by shouldAllowChanges and shouldAllowDeletes,
+  //     which are simple OR-chains over the options.
+  //   Data skipping - only skipChangeCommits causes commits with data-changing
+  //     RemoveFiles to be entirely skipped (no AddFiles emitted).
+  //
+  // Each test below runs a canonical scenario through testReadOptionHandling in
+  // three phases, verifying intermediate results after each phase.
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true",
-          "startingVersion" -> "0"))
+  /**
+   * Runs a canonical phased scenario with a single long-lived query to verify
+   * how Delta source handles delete-only and change commits under the given
+   * read options.
+   *
+   * Phase 1 - v0: Write [1, 2, 3] (always succeeds, verifies [1, 2, 3])
+   * Phase 2 - v1: Delete all rows (delete-only commit)
+   *           v2: Append [4, 5]
+   * Phase 3 - v3: Overwrite with [6, 7, 8] (change commit: AddFile + RemoveFile)
+   *           v4: Append [9, 10]
+   *
+   * All option combinations tested here tolerate the delete-only commit, so the
+   * query stays alive through phases 1 and 2. Phase 3 either succeeds or fails
+   * depending on whether the options allow change commits.
+   *
+   * @param options                    Delta read options to set on the stream
+   * @param expectedAfterDeleteAppend  expected output rows after phase 2
+   * @param expectedAfterOverwriteAppend Right(rows) to assert output after phase 3,
+   *                                     or Left(substring) to assert an
+   *                                     [[UnsupportedOperationException]]
+   */
+  private def testReadOptionHandling(
+      options: Map[String, String],
+      expectedAfterDeleteAppend: Seq[Int],
+      expectedAfterOverwriteAppend: Either[String, Seq[Int]]): Unit = {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+      val df = loadStreamWithOptions(inputDir.toString, options)
 
       val q = df.writeStream
         .format("delta")
         .option("checkpointLocation", checkpointDir.toString)
         .start(outputDir.toString)
       try {
+        // Phase 1: process initial data (v0)
         q.processAllAvailable()
         checkAnswer(
           spark.read.format("delta").load(outputDir.toString),
           Seq(1, 2, 3).map(Row(_)))
 
-        // Delete all rows: produces only RemoveFile actions
+        // Phase 2: delete-only commit (v1) + append (v2)
         io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
-
-        // Append new data after the delete
         Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
         q.processAllAvailable()
-
-        // The delete commit should be silently skipped; only inserts are processed
         checkAnswer(
           spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5).map(Row(_)))
-      } finally {
-        q.stop()
-      }
-    }
-  }
+          expectedAfterDeleteAppend.map(Row(_)))
 
-  testQuietly("streaming with ignoreDeletes = true still fails on change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+        // Phase 3: overwrite / change commit (v3) + append (v4)
+        Seq(6, 7, 8).toDF("x")
+          .write.mode("overwrite").format("delta").save(inputDir.toString)
+        Seq(9, 10).toDF("x")
+          .write.format("delta").mode("append").save(inputDir.toString)
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true"))
-      df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-        .processAllAvailable()
+        expectedAfterOverwriteAppend match {
+          case Left(errorSubstring) =>
+            val e = intercept[StreamingQueryException] {
+              q.processAllAvailable()
+            }
+            assert(e.getCause.isInstanceOf[UnsupportedOperationException])
+            assert(e.getCause.getMessage.contains(errorSubstring))
 
-      // Overwrite produces both AddFile and RemoveFile actions (a change commit)
-      Seq(4, 5, 6).toDF("x")
-        .write
-        .mode("overwrite")
-        .format("delta")
-        .save(inputDir.toString)
-
-      val e = intercept[StreamingQueryException] {
-        val q = df.writeStream
-          .format("delta")
-          .option("checkpointLocation", checkpointDir.toString)
-          .start(outputDir.toString)
-
-        try {
-          q.processAllAvailable()
-        } finally {
-          q.stop()
+          case Right(expectedData) =>
+            q.processAllAvailable()
+            checkAnswer(
+              spark.read.format("delta").load(outputDir.toString),
+              expectedData.map(Row(_)))
         }
-      }
-
-      assert(e.getCause.isInstanceOf[UnsupportedOperationException])
-      assert(e.getCause.getMessage.contains(
-        "This is currently not supported. If this is going to happen regularly and you are okay" +
-          " to skip changes, set the option 'skipChangeCommits' to 'true'."
-      ))
-    }
-  }
-
-  test("streaming with skipChangeCommits = true skips both delete and change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
-
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"))
-
-      val q = df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3).map(Row(_)))
-
-        // Delete all rows: produces only RemoveFile actions (delete-only commit)
-        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
-
-        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
-        // Overwrite produces both AddFile and RemoveFile actions (change commit)
-        Seq(6, 7, 8).toDF("x")
-          .write
-          .mode("overwrite")
-          .format("delta")
-          .save(inputDir.toString)
-
-        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
-        q.processAllAvailable()
-
-        // Both the delete and overwrite commits are silently skipped; only inserts are processed
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5, 9, 10).map(Row(_)))
       } finally {
         q.stop()
       }
     }
   }
 
-  test("streaming with ignoreChanges = true allows both delete and change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+  // --- Single-option tests ---
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"))
-
-      val q = df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3).map(Row(_)))
-
-        // Delete all rows: delete-only commit, allowed by ignoreChanges
-        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
-
-        // The delete commit is skipped (no AddFiles)
-        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5).map(Row(_)))
-
-        // Overwrite produces both AddFile and RemoveFile actions (change commit).
-        // Unlike skipChangeCommits which skips the commit, ignoreChanges lets the
-        // AddFiles through (potentially duplicating data).
-        Seq(6, 7, 8).toDF("x")
-          .write
-          .mode("overwrite")
-          .format("delta")
-          .save(inputDir.toString)
-
-        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-
-        q.processAllAvailable()
-
-        // The overwrite commit's AddFiles ARE emitted (unlike skipChangeCommits). The
-        // result includes the overwrite's new rows.
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(Row(_)))
-      } finally {
-        q.stop()
-      }
-    }
+  testQuietly("read options [ignoreDeletes]: ignores delete, rejects change") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.IGNORE_DELETES_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Left("skipChangeCommits"))
   }
 
-  test("streaming with ignoreFileDeletion = true allows both delete and change commits") {
-    withTempDirs { (inputDir, outputDir, checkpointDir) =>
-      Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
+  test("read options [skipChangeCommits]: ignores delete, skips change") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
+  }
 
-      val df = loadStreamWithOptions(
-        inputDir.toString, Map(DeltaOptions.IGNORE_FILE_DELETION_OPTION -> "true"))
+  test("read options [ignoreChanges]: ignores delete, includes change AddFiles") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.IGNORE_CHANGES_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+  }
 
-      val q = df.writeStream
-        .format("delta")
-        .option("checkpointLocation", checkpointDir.toString)
-        .start(outputDir.toString)
-      try {
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3).map(Row(_)))
+  test("read options [ignoreFileDeletion] (deprecated): equivalent to ignoreChanges") {
+    testReadOptionHandling(
+      options = Map(DeltaOptions.IGNORE_FILE_DELETION_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+  }
 
-        // Delete all rows: delete-only commit
-        io.delta.tables.DeltaTable.forPath(spark, inputDir.getAbsolutePath).delete()
+  // --- Combination tests ---
 
-        // The delete commit is skipped (no AddFiles)
-        Seq(4, 5).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
-        q.processAllAvailable()
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5).map(Row(_)))
+  test("read options [ignoreDeletes, ignoreChanges]: equivalent to ignoreChanges") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)))
+  }
 
-        // Overwrite produces both AddFile and RemoveFile actions (change commit).
-        // ignoreFileDeletion behaves like ignoreChanges - AddFiles are emitted.
-        Seq(6, 7, 8).toDF("x")
-          .write
-          .mode("overwrite")
-          .format("delta")
-          .save(inputDir.toString)
+  test("read options [ignoreChanges, skipChangeCommits]: equivalent to skipChangeCommits") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true",
+        DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
+  }
 
-        Seq(9, 10).toDF("x").write.format("delta").mode("append").save(inputDir.toString)
+  test("read options [ignoreDeletes, skipChangeCommits]: equivalent to skipChangeCommits") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
+  }
 
-        q.processAllAvailable()
-
-        // The overwrite's AddFiles are emitted (same as ignoreChanges). This option is
-        // deprecated in favor of skipChangeCommits.
-        checkAnswer(
-          spark.read.format("delta").load(outputDir.toString),
-          Seq(1, 2, 3, 4, 5, 6, 7, 8, 9, 10).map(Row(_)))
-      } finally {
-        q.stop()
-      }
-    }
+  test("read options [ignoreDeletes, ignoreChanges, skipChangeCommits]: " +
+      "equivalent to skipChangeCommits") {
+    testReadOptionHandling(
+      options = Map(
+        DeltaOptions.IGNORE_DELETES_OPTION -> "true",
+        DeltaOptions.IGNORE_CHANGES_OPTION -> "true",
+        DeltaOptions.SKIP_CHANGE_COMMITS_OPTION -> "true"),
+      expectedAfterDeleteAppend = Seq(1, 2, 3, 4, 5),
+      expectedAfterOverwriteAppend = Right(Seq(1, 2, 3, 4, 5, 9, 10)))
   }
 
   test("incremental: first commit file missing, fails") {
