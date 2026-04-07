@@ -17,6 +17,9 @@
 import json
 import unittest
 
+import grpc
+from grpc import StatusCode
+
 from pyspark.errors.exceptions.connect import SparkConnectGrpcException
 
 from delta.connect.exceptions import (
@@ -45,16 +48,23 @@ from delta.exceptions.base import (
 class _FakeErrorInfo:
     """Minimal stub for google.rpc.error_details_pb2.ErrorInfo."""
 
-    def __init__(self, classes=None, sql_state=None):
+    def __init__(self, classes=None, sql_state=None, error_class=None, message_parameters=None):
         self.metadata = {}
         if classes is not None:
             self.metadata["classes"] = json.dumps(classes)
         if sql_state is not None:
             self.metadata["sqlState"] = sql_state
+        if error_class is not None:
+            self.metadata["errorClass"] = error_class
+        if message_parameters is not None:
+            self.metadata["messageParameters"] = json.dumps(message_parameters)
 
 
 _MESSAGE = "test error message"
 _SQL_STATE = "2D521"
+_STACKTRACE = "some.stack.Trace"
+_ERROR_CLASS = "DELTA_CONCURRENT_WRITE"
+_MESSAGE_PARAMETERS = {"tableName": "my_table"}
 
 _CLASS_TO_EXCEPTION = [
     ("io.delta.exceptions.ConcurrentWriteException", ConcurrentWriteException, BaseConcurrentWriteException),
@@ -108,6 +118,31 @@ class DeltaConnectExceptionConversionTests(unittest.TestCase):
         info = _FakeErrorInfo()
         result = _convert_delta_exception(info, _MESSAGE)
         self.assertIsNone(result)
+
+    def test_error_class_and_message_parameters_propagated(self) -> None:
+        info = _FakeErrorInfo(
+            classes=["io.delta.exceptions.ConcurrentWriteException"],
+            error_class=_ERROR_CLASS,
+            message_parameters=_MESSAGE_PARAMETERS,
+        )
+        exc = _convert_delta_exception(info, _MESSAGE)
+        self.assertIsNotNone(exc)
+        self.assertEqual(exc.getCondition(), _ERROR_CLASS)  # type: ignore[union-attr]
+        self.assertEqual(exc.getMessageParameters(), _MESSAGE_PARAMETERS)  # type: ignore[union-attr]
+
+    def test_server_stacktrace_propagated(self) -> None:
+        info = _FakeErrorInfo(classes=["io.delta.exceptions.ConcurrentWriteException"])
+        exc = _convert_delta_exception(info, _MESSAGE, server_stacktrace=_STACKTRACE)
+        self.assertIsNotNone(exc)
+        self.assertEqual(exc.getStackTrace(), _STACKTRACE)  # type: ignore[union-attr]
+
+    def test_grpc_status_code_propagated(self) -> None:
+        info = _FakeErrorInfo(classes=["io.delta.exceptions.ConcurrentWriteException"])
+        exc = _convert_delta_exception(
+            info, _MESSAGE, grpc_status_code=StatusCode.INTERNAL
+        )
+        self.assertIsNotNone(exc)
+        self.assertEqual(exc.getGrpcStatusCode(), StatusCode.INTERNAL)  # type: ignore[union-attr]
 
     def test_inherits_from_spark_connect_grpc_exception(self) -> None:
         for java_class, _, _ in _CLASS_TO_EXCEPTION:

@@ -15,7 +15,10 @@
 #
 
 import json
-from typing import Optional, TYPE_CHECKING
+from typing import Dict, Optional, TYPE_CHECKING
+
+import grpc
+from grpc import StatusCode
 
 from pyspark.errors.exceptions.connect import SparkConnectException, SparkConnectGrpcException
 
@@ -118,28 +121,99 @@ class ConcurrentTransactionException(SparkConnectGrpcException, BaseConcurrentTr
 
 
 def _convert_delta_exception(
-    info: "ErrorInfo", message: str
+    info: "ErrorInfo",
+    message: str,
+    grpc_status_code: grpc.StatusCode = StatusCode.UNKNOWN,
+    server_stacktrace: Optional[str] = None,
+    display_server_stacktrace: bool = False,
 ) -> Optional[SparkConnectGrpcException]:
     classes = []
     if "classes" in info.metadata:
         classes = json.loads(info.metadata["classes"])
 
     sql_state: Optional[str] = info.metadata.get("sqlState")
+    error_class: Optional[str] = info.metadata.get("errorClass")
+    raw_params = info.metadata.get("messageParameters")
+    message_parameters: Optional[Dict[str, str]] = json.loads(raw_params) if raw_params else None
 
     if "io.delta.exceptions.ConcurrentWriteException" in classes:
-        return ConcurrentWriteException(message, sql_state=sql_state)
+        return ConcurrentWriteException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.MetadataChangedException" in classes:
-        return MetadataChangedException(message, sql_state=sql_state)
+        return MetadataChangedException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.ProtocolChangedException" in classes:
-        return ProtocolChangedException(message, sql_state=sql_state)
+        return ProtocolChangedException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.ConcurrentAppendException" in classes:
-        return ConcurrentAppendException(message, sql_state=sql_state)
+        return ConcurrentAppendException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.ConcurrentDeleteReadException" in classes:
-        return ConcurrentDeleteReadException(message, sql_state=sql_state)
+        return ConcurrentDeleteReadException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.ConcurrentDeleteDeleteException" in classes:
-        return ConcurrentDeleteDeleteException(message, sql_state=sql_state)
+        return ConcurrentDeleteDeleteException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.ConcurrentTransactionException" in classes:
-        return ConcurrentTransactionException(message, sql_state=sql_state)
+        return ConcurrentTransactionException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     if "io.delta.exceptions.DeltaConcurrentModificationException" in classes:
-        return DeltaConcurrentModificationException(message, sql_state=sql_state)
+        return DeltaConcurrentModificationException(
+            message,
+            errorClass=error_class,
+            messageParameters=message_parameters,
+            sql_state=sql_state,
+            grpc_status_code=grpc_status_code,
+            server_stacktrace=server_stacktrace,
+            display_server_stacktrace=display_server_stacktrace,
+        )
     return None
