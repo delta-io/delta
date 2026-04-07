@@ -634,8 +634,12 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
       // Sentinel files have null AddFile and null RemoveFile.
       String deltaPath = deltaFile.add() != null ? deltaFile.add().path() : null;
-      String kernelPath =
-          kernelFile.getAddFile() != null ? kernelFile.getAddFile().getPath() : null;
+      String kernelPath = null;
+      if (kernelFile.getAddFile() != null) {
+        kernelPath = kernelFile.getAddFile().getPath();
+      } else if (kernelFile.getCDCFile() != null && kernelFile.getCDCFile().getAddFile() != null) {
+        kernelPath = kernelFile.getCDCFile().getAddFile().getPath();
+      }
 
       if (deltaPath != null || kernelPath != null) {
         assertEquals(
@@ -1229,14 +1233,53 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreChanges", false);
   }
 
+  // ================================================================================================
+  // Tests for ignoreFileDeletion parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreFileDeletion=true, both DSv1 and DSv2 produce the same file changes
+   * for delete-only commits. Since ignoreFileDeletion implies shouldAllowDeletes, these commits
+   * should be silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreFileDeletion_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreFileDeletion", true);
+  }
+
+  /**
+   * Verifies that with ignoreFileDeletion=true, both DSv1 and DSv2 produce the same file changes
+   * for change commits (commits containing both AddFile and RemoveFile actions). Unlike
+   * ignoreDeletes, ignoreFileDeletion allows these commits through and emits their AddFiles.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreFileDeletion_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreFileDeletion", false);
+  }
+
   // TODO(#5319): test the combinations of ignoreDeletes, skipChangeCommits, and ignoreChanges
   // ================================================================================================
-  // Shared scenario providers for ignoreDeletes, skipChangeCommits, and ignoreChanges tests
+  // Shared scenario providers for ignoreDeletes, skipChangeCommits, ignoreChanges, and
+  // ignoreFileDeletion tests
   // ================================================================================================
 
   /**
    * Provides delete-only scenarios: commits with only RemoveFile actions and no AddFile actions.
-   * Used by ignoreDeletes, skipChangeCommits, and ignoreChanges tests.
+   * Used by ignoreDeletes, skipChangeCommits, ignoreChanges, and ignoreFileDeletion tests.
    *
    * <p>Arguments: (ScenarioSetup, isInitialSnapshot, testDescription)
    */
@@ -1295,9 +1338,10 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
   /**
    * Provides change-commit scenarios: commits containing both AddFile and RemoveFile actions (e.g.,
-   * UPDATE, MERGE). Used by ignoreDeletes, skipChangeCommits, and ignoreChanges tests —
-   * ignoreDeletes expects these to throw, skipChangeCommits expects them to be silently skipped,
-   * and ignoreChanges expects them to pass through with AddFiles emitted.
+   * UPDATE, MERGE). Used by ignoreDeletes, skipChangeCommits, ignoreChanges, and ignoreFileDeletion
+   * tests — ignoreDeletes expects these to throw, skipChangeCommits expects them to be silently
+   * skipped, and ignoreChanges/ignoreFileDeletion expect them to pass through with AddFiles
+   * emitted.
    *
    * <p>Arguments: (ScenarioSetup, isInitialSnapshot, testDescription)
    */
@@ -3695,7 +3739,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
           @Override
           public IndexedFile next() {
             consumed = true;
-            return new IndexedFile(/* version= */ 1L, /* index= */ 0L, /* addFile= */ null);
+            return IndexedFile.sentinel(/* version= */ 1L, /* index= */ 0L);
           }
 
           @Override
@@ -3733,7 +3777,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
           @Override
           public IndexedFile next() {
             remaining--;
-            return new IndexedFile(/* version= */ 1L, /* index= */ remaining, /* addFile= */ null);
+            return IndexedFile.sentinel(/* version= */ 1L, /* index= */ remaining);
           }
 
           @Override
