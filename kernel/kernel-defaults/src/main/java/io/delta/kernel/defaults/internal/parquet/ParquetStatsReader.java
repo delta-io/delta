@@ -300,9 +300,7 @@ public class ParquetStatsReader {
         || dataType instanceof TimestampType
         || dataType instanceof TimestampNTZType
         || dataType instanceof StringType
-        || dataType instanceof BinaryType
-        || dataType instanceof GeometryType
-        || dataType instanceof GeographyType;
+        || DataType.isTypeValueBinaryLike(dataType);
   }
 
   private static byte[] getBinaryStat(Statistics<?> statistics, boolean decodeMin) {

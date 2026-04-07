@@ -50,9 +50,7 @@ class ParquetColumnReaders {
       return new MapColumnReader(
           initialBatchSize, (MapType) typeFromClient, (GroupType) typeFromFile);
     } else if (typeFromClient instanceof StringType
-        || typeFromClient instanceof BinaryType
-        || typeFromClient instanceof GeometryType
-        || typeFromClient instanceof GeographyType) {
+        || DataType.isTypeValueBinaryLike(typeFromClient)) {
       return new BinaryColumnReader(typeFromClient, initialBatchSize);
     } else if (typeFromClient instanceof BooleanType) {
       return new BooleanColumnReader(initialBatchSize);

@@ -16,12 +16,10 @@
 package io.delta.kernel.defaults.internal.data.vector;
 
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
+import static io.delta.kernel.types.DataType.isTypeValueBinaryLike;
 import static java.util.Objects.requireNonNull;
 
-import io.delta.kernel.types.BinaryType;
 import io.delta.kernel.types.DataType;
-import io.delta.kernel.types.GeographyType;
-import io.delta.kernel.types.GeometryType;
 import io.delta.kernel.types.StringType;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -40,10 +38,7 @@ public class DefaultBinaryVector extends AbstractColumnVector {
   public DefaultBinaryVector(DataType dataType, int size, byte[][] values) {
     super(size, dataType, Optional.empty());
     checkArgument(
-        dataType instanceof StringType
-            || dataType instanceof BinaryType
-            || dataType instanceof GeometryType
-            || dataType instanceof GeographyType,
+        dataType instanceof StringType || isTypeValueBinaryLike(dataType),
         "invalid type for binary vector: %s",
         dataType);
     this.values = requireNonNull(values, "values is null");
@@ -91,10 +86,7 @@ public class DefaultBinaryVector extends AbstractColumnVector {
    */
   @Override
   public byte[] getBinary(int rowId) {
-    DataType dt = getDataType();
-    if (!(dt instanceof BinaryType)
-        && !(dt instanceof GeometryType)
-        && !(dt instanceof GeographyType)) {
+    if (!isTypeValueBinaryLike(getDataType())) {
       throw unsupportedDataAccessException("binary");
     }
     checkValidRowId(rowId);

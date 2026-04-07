@@ -27,6 +27,15 @@ import io.delta.kernel.annotation.Evolving;
 public abstract class DataType {
 
   /**
+   * Returns true if the type value can be interpreted as raw bytes.
+   */
+  public static boolean isTypeValueBinaryLike(DataType type) {
+    return type instanceof BinaryType
+        || type instanceof GeometryType
+        || type instanceof GeographyType;
+  }
+
+  /**
    * Are the data types same? The metadata, collations or column names could be different.
    *
    * <p>Should be used for schema comparisons during schema evolution.
