@@ -272,6 +272,28 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testAlwaysTrueFilter() {
+    Filter filter = new org.apache.spark.sql.sources.AlwaysTrue();
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "AlwaysTrue should be converted");
+    assertFalse(result.isPartial());
+    assertEquals("ALWAYS_TRUE", result.get().getName());
+  }
+
+  @Test
+  public void testAlwaysFalseFilter() {
+    Filter filter = new org.apache.spark.sql.sources.AlwaysFalse();
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "AlwaysFalse should be converted");
+    assertFalse(result.isPartial());
+    assertEquals("ALWAYS_FALSE", result.get().getName());
+  }
+
+  @Test
   public void testUnsupportedFilter() {
     // Create an unsupported filter (StringContains is not implemented in our conversion method)
     Filter unsupportedFilter = new StringContains("col1", "test");
@@ -449,6 +471,22 @@ public class ExpressionUtilsTest {
         expectedDataType,
         literal.getDataType(),
         "DataType should match expected type for " + typeName);
+  }
+
+  @Test
+  public void testConvertValueToKernelLiteral_DecimalWithScaleExceedingPrecision() {
+    // BigDecimal("0.00") has precision=1, scale=2 which violates precision >= scale.
+    // The conversion should normalize precision to max(precision, scale + 1).
+    BigDecimal bd = new BigDecimal("0.00");
+    assertEquals(1, bd.precision(), "Precondition: precision of 0.00 should be 1");
+    assertEquals(2, bd.scale(), "Precondition: scale of 0.00 should be 2");
+
+    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(bd);
+    assertTrue(result.isPresent(), "BigDecimal 0.00 should be convertible");
+
+    Literal literal = result.get();
+    // Normalized precision should be max(1, 2+1) = 3
+    assertEquals(new DecimalType(3, 2), literal.getDataType());
   }
 
   @Test

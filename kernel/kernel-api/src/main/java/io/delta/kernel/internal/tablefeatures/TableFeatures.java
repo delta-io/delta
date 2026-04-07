@@ -143,8 +143,10 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      // writable if change data feed is disabled
-      return !TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+      // Kernel now supports writes to CDF-enabled tables with restrictions.
+      // Validation is performed at commit time to check for unsupported mixed operations
+      // (add+remove with dataChange=true) which would require CDC file generation.
+      return true;
     }
 
     @Override
@@ -200,6 +202,20 @@ public class TableFeatures {
     @Override
     public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
       return hasIdentityColumns(metadata);
+    }
+  }
+
+  static final TableFeature GEOSPATIAL_RW_FEATURE = new GeoSpatialTableFeature();
+
+  private static class GeoSpatialTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    GeoSpatialTableFeature() {
+      super("geospatial", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasGeospatial(metadata);
     }
   }
 
@@ -538,6 +554,34 @@ public class TableFeatures {
     }
   }
 
+  /** This feature was replaced with its stable version, `collations`. */
+  public static final TableFeature COLLATIONS_PREVIEW_W_FEATURE = new CollationsPreview();
+
+  private static class CollationsPreview extends TableFeature.WriterFeature {
+    CollationsPreview() {
+      super("collations-preview", /* minWriterVersion = */ 7);
+    }
+  }
+
+  /** The stable collation feature. */
+  public static final TableFeature COLLATIONS_W_FEATURE = new Collations();
+
+  private static class Collations extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    Collations() {
+      super("collations", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasCollatedColumn(metadata.getSchema())
+          &&
+          // Don't automatically enable the stable feature if the preview feature is already
+          // supported, to avoid breaking old clients that only support the preview feature.
+          !protocol.supportsFeature(COLLATIONS_PREVIEW_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -582,7 +626,10 @@ public class TableFeatures {
               VARIANT_SHREDDING_RW_FEATURE,
               VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
               ICEBERG_WRITER_COMPAT_V1,
-              ICEBERG_WRITER_COMPAT_V3));
+              ICEBERG_WRITER_COMPAT_V3,
+              COLLATIONS_PREVIEW_W_FEATURE,
+              COLLATIONS_W_FEATURE,
+              GEOSPATIAL_RW_FEATURE));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
@@ -880,11 +927,34 @@ public class TableFeatures {
     }
   }
 
+  public static boolean hasGeospatial(Metadata metadata) {
+    return new SchemaIterable(metadata.getSchema())
+        .stream()
+            .anyMatch(
+                element ->
+                    element.getField().getDataType() instanceof GeometryType
+                        || element.getField().getDataType() instanceof GeographyType);
+  }
+
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
   private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
     return new SchemaIterable(tableSchema)
         .stream().anyMatch(element -> element.getField().getDataType().equals(type));
+  }
+
+  /**
+   * Check if the table schema has any string column with a non-default (non-UTF8_BINARY) collation.
+   */
+  static boolean hasCollatedColumn(StructType tableSchema) {
+    return new SchemaIterable(tableSchema)
+        .stream()
+            .anyMatch(
+                element -> {
+                  DataType dataType = element.getField().getDataType();
+                  return dataType instanceof StringType
+                      && !((StringType) dataType).isUTF8BinaryCollated();
+                });
   }
 }

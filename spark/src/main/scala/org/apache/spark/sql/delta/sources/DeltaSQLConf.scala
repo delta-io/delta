@@ -825,6 +825,23 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
+  val DELTA_UC_COMMIT_METRICS_ENABLED =
+    buildConf("commitMetrics.enabled")
+      .doc("When enabled, Delta sends commit metrics to Unity Catalog " +
+        "for UC-managed tables. Metrics are sent asynchronously and " +
+        "never block or fail commits.")
+      .booleanConf
+      .createWithDefault(false)
+
+  val DELTA_UC_COMMIT_METRICS_THREAD_POOL_SIZE =
+    buildStaticConf("commitMetrics.threadPoolSize")
+      .internal()
+      .doc("The number of threads for sending commit metrics " +
+        "to Unity Catalog asynchronously.")
+      .intConf
+      .checkValue(_ > 0, "threadPoolSize must be positive")
+      .createWithDefault(20)
+
   val COORDINATED_COMMITS_GET_COMMITS_THREAD_POOL_SIZE =
     buildStaticConf("coordinatedCommits.getCommits.threadPoolSize")
       .internal()
@@ -908,6 +925,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "is first provisioned and cannot be used configure an existing table.")
       .intConf
       .createWithDefault(5)
+
+  val COMMIT_FILES_ITERATOR_BACKFILL_GAP_FIX_ENABLED =
+    buildConf("coordinatedCommits.commitFilesIterator.backfillGapFix.enabled")
+      .internal()
+      .doc("When enabled, commitFilesIterator falls back to filesystem listing when all " +
+        "unbackfilled commits are concurrently backfilled between Phase 1 (filesystem listing) " +
+        "and Phase 2 (coordinator query), preventing silent data loss.")
+      .booleanConf
+      .createWithDefault(true)
 
   //////////////////////////////////////////////
   // DynamoDB Commit Coordinator-specific configs end
@@ -2487,6 +2513,20 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         "'dynamic' in either the SQL conf, or a DataFrameWriter option. When this is disabled " +
         "'partitionOverwriteMode' will be ignored.")
       .internal()
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED =
+    buildConf("replaceOn.dataframe.writer.enabled")
+      .internal()
+      .doc("When false, the `replaceOn` option is blocked in DataFrameWriter APIs.")
+      .booleanConf
+      .createWithDefault(true)
+
+  val REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED =
+    buildConf("replaceUsing.dataframe.writer.enabled")
+      .internal()
+      .doc("When false, the `replaceUsing` option is blocked in DataFrameWriter APIs.")
       .booleanConf
       .createWithDefault(true)
 
