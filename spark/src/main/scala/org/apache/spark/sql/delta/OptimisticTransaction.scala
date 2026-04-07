@@ -47,6 +47,7 @@ import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfig
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
@@ -2111,6 +2112,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
         // We manually triggered a checkpoint in `updateAndCheckpoint` above.
         computedNeedsCheckpoint = true,
         isolationLevel = Serializable,
+        fileSizeHistogramOpt = postCommitSnapshot.fileSizeHistogram,
         commitInfoOpt = Some(commitInfo),
         commitSizeBytes = commitSizeBytes
       )
@@ -2667,6 +2669,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
       postCommitSnapshot = postCommitSnapshot,
       computedNeedsCheckpoint = needsCheckpoint,
       isolationLevel = isolationLevel,
+      fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.histogramOpt),
       commitInfoOpt = currentTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes
     )
@@ -2819,6 +2822,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
+      mustIncludeFileSizeHistogram =
+        spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
       includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
     ).toOption
   }
