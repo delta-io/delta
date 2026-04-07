@@ -893,7 +893,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `protocol` action
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
- - A collection of `domainMetadata` actions with unique `domain`s.
+ - A collection of `domainMetadata` actions with unique `domain`s, excluding tombstones (i.e. actions with `removed=true`).
  - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
@@ -1013,7 +1013,7 @@ Field Name | Data Type | Description
 -|-|-
 storageType | String | A single character to indicate how to access the DV. Legal options are: `['u', 'i', 'p']`.
 pathOrInlineDv | String | Three format options are currently proposed:<ul><li>If `storageType = 'u'` then  `<random prefix - optional><base85 encoded uuid>`: The deletion vector is stored in a file with a path relative to the data directory of this Delta table, and the  file name can be reconstructed from the UUID. See Derived Fields for how to reconstruct the file name. The random prefix is recovered as the extra characters before the (20 characters fixed length) uuid.</li><li>If `storageType = 'i'` then `<base85 encoded bytes>`: The deletion vector is stored inline in the log. The format used is the `RoaringBitmapArray` format also used when the DV is stored on disk and described in [Deletion Vector Format](#Deletion-Vector-Format).</li><li>If `storageType = 'p'` then `<absolute path>`: The DV is stored in a file with an absolute path given by this path, which has the same format as the `path` field in the `add`/`remove` actions.</li></ul>
-offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`.
+offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`. Interpret as `0` if absent for other `storageType`s.
 sizeInBytes | Int | Size of the serialized DV in bytes (raw data size, i.e. before base85 encoding, if inline).
 cardinality | Long | Number of rows the given DV logically removes from the file.
 
@@ -2090,7 +2090,7 @@ Each row in the checkpoint corresponds to a single action. The checkpoint **must
  * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
  * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
- * [Domain Metadata](#Domain-Metadata)
+ * [Domain Metadata](#Domain-Metadata) that have not been removed (i.e. excluding tombstones with `removed=true`)
  * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
  * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 

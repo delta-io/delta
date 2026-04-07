@@ -66,8 +66,17 @@ realpath () {
 )
 }
 
-# Make Jenkins use Google Mirror first as Maven Central may ban us
-SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
+# If MAVEN_PROXY_URL is set, use it as the sole repository for all dependencies.
+if [[ -n "$MAVEN_PROXY_URL" ]]; then
+  SBT_REPOSITORIES_CONFIG=$(mktemp)
+  cat > "$SBT_REPOSITORIES_CONFIG" <<EOF
+[repositories]
+  maven-proxy: $MAVEN_PROXY_URL
+  maven-proxy-ivy: $MAVEN_PROXY_URL, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
+EOF
+else
+  SBT_REPOSITORIES_CONFIG="$(dirname "$(realpath "$0")")/sbt-config/repositories"
+fi
 export SBT_OPTS="-Dsbt.override.build.repos=true -Dsbt.repository.config=$SBT_REPOSITORIES_CONFIG"
 
 . "$(dirname "$(realpath "$0")")"/sbt-launch-lib.bash

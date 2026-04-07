@@ -19,6 +19,7 @@ import static org.apache.spark.sql.connector.catalog.CatalogV2Implicits.parseCol
 
 import com.google.common.annotations.VisibleForTesting;
 import io.delta.kernel.expressions.AlwaysFalse;
+import io.delta.kernel.expressions.AlwaysTrue;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.expressions.In;
@@ -250,6 +251,13 @@ public final class ExpressionUtils {
           child.getConvertedPredicate().map(c -> new Predicate("NOT", c)), child.isPartial());
     }
 
+    if (filter instanceof org.apache.spark.sql.sources.AlwaysTrue) {
+      return new ConvertedPredicate(Optional.of(AlwaysTrue.ALWAYS_TRUE));
+    }
+    if (filter instanceof org.apache.spark.sql.sources.AlwaysFalse) {
+      return new ConvertedPredicate(Optional.of(AlwaysFalse.ALWAYS_FALSE));
+    }
+
     return new ConvertedPredicate(Optional.empty());
   }
 
@@ -395,9 +403,11 @@ public final class ExpressionUtils {
       return Optional.of(Literal.ofDouble(d));
     }
     if (value instanceof BigDecimal) {
-      // Preserve precision and scale from the original BigDecimal
       BigDecimal bd = (BigDecimal) value;
-      return Optional.of(Literal.ofDecimal(bd, bd.precision(), bd.scale()));
+      // BigDecimal precision can be less than scale (e.g. BigDecimal("0.00") has
+      // precision=1, scale=2). Kernel requires precision >= scale, so normalize.
+      int precision = Math.max(bd.precision(), bd.scale() + 1);
+      return Optional.of(Literal.ofDecimal(bd, precision, bd.scale()));
     }
     if (value instanceof UTF8String) {
       UTF8String s = (UTF8String) value;
@@ -516,9 +526,7 @@ public final class ExpressionUtils {
       Filter filter, Set<String> partitionColumnSet, StructType tableSchema) {
     // try to convert Spark filter to Kernel Predicate
     ConvertedPredicate convertedPredicate =
-        tableSchema != null
-            ? ExpressionUtils.convertSparkFilterToKernelPredicate(filter, tableSchema)
-            : ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter, tableSchema);
 
     boolean isKernelSupported = convertedPredicate.isPresent();
     boolean isPartialConversion = convertedPredicate.isPartial();

@@ -102,6 +102,7 @@ public class SparkMicroBatchStream
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
+  private final boolean ignoreFileDeletion;
   private final boolean skipChangeCommits;
   private final SnapshotImpl snapshotAtSourceInit;
   private final String tableId;
@@ -159,10 +160,12 @@ public class SparkMicroBatchStream
   private static class InitialSnapshotCache {
     final Long version;
     final List<IndexedFile> files;
+    final long commitTimestamp;
 
-    InitialSnapshotCache(Long version, List<IndexedFile> files) {
+    InitialSnapshotCache(Long version, List<IndexedFile> files, long commitTimestamp) {
       this.version = version;
       this.files = files;
+      this.commitTimestamp = commitTimestamp;
     }
   }
 
@@ -188,6 +191,11 @@ public class SparkMicroBatchStream
     this.spark = Objects.requireNonNull(spark, "spark is null");
     this.engine = DefaultEngine.create(hadoopConf);
     this.options = Objects.requireNonNull(options, "options is null");
+    this.ignoreFileDeletion = this.options.ignoreFileDeletion();
+    // Deprecated. Please use `skipChangeCommits` from now on.
+    if (this.ignoreFileDeletion) {
+      logger.warn(DeltaErrors.ignoreStreamingUpdatesAndDeletesWarning(this.spark));
+    }
     this.skipChangeCommits = this.options.skipChangeCommits();
     // Normalize tablePath to ensure it ends with "/" for consistent path construction
     String normalizedTablePath = Objects.requireNonNull(tablePath, "tablePath is null");
@@ -428,7 +436,7 @@ public class SparkMicroBatchStream
         getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.of(endOffset))) {
       while (fileChanges.hasNext()) {
         IndexedFile indexedFile = fileChanges.next();
-        if (!indexedFile.hasFileAction() || indexedFile.getAddFile() == null) {
+        if (indexedFile.getAddFile() == null) {
           continue;
         }
         AddFile addFile = indexedFile.getAddFile();
@@ -707,13 +715,77 @@ public class SparkMicroBatchStream
     if (isInitialSnapshot) {
       // Lazily combine snapshot files with delta logs starting from fromVersion + 1.
       // filterDeltaLogs handles the case when no commits exist after fromVersion.
-      CloseableIterator<IndexedFile> snapshotFiles = getSnapshotFiles(fromVersion);
+      InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
+      CloseableIterator<IndexedFile> snapshotFiles =
+          Utils.toCloseableIterator(snapshot.files.iterator());
       CloseableIterator<IndexedFile> deltaChanges = filterDeltaLogs(fromVersion + 1, endOffset);
       result = snapshotFiles.combine(deltaChanges);
     } else {
       result = filterDeltaLogs(fromVersion, endOffset);
     }
 
+    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+  }
+
+  /**
+   * Gets file changes for CDC mode. Mirrors DSv1: DeltaSourceCDCSupport.getFileChangesForCDC.
+   *
+   * @param fromVersion The starting version (exclusive with fromIndex)
+   * @param fromIndex The starting index within fromVersion (exclusive)
+   * @param isInitialSnapshot Whether this is the initial snapshot
+   * @param limits Rate limits to apply (Optional.empty() for no limits)
+   * @param endOffset The end offset (inclusive), or empty to read all available commits
+   * @return An iterator of IndexedFile representing the CDC file changes
+   */
+  CloseableIterator<IndexedFile> getFileChangesForCDC(
+      long fromVersion,
+      long fromIndex,
+      boolean isInitialSnapshot,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffset) {
+    validateCDFEnabledOnTable();
+    CloseableIterator<IndexedFile> result;
+    if (isInitialSnapshot) {
+      InitialSnapshotCache snapshot = getSnapshotFiles(fromVersion);
+      long commitTimestamp = snapshot.commitTimestamp;
+      CloseableIterator<IndexedFile> snapshotFiles =
+          Utils.toCloseableIterator(snapshot.files.iterator());
+      snapshotFiles =
+          snapshotFiles.map(
+              file ->
+                  file.getAddFile() != null
+                      ? IndexedFile.cdc(
+                          file.getVersion(),
+                          file.getIndex(),
+                          CDCDataFile.fromAddFile(file.getAddFile(), commitTimestamp))
+                      : file);
+      if (limits.isPresent()) {
+        snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
+      }
+      // TODO(#5319): combine with filterDeltaLogsForCDC for commits after snapshot
+      result = snapshotFiles;
+    } else {
+      // TODO(#5319): incremental CDC via filterDeltaLogsForCDC
+      result = Utils.toCloseableIterator(Collections.emptyIterator());
+    }
+
+    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+  }
+
+  /**
+   * Applies start/end boundary filtering to an iterator of {@link IndexedFile}s.
+   *
+   * @param result The unfiltered iterator
+   * @param fromVersion The starting version (exclusive with fromIndex)
+   * @param fromIndex The starting index within fromVersion (exclusive)
+   * @param endOffset The end offset (inclusive), or empty to read all available commits
+   * @return The filtered iterator
+   */
+  private CloseableIterator<IndexedFile> applyBoundaryFiltering(
+      CloseableIterator<IndexedFile> result,
+      long fromVersion,
+      long fromIndex,
+      Optional<DeltaSourceOffset> endOffset) {
     // Check start boundary (exclusive)
     result =
         result.filter(
@@ -740,6 +812,22 @@ public class SparkMicroBatchStream
     }
 
     return result;
+  }
+
+  private void validateCDFEnabledOnTable() {
+    String cdcEnabled =
+        snapshotAtSourceInit
+            .getMetadata()
+            .getConfiguration()
+            .getOrDefault("delta.enableChangeDataFeed", "false");
+
+    if (!cdcEnabled.equalsIgnoreCase("true")) {
+      long version = snapshotAtSourceInit.getVersion();
+      // DeltaErrors.changeDataNotRecordedException returns a DeltaAnalysisException (checked),
+      // so we wrap it to propagate through the streaming pipeline.
+      Throwable error = DeltaErrors.changeDataNotRecordedException(version, version, version);
+      throw new RuntimeException(error.getMessage(), error);
+    }
   }
 
   private CloseableIterator<IndexedFile> filterDeltaLogs(
@@ -847,12 +935,11 @@ public class SparkMicroBatchStream
               : getFilesFromCommit(commit, version);
       CloseableIterator<IndexedFile> inner =
           Utils.singletonCloseableIterator(
-                  new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), /* addFile= */ null))
+                  IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
               .combine(fileActions)
               .combine(
                   Utils.singletonCloseableIterator(
-                      new IndexedFile(
-                          version, DeltaSourceOffset.END_INDEX(), /* addFile= */ null)));
+                      IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX())));
 
       // Wrap the iterator so that closing it also closes the CommitActions, releasing its
       // internal ActionsIterator and any associated file handles / parsed data.
@@ -935,10 +1022,12 @@ public class SparkMicroBatchStream
       }
     }
 
-    // TODO(#5319): Implement ignoreChanges & ignoreFileDeletion (deprecated)
-    // A check on the source table that disallows changes on the source data.
-    boolean shouldAllowChanges = skipChangeCommits;
-    // A check on the source table that disallows commits that only include deletes to the data.
+    // "Changes" are commits that contain both AddFile and RemoveFile actions (e.g. UPDATE,
+    // MERGE that rewrites data files). Allowing changes means these commits won't cause failures.
+    boolean shouldAllowChanges = options.ignoreChanges() || ignoreFileDeletion || skipChangeCommits;
+    // "Deletes" are commits that contain only RemoveFile actions without any AddFile actions
+    // (e.g. DELETE that purely removes data). This is a subset of changes, so allowing changes
+    // implies allowing deletes.
     boolean shouldAllowDeletes = shouldAllowChanges || options.ignoreDeletes();
 
     boolean hasFileAdd = false;
@@ -1300,7 +1389,7 @@ public class SparkMicroBatchStream
       Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
       if (addOpt.isPresent()) {
         AddFile addFile = addOpt.get();
-        output.add(new IndexedFile(version, index++, addFile));
+        output.add(IndexedFile.addFile(version, index++, addFile));
       }
     }
 
@@ -1314,26 +1403,25 @@ public class SparkMicroBatchStream
    * <p>Mimics DeltaSourceSnapshot in DSv1.
    *
    * @param version The snapshot version to read
-   * @return An iterator of IndexedFile representing the snapshot files
+   * @return The cached or newly loaded initial snapshot
    */
-  private CloseableIterator<IndexedFile> getSnapshotFiles(long version) {
+  private InitialSnapshotCache getSnapshotFiles(long version) {
     InitialSnapshotCache cache = cachedInitialSnapshot.get();
 
     if (cache != null && cache.version != null && cache.version == version) {
-      return Utils.toCloseableIterator(cache.files.iterator());
+      return cache;
     }
 
-    List<IndexedFile> indexedFiles = loadAndValidateSnapshot(version);
+    InitialSnapshotCache newCache = loadAndValidateSnapshot(version);
+    cachedInitialSnapshot.set(newCache);
 
-    cachedInitialSnapshot.set(
-        new InitialSnapshotCache(version, Collections.unmodifiableList(indexedFiles)));
-
-    return Utils.toCloseableIterator(indexedFiles.iterator());
+    return newCache;
   }
 
   /** Loads snapshot files at the specified version. */
-  private List<IndexedFile> loadAndValidateSnapshot(long version) {
+  private InitialSnapshotCache loadAndValidateSnapshot(long version) {
     Snapshot snapshot = snapshotManager.loadSnapshotAt(version);
+    long commitTimestamp = snapshot.getTimestamp(engine);
 
     Scan scan = snapshot.getScanBuilder().build();
 
@@ -1377,16 +1465,17 @@ public class SparkMicroBatchStream
     List<IndexedFile> indexedFiles = new ArrayList<>();
 
     // Add BEGIN sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.BASE_INDEX(), null));
+    indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
 
     // Add data files with sequential indices starting from 0
     for (int i = 0; i < addFiles.size(); i++) {
-      indexedFiles.add(new IndexedFile(version, i, addFiles.get(i)));
+      indexedFiles.add(IndexedFile.addFile(version, /* index= */ i, addFiles.get(i)));
     }
 
     // Add END sentinel
-    indexedFiles.add(new IndexedFile(version, DeltaSourceOffset.END_INDEX(), null));
+    indexedFiles.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
 
-    return indexedFiles;
+    return new InitialSnapshotCache(
+        version, Collections.unmodifiableList(indexedFiles), commitTimestamp);
   }
 }

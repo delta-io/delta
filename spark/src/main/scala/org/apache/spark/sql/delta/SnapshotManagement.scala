@@ -1407,13 +1407,19 @@ trait SnapshotManagement { self: DeltaLog =>
         // NOTE: Validation is a no-op with incremental commit disabled.
         newSnapshot.validateChecksum(Map("context" -> checksumContext))
       } catch {
-        case _: IllegalStateException if !DeltaUtils.isTesting => false
+        case e: IllegalStateException if !DeltaUtils.isTesting =>
+          logWarning(log"Incremental checksum validation failed: " +
+            log"${MDC(DeltaLogKeys.ERROR, e.getMessage)}")
+          false
       }
 
       if (!crcIsValid) {
         // Create snapshot without incremental checksum. This will fallback to creating
         // a checksum based on state reconstruction. Disable incremental commit to avoid
         // further error triggers in this session.
+        logWarning(log"Disabling incremental commit for this session due to checksum " +
+          log"validation failure at version " +
+          log"${MDC(DeltaLogKeys.VERSION, newSnapshot.version)}")
         spark.sessionState.conf.setConf(DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED, false)
         spark.sessionState.conf.setConf(DeltaSQLConf.DELTA_WRITE_SET_TRANSACTIONS_IN_CRC, false)
         return createSnapshotWithCrc(checksumOpt = None)

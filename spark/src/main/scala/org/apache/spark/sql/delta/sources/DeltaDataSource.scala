@@ -248,10 +248,21 @@ class DeltaDataSource
 
     val deltaLog = Utils.getDeltaLogFromTableOrPath(
       sqlContext.sparkSession, catalogTableOpt, new Path(path), parameters)
+    val deltaOptions = new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf)
+    if (deltaOptions.isReplaceOnOrUsingDefined) {
+      if (deltaOptions.replaceOn.isDefined && !sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceOn")
+      } else if (deltaOptions.replaceUsing.isDefined &&
+          !sqlContext.sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED)) {
+        throw DeltaErrors.operationNotSupportedException("replaceUsing")
+      }
+    }
     WriteIntoDelta(
       deltaLog = deltaLog,
       mode = mode,
-      new DeltaOptions(parameters, sqlContext.sparkSession.sessionState.conf),
+      deltaOptions,
       partitionColumns = partitionColumns,
       configuration = DeltaConfigs.validateConfigurations(
         parameters.filterKeys(_.startsWith("delta.")).toMap),

@@ -26,6 +26,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -48,6 +49,7 @@ import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.connector.read.streaming.MicroBatchStream;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.*;
+import org.apache.spark.sql.execution.datasources.parquet.ParquetUtils;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StringType;
@@ -70,22 +72,22 @@ public class SparkScan
               DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
               DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
+              DeltaOptions.IGNORE_FILE_DELETION_OPTION(),
+              DeltaOptions.IGNORE_CHANGES_OPTION(),
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
               DeltaOptions.EXCLUDE_REGEX_OPTION()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreDeletes,
-   * skipChangeCommits, and excludeRegex are supported. User-defined custom options (not in
-   * DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreFileDeletion,
+   * ignoreChanges, ignoreDeletes, skipChangeCommits, and excludeRegex are supported. User-defined
+   * custom options (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
-                  DeltaOptions.IGNORE_CHANGES_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
@@ -165,6 +167,39 @@ public class SparkScan
     Collections.addAll(fields, readDataSchema.fields());
     Collections.addAll(fields, partitionSchema.fields());
     return new StructType(fields.toArray(new StructField[0]));
+  }
+
+  /**
+   * Override columnarSupportMode to explicitly declare whether this scan supports columnar
+   * (vectorized) reading. Without this override, the default {@code PARTITION_DEFINED} mode causes
+   * Spark to eagerly call {@code planInputPartitions()} during query planning to check
+   * per-partition columnar support, triggering unnecessary early file enumeration.
+   *
+   * <p>Since columnar support is uniform across all partitions (determined by schema compatibility
+   * and table features, not by individual files), we can declare it at the scan level to avoid this
+   * overhead.
+   *
+   * <p>This must stay consistent with the vectorized reader decision in {@link
+   * PartitionUtils#createDeltaParquetReaderFactory}. In particular, deletion-vector-enabled tables
+   * augment the read schema with internal columns (e.g., {@code __delta_internal_is_row_deleted}),
+   * which changes the schema passed to the vectorized reader check. We replicate that logic here to
+   * ensure the scan-level declaration matches the per-partition reader behavior.
+   */
+  @Override
+  public Scan.ColumnarSupportMode columnarSupportMode() {
+    // When the table supports deletion vectors, the reader factory augments the read schema
+    // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
+    // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in
+    // the future, this code path picks them up automatically.
+    StructType schemaForBatchCheck =
+        PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)
+            ? new DeletionVectorSchemaContext(readDataSchema, partitionSchema)
+                .getSchemaWithDvColumn()
+            : readDataSchema;
+
+    return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, schemaForBatchCheck)
+        ? Scan.ColumnarSupportMode.SUPPORTED
+        : Scan.ColumnarSupportMode.UNSUPPORTED;
   }
 
   @Override

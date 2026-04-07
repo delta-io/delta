@@ -61,6 +61,19 @@ public class PartitionUtils {
   private PartitionUtils() {}
 
   /**
+   * Returns whether the given snapshot's table supports deletion vectors. A table supports DVs when
+   * its protocol includes the {@link TableFeatures#DELETION_VECTORS_RW_FEATURE} and the table
+   * format is Parquet.
+   */
+  public static boolean tableSupportsDeletionVectors(Snapshot snapshot) {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    Protocol protocol = snapshotImpl.getProtocol();
+    Metadata metadata = snapshotImpl.getMetadata();
+    return protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
+        && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
+  }
+
+  /**
    * Calculate the maximum split bytes for file partitioning, considering total bytes and file
    * count. This is used for optimal file splitting in both batch and streaming read.
    */
@@ -197,19 +210,14 @@ public class PartitionUtils {
       Configuration hadoopConf,
       SQLConf sqlConf) {
     SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
-    Protocol protocol = snapshotImpl.getProtocol();
-    Metadata metadata = snapshotImpl.getMetadata();
     // Use Path.toString() instead of toUri().toString() to avoid URL encoding issues.
     // toUri().toString() encodes special characters (e.g., space -> %20), which causes
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
 
     // Create DV schema context if table supports deletion vectors
-    boolean isTableSupportDv =
-        protocol.supportsFeature(TableFeatures.DELETION_VECTORS_RW_FEATURE)
-            && "parquet".equalsIgnoreCase(metadata.getFormat().getProvider());
     Optional<DeletionVectorSchemaContext> dvSchemaContext =
-        isTableSupportDv
+        tableSupportsDeletionVectors(snapshot)
             ? Optional.of(new DeletionVectorSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
     StructType finalReadDataSchema =
@@ -226,21 +234,14 @@ public class PartitionUtils {
                 String.valueOf(enableVectorizedReader)));
 
     // TODO(https://github.com/delta-io/delta/issues/5859): Enable file splitting for DV tables
-    boolean optimizationsEnabled = !isTableSupportDv;
+    boolean optimizationsEnabled = !dvSchemaContext.isPresent();
 
     // TODO(https://github.com/delta-io/delta/issues/5859): Support _metadata.row_index for DV
     Option<Boolean> useMetadataRowIndex =
-        isTableSupportDv ? Option.apply(Boolean.FALSE) : Option.empty();
+        dvSchemaContext.isPresent() ? Option.apply(Boolean.FALSE) : Option.empty();
     DeltaParquetFileFormatV2 deltaFormat =
-        new DeltaParquetFileFormatV2(
-            protocol,
-            metadata,
-            /* nullableRowTrackingConstantFields */ false,
-            /* nullableRowTrackingGeneratedFields */ false,
-            optimizationsEnabled,
-            Option.apply(tablePath),
-            /* isCDCRead */ false,
-            /* useMetadataRowIndexOpt */ useMetadataRowIndex);
+        createDeltaParquetFileFormat(
+            snapshot, tablePath, optimizationsEnabled, useMetadataRowIndex);
 
     Function1<PartitionedFile, Iterator<InternalRow>> readFunc =
         deltaFormat.buildReaderWithPartitionValues(
@@ -259,6 +260,32 @@ public class PartitionUtils {
     }
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  }
+
+  /**
+   * Creates a {@link DeltaParquetFileFormatV2} from a snapshot. Shared between the read path
+   * ({@link #createDeltaParquetReaderFactory}) and the write path (BatchWrite).
+   *
+   * @param snapshot the Delta table snapshot (must be a SnapshotImpl)
+   * @param tablePath the table root path
+   * @param optimizationsEnabled whether to enable file splitting and predicate pushdown
+   * @param useMetadataRowIndex explicit control over _metadata.row_index for DV filtering
+   */
+  public static DeltaParquetFileFormatV2 createDeltaParquetFileFormat(
+      Snapshot snapshot,
+      String tablePath,
+      boolean optimizationsEnabled,
+      Option<Boolean> useMetadataRowIndex) {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) snapshot;
+    return new DeltaParquetFileFormatV2(
+        snapshotImpl.getProtocol(),
+        snapshotImpl.getMetadata(),
+        /* nullableRowTrackingConstantFields */ false,
+        /* nullableRowTrackingGeneratedFields */ false,
+        optimizationsEnabled,
+        Option.apply(tablePath),
+        /* isCDCRead */ false,
+        useMetadataRowIndex);
   }
 
   /**

@@ -3046,6 +3046,33 @@ trait DeltaErrorsBase
     )
   }
 
+  def dynamicPartitionOverwriteIncompatibleReplaceOnOrUsingError(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_DYNAMIC_PARTITION_OVERWRITE_INCOMPATIBLE_REPLACE_ON_OR_USING"
+    )
+  }
+
+  def incompatibleDataFrameOptions(
+      firstDeltaOption: String,
+      secondDeltaOption: String): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INCOMPATIBLE_DATAFRAME_OPTIONS",
+      messageParameters = Array(firstDeltaOption, secondDeltaOption)
+    )
+  }
+
+  def overwriteByFilterIncompatibleReplaceOnOrUsingError(): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_OVERWRITE_BY_FILTER_INCOMPATIBLE_REPLACE_ON_OR_USING"
+    )
+  }
+
+  def dfv2CreateReplaceIncompatibleReplaceOnOrUsingError(): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_DFV2_CREATE_REPLACE_INCOMPATIBLE_REPLACE_ON_OR_USING",
+      messageParameters = Array.empty)
+  }
+
   def replaceWhereUsedInOverwrite(): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_REPLACE_WHERE_IN_OVERWRITE", messageParameters = Array.empty
@@ -3542,8 +3569,8 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UniversalFormat.ICEBERG_FORMAT,
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
-        "to be enabled on an existing table. To enable IcebergCompatV2, set the table property " +
-        "'delta.enableIcebergCompatV2' = 'true'."
+        "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
+        "IcebergCompatV2."
       )
     )
   }

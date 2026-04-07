@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaOptions.{
   IGNORE_DELETES_OPTION,
   SKIP_CHANGE_COMMITS_OPTION
 }
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.{DeltaSourceOffset, DeltaSQLConf}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import io.delta.sharing.client.DeltaSharingRestClient
@@ -37,6 +38,7 @@ import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import io.delta.sharing.spark.test.shims.SharingStreamingTestShims.{
   CheckpointFileManager,
   CommitMetadata,
+  OffsetSeqLog,
   SerializedOffset,
   StreamingCheckpointConstants,
   StreamMetadata
@@ -105,6 +107,41 @@ class DeltaFormatSharingSourceSuite
         DeltaSharingLogFileSystem.DELTA_SHARING_LOG_BLOCK_ID_PREFIX)
     )
     matchingBlockIds.foreach(blockManager.removeBlock(_))
+  }
+
+  /**
+   * Write a legacy DeltaSharingSourceOffset and its corresponding commit entry
+   * into a streaming checkpoint directory.
+   */
+  private def writeLegacyOffsetAndCommit(
+      fileManager: CheckpointFileManager,
+      checkpointPath: Path,
+      batchId: Long,
+      tableId: String,
+      tableVersion: Long,
+      index: Long,
+      isStartingVersion: Boolean): Unit = {
+    val offsetMetadataJson =
+      """{"batchWatermarkMs":0,"batchTimestampMs":0,"conf":{},"sourceMetadataInfo":{}}"""
+    val legacyOffsetJson =
+      s"""{"sourceVersion":1,"tableId":"$tableId",""" +
+        s""""tableVersion":$tableVersion,"index":$index,""" +
+        s""""isStartingVersion":$isStartingVersion}"""
+    val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+    val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+    val offsetContent =
+      s"v1\n$offsetMetadataJson\n$legacyOffsetJson"
+        .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    val offsetPath = new Path(new Path(checkpointPath, offsetsDir), batchId.toString)
+    val offsetOut = fileManager.createAtomic(offsetPath, overwriteIfPossible = true)
+    offsetOut.write(offsetContent)
+    offsetOut.close()
+    val commitContent = s"v1\n${CommitMetadata(batchId).json}"
+      .getBytes(java.nio.charset.StandardCharsets.UTF_8)
+    val commitPath = new Path(new Path(checkpointPath, commitsDir), batchId.toString)
+    val commitOut = fileManager.createAtomic(commitPath, overwriteIfPossible = true)
+    commitOut.write(commitContent)
+    commitOut.close()
   }
 
   test("DeltaFormatSharingSource able to get schema") {
@@ -271,7 +308,13 @@ class DeltaFormatSharingSourceSuite
                |CREATE TABLE $deltaTableName (value STRING)
                |USING DELTA
                |""".stripMargin)
-        sql(s"INSERT INTO $deltaTableName VALUES ('p1'), ('p2')")
+        // Version 1: 2 files (1 row each) via repartition so index=0
+        // represents a mid-version offset with isStartingVersion=true.
+        spark.createDataFrame(
+          spark.sparkContext.parallelize(Seq(Row("p1"), Row("p2")), 2),
+          new StructType().add("value", StringType)
+        ).write.insertInto(deltaTableName)
+        sql(s"INSERT INTO $deltaTableName VALUES ('p3'), ('p4')")
         val tableId = DeltaLog.forTable(spark, new TableIdentifier(deltaTableName))
           .update().metadata.id
         val sharedTableName = "shared_streaming_table_e2e"
@@ -297,32 +340,12 @@ class DeltaFormatSharingSourceSuite
         val streamId = java.util.UUID.randomUUID.toString
         StreamMetadata.write(
           StreamMetadata(streamId), metadataPath, hadoopConf)
-        val legacyOffsetJson =
-          "{\"sourceVersion\":1," +
-            s""""tableId":"$tableId",""" +
-            "\"tableVersion\":1," +
-            "\"index\":-1," +
-            "\"isStartingVersion\":true}"
-        val offsetMetadataJson =
-          """{"batchWatermarkMs":0,""" +
-            """"batchTimestampMs":0,""" +
-            """"conf":{},""" +
-            """"sourceMetadataInfo":{}}"""
-        val offsetContent =
-          s"v1\n$offsetMetadataJson\n$legacyOffsetJson"
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val offsetBatchPath = new Path(
-          new Path(checkpointPath, StreamingCheckpointConstants.DIR_NAME_OFFSETS), "0")
-        val offsetOut = fileManager.createAtomic(offsetBatchPath, overwriteIfPossible = true)
-        offsetOut.write(offsetContent)
-        offsetOut.close()
-        val commitContent = s"v1\n${CommitMetadata(0).json}"
-          .getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val commitBatchPath = new Path(
-          new Path(checkpointPath, StreamingCheckpointConstants.DIR_NAME_COMMITS), "0")
-        val commitOut = fileManager.createAtomic(commitBatchPath, overwriteIfPossible = true)
-        commitOut.write(commitContent)
-        commitOut.close()
+        // Mid-version legacy offset: index=0, isStartingVersion=true
+        // means we're in the middle of processing the initial snapshot
+        // at v1 (processed 1 of 2 files).
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 1, index = 0,
+          isStartingVersion = true)
 
         val autoResolveKey = DeltaSQLConf
           .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
@@ -333,11 +356,19 @@ class DeltaFormatSharingSourceSuite
           )).toSeq: _*
         ) {
           prepareMockedClientMetadata(deltaTableName, sharedTableName)
-          // Snapshot getFiles(versionAsOf=1) for initial batch when resuming from legacy offset
+          // Priming: snapshot at v1 for initial batch when resuming
+          // from legacy mid-version offset.
           prepareMockedClientAndFileSystemResult(
             deltaTableName, sharedTableName, versionAsOf = Some(1L))
+          // Mid-version: restricted to v1 only (MD5) to finish
+          // remaining files in the initial snapshot.
           prepareMockedClientAndFileSystemResultForStreaming(
             deltaTableName, sharedTableName, 1L, 1L)
+          // After transition at v1 boundary, stream fetches v2 normally.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 1L, 2L)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 2L)
           prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
           if (autoResolve) {
@@ -354,9 +385,17 @@ class DeltaFormatSharingSourceSuite
             } finally {
               q.stop()
             }
-            checkAnswer(
-              spark.read.format("delta").load(outputDir.getCanonicalPath),
-              Seq("p1", "p2").toDF())
+            // The stream finishes the remaining v1 file (1 of p1/p2),
+            // then processes v2 (p3, p4).
+            val outputValues = spark.read.format("delta")
+              .load(outputDir.getCanonicalPath)
+              .collect().map(_.getString(0)).toSet
+            assert(outputValues.size == 3,
+              s"Expected 3 rows (1 remaining v1 + 2 v2) but got: $outputValues")
+            assert(outputValues.contains("p3") && outputValues.contains("p4"),
+              s"Expected p3 and p4 in output but got: $outputValues")
+            assert(outputValues.intersect(Set("p1", "p2")).size == 1,
+              s"Expected exactly one of p1/p2 from remaining v1 file but got: $outputValues")
           } else {
             var q: StreamingQuery = null
             val e = intercept[Exception] {
@@ -446,63 +485,14 @@ class DeltaFormatSharingSourceSuite
         val streamId = java.util.UUID.randomUUID.toString
         StreamMetadata.write(
           StreamMetadata(streamId), metadataPath, hadoopConf)
-        val offsetMetadataJson =
-          """{"batchWatermarkMs":0,""" +
-            """"batchTimestampMs":0,""" +
-            """"conf":{},""" +
-            """"sourceMetadataInfo":{}}"""
-
         // Batch 0: legacy offset at version 1
-        val legacyOffset0Json =
-          "{\"sourceVersion\":1," +
-            s""""tableId":"$tableId",""" +
-            "\"tableVersion\":1," +
-            "\"index\":-1," +
-            "\"isStartingVersion\":false}"
-        val offset0Content =
-          s"v1\n$offsetMetadataJson\n$legacyOffset0Json"
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val offset0Path = new Path(new Path(
-          checkpointPath, offsetsDir), "0")
-        val offset0Out = fileManager.createAtomic(
-          offset0Path, overwriteIfPossible = true)
-        offset0Out.write(offset0Content)
-        offset0Out.close()
-        val commit0Content =
-          s"v1\n${CommitMetadata(0).json}"
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val commit0Path = new Path(new Path(
-          checkpointPath, commitsDir), "0")
-        val commit0Out = fileManager.createAtomic(
-          commit0Path, overwriteIfPossible = true)
-        commit0Out.write(commit0Content)
-        commit0Out.close()
-
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 1, index = -1,
+          isStartingVersion = false)
         // Batch 1: legacy offset at version 2
-        val legacyOffset1Json =
-          "{\"sourceVersion\":1," +
-            s""""tableId":"$tableId",""" +
-            "\"tableVersion\":2," +
-            "\"index\":-1," +
-            "\"isStartingVersion\":false}"
-        val offset1Content =
-          s"v1\n$offsetMetadataJson\n$legacyOffset1Json"
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val offset1Path = new Path(new Path(
-          checkpointPath, offsetsDir), "1")
-        val offset1Out = fileManager.createAtomic(
-          offset1Path, overwriteIfPossible = true)
-        offset1Out.write(offset1Content)
-        offset1Out.close()
-        val commit1Content =
-          s"v1\n${CommitMetadata(1).json}"
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        val commit1Path = new Path(new Path(
-          checkpointPath, commitsDir), "1")
-        val commit1Out = fileManager.createAtomic(
-          commit1Path, overwriteIfPossible = true)
-        commit1Out.write(commit1Content)
-        commit1Out.close()
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 1, tableId, tableVersion = 2, index = -1,
+          isStartingVersion = false)
 
         val autoResolveKey = DeltaSQLConf
           .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT
@@ -514,11 +504,15 @@ class DeltaFormatSharingSourceSuite
         ) {
           prepareMockedClientMetadata(
             deltaTableName, sharedTableName)
-          // getBatch(offset_0, offset_1) uses offset_0 as
-          // startingOffset (isInitialSnapshot=false) so the
-          // streaming API is used from version 1 to 3.
+          // Priming getBatch(offset_0, offset_1): endOffset is
+          // legacy (v2, index=-1 -> BASE_INDEX), so
+          // endVersion = 2 - 1 = 1. Fetches v1 only (MD5).
           prepareMockedClientAndFileSystemResultForStreaming(
-            deltaTableName, sharedTableName, 1L, 3L)
+            deltaTableName, sharedTableName, 1L, 1L)
+          // After priming, latestOffset starts from v2 and
+          // fetches v2-v3.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 3L)
           prepareMockedClientGetTableVersion(
             deltaTableName, sharedTableName)
 
@@ -1742,4 +1736,833 @@ class DeltaFormatSharingSourceSuite
         }
       }
     }
+
+  // E2E test: Legacy checkpoint at a version boundary (index=-1, i.e., the
+  // "lucky case") with isStartingVersion=false. The stream should transition
+  // fully to DeltaSourceOffset and use SHA256 file IDs.
+  test("E2E: legacy checkpoint at version boundary (lucky case) transitions cleanly") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_lucky_case"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('c'), ('d')")
+        val tableId = DeltaLog.forTable(
+          spark, new TableIdentifier(deltaTableName))
+          .update().metadata.id
+        val sharedTableName = "shared_lucky_case"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath +
+          s"#share1.default.$sharedTableName"
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+        // Build checkpoint: legacy offset at version boundary (index=-1),
+        // isStartingVersion=false because index=-1 means past initial snapshot.
+        val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
+        val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
+        val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+        val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+        val metaDir = StreamingCheckpointConstants.DIR_NAME_METADATA
+        fileManager.mkdirs(new Path(checkpointPath, offsetsDir))
+        fileManager.mkdirs(new Path(checkpointPath, commitsDir))
+        val metadataPath = new Path(checkpointPath, metaDir)
+        val streamId = java.util.UUID.randomUUID.toString
+        StreamMetadata.write(StreamMetadata(streamId), metadataPath, hadoopConf)
+        // Batch 0: version 2, at boundary (index=-1), not initial snapshot
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 2, index = -1,
+          isStartingVersion = false)
+
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf ++ Seq(
+            autoResolveKey -> "true"
+          )).toSeq: _*
+        ) {
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          // getBatch(None, offset_0) with isInitialSnapshot=false:
+          // getStartingOffset returns (v2-1=v1, isInitialSnapshot=true).
+          // endVersion = 2-1 = 1. Priming fetches snapshot at v1.
+          prepareMockedClientAndFileSystemResult(
+            deltaTableName, sharedTableName, versionAsOf = Some(1L))
+          // Since the legacy offset is at a version boundary (index=-1 -> BASE_INDEX),
+          // this is the "lucky case": latestOffset uses SHA256 file IDs and
+          // fetches from v2 onwards.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 2L)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+          // Priming replays v1 snapshot (already committed), then v2 is processed.
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("c", "d").toDF())
+
+          // Validate the final offset is in DeltaSourceOffset format
+          // (has reservoirVersion, not tableVersion).
+          val offsetLog = new OffsetSeqLog(
+            spark, s"${checkpointDir.getCanonicalPath}/offsets")
+          val (latestBatchId, latestOffsetSeq) = offsetLog.getLatest().get
+          val offsetJson = latestOffsetSeq.offsets.head.get.json()
+          assert(offsetJson.contains("reservoirVersion"),
+            s"Expected DeltaSourceOffset (reservoirVersion) but got: $offsetJson")
+          assert(!offsetJson.contains("tableVersion"),
+            s"Expected no legacy tableVersion in final offset but got: $offsetJson")
+        }
+      }
+    }
+  }
+
+  // E2E: Legacy checkpoint mid-version (index != -1, the "unlucky case")
+  // with isStartingVersion=false. The stream should restrict to 1 version
+  // with MD5 file IDs, then transition after reaching a boundary.
+  test("E2E: legacy checkpoint mid-version (unlucky case) " +
+    "finishes version before transitioning") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_unlucky_case"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+        sql(s"INSERT INTO $deltaTableName VALUES ('v1a'), ('v1b')")
+        // Version 2: exactly 2 files (1 row each) for the mid-version case.
+        // parallelize with numSlices=2 places each row in its own partition.
+        spark.createDataFrame(
+          spark.sparkContext.parallelize(Seq(Row("v2a"), Row("v2b")), 2),
+          new StructType().add("value", StringType)
+        ).write.mode("append").insertInto(deltaTableName)
+        sql(s"INSERT INTO $deltaTableName VALUES ('v3a'), ('v3b')")
+        val tableId = DeltaLog.forTable(
+          spark, new TableIdentifier(deltaTableName))
+          .update().metadata.id
+        val sharedTableName = "shared_unlucky_case"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath +
+          s"#share1.default.$sharedTableName"
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+        // Build checkpoint: legacy offset mid-version (index=0, not -1)
+        val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
+        val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
+        val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+        val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+        val metaDir = StreamingCheckpointConstants.DIR_NAME_METADATA
+        fileManager.mkdirs(new Path(checkpointPath, offsetsDir))
+        fileManager.mkdirs(new Path(checkpointPath, commitsDir))
+        val metadataPath = new Path(checkpointPath, metaDir)
+        val streamId = java.util.UUID.randomUUID.toString
+        StreamMetadata.write(StreamMetadata(streamId), metadataPath, hadoopConf)
+
+        // Batch 0: finished processing version 0 (index=-1 means starting version 1)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 1, index = -1,
+          isStartingVersion = false)
+        // Batch 1: mid-version at version 2, index 0 (processed 1 of 2 files)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 1, tableId, tableVersion = 2, index = 0,
+          isStartingVersion = false)
+
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf ++ Seq(
+            autoResolveKey -> "true"
+          )).toSeq: _*
+        ) {
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          // Priming getBatch(offset_0, offset_1) fetches streaming v1-v2.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 1L, 2L)
+          // Mid-version: restricted to version 2 only (MD5).
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 2L)
+          // After transitioning at version boundary, stream fetches
+          // remaining versions normally.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 3L)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 3L, 3L)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+          // The legacy checkpoint was at version 2, index 0 (1 of 2 files
+          // processed). The stream finishes the remaining file in version 2,
+          // transitions to DeltaSourceOffset at the version boundary, then
+          // processes version 3 normally.
+          val outputValues = spark.read.format("delta")
+            .load(outputDir.getCanonicalPath)
+            .collect().map(_.getString(0)).toSet
+          assert(outputValues.size == 3,
+            s"Expected 3 rows (1 remaining v2 + 2 v3) but got: $outputValues")
+          assert(outputValues.contains("v3a") && outputValues.contains("v3b"),
+            s"Expected v3a and v3b in output but got: $outputValues")
+          assert(outputValues.intersect(Set("v2a", "v2b")).size == 1,
+            s"Expected exactly one v2 row from the unprocessed file but got: $outputValues")
+
+          // Validate the final offset has transitioned to DeltaSourceOffset format.
+          val offsetLog = new OffsetSeqLog(
+            spark, s"${checkpointDir.getCanonicalPath}/offsets")
+          val (latestBatchId, latestOffsetSeq) = offsetLog.getLatest().get
+          val offsetJson = latestOffsetSeq.offsets.head.get.json()
+          assert(offsetJson.contains("reservoirVersion"),
+            s"Expected DeltaSourceOffset (reservoirVersion) but got: $offsetJson")
+          assert(!offsetJson.contains("tableVersion"),
+            s"Expected no legacy tableVersion in final offset but got: $offsetJson")
+        }
+      }
+    }
+  }
+
+  // Test that fileIdHash is correctly passed to the server: SHA256 for
+  // version-boundary legacy offsets (lucky case), MD5 for mid-version
+  // legacy offsets (unlucky case), and SHA256 after transition.
+  test("fileIdHash: SHA256 for boundary legacy offset") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_fileidhash"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+        sql(s"INSERT INTO $deltaTableName VALUES ('a'), ('b')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('c'), ('d')")
+        val tableId = DeltaLog.forTable(
+          spark, new TableIdentifier(deltaTableName))
+          .update().metadata.id
+        val sharedTableName = "shared_fileidhash"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath +
+          s"#share1.default.$sharedTableName"
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+        val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
+        val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
+        val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+        val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+        val metaDir = StreamingCheckpointConstants.DIR_NAME_METADATA
+        fileManager.mkdirs(new Path(checkpointPath, offsetsDir))
+        fileManager.mkdirs(new Path(checkpointPath, commitsDir))
+        val metadataPath = new Path(checkpointPath, metaDir)
+        val streamId = java.util.UUID.randomUUID.toString
+        StreamMetadata.write(StreamMetadata(streamId), metadataPath, hadoopConf)
+
+        // Version boundary (lucky case) with isStartingVersion=false
+        // (index=-1 means past initial snapshot)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 2, index = -1,
+          isStartingVersion = false)
+
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf ++ Seq(
+            autoResolveKey -> "true"
+          )).toSeq: _*
+        ) {
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          // Priming: getStartingOffset returns (v2-1=v1, true),
+          // endVersion = 2-1 = 1. Snapshot at v1.
+          prepareMockedClientAndFileSystemResult(
+            deltaTableName, sharedTableName, versionAsOf = Some(1L))
+          // Lucky case: latestOffset uses SHA256 from v2 onwards.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 2L)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          TestClientForDeltaFormatSharing.clearFileIdHashHistory()
+
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+
+          // All streaming getFiles calls should use SHA256 for the
+          // lucky case (version boundary).
+          val history = TestClientForDeltaFormatSharing.getFileIdHashHistory
+          val streamingCalls = history.filter { case (name, qt, _) =>
+            name == sharedTableName && qt.startsWith("getFiles_streaming")
+          }
+          assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
+          streamingCalls.foreach { case (_, queryType, fileIdHash) =>
+            assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_SHA256),
+              s"Expected SHA256 for boundary legacy offset but got $fileIdHash in $queryType")
+          }
+        }
+      }
+    }
+  }
+
+  test("fileIdHash: MD5 for mid-version legacy offset") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_fileidhash_mid"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+        sql(s"INSERT INTO $deltaTableName VALUES ('e'), ('f')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('g'), ('h')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('i'), ('j')")
+        val tableId = DeltaLog.forTable(
+          spark, new TableIdentifier(deltaTableName))
+          .update().metadata.id
+        val sharedTableName = "shared_fileidhash_mid"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath +
+          s"#share1.default.$sharedTableName"
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+        val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
+        val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
+        val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+        val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+        val metaDir = StreamingCheckpointConstants.DIR_NAME_METADATA
+        fileManager.mkdirs(new Path(checkpointPath, offsetsDir))
+        fileManager.mkdirs(new Path(checkpointPath, commitsDir))
+        val metadataPath = new Path(checkpointPath, metaDir)
+        val streamId = java.util.UUID.randomUUID.toString
+        StreamMetadata.write(StreamMetadata(streamId), metadataPath, hadoopConf)
+
+        // Batch 0: finished processing version 0 (index=-1 means starting version 1)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 1, index = -1,
+          isStartingVersion = false)
+        // Batch 1: mid-version at version 2, index 0 (not at boundary)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 1, tableId, tableVersion = 2, index = 0,
+          isStartingVersion = false)
+
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf ++ Seq(
+            autoResolveKey -> "true"
+          )).toSeq: _*
+        ) {
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          // Priming getBatch(offset_0, offset_1) fetches streaming v1-v2.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 1L, 2L)
+          // Mid-version: restricted to version 2 only (MD5).
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 2L)
+          // After transition: fetches from version 2 onwards normally (SHA256).
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 3L)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 3L, 3L)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          TestClientForDeltaFormatSharing.clearFileIdHashHistory()
+
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+
+          val history = TestClientForDeltaFormatSharing.getFileIdHashHistory
+          val streamingCalls = history.filter { case (name, qt, _) =>
+            name == sharedTableName && qt.startsWith("getFiles_streaming")
+          }
+          assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
+          // The first streaming call should use MD5 (mid-version legacy),
+          // subsequent calls after transition should use SHA256.
+          val firstCall = streamingCalls.head
+          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_MD5),
+            s"Expected MD5 for mid-version legacy offset but got ${firstCall._3}")
+          if (streamingCalls.size > 1) {
+            streamingCalls.tail.foreach { case (_, queryType, fileIdHash) =>
+              assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_SHA256),
+                s"Expected SHA256 after transition but got $fileIdHash in $queryType")
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // E2E: On restart the engine primes with getBatch(start=legacy, end=legacy) before
+  // calling latestOffset. When both offsets are from a legacy checkpoint, the file
+  // fetch must use MD5 fileIdHash to match the legacy source's ordering. This test
+  // creates two committed legacy batches (both at version boundary), restarts, and
+  // verifies that the priming getBatch uses MD5 for the initial file fetch.
+  test("fileIdHash: MD5 for priming getBatch when both start and end are legacy") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_fileidhash_priming"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+        sql(s"INSERT INTO $deltaTableName VALUES ('a1'), ('a2')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('b1'), ('b2')")
+        sql(s"INSERT INTO $deltaTableName VALUES ('c1'), ('c2')")
+        val tableId = DeltaLog.forTable(
+          spark, new TableIdentifier(deltaTableName))
+          .update().metadata.id
+        val sharedTableName = "shared_fileidhash_priming"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath +
+          s"#share1.default.$sharedTableName"
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+        // Two committed legacy batches: batch 0 at version 1, batch 1 at version 2.
+        // On restart, the engine calls getBatch(offset_0, offset_1) as priming -- both legacy.
+        val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
+        val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
+        val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+        val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+        val metaDir = StreamingCheckpointConstants.DIR_NAME_METADATA
+        fileManager.mkdirs(new Path(checkpointPath, offsetsDir))
+        fileManager.mkdirs(new Path(checkpointPath, commitsDir))
+        val metadataPath = new Path(checkpointPath, metaDir)
+        val streamId = java.util.UUID.randomUUID.toString
+        StreamMetadata.write(StreamMetadata(streamId), metadataPath, hadoopConf)
+
+        // Batch 0: legacy offset at version 1 (boundary)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 1, index = -1,
+          isStartingVersion = false)
+        // Batch 1: legacy offset at version 2 (boundary)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 1, tableId, tableVersion = 2, index = -1,
+          isStartingVersion = false)
+
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf ++ Seq(
+            autoResolveKey -> "true"
+          )).toSeq: _*
+        ) {
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          // Priming getBatch(offset_0, offset_1): endOffset is legacy
+          // (v2, index=-1 -> BASE_INDEX), so endVersion = 2 - 1 = 1.
+          // Fetches version 1 only (MD5).
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 1L, 1L)
+          // After priming, latestOffset starts from v2 and fetches v2-v3.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 3L)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          TestClientForDeltaFormatSharing.clearFileIdHashHistory()
+
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+
+          // Verify data correctness: the priming getBatch replays version 1 to 2
+          // data. Then latestOffset picks up version 3.
+          checkAnswer(
+            spark.read.format("delta").load(outputDir.getCanonicalPath),
+            Seq("b1", "b2", "c1", "c2").toDF())
+
+          // The first streaming getFiles call (from priming getBatch) should use MD5
+          // because both start and end offsets are from legacy checkpoints.
+          val history = TestClientForDeltaFormatSharing.getFileIdHashHistory
+          val streamingCalls = history.filter { case (name, qt, _) =>
+            name == sharedTableName && qt.startsWith("getFiles_streaming")
+          }
+          assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
+          val firstCall = streamingCalls.head
+          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_MD5),
+            s"Expected MD5 for priming getBatch with both-legacy offsets but got ${firstCall._3}")
+        }
+      }
+    }
+  }
+
+  // E2E: Legacy checkpoint mid-version with multiple files per version.
+  // Uses maxFilesPerTrigger=1 so that deltaSource.latestOffset returns a
+  // mid-version end offset, which triggers convertDeltaSourceOffsetToLegacyOffset.
+  // Validates that intermediate batch offsets stay in legacy format and
+  // the final batch transitions to DeltaSourceOffset.
+  test("E2E: convertDeltaSourceOffsetToLegacyOffset - intermediate batches " +
+    "stay legacy until version boundary") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_legacy_convert_e2e"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (value STRING)
+               |USING DELTA""".stripMargin)
+        // Version 1: 1 file (2 rows)
+        sql(s"INSERT INTO $deltaTableName VALUES ('v1a'), ('v1b')")
+        // Version 2: 3 files via repartition (1 row each)
+        Seq("v2a", "v2b", "v2c").toDF("value")
+          .repartition(3)
+          .write.insertInto(deltaTableName)
+        // Version 3: 1 file (2 rows)
+        sql(s"INSERT INTO $deltaTableName VALUES ('v3a'), ('v3b')")
+        val deltaLog = DeltaLog.forTable(
+          spark, new TableIdentifier(deltaTableName))
+        val tableId = deltaLog.update().metadata.id
+
+        // Verify version 2 has multiple files (added in that version)
+        val v2Changes = deltaLog.getChanges(2).next()._2
+          .collect { case a: AddFile if a.dataChange => a }
+        assert(v2Changes.size >= 2,
+          s"Expected multiple files in version 2 but got ${v2Changes.size}")
+
+        val sharedTableName = "shared_legacy_convert_e2e"
+        val profileFile = prepareProfileFile(inputDir)
+        val tablePath = profileFile.getCanonicalPath +
+          s"#share1.default.$sharedTableName"
+        spark.sessionState.conf.setConfString(
+          "spark.delta.sharing.streaming.queryTableVersionIntervalSeconds", "10s")
+
+        // Build checkpoint: legacy offset mid-version at version 2, index 0
+        val checkpointPath = new Path(checkpointDir.getCanonicalPath)
+        // scalastyle:off deltahadoopconfiguration
+        val hadoopConf = spark.sessionState.newHadoopConf()
+        // scalastyle:on deltahadoopconfiguration
+        val fileManager = CheckpointFileManager.create(checkpointPath, hadoopConf)
+        val offsetsDir = StreamingCheckpointConstants.DIR_NAME_OFFSETS
+        val commitsDir = StreamingCheckpointConstants.DIR_NAME_COMMITS
+        val metaDir = StreamingCheckpointConstants.DIR_NAME_METADATA
+        fileManager.mkdirs(new Path(checkpointPath, offsetsDir))
+        fileManager.mkdirs(new Path(checkpointPath, commitsDir))
+        val metadataPath = new Path(checkpointPath, metaDir)
+        val streamId = java.util.UUID.randomUUID.toString
+        StreamMetadata.write(StreamMetadata(streamId), metadataPath, hadoopConf)
+
+        // Batch 0: finished processing version 0 (index=-1 means starting version 1)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 0, tableId, tableVersion = 1, index = -1,
+          isStartingVersion = false)
+        // Batch 1: mid-version at version 2, index 0 (processed 1 of 3 files)
+        writeLegacyOffsetAndCommit(fileManager, checkpointPath,
+          batchId = 1, tableId, tableVersion = 2, index = 0,
+          isStartingVersion = false)
+
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf(
+          (getDeltaSharingClassesSQLConf ++ Seq(
+            autoResolveKey -> "true"
+          )).toSeq: _*
+        ) {
+          prepareMockedClientMetadata(deltaTableName, sharedTableName)
+          // Priming getBatch(offset_0, offset_1) fetches streaming v1-v2.
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 1L, 2L)
+          // Mid-version: restrict to version 2 only with MD5 file IDs
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 2L)
+          // After transitioning at version boundary, fetch remaining versions
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 2L, 3L)
+          prepareMockedClientAndFileSystemResultForStreaming(
+            deltaTableName, sharedTableName, 3L, 3L)
+          prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+          // maxFilesPerTrigger=1 forces deltaSource.latestOffset to return
+          // mid-version end offsets, triggering convertDeltaSourceOffsetToLegacyOffset
+          val q = spark.readStream
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option("maxFilesPerTrigger", "1")
+            .load(tablePath)
+            .writeStream
+            .format("delta")
+            .option("checkpointLocation", checkpointDir.toString)
+            .start(outputDir.toString)
+          try {
+            q.processAllAvailable()
+          } finally {
+            q.stop()
+          }
+
+          val offsetLog = new OffsetSeqLog(
+            spark, s"${checkpointDir.getCanonicalPath}/offsets")
+
+          // Validate intermediate batch offsets are in legacy format.
+          // Batch 0 and 1 are the synthetic legacy checkpoint we created.
+          // Batch 2 is the first micro-batch after restart; since both
+          // start (index=0) and end (index=1) are mid-version,
+          // convertDeltaSourceOffsetToLegacyOffset should fire.
+          val batch2OffsetOpt = offsetLog.get(2)
+          assert(batch2OffsetOpt.isDefined, "Expected batch 2 in offset log")
+          val batch2Json = batch2OffsetOpt.get.offsets.head.get.json()
+          assert(batch2Json.contains("tableVersion"),
+            s"Expected legacy offset (tableVersion) in batch 2 but got: $batch2Json")
+          assert(!batch2Json.contains("reservoirVersion"),
+            s"Expected no DeltaSourceOffset in batch 2 but got: $batch2Json")
+
+          // Validate the final offset has transitioned to DeltaSourceOffset format.
+          val (_, finalOffsetSeq) = offsetLog.getLatest().get
+          val finalJson = finalOffsetSeq.offsets.head.get.json()
+          assert(finalJson.contains("reservoirVersion"),
+            s"Expected DeltaSourceOffset (reservoirVersion) in final offset but got: $finalJson")
+          assert(!finalJson.contains("tableVersion"),
+            s"Expected no legacy tableVersion in final offset but got: $finalJson")
+        }
+      }
+    }
+  }
+
+  // Test convertDeltaSourceOffsetToLegacyOffset: verify that a DeltaSourceOffset
+  // is correctly converted back to a legacy DeltaSharingSourceOffset.
+  test("convertDeltaSourceOffsetToLegacyOffset produces valid legacy offset") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_convert_back"
+      withTable(deltaTableName) {
+        createTable(deltaTableName)
+        val sharedTableName = "shared_convert_back"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        val tableId = "test-table-convert-back"
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val source = getSource(
+            Map("path" -> s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          )
+          val tableIdField = source.getClass.getDeclaredField("tableId")
+          tableIdField.setAccessible(true)
+          tableIdField.set(source, tableId)
+
+          // Use reflection to call the private convertDeltaSourceOffsetToLegacyOffset
+          val method = source.getClass.getDeclaredMethod(
+            "convertDeltaSourceOffsetToLegacyOffset",
+            classOf[DeltaSourceOffset]
+          )
+          method.setAccessible(true)
+
+          val deltaOffset = DeltaSourceOffset(
+            reservoirId = tableId,
+            reservoirVersion = 5L,
+            index = 3L,
+            isInitialSnapshot = false
+          )
+          val result = method.invoke(source, deltaOffset)
+          // Call json() via the connector Offset interface
+          val jsonMethod = result.getClass.getMethod("json")
+          val json = jsonMethod.invoke(result).asInstanceOf[String]
+
+          // Verify the legacy offset JSON contains expected fields
+          assert(json.contains("\"sourceVersion\":1"), s"Expected sourceVersion:1 in $json")
+          assert(json.contains(s""""tableId":"$tableId""""), s"Expected tableId in $json")
+          assert(json.contains("\"tableVersion\":5"), s"Expected tableVersion:5 in $json")
+          assert(json.contains("\"index\":3"), s"Expected index:3 in $json")
+          assert(json.contains("\"isStartingVersion\":false"),
+            s"Expected isStartingVersion:false in $json")
+
+          // Round-trip: the legacy offset JSON should be parseable back via
+          // forceToDeltaSourceOffset
+          val autoResolveKey = DeltaSQLConf
+            .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+          withSQLConf(autoResolveKey -> "true") {
+            val serialized = SerializedOffset(json)
+            val (roundTripped, fromLegacy) = source.forceToDeltaSourceOffset(serialized)
+            assert(fromLegacy, "Should be detected as legacy")
+            assert(roundTripped.reservoirId === tableId)
+            assert(roundTripped.reservoirVersion === 5L)
+            // Index -1 maps to BASE_INDEX, but index 3 should stay 3
+            assert(roundTripped.index === 3L)
+            assert(!roundTripped.isInitialSnapshot)
+          }
+          cleanUpDeltaSharingBlocks()
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Targeted unit tests for determineVersionAndHashFromGetBatch and
+  // determineVersionAndHashFromLatestOffset.
+  // ---------------------------------------------------------------------------
+
+  private def makeOffset(
+      version: Long,
+      index: Long,
+      isInitialSnapshot: Boolean = false): DeltaSourceOffset = {
+    DeltaSourceOffset(
+      reservoirId = "test-table-id",
+      reservoirVersion = version,
+      index = index,
+      isInitialSnapshot = isInitialSnapshot
+    )
+  }
+
+  private val MD5 = DeltaSharingRestClient.FILEIDHASH_MD5
+  private val SHA256 = DeltaSharingRestClient.FILEIDHASH_SHA256
+
+  test("determineVersionAndHashFromGetBatch: all branches") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_determine_gb"
+      withTable(deltaTableName) {
+        createTable(deltaTableName)
+        val sharedTableName = "shared_determine_gb"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf((getDeltaSharingClassesSQLConf ++ Seq(
+          autoResolveKey -> "true"
+        )).toSeq: _*) {
+          val source = getSource(
+            Map("path" -> s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          )
+
+          // (description, start, startLegacy, end, endLegacy, latestVer,
+          //  expectedVersion, expectedHash)
+          Seq(
+            // end=legacy with BASE_INDEX -> endVersion = reservoirVersion - 1, MD5
+            ("end legacy BASE_INDEX",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true,
+              makeOffset(5, DeltaSourceOffset.BASE_INDEX), true,
+              10L, Some(4L), MD5),
+            // end=legacy with non-BASE_INDEX -> endVersion = reservoirVersion, MD5
+            ("end legacy non-BASE_INDEX",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true,
+              makeOffset(5, 2L), true,
+              10L, Some(5L), MD5),
+            // start=legacy mid-version, end=new -> endVersion = start.reservoirVersion, MD5
+            ("start legacy mid-version, end new",
+              makeOffset(3, 0L), true,
+              makeOffset(4, DeltaSourceOffset.BASE_INDEX), false,
+              10L, Some(3L), MD5),
+            // start=legacy boundary, end=new -> regular path, SHA256
+            ("start legacy boundary, end new",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true,
+              makeOffset(5, DeltaSourceOffset.BASE_INDEX), false,
+              10L, Some(10L), SHA256),
+            // regular delta format (no legacy) -> SHA256
+            ("regular delta format",
+              makeOffset(5, DeltaSourceOffset.BASE_INDEX), false,
+              makeOffset(7, DeltaSourceOffset.BASE_INDEX), false,
+              10L, Some(10L), SHA256)
+          ).foreach { case (desc, start, startLegacy, end, endLegacy,
+              latestVer, expectedVersion, expectedHash) =>
+            val (endVersion, fileIdHash) = source.determineVersionAndHashFromGetBatch(
+              startingOffset = start,
+              startConvertedFromLegacy = startLegacy,
+              endOffset = end,
+              endConvertedFromLegacy = endLegacy,
+              latestTableVersion = latestVer
+            )
+            expectedVersion.foreach(v =>
+              assert(endVersion === v, s"[$desc] unexpected endVersion"))
+            assert(fileIdHash.contains(expectedHash),
+              s"[$desc] expected $expectedHash but got $fileIdHash")
+          }
+          cleanUpDeltaSharingBlocks()
+        }
+      }
+    }
+  }
+
+  test("determineVersionAndHashFromLatestOffset: all branches") {
+    withTempDir { tempDir =>
+      val deltaTableName = "delta_table_determine_lo"
+      withTable(deltaTableName) {
+        createTable(deltaTableName)
+        val sharedTableName = "shared_determine_lo"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        val autoResolveKey = DeltaSQLConf
+          .DELTA_SHARING_STREAMING_AUTO_RESOLVE_RESPONSE_FORMAT.key
+        withSQLConf((getDeltaSharingClassesSQLConf ++ Seq(
+          autoResolveKey -> "true"
+        )).toSeq: _*) {
+          val source = getSource(
+            Map("path" -> s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName")
+          )
+
+          // (description, start, startLegacy, latestVer, expectedVersion, expectedHash)
+          Seq(
+            // start=legacy mid-version -> endVersion = start.reservoirVersion, MD5
+            ("legacy mid-version",
+              makeOffset(3, 0L), true, 10L, Some(3L), MD5),
+            // start=legacy boundary -> regular path, SHA256
+            ("legacy boundary",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), true, 10L, Some(10L), SHA256),
+            // regular delta format -> SHA256
+            ("regular delta format",
+              makeOffset(3, DeltaSourceOffset.BASE_INDEX), false, 10L, Some(10L), SHA256)
+          ).foreach { case (desc, start, startLegacy, latestVer,
+              expectedVersion, expectedHash) =>
+            val (endVersion, fileIdHash) = source.determineVersionAndHashFromLatestOffset(
+              startingOffset = start,
+              startConvertedFromLegacy = startLegacy,
+              latestTableVersion = latestVer
+            )
+            expectedVersion.foreach(v =>
+              assert(endVersion === v, s"[$desc] unexpected endVersion"))
+            assert(fileIdHash.contains(expectedHash),
+              s"[$desc] expected $expectedHash but got $fileIdHash")
+          }
+          cleanUpDeltaSharingBlocks()
+        }
+      }
+    }
+  }
 }
