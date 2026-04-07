@@ -477,7 +477,7 @@ class DeltaSinkImplicitCastSuite extends DeltaSinkImplicitCastSuiteBase
     }
   }
 
-  test(s"schema evolution with case sensitivity and without type mismatch") {
+  test("schema evolution with case sensitivity and without type mismatch") {
     withSQLConf(
       SQLConf.CASE_SENSITIVE.key -> "true",
       DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true"
