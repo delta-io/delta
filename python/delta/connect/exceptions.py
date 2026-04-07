@@ -15,9 +15,9 @@
 #
 
 import json
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
-from pyspark.errors.exceptions.connect import SparkConnectException
+from pyspark.errors.exceptions.connect import SparkConnectException, SparkConnectGrpcException
 
 from delta.exceptions.base import (
     DeltaConcurrentModificationException as BaseDeltaConcurrentModificationException,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from google.rpc.error_details_pb2 import ErrorInfo
 
 
-class DeltaConcurrentModificationException(SparkConnectException, BaseDeltaConcurrentModificationException):
+class DeltaConcurrentModificationException(SparkConnectGrpcException, BaseDeltaConcurrentModificationException):
     """
     The basic class for all Delta commit conflict exceptions.
 
@@ -44,7 +44,7 @@ class DeltaConcurrentModificationException(SparkConnectException, BaseDeltaConcu
     """
 
 
-class ConcurrentWriteException(SparkConnectException, BaseConcurrentWriteException):
+class ConcurrentWriteException(SparkConnectGrpcException, BaseConcurrentWriteException):
     """
     Thrown when a concurrent transaction has written data after the current transaction read the
     table.
@@ -55,7 +55,7 @@ class ConcurrentWriteException(SparkConnectException, BaseConcurrentWriteExcepti
     """
 
 
-class MetadataChangedException(SparkConnectException, BaseMetadataChangedException):
+class MetadataChangedException(SparkConnectGrpcException, BaseMetadataChangedException):
     """
     Thrown when the metadata of the Delta table has changed between the time of read
     and the time of commit.
@@ -66,7 +66,7 @@ class MetadataChangedException(SparkConnectException, BaseMetadataChangedExcepti
     """
 
 
-class ProtocolChangedException(SparkConnectException, BaseProtocolChangedException):
+class ProtocolChangedException(SparkConnectGrpcException, BaseProtocolChangedException):
     """
     Thrown when the protocol version has changed between the time of read
     and the time of commit.
@@ -77,7 +77,7 @@ class ProtocolChangedException(SparkConnectException, BaseProtocolChangedExcepti
     """
 
 
-class ConcurrentAppendException(SparkConnectException, BaseConcurrentAppendException):
+class ConcurrentAppendException(SparkConnectGrpcException, BaseConcurrentAppendException):
     """
     Thrown when files are added that would have been read by the current transaction.
 
@@ -87,7 +87,7 @@ class ConcurrentAppendException(SparkConnectException, BaseConcurrentAppendExcep
     """
 
 
-class ConcurrentDeleteReadException(SparkConnectException, BaseConcurrentDeleteReadException):
+class ConcurrentDeleteReadException(SparkConnectGrpcException, BaseConcurrentDeleteReadException):
     """
     Thrown when the current transaction reads data that was deleted by a concurrent transaction.
 
@@ -97,7 +97,7 @@ class ConcurrentDeleteReadException(SparkConnectException, BaseConcurrentDeleteR
     """
 
 
-class ConcurrentDeleteDeleteException(SparkConnectException, BaseConcurrentDeleteDeleteException):
+class ConcurrentDeleteDeleteException(SparkConnectGrpcException, BaseConcurrentDeleteDeleteException):
     """
     Thrown when the current transaction deletes data that was deleted by a concurrent transaction.
 
@@ -107,7 +107,7 @@ class ConcurrentDeleteDeleteException(SparkConnectException, BaseConcurrentDelet
     """
 
 
-class ConcurrentTransactionException(SparkConnectException, BaseConcurrentTransactionException):
+class ConcurrentTransactionException(SparkConnectGrpcException, BaseConcurrentTransactionException):
     """
     Thrown when concurrent transaction both attempt to update the same idempotent transaction.
 
@@ -117,25 +117,29 @@ class ConcurrentTransactionException(SparkConnectException, BaseConcurrentTransa
     """
 
 
-def _convert_delta_exception(info: "ErrorInfo", message: str):
+def _convert_delta_exception(
+    info: "ErrorInfo", message: str
+) -> Optional[SparkConnectGrpcException]:
     classes = []
     if "classes" in info.metadata:
         classes = json.loads(info.metadata["classes"])
 
+    sql_state: Optional[str] = info.metadata.get("sqlState")
+
     if "io.delta.exceptions.ConcurrentWriteException" in classes:
-        return ConcurrentWriteException(message)
+        return ConcurrentWriteException(message, sql_state=sql_state)
     if "io.delta.exceptions.MetadataChangedException" in classes:
-        return MetadataChangedException(message)
+        return MetadataChangedException(message, sql_state=sql_state)
     if "io.delta.exceptions.ProtocolChangedException" in classes:
-        return ProtocolChangedException(message)
+        return ProtocolChangedException(message, sql_state=sql_state)
     if "io.delta.exceptions.ConcurrentAppendException" in classes:
-        return ConcurrentAppendException(message)
+        return ConcurrentAppendException(message, sql_state=sql_state)
     if "io.delta.exceptions.ConcurrentDeleteReadException" in classes:
-        return ConcurrentDeleteReadException(message)
+        return ConcurrentDeleteReadException(message, sql_state=sql_state)
     if "io.delta.exceptions.ConcurrentDeleteDeleteException" in classes:
-        return ConcurrentDeleteDeleteException(message)
+        return ConcurrentDeleteDeleteException(message, sql_state=sql_state)
     if "io.delta.exceptions.ConcurrentTransactionException" in classes:
-        return ConcurrentTransactionException(message)
+        return ConcurrentTransactionException(message, sql_state=sql_state)
     if "io.delta.exceptions.DeltaConcurrentModificationException" in classes:
-        return DeltaConcurrentModificationException(message)
+        return DeltaConcurrentModificationException(message, sql_state=sql_state)
     return None
