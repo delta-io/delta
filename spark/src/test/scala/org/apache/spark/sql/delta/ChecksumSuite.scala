@@ -81,7 +81,9 @@ class ChecksumSuite
     for (incrementalCommitEnabled <- BOOLEAN_DOMAIN) {
       withSQLConf(
         DeltaSQLConf.DELTA_WRITE_CHECKSUM_ENABLED.key -> "false",
-        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString
+        DeltaSQLConf.INCREMENTAL_COMMIT_ENABLED.key -> incrementalCommitEnabled.toString,
+        DeltaSQLConf.DELTA_ALL_FILES_IN_CRC_FORCE_VERIFICATION_MODE_FOR_NON_UTC_ENABLED.key ->
+          "false"
       ) {
         withTempTable(createTable = false) { tableName =>
           // Set the timezone to UTC to avoid triggering force verification of all files in CRC
@@ -247,7 +249,10 @@ class ChecksumSuite
         val log = DeltaLog.forTable(spark, TableIdentifier(tableName))
         val txn = log.startTransaction()
         val expected =
-          s"""Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
+          s"""
+             |FileSizeHistogram mismatch in file sizes
+             |FileSizeHistogram mismatch in file counts
+             |Table size (bytes) - Expected: ${2*numAddFiles} Computed: $numAddFiles
              |Number of files - Expected: ${2*numAddFiles} Computed: $numAddFiles
           """.stripMargin.trim
 
