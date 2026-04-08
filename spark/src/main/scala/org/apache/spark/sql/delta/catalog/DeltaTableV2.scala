@@ -437,7 +437,7 @@ class DeltaTableV2 private(
     val label = catalogTable.map(_.identifier.unquotedString)
       .orElse(tableIdentifier)
       .getOrElse(s"delta.`$path`")
-    s"DeltaTableV2($label, path=$path)"
+    s"DeltaTableV2($label, $path)"
   }
 }
 
