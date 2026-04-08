@@ -22,7 +22,7 @@ import scala.jdk.CollectionConverters._
 import io.delta.kernel.{Operation, Table, TableManager, Transaction}
 import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.data.Row
-import io.delta.kernel.defaults.utils.WriteUtilsWithV2Builders
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -38,7 +38,7 @@ import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtilsWithV2Builders {
+class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtils {
 
   private def assertCrcExistsAtLatest(engine: Engine, tablePath: String): Unit = {
     val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
