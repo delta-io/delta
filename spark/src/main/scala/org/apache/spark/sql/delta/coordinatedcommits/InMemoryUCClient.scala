@@ -77,7 +77,8 @@ class InMemoryUCClient(
       Option(lastKnownBackfilledVersion.orElse(null)).map(_.toLong),
       disown,
       Option(newProtocol.orElse(null)).map(_.asInstanceOf[Protocol]),
-      Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]))
+      Option(newMetadata.orElse(null)).map(_.asInstanceOf[Metadata]),
+      Option(uniform.orElse(null)))
   }
 
   override def getCommits(
