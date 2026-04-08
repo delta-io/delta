@@ -308,6 +308,9 @@ object DeletionVectorBitmapGenerator {
   final val DELETED_ROW_INDEX_BITMAP = "deletedRowIndexSet"
   final val DELETED_ROW_INDEX_COUNT = "deletedRowIndexCount"
   final val MAX_ROW_INDEX_COL = "maxRowIndexCol"
+  // Used to avoid colliding with user columns (e.g. a target column named `path`) when joining
+  // with `FileToDvDescriptor` which also has a `path` column.
+  private final val DV_FILE_PATH_JOIN_COL = "__delta_dv_file_path"
 
   private class DeletionVectorSet(
     spark: SparkSession,
@@ -428,13 +431,20 @@ object DeletionVectorBitmapGenerator {
       }
       val filePathToDVDf = sparkSession.createDataset(filePathToDV)
 
-      val joinExpr = filePathToDVDf("path") === matchedRowsDf(FILE_NAME_COL)
+      // Avoid duplicate column names: the target table can legitimately have a column named `path`,
+      // and a DataFrame join would then produce multiple `path` columns. If we later rename `path`
+      // to `filePath` we'd end up with multiple `filePath` columns which triggers ambiguous
+      // references (see delta-io/delta#5296).
+      val filePathToDVDfWithUniquePathCol =
+        filePathToDVDf.withColumnRenamed("path", DV_FILE_PATH_JOIN_COL)
+      val joinExpr = filePathToDVDfWithUniquePathCol(DV_FILE_PATH_JOIN_COL) ===
+        matchedRowsDf(FILE_NAME_COL)
       // Perform leftOuter join to make sure we do not eliminate any rows because of path
       // encoding issues. If there is such an issue we will detect it during the aggregation
       // of the bitmaps.
-      val joinedDf = matchedRowsDf.join(filePathToDVDf, joinExpr, "leftOuter")
+      val joinedDf = matchedRowsDf.join(filePathToDVDfWithUniquePathCol, joinExpr, "leftOuter")
         .drop(FILE_NAME_COL)
-        .withColumnRenamed("path", FILE_NAME_COL)
+        .withColumnRenamed(DV_FILE_PATH_JOIN_COL, FILE_NAME_COL)
       joinedDf
     } else {
       // When the table has no DVs, just add a column to indicate that the existing dv is null
