@@ -1575,6 +1575,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_FILE_SIZE_HISTOGRAM_ENABLED =
+    buildConf("fileSizeHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction reports file size distribution histogram
+              |of all the files in the latest snapshot after the commit and histograms of new
+              |files added and old files removed.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
@@ -2395,18 +2404,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
-  val DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS =
-    buildConf("streaming.sink.allowImplicitCasts")
-      .internal()
-      .doc(
-        """Whether to accept writing data to a Delta streaming sink when the data type doesn't
-          |match the type in the underlying Delta table. When true, data is cast to the expected
-          |type before the write. When false, the write fails.
-          |The casting behavior is governed by 'spark.sql.storeAssignmentPolicy'.
-          |""".stripMargin)
-      .booleanConf
-      .createWithDefault(true)
-
   val DELTA_STREAMING_SINK_IMPLICIT_CAST_FOR_TYPE_MISMATCH_ONLY =
     buildConf("streaming.sink.implicitCastForTypeMismatchOnly")
       .internal()
@@ -2417,8 +2414,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |nested field in the data and table schema.
           |When false, missing, extra or reordered columns or nested fields also trigger adding an
           |implicit cast.
-          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
-          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
@@ -2431,8 +2426,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
           |When true, the code paths handling implicit casting in streaming will escape column names
           |to properly handle e.g. dots in column names.
           |This is a kill-switch and shouldn't be disabled unless necessary to mitigate an issue.
-          |Only takes effect when implicit casting is enabled in streaming writes to a Delta table
-          |via `spark.databricks.delta.streaming.sink.allowImplicitCasts`.
           |""".stripMargin)
       .booleanConf
       .createWithDefault(true)
