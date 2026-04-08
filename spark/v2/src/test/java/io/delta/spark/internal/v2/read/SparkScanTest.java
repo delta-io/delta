@@ -1610,11 +1610,11 @@ public class SparkScanTest extends DeltaV2TestBase {
   @Test
   public void testBatchEqualityFromSeparateCatalogLookups() {
     Identifier id = Identifier.of(new String[] {"spark_catalog", "default"}, tableName);
-    SparkTable table1 = new SparkTable(id, tablePath, OPTIONS);
-    SparkTable table2 = new SparkTable(id, tablePath, OPTIONS);
+    SparkTable table1 = new SparkTable(id, tablePath, options);
+    SparkTable table2 = new SparkTable(id, tablePath, options);
 
-    Batch batch1 = table1.newScanBuilder(OPTIONS).build().toBatch();
-    Batch batch2 = table2.newScanBuilder(OPTIONS).build().toBatch();
+    Batch batch1 = table1.newScanBuilder(options).build().toBatch();
+    Batch batch2 = table2.newScanBuilder(options).build().toBatch();
 
     assertNotSame(batch1, batch2, "Expected different SparkBatch instances");
     assertEquals(batch1, batch2, "SparkBatch instances for the same table should be equal");
@@ -1636,11 +1636,11 @@ public class SparkScanTest extends DeltaV2TestBase {
 
     Identifier id1 = Identifier.of(new String[] {"spark_catalog", "default"}, tableName);
     Identifier id2 = Identifier.of(new String[] {"spark_catalog", "default"}, otherName);
-    SparkTable table1 = new SparkTable(id1, tablePath, OPTIONS);
-    SparkTable table2 = new SparkTable(id2, otherPath, OPTIONS);
+    SparkTable table1 = new SparkTable(id1, tablePath, options);
+    SparkTable table2 = new SparkTable(id2, otherPath, options);
 
-    Batch batch1 = table1.newScanBuilder(OPTIONS).build().toBatch();
-    Batch batch2 = table2.newScanBuilder(OPTIONS).build().toBatch();
+    Batch batch1 = table1.newScanBuilder(options).build().toBatch();
+    Batch batch2 = table2.newScanBuilder(options).build().toBatch();
 
     assertNotEquals(
         batch1, batch2, "SparkBatch instances for different tables should not be equal");
