@@ -135,6 +135,9 @@ public class DeltaBatchWrite implements BatchWrite {
             : Collections.emptyMap();
 
     // Phase 2: Convert V1 AddFile → Kernel DataFileStatus, grouped by partition.
+    // Stats are matched by file basename. V1 alternatively injects stats into AddFile.copy()
+    // via TransactionalWriteEdge, but since we convert to Kernel DataFileStatus anyway, it's
+    // simpler to look up stats at conversion time rather than mutate the V1 actions.
     String tablePath = description.path();
     List<org.apache.spark.sql.delta.actions.AddFile> addedFiles =
         new ArrayList<>(CollectionConverters.asJava(committer.addedStatuses()));

@@ -124,12 +124,24 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
   @SuppressWarnings({"unchecked", "rawtypes"})
   public BatchWrite toBatch() {
     SparkSession spark = SparkSession.active();
-    Configuration hadoopConf = table.getHadoopConf();
     String tablePath = table.getTablePath().toString();
 
     // -- Kernel: create transaction --
-    Engine engine = DefaultEngine.create(hadoopConf);
     Snapshot snapshot = table.getInitialSnapshot();
+
+    // -- Hadoop conf: merge table metadata configuration --
+    // V1 does: newHadoopConfWithOptions(metadata.configuration ++ deltaLog.options)
+    // This ensures Delta table properties (e.g. column mapping config) are visible to
+    // Parquet writers and the commit protocol.
+    Configuration hadoopConf = new Configuration(table.getHadoopConf());
+    io.delta.kernel.internal.SnapshotImpl snapshotImpl =
+        (io.delta.kernel.internal.SnapshotImpl) snapshot;
+    for (java.util.Map.Entry<String, String> e :
+        snapshotImpl.getMetadata().getConfiguration().entrySet()) {
+      hadoopConf.set(e.getKey(), e.getValue());
+    }
+
+    Engine engine = DefaultEngine.create(hadoopConf);
 
     // -- Schema evolution --
     boolean mergeSchema =
@@ -173,13 +185,36 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
     StructType partitionSchema = table.getPartitionSchema();
 
     // -- DelayedCommitProtocol (reuse V1) --
+    // V1 TransactionalWrite.getCommitter: uses random prefix if randomizeFilePrefixes is
+    // enabled or column mapping is active; uses data subdir if configured.
     String jobId = UUID.randomUUID().toString();
+    java.util.Map<String, String> tableConfig = snapshotImpl.getMetadata().getConfiguration();
+    boolean randomizeFilePrefixes =
+        Boolean.parseBoolean(tableConfig.getOrDefault("delta.randomizeFilePrefixes", "false"));
+    String columnMappingMode = tableConfig.getOrDefault("delta.columnMapping.mode", "none");
+    boolean needsRandomPrefix = randomizeFilePrefixes || !"none".equals(columnMappingMode);
+
+    Option<Object> randomPrefixLengthOpt;
+    if (needsRandomPrefix) {
+      int prefixLen = Integer.parseInt(tableConfig.getOrDefault("delta.randomPrefixLength", "2"));
+      randomPrefixLengthOpt = Option.apply((Object) prefixLen);
+    } else {
+      randomPrefixLengthOpt = Option.empty();
+    }
+
+    Option<String> deltaDataSubdir =
+        (Boolean)
+                spark
+                    .sessionState()
+                    .conf()
+                    .getConf(
+                        org.apache.spark.sql.delta.sources.DeltaSQLConf
+                            .WRITE_DATA_FILES_TO_SUBDIR())
+            ? Option.apply("data")
+            : Option.empty();
+
     DelayedCommitProtocol committer =
-        new DelayedCommitProtocol(
-            jobId,
-            tablePath,
-            Option.<Object>empty(), // no random prefix
-            Option.<String>empty()); // no subdir
+        new DelayedCommitProtocol(jobId, tablePath, randomPrefixLengthOpt, deltaDataSubdir);
 
     // -- Hadoop Job + OutputWriterFactory (same as FileWrite.toBatch) --
     Job job;
@@ -198,8 +233,25 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
     DeltaParquetFileFormatV2 fileFormat =
         PartitionUtils.createDeltaParquetFileFormat(
             snapshot, tablePath, /* optimizationsEnabled */ false, Option.empty());
-    OutputWriterFactory factory =
-        fileFormat.prepareWrite(spark, job, toScalaMap(Collections.emptyMap()), dataSchema);
+
+    // -- WRITE_PARTITION_COLUMNS: Iceberg spec and MaterializePartitionColumns require
+    // partition columns to be materialized in Parquet data files. --
+    // V1: IcebergCompat.isAnyEnabled(metadata) || protocol.isFeatureSupported(...)
+    boolean icebergCompatEnabled =
+        Boolean.parseBoolean(tableConfig.getOrDefault("delta.enableIcebergCompatV1", "false"))
+            || Boolean.parseBoolean(
+                tableConfig.getOrDefault("delta.enableIcebergCompatV2", "false"));
+    boolean writePartitionColumns =
+        icebergCompatEnabled
+            || snapshotImpl
+                .getProtocol()
+                .getWriterFeatures()
+                .contains("materializePartitionColumns");
+
+    Map<String, String> writerOptions = new HashMap<>();
+    writerOptions.put(
+        org.apache.spark.sql.delta.DeltaOptions.WRITE_PARTITION_COLUMNS(),
+        Boolean.toString(writePartitionColumns));
 
     // -- WriteJobDescription: allColumns = dataColumns ++ partitionColumns --
     // All three seqs must be derived from the same toAttributes call so their Attribute
@@ -221,8 +273,33 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
       }
     }
 
-    Seq dataColumns = scala.jdk.javaapi.CollectionConverters.asScala(dataCols).toList();
+    // When writePartitionColumns is true, partition columns are included in the Parquet
+    // data schema so they appear in the physical file (V1: outputDataColumns = dataColumns ++
+    // partitionColumns). Otherwise only non-partition columns are written.
     Seq partitionColumns = scala.jdk.javaapi.CollectionConverters.asScala(partCols).toList();
+    Seq dataColumns;
+    if (writePartitionColumns) {
+      List<Object> outputDataCols = new ArrayList<>(dataCols);
+      outputDataCols.addAll(partCols);
+      dataColumns = scala.jdk.javaapi.CollectionConverters.asScala(outputDataCols).toList();
+    } else {
+      dataColumns = scala.jdk.javaapi.CollectionConverters.asScala(dataCols).toList();
+    }
+
+    // prepareWrite needs the output data schema as StructType.
+    // V1: outputDataColumns.toStructType (Scala implicit).
+    // In Java we reconstruct it from the Attribute sequence.
+    org.apache.spark.sql.types.StructField[] outputFields =
+        new org.apache.spark.sql.types.StructField[dataColumns.size()];
+    for (int i = 0; i < dataColumns.size(); i++) {
+      Attribute attr = (Attribute) dataColumns.apply(i);
+      outputFields[i] =
+          new org.apache.spark.sql.types.StructField(
+              attr.name(), attr.dataType(), attr.nullable(), attr.metadata());
+    }
+    StructType outputDataSchema = new StructType(outputFields);
+    OutputWriterFactory factory =
+        fileFormat.prepareWrite(spark, job, toScalaMap(writerOptions), outputDataSchema);
 
     SerializableConfiguration srlHadoopConf = new SerializableConfiguration(job.getConfiguration());
 
@@ -249,9 +326,10 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
     scala.collection.immutable.Map emptyPartLocations =
         scala.collection.immutable.Map$.MODULE$.empty();
 
+    String writeJobUUID = UUID.randomUUID().toString();
     WriteJobDescription desc =
         new WriteJobDescription(
-            UUID.randomUUID().toString(),
+            writeJobUUID,
             srlHadoopConf,
             factory,
             allColumns,
@@ -263,6 +341,9 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
             spark.sessionState().conf().maxRecordsPerFile(),
             spark.sessionState().conf().sessionLocalTimeZone(),
             statsTrackers);
+
+    // V1 DeltaFileFormatWriter sets this after constructing the description
+    job.getConfiguration().set("spark.sql.sources.writeJobUUID", writeJobUUID);
 
     // -- Setup job (no-op for DelayedCommitProtocol) --
     committer.setupJob(job);

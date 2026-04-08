@@ -115,13 +115,19 @@ object DeltaStatsTrackerHelper {
       hadoopConf, outputPath, newStatsDataSchema, statsColExpr))
   }
 
-  /** Calls processStats on the tracker to populate recordedStats from task results. */
+  /**
+   * Processes task-level stats through each tracker, populating recordedStats.
+   *
+   * Mirrors the private `DeltaFileFormatWriter.processStats()` logic: transpose the
+   * per-task stats matrix so each tracker gets its own column of stats, then call
+   * `tracker.processStats(stats, jobCommitDuration)`. We cannot call
+   * `DeltaFileFormatWriter.processStats` directly because it is private.
+   */
   def processStats(
       statsTrackers: Seq[WriteJobStatsTracker],
       taskResults: Array[WriteTaskResult]): Unit = {
     if (taskResults.isEmpty || statsTrackers.isEmpty) return
     val statsPerTask: Seq[Seq[WriteTaskStats]] = taskResults.map(_.summary.stats).toSeq
-    val numTrackers = statsTrackers.length
     val statsPerTracker = if (statsPerTask.nonEmpty) statsPerTask.transpose else {
       statsTrackers.map(_ => Seq.empty)
     }
@@ -156,6 +162,18 @@ object DeltaStatsTrackerHelper {
     (resolvedPlan.expressions.head, newStatsDataSchema)
   }
 
+  /**
+   * Builds a V1 [[V1Metadata]] from a Kernel snapshot for [[StatisticsCollection]].
+   *
+   * [[StatisticsCollection]] reads the following fields:
+   *  - `schema` (derived from `schemaString`) — for stats column resolution
+   *  - `partitionColumns` — to exclude partition columns from stats schema
+   *  - `configuration` — for `delta.dataSkippingNumIndexedCols` and stats column spec
+   *  - `columnMappingMode` (derived from `configuration`) — for physical name mapping
+   *
+   * The remaining case class fields (`name`, `description`, `format`, `createdTime`)
+   * use their defaults and are not accessed by the stats collection code path.
+   */
   private def buildV1Metadata(snapshotImpl: SnapshotImpl): V1Metadata = {
     val kernelMeta = snapshotImpl.getMetadata
     val kernelConfig = kernelMeta.getConfiguration.asScala.toMap
@@ -171,6 +189,12 @@ object DeltaStatsTrackerHelper {
     )
   }
 
+  /**
+   * Builds a V1 [[V1Protocol]] from a Kernel snapshot for [[StatisticsCollection]].
+   *
+   * [[StatisticsCollection]] checks `protocol` to determine whether certain table features
+   * (e.g. column mapping) affect stats column resolution.
+   */
   private def buildV1Protocol(snapshotImpl: SnapshotImpl): V1Protocol = {
     val kernelProto = snapshotImpl.getProtocol
     val base = V1Protocol(kernelProto.getMinReaderVersion, kernelProto.getMinWriterVersion)
