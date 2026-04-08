@@ -58,7 +58,15 @@ public interface SnapshotStatistics {
   Optional<Integer> getIncrementalChecksumLoadCost();
 
   /**
-   * Returns {@link TableStats} for the current snapshot version on a best-effort basis.
+   * Returns {@link TableStats} for the current snapshot version.
+   *
+   * <p>Returns {@link Optional#empty()} when:
+   *
+   * <ul>
+   *   <li>No checksum file exists in the log segment.
+   *   <li>A checksum file exists but the TableStats cannot be incrementally computed from it to the
+   *       current snapshot version.
+   * </ul>
    *
    * @param engine the engine to use for reading files
    */

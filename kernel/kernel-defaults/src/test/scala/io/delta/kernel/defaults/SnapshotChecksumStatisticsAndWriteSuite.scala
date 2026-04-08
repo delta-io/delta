@@ -15,15 +15,14 @@
  */
 package io.delta.kernel.defaults
 
-import java.util.{Collections, Optional}
+import java.util.Optional
 
 import scala.jdk.CollectionConverters._
 
 import io.delta.kernel.{Operation, Table, TableManager, Transaction}
 import io.delta.kernel.Snapshot.ChecksumWriteMode
-import io.delta.kernel.data.{FilteredColumnarBatch, Row}
-import io.delta.kernel.defaults.internal.data.DefaultColumnarBatch
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtilsWithV2Builders
 import io.delta.kernel.engine.Engine
 import io.delta.kernel.expressions.Literal
 import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
@@ -33,17 +32,13 @@ import io.delta.kernel.internal.checksum.ChecksumReader
 import io.delta.kernel.internal.data.GenericRow
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
-import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.StructType
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
 import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils {
-
-  val testSchema = new StructType().add("id", INTEGER)
+class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtilsWithV2Builders {
 
   private def assertCrcExistsAtLatest(engine: Engine, tablePath: String): Unit = {
     val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
@@ -306,7 +301,8 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
   /**
    * Creates a table with versions 0-14, CRC files at 0-14, and a checkpoint at version 10.
    * Versions 1-10 append data, versions 11-12 remove files, versions 13-14 append again.
-   * Passes expected (numFiles, tableSizeBytes) at version 14 to the test function.
+   * Passes (path, engine, expectedNumFiles, expectedTableSizeBytes) at version 14 to the test
+   * function.
    */
   private def withTableWithCrcAndCheckpoint(
       f: (String, Engine, Long, Long) => Unit): Unit = {
@@ -320,29 +316,9 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
 
       var postCommitSnapshot = result0.getPostCommitSnapshot.get()
 
-      def stageAppendActions(txn: io.delta.kernel.Transaction): CloseableIterable[Row] = {
-        val batch = new DefaultColumnarBatch(
-          10,
-          testSchema,
-          Array(testColumnVector(10, INTEGER)))
-        val filteredBatch = new FilteredColumnarBatch(batch, Optional.empty())
-        val txnState = txn.getTransactionState(defaultEngine)
-        val emptyPartValues = Collections.emptyMap[String, Literal]()
-        val physicalData = Transaction.transformLogicalData(
-          defaultEngine,
-          txnState,
-          toCloseableIterator(Iterator(filteredBatch).asJava),
-          emptyPartValues)
-        val writeCtx = Transaction.getWriteContext(
-          defaultEngine,
-          txnState,
-          emptyPartValues)
-        val writeResult = defaultEngine.getParquetHandler.writeParquetFiles(
-          writeCtx.getTargetDirectory,
-          physicalData,
-          writeCtx.getStatisticsColumns)
-        inMemoryIterable(
-          Transaction.generateAppendActions(defaultEngine, txnState, writeResult, writeCtx))
+      def stageAppendActions(txn: Transaction): CloseableIterable[Row] = {
+        val data = generateData(testSchema, Seq.empty, Map.empty, 10, 1)
+        getAppendActions(txn, Seq((Map.empty[String, Literal], data)))
       }
 
       def commitAndAdvance(dataActions: CloseableIterable[Row]): Unit = {
@@ -399,7 +375,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
     }
   }
 
-  test("CRC only before last checkpoint => getTableStats empty, load cost empty") {
+  test("No CRC in log segment => getTableStats empty, load cost empty") {
     withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
       deleteChecksumFileForTable(path, (10 to 14))
       val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
@@ -436,7 +412,7 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
   }
 
   test("getTableStats: CRC between checkpoint and current, " +
-    "remove without size => empty") {
+    "remove action without size => empty") {
     withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
       val snapshot14 = TableManager.loadSnapshot(path).build(engine)
       val scanFileRows = collectScanFileRows(snapshot14.getScanBuilder.build())
