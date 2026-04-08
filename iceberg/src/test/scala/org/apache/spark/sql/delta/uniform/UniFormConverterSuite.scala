@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.uniform
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, DeltaOperations, DeltaTableReadPredicate, Snapshot}
+import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata}
 import org.apache.spark.sql.delta.icebergShaded.{IcebergConverter, UNIFORM_CC_MODE, UNIFORM_POST_COMMIT_MODE}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -51,7 +53,8 @@ class IcebergConverterForTest extends IcebergConverter {
   }
 }
 
-class UniFormConverterSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+class UniFormConverterSuite extends
+  QueryTest with SharedSparkSession with DeltaSQLCommandTest with NonSparkReadIceberg {
   def constructDummyAddFile(path: String = "s3://path1/1.parquet"): AddFile = {
     AddFile(
       path = path,
@@ -87,7 +90,7 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
     )
   }
 
-  test("convertSnapshot writes Iceberg metadata and file count matches Delta snapshot") {
+  test("Verify convertSnapshot writes Iceberg metadata") {
     val tableName = "test_iceberg_converter"
     withTable(tableName) {
       spark.sql(
@@ -115,10 +118,13 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
         numFilesInIceberg == snapshot.numOfFiles,
         s"Iceberg total-data-files ($numFilesInIceberg) must equal " +
           s"Delta numOfFiles (${snapshot.numOfFiles})")
+      verifyReadByPath(metadataPath,
+        snapshot.schema, fields = "id", orderBy = "id", Seq(Row(1), Row(2), Row(3))
+      )
     }
   }
 
-  test("convertSnapshot file count matches Delta snapshot after multiple inserts") {
+  test("Verify convertSnapshot after multiple inserts") {
     val tableName = "test_iceberg_converter_multi"
     withTable(tableName) {
       spark.sql(
@@ -148,6 +154,9 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
         numFilesInIceberg == snapshot.numOfFiles,
         s"Iceberg total-data-files ($numFilesInIceberg) must equal " +
           s"Delta numOfFiles (${snapshot.numOfFiles})")
+      verifyReadByPath(metadataPath,
+        snapshot.schema, fields = "id", orderBy = "id", Seq(Row(1), Row(2), Row(3))
+      )
     }
   }
 

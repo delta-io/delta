@@ -1,6 +1,7 @@
 name: "Kernel Unity Catalog"
 on:
   push:
+    branches: [master]
     paths:
       - 'build.sbt'
       - 'version.sbt'
@@ -10,6 +11,7 @@ on:
       - 'storage/**/*.java'
       - '.github/workflows/kernel_unitycatalog_test.yaml'
   pull_request:
+    branches: [master]
     paths:
       - 'build.sbt'
       - 'version.sbt'
@@ -34,3 +36,4 @@ jobs:
       - name: Run Unity tests with coverage
         run: |
           ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
+

@@ -29,7 +29,6 @@ class DeltaInsertIntoColumnOrderSuite extends DeltaInsertIntoTest {
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    spark.conf.set(DeltaSQLConf.DELTA_STREAMING_SINK_ALLOW_IMPLICIT_CASTS.key, "true")
     spark.conf.set(SQLConf.ANSI_ENABLED.key, "true")
   }
 
