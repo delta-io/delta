@@ -123,8 +123,11 @@ object DeltaUDF {
       template: SparkUserDefinedFunction,
       f: AnyRef,
       orElse: => UserDefinedFunction): UserDefinedFunction = {
-    if (SparkSession.active.sessionState.conf
-      .getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED)) {
+    // Use getActiveSession instead of active to avoid IllegalStateException when the SparkContext
+    // is stopped (e.g. during query cancellation or cluster shutdown). If no session is available,
+    // fall through to orElse which creates a fresh UDF safely.
+    if (SparkSession.getActiveSession
+      .exists(_.sessionState.conf.getConf(DeltaSQLConf.INTERNAL_UDF_OPTIMIZATION_ENABLED))) {
       val inputEncoders = template.inputEncoders.map(_.map(e => encoderFor(e)))
       val outputEncoder = template.outputEncoder.map(e => encoderFor(e))
       template.copy(f = f, inputEncoders = inputEncoders, outputEncoder = outputEncoder)

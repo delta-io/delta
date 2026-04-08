@@ -69,11 +69,15 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === Read options ===
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "streaming with ignoreDeletes = true skips delete-only commits",
-    "streaming with ignoreDeletes = true still fails on change commits",
-    "streaming with skipChangeCommits = true skips both delete and change commits",
-    "streaming with ignoreChanges = true allows both delete and change commits",
-    "streaming with ignoreFileDeletion = true allows both delete and change commits",
+    "read options [ignoreDeletes]: ignores delete, rejects change",
+    "read options [skipChangeCommits]: ignores delete, skips change",
+    "read options [ignoreChanges]: ignores delete, includes change AddFiles",
+    "read options [ignoreFileDeletion] (deprecated): equivalent to ignoreChanges",
+    "read options [ignoreDeletes, ignoreChanges]: equivalent to ignoreChanges",
+    "read options [ignoreChanges, skipChangeCommits]: equivalent to skipChangeCommits",
+    "read options [ignoreDeletes, skipChangeCommits]: equivalent to skipChangeCommits",
+    "read options [ignoreDeletes, ignoreChanges, skipChangeCommits]: " +
+      "equivalent to skipChangeCommits",
 
     // === Commit/Checkpoint file missing detection ===
     "incremental: first commit file missing, fails",
