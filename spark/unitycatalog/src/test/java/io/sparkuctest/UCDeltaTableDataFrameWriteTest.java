@@ -94,6 +94,8 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
         });
   }
 
+  // TODO: Once external delta table RTAS/DPO is supported, use @TestAllTableTypes for these tests.
+
   @Test
   public void testSaveAsTableOverwriteReplacesWholeTable() throws Exception {
     withManagedDynamicPartitionOverwriteTable(
@@ -165,8 +167,7 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
                           "SELECT time, time_date_level, time_hour_level, "
                               + "concat(tenant, '_updated') AS tenant, eventMetaId + 100 AS eventMetaId "
                               + "FROM %s WHERE time_hour_level = 12",
-                          tableName))
-                  .limit(2));
+                          tableName)));
 
           assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
           // Only partition 12 should be rewritten; partitions 10 and 11 must remain unchanged.

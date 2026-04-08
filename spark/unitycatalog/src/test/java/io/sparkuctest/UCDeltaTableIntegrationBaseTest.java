@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import io.unitycatalog.client.api.TablesApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -330,6 +331,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   protected String fullTableName(String simpleName) {
     UnityCatalogInfo uc = unityCatalogInfo();
     return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
+  }
+
+  /** Returns the UC table ID for the given table. */
+  protected String currentUcTableId(String fullTableName) throws Exception {
+    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
+    return tablesApi.getTable(fullTableName, false, false).getTableId();
   }
 
   /** Returns the current (latest) version of the table. */
