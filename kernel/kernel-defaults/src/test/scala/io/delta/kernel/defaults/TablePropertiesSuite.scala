@@ -145,6 +145,29 @@ trait TablePropertiesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
     }
   }
 
+  test("create/update table - allow delta.liquid.* properties to Kernel") {
+    withTempDir { tempFile =>
+      val tablePath = tempFile.getAbsolutePath
+      // Create table with delta.liquid.* property
+      createUpdateTableWithProps(
+        tablePath,
+        createTable = true,
+        propsAdded = Map("delta.liquid.someProperty" -> "value1"))
+      assertHasProp(
+        tablePath,
+        expProps = Map("delta.liquid.someProperty" -> "value1"))
+
+      // Update table with a different delta.liquid.* property value
+      createUpdateTableWithProps(
+        tablePath,
+        propsAdded = Map(
+          "delta.liquid.someProperty" -> "value2"))
+      assertHasProp(
+        tablePath,
+        expProps = Map("delta.liquid.someProperty" -> "value2"))
+    }
+  }
+
   test("create/update/replace table - delta configs are stored with same case as " +
     "defined in TableConfig") {
     withTempDir { tempFile =>
