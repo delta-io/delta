@@ -337,6 +337,24 @@ abstract class UniversalFormatConverter {
    * @return None if no previous conversion found
    */
   def loadLastDeltaVersionConverted(snapshot: Snapshot, table: CatalogTable): Option[Long]
+
+  /**
+   * Perform a blocking pre-commit conversion for an uncommitted transaction (atomic UniForm).
+   * Generates Iceberg metadata before the Delta commit so both can be submitted atomically.
+   *
+   * @param txnInfo              The uncommitted transaction info containing the proposed actions.
+   * @param deltaAttemptVersion  The Delta version this transaction is targeting.
+   * @param deltaLog             The DeltaLog for this table.
+   * @param catalogTable         The catalog table this conversion targets.
+   * @return (Iceberg metadata path, last converted Delta version)
+   */
+  def convertUncommitedTxn(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      deltaLog: DeltaLog,
+      catalogTable: CatalogTable): (String, Option[Long]) =
+    throw new UnsupportedOperationException(
+      s"${getClass.getSimpleName} does not support atomic UniForm pre-commit conversion")
 }
 
 object IcebergConstants {

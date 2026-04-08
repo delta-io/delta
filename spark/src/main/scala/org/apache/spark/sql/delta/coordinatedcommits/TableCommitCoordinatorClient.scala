@@ -16,9 +16,12 @@
 
 package org.apache.spark.sql.delta.coordinatedcommits
 
+import java.util.Optional
+
 import scala.collection.JavaConverters._
 
 import org.apache.spark.sql.delta.DeltaLog
+import org.apache.spark.sql.delta.DeltaUniformIceberg
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreInverseAdaptor}
 import io.delta.storage.commit.{
   CommitCoordinatorClient => JCommitCoordinatorClient,
@@ -27,10 +30,20 @@ import io.delta.storage.commit.{
   TableDescriptor,
   UpdatedActions
 }
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.catalyst.{TableIdentifier => CatalystTableIdentifier}
+
+/**
+ * Catalog-tracked information for a Delta commit, containing metadata for external catalog
+ * formats that should be committed atomically with the Delta commit.
+ *
+ * @param uniformIceberg Optional Iceberg metadata pre-generated before this commit for
+ *                       atomic UniForm support.
+ */
+case class CatalogTrackedInfo(uniformIceberg: Option[DeltaUniformIceberg])
 
 /**
  * A wrapper around [[CommitCoordinatorClient]] that provides a more user-friendly API for
@@ -61,14 +74,26 @@ case class TableCommitCoordinatorClient(
       commitVersion: Long,
       actions: Iterator[String],
       updatedActions: UpdatedActions,
-      tableIdentifierOpt: Option[CatalystTableIdentifier]): CommitResponse = {
+      tableIdentifierOpt: Option[CatalystTableIdentifier],
+      catalogTrackedInfo: Option[CatalogTrackedInfo] = None): CommitResponse = {
+    val javaUniformMetadata: Optional[UniformMetadata] =
+      catalogTrackedInfo.flatMap(_.uniformIceberg) match {
+        case Some(iceberg) =>
+          Optional.of(new UniformMetadata(new IcebergMetadata(
+            iceberg.metadataLocation.toString,
+            iceberg.convertedDeltaVersion,
+            iceberg.convertedDeltaTimestamp)))
+        case None =>
+          Optional.empty()
+      }
     commitCoordinatorClient.commit(
       LogStoreInverseAdaptor(logStore, hadoopConf),
       hadoopConf,
       makeTableDesc(tableIdentifierOpt),
       commitVersion,
       actions.asJava,
-      updatedActions)
+      updatedActions,
+      javaUniformMetadata)
   }
 
   def getCommits(

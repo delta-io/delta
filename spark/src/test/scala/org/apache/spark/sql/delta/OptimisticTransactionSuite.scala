@@ -593,7 +593,10 @@ class OptimisticTransactionSuite
               tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
+              updatedActions: UpdatedActions,
+              catalogTrackedInfo: java.util.Optional[
+                io.delta.storage.commit.uniform.UniformMetadata])
+              : CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
               return super.commit(
@@ -602,7 +605,8 @@ class OptimisticTransactionSuite
                 tableDesc,
                 commitVersion,
                 actions,
-                updatedActions)
+                updatedActions,
+                catalogTrackedInfo)
             }
             commitAttempts += 1
             throw new CommitFailedException(
@@ -653,7 +657,10 @@ class OptimisticTransactionSuite
               tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
+              updatedActions: UpdatedActions,
+              catalogTrackedInfo: java.util.Optional[
+                io.delta.storage.commit.uniform.UniformMetadata])
+              : CommitResponse = {
             // Fail all commits except first one
             if (commitVersion == 0) {
               return super.commit(
@@ -662,7 +669,8 @@ class OptimisticTransactionSuite
                 tableDesc,
                 commitVersion,
                 actions,
-                updatedActions)
+                updatedActions,
+                catalogTrackedInfo)
             }
             commitAttempts += 1
             throw new FileAlreadyExistsException("Commit-File Already Exists")
@@ -986,13 +994,18 @@ class OptimisticTransactionSuite
               tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: java.util.Iterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
+              updatedActions: UpdatedActions,
+              catalogTrackedInfo: java.util.Optional[
+                io.delta.storage.commit.uniform.UniformMetadata])
+              : CommitResponse = {
             if (updatedActions.getCommitInfo.asInstanceOf[CommitInfo].operation
                 == DeltaOperations.OP_RESTORE) {
               deltaLog.startTransaction().commit(addB :: Nil, ManualUpdate)
               throw new CommitFailedException(true, conflict, "")
             }
-            super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
+            super.commit(
+              logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions,
+              catalogTrackedInfo)
           }
         }
         object RetryableConflictCommitCoordinatorBuilder$ extends CommitCoordinatorBuilder {

@@ -105,7 +105,9 @@ class InMemoryCommitCoordinator(val batchSize: Long) extends CommitCoordinatorCl
       tableDesc: TableDescriptor,
       commitVersion: Long,
       actions: JIterator[String],
-      updatedActions: UpdatedActions): CommitResponse = {
+      updatedActions: UpdatedActions,
+      catalogTrackedInfo: java.util.Optional[io.delta.storage.commit.uniform.UniformMetadata])
+      : CommitResponse = {
     val logPath = tableDesc.getLogPath
     val tablePath = CoordinatedCommitsUtils.getTablePath(logPath)
     if (commitVersion == 0) {

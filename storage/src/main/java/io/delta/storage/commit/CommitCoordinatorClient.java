@@ -23,6 +23,7 @@ import java.util.Optional;
 
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.LogStore;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -79,13 +80,16 @@ public interface CommitCoordinatorClient {
    * API to commit the given set of actions to the table represented by logPath at the
    * given commitVersion.
    *
-   * @param logStore        The log store to use for writing the commit file.
-   * @param hadoopConf      The Hadoop configuration required to access the file system.
-   * @param tableDescriptor The descriptor for the table.
-   * @param commitVersion   The version of the commit that is being committed.
-   * @param actions         The actions that need to be committed.
-   * @param updatedActions  The commit info and any metadata or protocol changes that are made
-   *                        as part of this commit.
+   * @param logStore            The log store to use for writing the commit file.
+   * @param hadoopConf          The Hadoop configuration required to access the file system.
+   * @param tableDescriptor     The descriptor for the table.
+   * @param commitVersion       The version of the commit that is being committed.
+   * @param actions             The actions that need to be committed.
+   * @param updatedActions      The commit info and any metadata or protocol changes that are made
+   *                            as part of this commit.
+   * @param catalogTrackedInfo  Optional UniForm metadata pre-generated before this Delta commit
+   *                            for atomic UniForm support. When present, the coordinator should
+   *                            persist the Iceberg metadata atomically with the Delta commit.
    * @return CommitResponse which contains the file status of the committed commit file. If the
    *         commit is already backfilled, then the file status could be omitted from the response
    *         and the client could retrieve the information by itself.
@@ -97,7 +101,8 @@ public interface CommitCoordinatorClient {
     TableDescriptor tableDescriptor,
     long commitVersion,
     Iterator<String> actions,
-    UpdatedActions updatedActions) throws CommitFailedException;
+    UpdatedActions updatedActions,
+    Optional<UniformMetadata> catalogTrackedInfo) throws CommitFailedException;
 
   /**
    * API to get the unbackfilled commits for the table represented by the given logPath.

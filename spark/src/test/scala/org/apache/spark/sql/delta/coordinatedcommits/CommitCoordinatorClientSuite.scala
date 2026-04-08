@@ -44,7 +44,9 @@ class CommitCoordinatorClientSuite extends QueryTest with DeltaSQLTestUtils with
         tableDesc: TableDescriptor,
         commitVersion: Long,
         actions: java.util.Iterator[String],
-        updatedActions: UpdatedActions): CommitResponse = {
+        updatedActions: UpdatedActions,
+        catalogTrackedInfo: java.util.Optional[io.delta.storage.commit.uniform.UniformMetadata])
+        : CommitResponse = {
       throw new UnsupportedOperationException("Not implemented")
     }
 

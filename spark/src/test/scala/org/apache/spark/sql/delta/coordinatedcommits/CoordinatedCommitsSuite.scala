@@ -161,9 +161,14 @@ class CoordinatedCommitsSuite
             tableDesc: TableDescriptor,
             commitVersion: Long,
             actions: java.util.Iterator[String],
-            updatedActions: UpdatedActions): CommitResponse = {
+            updatedActions: UpdatedActions,
+            catalogTrackedInfo: java.util.Optional[
+              io.delta.storage.commit.uniform.UniformMetadata])
+            : CommitResponse = {
           assert(tableDesc.getTableConf === tableConf)
-          super.commit(logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions)
+          super.commit(
+            logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions,
+            catalogTrackedInfo)
         }
 
         override def backfillToVersion(
@@ -402,7 +407,10 @@ abstract class CommitCoordinatorSuiteBase
               tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: JIterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
+              updatedActions: UpdatedActions,
+              catalogTrackedInfo: java.util.Optional[
+                io.delta.storage.commit.uniform.UniformMetadata])
+              : CommitResponse = {
             throw new IllegalStateException("Fail commit request")
           }
         }
@@ -415,7 +423,10 @@ abstract class CommitCoordinatorSuiteBase
               tableDesc: TableDescriptor,
               commitVersion: Long,
               actions: JIterator[String],
-              updatedActions: UpdatedActions): CommitResponse = {
+              updatedActions: UpdatedActions,
+              catalogTrackedInfo: java.util.Optional[
+                io.delta.storage.commit.uniform.UniformMetadata])
+              : CommitResponse = {
             throw new IllegalStateException("Fail commit request")
           }
         }

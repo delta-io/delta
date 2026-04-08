@@ -25,7 +25,7 @@ import org.apache.hadoop.fs.Path;
 
 /**
  * Exception raised by
- * {@link CommitCoordinatorClient#commit(LogStore, Configuration, TableDescriptor, long, Iterator, UpdatedActions)}
+ * {@link CommitCoordinatorClient#commit(LogStore, Configuration, TableDescriptor, long, Iterator, UpdatedActions, java.util.Optional)}
  *
  * <pre>
  *  | retryable | conflict  | meaning                                                         |

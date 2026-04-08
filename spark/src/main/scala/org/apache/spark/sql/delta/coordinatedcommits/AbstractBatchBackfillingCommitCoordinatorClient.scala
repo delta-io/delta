@@ -27,8 +27,11 @@ import org.apache.spark.sql.delta.actions.CommitInfo
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.util.FileNames
+import java.util.Optional
+
 import io.delta.storage.LogStore
 import io.delta.storage.commit.{CommitCoordinatorClient, CommitFailedException => JCommitFailedException, CommitResponse, CoordinatedCommitsUtils => JCoordinatedCommitsUtils, TableDescriptor, TableIdentifier, UpdatedActions}
+import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
 
@@ -67,7 +70,8 @@ trait AbstractBatchBackfillingCommitCoordinatorClient
       tableDesc: TableDescriptor,
       commitVersion: Long,
       actions: java.util.Iterator[String],
-      updatedActions: UpdatedActions): CommitResponse = {
+      updatedActions: UpdatedActions,
+      catalogTrackedInfo: Optional[UniformMetadata]): CommitResponse = {
     val logPath = tableDesc.getLogPath
     val executionObserver = TransactionExecutionObserver.getObserver
     val tablePath = JCoordinatedCommitsUtils.getTablePath(logPath)

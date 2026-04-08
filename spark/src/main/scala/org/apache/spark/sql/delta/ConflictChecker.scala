@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 import scala.collection.mutable
@@ -39,6 +40,22 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.expressions.{Expression, ExpressionSet, Or}
 import org.apache.spark.sql.types.{Metadata => FieldMetadata, MetadataBuilder, StructType}
+
+/**
+ * Iceberg metadata for a Delta UniForm table, tracking the most recent Iceberg conversion.
+ *
+ * @param metadataLocation        The Iceberg metadata file location.
+ * @param convertedDeltaVersion   The Delta version that was converted.
+ * @param convertedDeltaTimestamp The timestamp of the conversion in ISO-8601 format.
+ * @param baseConvertedDeltaVersion The base Delta version used for incremental conversion,
+ *                                  if applicable.
+ */
+private[delta] case class DeltaUniformIceberg(
+    metadataLocation: URI,
+    convertedDeltaVersion: Long,
+    convertedDeltaTimestamp: String,
+    baseConvertedDeltaVersion: Option[Long] = None
+)
 
 /**
  * A class representing different attributes of current transaction needed for conflict detection.
@@ -66,7 +83,8 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation) {
+    val op: DeltaOperations.Operation,
+    val convertedIcebergMetadata: Option[DeltaUniformIceberg] = None) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can

@@ -350,7 +350,9 @@ public class DynamoDBCommitCoordinatorClient implements CommitCoordinatorClient 
             TableDescriptor tableDesc,
             long commitVersion,
             Iterator<String> actions,
-            UpdatedActions updatedActions) throws CommitFailedException {
+            UpdatedActions updatedActions,
+            Optional<io.delta.storage.commit.uniform.UniformMetadata> catalogTrackedInfo)
+            throws CommitFailedException {
         Path logPath = tableDesc.getLogPath();
         if (commitVersion == 0) {
             throw new CommitFailedException(
