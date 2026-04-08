@@ -19,7 +19,6 @@ package io.sparkuctest;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.lit;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.Arrays;
 import java.util.List;
@@ -39,6 +38,16 @@ import org.junit.jupiter.api.Test;
  * against both EXTERNAL and MANAGED table types.
  */
 public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseTest {
+
+  private static List<String> expectedManagedPathWriteFailure() {
+    if (isUCRemoteConfigured()) {
+      return List.of("Status Code: 403", "getFileStatus on s3://", "S3Exception");
+    }
+    return List.of(
+        "Unable to load credentials",
+        "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
+        "Path-based access is not allowed");
+  }
 
   // Writer V1: insertInto
 
@@ -93,6 +102,8 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
           check(tableName, List.of(row("1"), row("2"), row("3"), row("4"), row("5")));
         });
   }
+
+  // TODO: Once external delta table RTAS/DPO is supported, use @TestAllTableTypes for these tests.
 
   @Test
   public void testSaveAsTableOverwriteReplacesWholeTable() throws Exception {
@@ -165,8 +176,7 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
                           "SELECT time, time_date_level, time_hour_level, "
                               + "concat(tenant, '_updated') AS tenant, eventMetaId + 100 AS eventMetaId "
                               + "FROM %s WHERE time_hour_level = 12",
-                          tableName))
-                  .limit(2));
+                          tableName)));
 
           assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
           // Only partition 12 should be rewritten; partitions 10 and 11 must remain unchanged.
@@ -252,14 +262,9 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
                   .map(r -> r.get(1).trim())
                   .findFirst()
                   .orElseThrow();
-          assertThatThrownBy(() -> intDf(4).write().format("delta").mode("append").save(tablePath))
-              .satisfies(
-                  e ->
-                      assertThat(e.getMessage())
-                          .containsAnyOf(
-                              "Unable to load credentials",
-                              "DELTA_PATH_BASED_ACCESS_TO_CATALOG_MANAGED_TABLE_BLOCKED",
-                              "Path-based access is not allowed"));
+          assertThrowsWithCauseContainingAny(
+              expectedManagedPathWriteFailure(),
+              () -> intDf(4).write().format("delta").mode("append").save(tablePath));
           check(tableName, List.of(row("1"), row("2"), row("3")));
         });
   }

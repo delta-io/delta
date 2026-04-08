@@ -102,10 +102,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     return isUnityCatalogSparkAtLeast(0, 4, 1);
   }
 
-  private static boolean translatesDeprecatedUcTableIdOnManagedCreate() {
-    return isUnityCatalogSparkAtLeast(0, 4, 1);
-  }
-
   private static String expectedUcTableIdValidationKey(String providedKey) {
     return isUnityCatalogSparkAtLeast(0, 4, 1) ? UC_TABLE_ID_KEY : providedKey;
   }
@@ -292,11 +288,6 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     return tests.stream();
   }
 
-  private String currentUcTableId(String fullTableName) throws ApiException {
-    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
-    return tablesApi.getTable(fullTableName, false, false).getTableId();
-  }
-
   private void runTableCreationTest(
       int count,
       TableType tableType,
@@ -409,30 +400,20 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
                     fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY))
         .hasMessageContaining(expectedUcTableIdValidationKey(UC_TABLE_ID_KEY));
 
-    // The deprecated key is rejected on older UC Spark versions. Starting in UC Spark 0.4.1 it is
-    // normalized away before create, so managed table creation succeeds and the old key does not
-    // survive as a user-visible property.
-    if (translatesDeprecatedUcTableIdOnManagedCreate()) {
-      try {
-        sql(
-            "CREATE TABLE %s(name STRING) USING delta "
-                + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
-            fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY_OLD);
-        assertUCTableInfo(TableType.MANAGED, fullTableName, List.of("name"), Map.of(), null, null);
-      } finally {
-        sql("DROP TABLE IF EXISTS %s", fullTableName);
-      }
-    } else {
-      assertThatThrownBy(
-              () ->
-                  sql(
-                      "CREATE TABLE %s(name STRING) USING delta "
-                          + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
-                      fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY_OLD))
-          .hasMessageContaining(expectedUcTableIdValidationKey(UC_TABLE_ID_KEY_OLD));
+    // Starting in UC Spark 0.4.1, the deprecated key is normalized away before create, so managed
+    // table creation succeeds and the old key does not survive as a user-visible property.
+    try {
+      sql(
+          "CREATE TABLE %s(name STRING) USING delta " + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
+          fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY_OLD);
+      assertUCTableInfo(TableType.MANAGED, fullTableName, List.of("name"), Map.of(), null, null);
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
     }
 
-    // Test 4: Cannot set is_managed_location to false for managed tables
+    // Test 4: Cannot set is_managed_location to false for managed tables.
+    // catalogManaged must be included so the statement passes managed-table validation (Test 5)
+    // and actually reaches the is_managed_location check.
     assertThatThrownBy(
             () ->
                 sql(

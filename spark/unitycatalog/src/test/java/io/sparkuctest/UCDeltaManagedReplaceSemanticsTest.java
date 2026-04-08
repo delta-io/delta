@@ -18,7 +18,6 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.unitycatalog.client.api.TablesApi;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -61,6 +60,8 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     }
   }
 
+  // TODO: Once external delta table RTAS is supported, use @TestAllTableTypes for these tests.
+
   @Test
   public void testDefaultFeatureRestatementIsAllowedForManagedReplaceOperations() throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
@@ -96,7 +97,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           "i INT, s STRING",
           null,
           TableType.MANAGED,
-          "'delta.enableChangeDataFeed'='true', " + "'delta.enableTypeWidening'='true'",
+          "'delta.enableChangeDataFeed'='true', 'delta.enableTypeWidening'='true'",
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
@@ -124,7 +125,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           "i INT, s STRING",
           null,
           TableType.MANAGED,
-          "'delta.enableChangeDataFeed'='true', " + "'delta.enableTypeWidening'='true'",
+          "'delta.enableChangeDataFeed'='true', 'delta.enableTypeWidening'='true'",
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
@@ -146,7 +147,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           "i INT, s STRING",
           null,
           TableType.MANAGED,
-          "'delta.enableChangeDataFeed'='true', " + "'delta.enableTypeWidening'='true'",
+          "'delta.enableChangeDataFeed'='true', 'delta.enableTypeWidening'='true'",
           fullTableName -> {
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
@@ -180,7 +181,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     operation,
                     fullTableName,
                     "i INT, s STRING",
-                    "",
+                    DEFAULT_FEATURES_RESTATEMENT,
                     "new description",
                     "2 AS i, 'new' AS s"));
           });
@@ -204,7 +205,11 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     operation,
                     fullTableName,
                     "i INT, s STRING",
-                    "TBLPROPERTIES ('myapp.version'='2')",
+                    "TBLPROPERTIES ("
+                        + "'delta.feature.catalogManaged'='supported', "
+                        + "'delta.feature.vacuumProtocolCheck'='supported', "
+                        + "'delta.feature.inCommitTimestamp'='supported', "
+                        + "'myapp.version'='2')",
                     null,
                     "2 AS i, 'new' AS s"));
           });
@@ -220,7 +225,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
 
     assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
     assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace + 1);
-    assertThat(sql("SELECT CAST(COUNT(*) AS STRING) FROM %s", tableName))
+    assertThat(sql("SELECT COUNT(*) FROM %s", tableName))
         .containsExactly(row(operation.isAsSelect() ? "1" : "0"));
   }
 
@@ -233,12 +238,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
 
     assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
     assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace);
-    assertThat(sql("SELECT CAST(COUNT(*) AS STRING) FROM %s", tableName)).containsExactly(row("1"));
-  }
-
-  private String currentUcTableId(String fullTableName) throws Exception {
-    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
-    return tablesApi.getTable(fullTableName, false, false).getTableId();
+    assertThat(sql("SELECT COUNT(*) FROM %s", tableName)).containsExactly(row("1"));
   }
 
   private String uniqueTableName(String prefix, ReplaceOperation operation) {
