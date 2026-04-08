@@ -68,7 +68,7 @@ case class CommitReport(
     @JsonProperty("num_rows_updated")
       numRowsUpdated: Option[Long] = None,
     @JsonProperty("file_size_histogram")
-      fileSizeHistogram: FileSizeHistogramPayload)
+      fileSizeHistogram: Option[FileSizeHistogramPayload] = None)
 
 case class FileSizeHistogramPayload(
     @JsonProperty("sorted_bin_boundaries")
@@ -119,13 +119,16 @@ case class UpdateMetricsHook(catalogTable: Option[CatalogTable])
     val actions = txn.committedActions
     val version = txn.committedVersion
     val logPath = txn.deltaLog.logPath
+    // Read histogram from the CRC only - avoids triggering state reconstruction.
+    val snapshotHistogram =
+      txn.postCommitSnapshot.checksumOpt.flatMap(_.histogramOpt)
 
     implicit val ec: ExecutionContext =
       UpdateMetricsHook.getOrCreateExecutionContext(spark)
     UpdateMetricsHook.activeRequests.incrementAndGet()
     Future {
       val request = UpdateMetricsHook.buildRequest(
-        tableId, actions, version)
+        tableId, actions, version, snapshotHistogram)
       UpdateMetricsHook.sendMetrics(
         spark, request, catalogName)
       logDebug(
@@ -185,7 +188,9 @@ object UpdateMetricsHook {
   private[metrics] def buildRequest(
       tableId: String,
       committedActions: Seq[Action],
-      committedVersion: Long): ReportDeltaMetricsRequest = {
+      committedVersion: Long,
+      snapshotHistogram: Option[FileSizeHistogram] = None
+      ): ReportDeltaMetricsRequest = {
     val commitInfo =
       committedActions.collectFirst { case ci: CommitInfo => ci }
     val opMetrics =
@@ -194,6 +199,14 @@ object UpdateMetricsHook {
       committedActions.collect { case a: AddFile => a }
     val removeFiles =
       committedActions.collect { case r: RemoveFile => r }
+
+    val histogramPayload = snapshotHistogram.map { h =>
+      FileSizeHistogramPayload(
+        sortedBinBoundaries = h.sortedBinBoundaries,
+        fileCounts = h.fileCounts.toSeq,
+        totalBytes = h.totalBytes.toSeq,
+        commitVersion = committedVersion)
+    }
 
     val commitReport = CommitReport(
       numFilesAdded = addFiles.size.toLong,
@@ -205,8 +218,7 @@ object UpdateMetricsHook {
       numRowsRemoved =
         extractRowsRemoved(opMetrics, removeFiles),
       numRowsUpdated = extractRowsUpdated(opMetrics),
-      fileSizeHistogram =
-        buildFileSizeHistogram(addFiles, committedVersion)
+      fileSizeHistogram = histogramPayload
     )
 
     ReportDeltaMetricsRequest(
@@ -257,19 +269,6 @@ object UpdateMetricsHook {
   private def toLong(s: String): Option[Long] =
     try Some(s.toLong)
     catch { case _: NumberFormatException => None }
-
-  private def buildFileSizeHistogram(
-      addFiles: Seq[AddFile],
-      committedVersion: Long): FileSizeHistogramPayload = {
-    val histogram = FileSizeHistogram.emptyHistogram
-    addFiles.foreach(f => histogram.insert(f.size))
-    FileSizeHistogramPayload(
-      sortedBinBoundaries = histogram.sortedBinBoundaries,
-      fileCounts = histogram.fileCounts.toSeq,
-      totalBytes = histogram.totalBytes.toSeq,
-      commitVersion = committedVersion
-    )
-  }
 
   // -- HTTP client --
 
