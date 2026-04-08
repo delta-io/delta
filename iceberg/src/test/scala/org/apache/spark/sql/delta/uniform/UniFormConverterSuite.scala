@@ -160,6 +160,62 @@ class UniFormConverterSuite extends
     }
   }
 
+  test("Field ID consistency for CREATE_TABLE with nested schema and partition") {
+    val tableName = "test_field_id_nested_v2"
+    withTable(tableName) {
+      // Create table without Iceberg enabled so the first conversion triggers CREATE_TABLE.
+      // columnMapping.mode=name causes Delta to assign its own field IDs to nested fields;
+      // without the fix Iceberg reassigns those IDs during CREATE_TABLE, causing field ID
+      // mismatch between the manifest schema and the parquet files written by Delta.
+      spark.sql(
+        s"""CREATE TABLE $tableName
+           |(col1 INT,
+           | col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>, f6: INT>, f7: INT>,
+           | col3 INT)
+           |USING DELTA
+           |PARTITIONED BY (col3)
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+
+      import org.apache.spark.sql.types._
+      val schema = StructType(Seq(
+        StructField("col1", IntegerType),
+        StructField("col2", StructType(Seq(
+          StructField("f1", StructType(Seq(
+            StructField("f2", IntegerType),
+            StructField("f3", StructType(Seq(
+              StructField("f4", IntegerType),
+              StructField("f5", IntegerType)))),
+            StructField("f6", IntegerType)))),
+          StructField("f7", IntegerType)))),
+        StructField("col3", IntegerType)))
+
+      val data = Seq(Row(1, Row(Row(2, Row(3, 4), 5), 6), 7))
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").mode("append").saveAsTable(tableName)
+
+      // Enabling IcebergCompatV2 after data exists ensures convertSnapshotAndReturnMetadataPath
+      // triggers a CREATE_TABLE iceberg operation (baseMetadataLocationOpt = None).
+      spark.sql(
+        s"""ALTER TABLE $tableName SET TBLPROPERTIES (
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      val tableId = TableIdentifier(tableName)
+      val deltaLog = DeltaLog.forTable(spark, tableId)
+      val snapshot = deltaLog.update()
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(tableId)
+
+      val converter = new IcebergConverterForTest()
+      val metadataPath = converter.convertSnapshotAndReturnMetadataPath(snapshot, catalogTable)
+
+      // Without the fix, Iceberg reassigns field IDs during CREATE_TABLE so the manifest
+      // schema disagrees with the parquet file field IDs, causing nested fields to read as null.
+      verifyReadByPath(metadataPath, schema, fields = "col1, col2, col3", orderBy = "col1", data)
+    }
+  }
+
   test("IcebergConverter convertUncommitedTxn - initial conversion") {
     val tableName = "test_table_1"
     withTable(tableName) {
