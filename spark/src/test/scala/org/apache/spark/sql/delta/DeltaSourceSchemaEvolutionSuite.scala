@@ -196,20 +196,20 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
       startingVersion: Option[Long] = None,
       maxFilesPerTrigger: Option[Int] = None,
       ignoreDeletes: Option[Boolean] = None)(implicit log: DeltaLog): DataFrame = {
-    var dsr = spark.readStream.format("delta")
+    var options = Map.empty[String, String]
     if (isCdcTest) {
-      dsr = dsr.option(DeltaOptions.CDC_READ_OPTION, "true")
+      options += DeltaOptions.CDC_READ_OPTION -> "true"
     }
-    schemaLocation.foreach { loc => dsr = dsr.option(DeltaOptions.SCHEMA_TRACKING_LOCATION, loc) }
+    schemaLocation.foreach { loc =>
+      options += DeltaOptions.SCHEMA_TRACKING_LOCATION -> loc
+    }
     sourceTrackingId.foreach { name =>
-      dsr = dsr.option(DeltaOptions.STREAMING_SOURCE_TRACKING_ID, name)
+      options += DeltaOptions.STREAMING_SOURCE_TRACKING_ID -> name
     }
-    startingVersion.foreach { v => dsr = dsr.option("startingVersion", v) }
-    maxFilesPerTrigger.foreach { f => dsr = dsr.option("maxFilesPerTrigger", f) }
-    ignoreDeletes.foreach{ i => dsr.option("ignoreDeletes", i) }
-    val df = {
-        dsr.load(log.dataPath.toString)
-    }
+    startingVersion.foreach { v => options += "startingVersion" -> v.toString }
+    maxFilesPerTrigger.foreach { f => options += "maxFilesPerTrigger" -> f.toString }
+    ignoreDeletes.foreach { i => options += "ignoreDeletes" -> i.toString }
+    val df = loadStreamWithOptions(log.dataPath.toString, options)
     if (isCdcTest) {
       dropCDCFields(df)
     } else {
