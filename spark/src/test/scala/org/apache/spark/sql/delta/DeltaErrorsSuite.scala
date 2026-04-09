@@ -2392,7 +2392,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.metadataAbsentForExistingCatalogTable("tblName", "file://path/to/table")
       }
-      checkError(e, "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE", "XXKDS", Map(
+      checkError(e, "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE", "42K03", Map(
         "tableName" -> "tblName",
         "tablePath" -> "file://path/to/table",
         "tableNameForDropCmd" -> "tblName"
