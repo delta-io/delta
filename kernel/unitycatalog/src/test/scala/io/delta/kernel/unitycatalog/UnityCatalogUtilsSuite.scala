@@ -62,8 +62,14 @@ class UnityCatalogUtilsSuite
 
       val clusteringColumns = List(new Column("id"), new Column(Array("address", "city")))
 
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
       val snapshot = ucCatalogManagedClient
-        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction(
+          testUcTableId,
+          tablePath,
+          testSchema,
+          "test-engine",
+          ucTableIdentifier)
         .withTableProperties(
           Map(
             "foo" -> "bar",
@@ -114,14 +120,77 @@ class UnityCatalogUtilsSuite
     }
   }
 
+  test("getPropertiesForCreate(CommitMetadata): properties match snapshot-based overload") {
+    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
+      val ucClient = new InMemoryUCClient("ucMetastoreId")
+      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
+      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
+
+      val testSchema = new StructType()
+        .add("id", IntegerType.INTEGER)
+        .add(
+          "address",
+          new StructType()
+            .add("city", StringType.STRING)
+            .add("state", StringType.STRING))
+        .add("data", StringType.STRING)
+
+      val clusteringColumns = List(new Column("id"), new Column(Array("address", "city")))
+
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
+      val snapshot = ucCatalogManagedClient
+        .buildCreateTableTransaction(
+          testUcTableId,
+          tablePath,
+          testSchema,
+          "test-engine",
+          ucTableIdentifier)
+        .withTableProperties(
+          Map(
+            "foo" -> "bar",
+            "delta.enableRowTracking" -> "true",
+            "delta.columnMapping.mode" -> "name").asJava)
+        .withDataLayoutSpec(DataLayoutSpec.clustered(clusteringColumns.asJava))
+        .build(engine)
+        .commit(engine, CloseableIterable.emptyIterable())
+        .getPostCommitSnapshot
+        .get()
+        .asInstanceOf[SnapshotImpl]
+
+      // The CommitMetadata-based overload was called by finalizeTableInCatalog during commit.
+      // Verify its output (captured in FinalizeCreateRecord) matches the snapshot-based overload.
+      val snapshotProps = UnityCatalogUtils.getPropertiesForCreate(engine, snapshot).asScala
+      val commitMetadataProps = ucClient.getLastFinalizeCreateRecord.get.properties.asScala
+
+      // All properties from the snapshot-based overload should also be in the CommitMetadata-based
+      val failures = snapshotProps.collect {
+        case (k, v) if !commitMetadataProps.contains(k) =>
+          s"$k: MISSING from CommitMetadata overload (expected: $v)"
+        case (k, v) if commitMetadataProps(k) != v =>
+          s"$k: snapshot='$v', commitMetadata='${commitMetadataProps(k)}'"
+      }
+
+      assert(failures.isEmpty, failures.mkString("Property mismatches:\n", "\n", ""))
+
+      // Also verify clustering columns are present
+      assert(commitMetadataProps("clusteringColumns") == """[["id"],["address","city"]]""")
+    }
+  }
+
   test("getPropertiesForCreate: clustered table with empty clustering columns") {
     withTempDirAndEngine { case (tablePathUnresolved, engine) =>
       val ucClient = new InMemoryUCClient("ucMetastoreId")
       val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
 
+      val ucTableIdentifier = new UCTableIdentifier("cat", "sch", "tbl")
       val snapshot = ucCatalogManagedClient
-        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
+        .buildCreateTableTransaction(
+          testUcTableId,
+          tablePath,
+          testSchema,
+          "test-engine",
+          ucTableIdentifier)
         .withDataLayoutSpec(DataLayoutSpec.clustered(List.empty.asJava))
         .build(engine)
         .commit(engine, CloseableIterable.emptyIterable())

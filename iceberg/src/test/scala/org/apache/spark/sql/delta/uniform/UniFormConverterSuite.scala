@@ -160,6 +160,60 @@ class UniFormConverterSuite extends
     }
   }
 
+  test("Field ID consistency for CREATE_TABLE with nested schema and partition") {
+    val tableName = "test_field_id_nested_v2"
+    withTable(tableName) {
+      // Iceberg CREATE_TABLE reassigns the field id in schema, which
+      // is not consistent with Delta in edge cases (For nested schemas)
+      // This test checks that UniForm conversion handles this case well so that
+      // converted Iceberg is utilizing the Delta assigned field for schema
+      spark.sql(
+        s"""CREATE TABLE $tableName
+           |(col1 INT,
+           | col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>, f6: INT>, f7: INT>,
+           | col3 INT)
+           |USING DELTA
+           |PARTITIONED BY (col3)
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+
+      import org.apache.spark.sql.types._
+      val schema = StructType(Seq(
+        StructField("col1", IntegerType),
+        StructField("col2", StructType(Seq(
+          StructField("f1", StructType(Seq(
+            StructField("f2", IntegerType),
+            StructField("f3", StructType(Seq(
+              StructField("f4", IntegerType),
+              StructField("f5", IntegerType)))),
+            StructField("f6", IntegerType)))),
+          StructField("f7", IntegerType)))),
+        StructField("col3", IntegerType)))
+
+      val data = Seq(Row(1, Row(Row(2, Row(3, 4), 5), 6), 7))
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").mode("append").saveAsTable(tableName)
+      spark.sql(
+        s"""ALTER TABLE $tableName SET TBLPROPERTIES (
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      val tableId = TableIdentifier(tableName)
+      val deltaLog = DeltaLog.forTable(spark, tableId)
+      val snapshot = deltaLog.update()
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(tableId)
+      // Trigger an Iceberg full conversion
+      val converter = new IcebergConverterForTest()
+      val metadataPath = converter.convertSnapshotAndReturnMetadataPath(snapshot, catalogTable)
+
+      // Without the special fix, Iceberg reassigns field IDs during CREATE_TABLE
+      // so the read would fail
+      verifyReadByPath(metadataPath, schema, fields = "col1, col2, col3", orderBy = "col1", data)
+    }
+  }
+
+
   test("IcebergConverter convertUncommitedTxn - initial conversion") {
     val tableName = "test_table_1"
     withTable(tableName) {
