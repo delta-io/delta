@@ -22,7 +22,6 @@ import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
-import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
@@ -226,16 +225,15 @@ public class PartitionUtils {
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
 
-    boolean rowTrackingEnabledInTable =
-        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+    boolean metadataColumnRequested =
+        Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
     Optional<RowTrackingSchemaContext> rowTrackingSchemaContext = Optional.empty();
-    if (rowTrackingEnabledInTable) {
+    if (metadataColumnRequested) {
       RowTrackingSchemaContext context =
           new RowTrackingSchemaContext(readDataSchema, snapshotImpl.getMetadata(), partitionSchema);
-      if (context.areRowTrackingMetadataFieldsRequested()) {
-        rowTrackingSchemaContext = Optional.of(context);
-        readDataSchema = context.getSchemaWithRowTrackingColumns();
-      }
+      rowTrackingSchemaContext = Optional.of(context);
+      readDataSchema = context.getSchemaWithRowTrackingColumns();
     }
 
     // Create DV schema context if table supports deletion vectors

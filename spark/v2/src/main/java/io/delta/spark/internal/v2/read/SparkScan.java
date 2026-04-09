@@ -187,6 +187,13 @@ public class SparkScan
    */
   @Override
   public Scan.ColumnarSupportMode columnarSupportMode() {
+    boolean metadataColumnRequested =
+        Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
+    if (metadataColumnRequested) {
+      return Scan.ColumnarSupportMode.UNSUPPORTED;
+    }
+
     // When the table supports deletion vectors, the reader factory augments the read schema
     // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
     // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in

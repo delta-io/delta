@@ -56,16 +56,27 @@ public class RowTrackingReadFunction
    */
   @Override
   public Iterator<InternalRow> apply(PartitionedFile file) {
-    long baseRowId =
-        ((Number)
-                file.otherConstantMetadataColumnValues()
-                    .apply(DeltaParquetFileFormat.BASE_ROW_ID_KEY()))
-            .longValue();
-    long commitVersionId =
-        ((Number)
-                file.otherConstantMetadataColumnValues()
-                    .apply(DeltaParquetFileFormat.DEFAULT_ROW_COMMIT_VERSION_KEY()))
-            .longValue();
+    final long baseRowId;
+    if (rowTrackingSchemaContext.isRowIdRequested()) {
+      baseRowId =
+          ((Number)
+                  file.otherConstantMetadataColumnValues()
+                      .apply(DeltaParquetFileFormat.BASE_ROW_ID_KEY()))
+              .longValue();
+    } else {
+      baseRowId = 0L;
+    }
+
+    final long commitVersionId;
+    if (rowTrackingSchemaContext.isRowCommitVersionRequested()) {
+      commitVersionId =
+          ((Number)
+                  file.otherConstantMetadataColumnValues()
+                      .apply(DeltaParquetFileFormat.DEFAULT_ROW_COMMIT_VERSION_KEY()))
+              .longValue();
+    } else {
+      commitVersionId = 0L;
+    }
 
     int rowTrackingFieldsCount =
         (rowTrackingSchemaContext.isRowIdRequested() ? 1 : 0)
