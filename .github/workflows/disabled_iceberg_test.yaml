@@ -1,24 +1,28 @@
-name: "Delta Iceberg Latest"
-
+name: "Delta Iceberg Latest [DISABLED]"
+# SECURITY: All Python/PySpark workflows disabled due to active supply chain attack
+# targeting OSS package ecosystems (PyPI). C2 domains: models.litellm.cloud, checkmarx.zone
+# Date disabled: 2026-03-25
+# To re-enable: remove 'if: false' from all jobs and restore original triggers
 on:
-  push:
-    branches: [master]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-  pull_request:
-    branches: [master]
-    paths-ignore:
-      - '**.md'
-      - '**.txt'
-
+  workflow_dispatch: # manual-only, auto triggers removed
+  # To re-enable, replace the above line with:
+  # push:
+  #   branches: [master]
+  #   paths-ignore:
+  #     - '**.md'
+  #     - '**.txt'
+  # pull_request:
+  #   branches: [master]
+  #   paths-ignore:
+  #     - '**.md'
+  #     - '**.txt'
 env:
   # SECURITY: Temporal lockdown — refuse any package version published after this date.
   # This date is a pre-attack baseline (before the active PyPI supply chain attack).
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
-
 jobs:
   test:
+    if: false # SECURITY: disabled - supply chain attack mitigation
     name: "DIL: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-24.04
     strategy:
@@ -53,6 +57,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
+          # buf v1.28.1 (2023-11-15) — SHA from official release asset:
+          # https://github.com/bufbuild/buf/releases/download/v1.28.1/sha256.txt
+          BUF_VERSION="v1.28.1"
+          BUF_SHA256="870cf492d381a967d36636fdee9da44b524ea62aad163659b8dbf16a7da56987"
+          curl -fsSL -o buf-Linux-x86_64.tar.gz \
+            "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64.tar.gz"
+          echo "${BUF_SHA256}  buf-Linux-x86_64.tar.gz" | sha256sum -c -
+          mkdir -p ~/buf
+          tar -xzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
+          rm buf-Linux-x86_64.tar.gz
           uv python install 3.8
           uv venv .venv --python 3.8
       - name: Run Scala/Java and Python tests
