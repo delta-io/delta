@@ -1,31 +1,32 @@
-name: "Delta Iceberg Latest [DISABLED]"
-# SECURITY: All Python/PySpark workflows disabled due to active supply chain attack
-# targeting OSS package ecosystems (PyPI). C2 domains: models.litellm.cloud, checkmarx.zone
-# Date disabled: 2026-03-25
-# To re-enable: remove 'if: false' from all jobs and restore original triggers
+name: "Delta Iceberg Latest"
+
 on:
-  workflow_dispatch: # manual-only, auto triggers removed
-  # To re-enable, replace the above line with:
-  # push:
-  #   branches: [master]
-  #   paths-ignore:
-  #     - '**.md'
-  #     - '**.txt'
-  # pull_request:
-  #   branches: [master]
-  #   paths-ignore:
-  #     - '**.md'
-  #     - '**.txt'
+  push:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+
 env:
   # SECURITY: Temporal lockdown — refuse any package version published after this date.
   # This date is a pre-attack baseline (before the active PyPI supply chain attack).
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
-    if: false # SECURITY: disabled - supply chain attack mitigation
     name: "DIL: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-24.04
     strategy:
+      fail-fast: true
       matrix:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]
