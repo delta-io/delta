@@ -22,6 +22,7 @@ import java.io.File;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.Utils;
@@ -157,6 +158,43 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     assertEquals("Bob", rows.get(1).getString(1));
     assertEquals(3L, rows.get(2).getLong(0));
     assertEquals("Charlie", rows.get(2).getString(1));
+  }
+
+  @Test
+  public void testReadWithRowTrackingDisabledMetadataFieldAccess(@TempDir File tempDir) {
+    String noRtPath = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'false')",
+            noRtPath));
+    spark.sql(
+        String.format("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", noRtPath));
+
+    org.apache.spark.sql.Dataset<Row> metadataDf =
+        spark.sql(String.format("SELECT _metadata FROM dsv2.delta.`%s`", noRtPath));
+    StructType metadataSchema = (StructType) metadataDf.schema().apply("_metadata").dataType();
+    assertEquals(
+        0,
+        metadataSchema.fields().length,
+        "Expected _metadata to be an empty struct for row-tracking-disabled tables");
+
+    List<Row> metadataRows = metadataDf.collectAsList();
+    assertEquals(2, metadataRows.size());
+    for (Row row : metadataRows) {
+      assertNotNull(row.getStruct(0), "Expected _metadata struct value to be present");
+      assertEquals(0, row.getStruct(0).size(), "Expected _metadata struct to have no fields");
+    }
+
+    AnalysisException e =
+        assertThrows(
+            AnalysisException.class,
+            () ->
+                spark.sql(String.format("SELECT _metadata.row_id FROM dsv2.delta.`%s`", noRtPath))
+                    .collectAsList());
+    assertTrue(
+        e.getMessage().contains("row_id"),
+        "Expected analysis error mentioning missing _metadata.row_id");
   }
 
   // ---------------------------------------------------------------------------
