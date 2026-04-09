@@ -176,10 +176,13 @@ public class PartitionUtils {
     scala.collection.immutable.Map<String, Object> deletionVectorMetadata =
         buildDvMetadata(addFile.getDeletionVector());
     scala.collection.immutable.Map<String, Object> rowTrackingMetadata =
-        buildRowTrackingMetadata(
-            addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion());
+        buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion());
+    Map<String, Object> combinedMetadata = new HashMap<>();
+    combinedMetadata.putAll(CollectionConverters.asJava(deletionVectorMetadata));
+    combinedMetadata.putAll(CollectionConverters.asJava(rowTrackingMetadata));
     scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        deletionVectorMetadata.$plus$plus(rowTrackingMetadata);
+        scala.collection.immutable.Map$.MODULE$.from(
+            CollectionConverters.asScala(combinedMetadata));
 
     return new PartitionedFile(
         partitionRow,
@@ -223,12 +226,12 @@ public class PartitionUtils {
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
 
-    boolean rowTrackingEnabledInTable = RowTracking.isEnabled(
-        snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+    boolean rowTrackingEnabledInTable =
+        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
     Optional<RowTrackingSchemaContext> rowTrackingSchemaContext = Optional.empty();
     if (rowTrackingEnabledInTable) {
       RowTrackingSchemaContext context =
-        new RowTrackingSchemaContext(readDataSchema, snapshotImpl.getMetadata(), partitionSchema);
+          new RowTrackingSchemaContext(readDataSchema, snapshotImpl.getMetadata(), partitionSchema);
       if (context.areRowTrackingMetadataFieldsRequested()) {
         rowTrackingSchemaContext = Optional.of(context);
         readDataSchema = context.getSchemaWithRowTrackingColumns();
@@ -247,8 +250,8 @@ public class PartitionUtils {
     boolean enableVectorizedReader =
         // Disabled because RowTrackingReadFunction operates on individual InternalRows to compute
         // row_id from _tmp_metadata_row_index and coalesce with materialized columns.
-        !rowTrackingSchemaContext.isPresent() &&
-        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
+        !rowTrackingSchemaContext.isPresent()
+            && ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
@@ -352,20 +355,20 @@ public class PartitionUtils {
       Optional<Long> baseRowId, Optional<Long> defaultRowCommitVersion) {
     scala.collection.immutable.Map<String, Object> result =
         (scala.collection.immutable.Map<String, Object>)
-            (scala.collection.immutable.Map<?, ?>)
-                scala.collection.immutable.Map$.MODULE$.empty();
+            (scala.collection.immutable.Map<?, ?>) scala.collection.immutable.Map$.MODULE$.empty();
     if (baseRowId.isPresent() != defaultRowCommitVersion.isPresent()) {
       throw new IllegalStateException(
           "Expected row tracking metadata keys base_row_id and default_row_commit_version to "
               + "be either both set or both unset");
     }
     if (baseRowId.isPresent() && defaultRowCommitVersion.isPresent()) {
-      result = result.$plus(new Tuple2<>(
-          DeltaParquetFileFormat.BASE_ROW_ID_KEY(),
-          baseRowId.get()));
-      result = result.$plus(new Tuple2<>(
-          DeltaParquetFileFormat.DEFAULT_ROW_COMMIT_VERSION_KEY(),
-          defaultRowCommitVersion.get()));
+      result =
+          result.$plus(new Tuple2<>(DeltaParquetFileFormat.BASE_ROW_ID_KEY(), baseRowId.get()));
+      result =
+          result.$plus(
+              new Tuple2<>(
+                  DeltaParquetFileFormat.DEFAULT_ROW_COMMIT_VERSION_KEY(),
+                  defaultRowCommitVersion.get()));
     }
     return result;
   }

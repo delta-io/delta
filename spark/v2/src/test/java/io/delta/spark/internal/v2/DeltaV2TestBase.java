@@ -36,10 +36,8 @@ public abstract class DeltaV2TestBase {
             .config(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
-            .config("spark.sql.catalog.dsv2",
-                "io.delta.spark.internal.v2.catalog.TestCatalog")
-            .config("spark.sql.catalog.dsv2.base_path",
-                System.getProperty("java.io.tmpdir"))
+            .config("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
+            .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
             .getOrCreate();
     defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
   }

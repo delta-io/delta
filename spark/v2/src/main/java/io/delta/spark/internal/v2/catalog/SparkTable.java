@@ -25,8 +25,6 @@ import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.rowtracking.RowTracking;
-import org.apache.spark.sql.delta.RowCommitVersion$;
-import org.apache.spark.sql.delta.RowId$;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
@@ -45,6 +43,8 @@ import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
+import org.apache.spark.sql.delta.RowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
@@ -266,13 +266,23 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
             : new StructType();
 
     MetadataColumn[] columns = new MetadataColumn[1];
-    columns[0] = new MetadataColumn() {
-      @Override public String name() { return METADATA_COLUMN_NAME; }
+    columns[0] =
+        new MetadataColumn() {
+          @Override
+          public String name() {
+            return METADATA_COLUMN_NAME;
+          }
 
-      @Override public DataType dataType() { return metadataType; }
+          @Override
+          public DataType dataType() {
+            return metadataType;
+          }
 
-      @Override public boolean isNullable() { return false; }
-    };
+          @Override
+          public boolean isNullable() {
+            return false;
+          }
+        };
 
     return columns;
   }

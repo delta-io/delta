@@ -17,13 +17,13 @@ package io.delta.spark.internal.v2;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import org.apache.spark.sql.delta.DeltaLog;
 import java.io.File;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.apache.spark.sql.AnalysisException;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.delta.DeltaLog;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.util.Utils;
 import org.junit.jupiter.api.AfterEach;
@@ -36,9 +36,9 @@ import scala.Option;
  * Integration tests for DSv2 row tracking read behavior.
  *
  * <p>This suite validates row-tracking metadata serving through DSv2 queries, including metadata
- * projection combinations (row_id only, row_commit_version only, both, and none), update
- * evolution semantics (commit version bump and stable row_id), deletion-vector interaction, and
- * partitioned table reads with correct column ordering around {@code _metadata}.
+ * projection combinations (row_id only, row_commit_version only, both, and none), update evolution
+ * semantics (commit version bump and stable row_id), deletion-vector interaction, and partitioned
+ * table reads with correct column ordering around {@code _metadata}.
  *
  * <p>Uses real Delta tables with row tracking enabled -- no mocking.
  */
@@ -48,16 +48,18 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
 
   @BeforeEach
   public void setUpTable() {
-    tablePath = java.nio.file.Paths.get(
-        System.getProperty("java.io.tmpdir"),
-        "delta-test-rt-" + System.nanoTime()).toString();
-    spark.sql(String.format(
-        "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
-            + "TBLPROPERTIES ('delta.enableRowTracking' = 'true')",
-        tablePath));
-    spark.sql(String.format(
-        "INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')",
-        tablePath));
+    tablePath =
+        java.nio.file.Paths.get(
+                System.getProperty("java.io.tmpdir"), "delta-test-rt-" + System.nanoTime())
+            .toString();
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
+                + "TBLPROPERTIES ('delta.enableRowTracking' = 'true')",
+            tablePath));
+    spark.sql(
+        String.format(
+            "INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie')", tablePath));
   }
 
   @AfterEach
@@ -76,9 +78,7 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     org.apache.spark.sql.Dataset<Row> df =
         spark.sql(
             String.format(
-                "SELECT id, _metadata.row_id "
-                    + "FROM dsv2.delta.`%s` ORDER BY id",
-                tablePath));
+                "SELECT id, _metadata.row_id " + "FROM dsv2.delta.`%s` ORDER BY id", tablePath));
     assertArrayEquals(
         new String[] {"id", "row_id"},
         df.schema().fieldNames(),
@@ -99,8 +99,7 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     org.apache.spark.sql.Dataset<Row> df =
         spark.sql(
             String.format(
-                "SELECT id, _metadata.row_commit_version "
-                    + "FROM dsv2.delta.`%s` ORDER BY id",
+                "SELECT id, _metadata.row_commit_version " + "FROM dsv2.delta.`%s` ORDER BY id",
                 tablePath));
     assertArrayEquals(
         new String[] {"id", "row_commit_version"},
@@ -141,10 +140,7 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
   public void testReadWithoutRowTrackingMetadataFields() {
     org.apache.spark.sql.Dataset<Row> df =
         spark.sql(
-            String.format(
-                "SELECT id, name "
-                    + "FROM dsv2.delta.`%s` ORDER BY id",
-                tablePath));
+            String.format("SELECT id, name " + "FROM dsv2.delta.`%s` ORDER BY id", tablePath));
     assertArrayEquals(
         new String[] {"id", "name"},
         df.schema().fieldNames(),
@@ -168,8 +164,7 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
             "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
                 + "TBLPROPERTIES ('delta.enableRowTracking' = 'false')",
             noRtPath));
-    spark.sql(
-        String.format("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", noRtPath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (1, 'Alice'), (2, 'Bob')", noRtPath));
 
     org.apache.spark.sql.Dataset<Row> metadataDf =
         spark.sql(String.format("SELECT _metadata FROM dsv2.delta.`%s`", noRtPath));
@@ -190,7 +185,8 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
         assertThrows(
             AnalysisException.class,
             () ->
-                spark.sql(String.format("SELECT _metadata.row_id FROM dsv2.delta.`%s`", noRtPath))
+                spark
+                    .sql(String.format("SELECT _metadata.row_id FROM dsv2.delta.`%s`", noRtPath))
                     .collectAsList());
     assertTrue(
         e.getMessage().contains("row_id"),
@@ -203,8 +199,7 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
 
   @Test
   public void testSecondInsertContinuesFromHighWatermark() {
-    spark.sql(String.format(
-        "INSERT INTO delta.`%s` VALUES (4, 'Dave'), (5, 'Eve')", tablePath));
+    spark.sql(String.format("INSERT INTO delta.`%s` VALUES (4, 'Dave'), (5, 'Eve')", tablePath));
 
     List<Row> rows = queryRowTrackingWithRowTrackingMetadata(tablePath);
     assertEquals(5, rows.size());
@@ -225,28 +220,27 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     assertEquals(1L, beforeRows.get(0).getLong(0), "ALICE's id");
     long previousCommitVersion = beforeRows.get(0).getLong(3);
 
-    spark.sql(String.format(
-        "UPDATE delta.`%s` SET name = 'ALICE' WHERE id = 1", tablePath));
+    spark.sql(String.format("UPDATE delta.`%s` SET name = 'ALICE' WHERE id = 1", tablePath));
 
     List<Row> rows = queryRowTrackingWithRowTrackingMetadata(tablePath);
     assertEquals(1L, rows.get(0).getLong(0), "ALICE's id");
-    assertEquals(previousCommitVersion + 1L, rows.get(0).getLong(3),
+    assertEquals(
+        previousCommitVersion + 1L,
+        rows.get(0).getLong(3),
         "ALICE's commitVersion should be previous + 1 (original insert version)");
   }
 
   @Test
   public void testUpdateKeepsRowIdStable() {
-    long originalUpdatedRowId = queryRowTrackingWithRowTrackingMetadata(tablePath).get(0).getLong(2);
+    long originalUpdatedRowId =
+        queryRowTrackingWithRowTrackingMetadata(tablePath).get(0).getLong(2);
 
-    spark.sql(String.format(
-        "UPDATE delta.`%s` SET name = 'ALICE' WHERE id = 1", tablePath));
+    spark.sql(String.format("UPDATE delta.`%s` SET name = 'ALICE' WHERE id = 1", tablePath));
 
     List<Row> rows = queryRowTrackingWithRowTrackingMetadata(tablePath);
     assertEquals(3, rows.size());
     assertEquals(
-        originalUpdatedRowId,
-        rows.get(0).getLong(2),
-        "Updated row should keep the same row_id");
+        originalUpdatedRowId, rows.get(0).getLong(2), "Updated row should keep the same row_id");
   }
 
   // ---------------------------------------------------------------------------
@@ -257,12 +251,13 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
   public void testDeletionVectorReadWithRowTrackingPreservesPhysicalRowIds(@TempDir File tempDir) {
     String dvRtPath = tempDir.getAbsolutePath();
 
-    spark.sql(String.format(
-        "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
-            + "TBLPROPERTIES ("
-            + "'delta.enableRowTracking' = 'true', "
-            + "'delta.enableDeletionVectors' = 'true')",
-        dvRtPath));
+    spark.sql(
+        String.format(
+            "CREATE TABLE delta.`%s` (id LONG, name STRING) USING delta "
+                + "TBLPROPERTIES ("
+                + "'delta.enableRowTracking' = 'true', "
+                + "'delta.enableDeletionVectors' = 'true')",
+            dvRtPath));
 
     // Insert enough rows to encourage DV-based deletes (instead of full-file rewrites).
     spark
@@ -280,22 +275,19 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
     long numDVs =
         (long)
             deltaLog
-                .update(
-                    false,
-                    Option.empty(),
-                    Option.empty(),
-                    Option.empty(),
-                    Option.empty(),
-                    Option.empty(),
-                    Option.empty())
+                .update(false, Option.empty(), Option.empty())
                 .numDeletionVectorsOpt()
                 .getOrElse(() -> 0L);
     assertTrue(numDVs > 0, "Expected deletion vectors to be created, but none were found");
 
-    List<Row> rows = spark.sql(String.format(
-        "SELECT id, _metadata.row_id, _metadata.row_commit_version "
-            + "FROM dsv2.delta.`%s` ORDER BY id",
-        dvRtPath)).collectAsList();
+    List<Row> rows =
+        spark
+            .sql(
+                String.format(
+                    "SELECT id, _metadata.row_id, _metadata.row_commit_version "
+                        + "FROM dsv2.delta.`%s` ORDER BY id",
+                    dvRtPath))
+            .collectAsList();
 
     assertEquals(500, rows.size(), "Expected only odd IDs after DV filtering");
     for (int i = 0; i < rows.size(); i++) {
@@ -398,15 +390,17 @@ public class V2RowTrackingReadTest extends DeltaV2TestBase {
   // ---------------------------------------------------------------------------
 
   /**
-   * Queries row tracking metadata via the DSv2 SQL path.
-   * V2 metadata columns are nested in _metadata struct.
-   * Returns rows ordered by id with columns: id, name, row_id, row_commit_version.
+   * Queries row tracking metadata via the DSv2 SQL path. V2 metadata columns are nested in
+   * _metadata struct. Returns rows ordered by id with columns: id, name, row_id,
+   * row_commit_version.
    */
   private List<Row> queryRowTrackingWithRowTrackingMetadata(String path) {
-    return spark.sql(String.format(
-        "SELECT id, name, _metadata.row_id, _metadata.row_commit_version "
-            + "FROM dsv2.delta.`%s` ORDER BY id",
-        path)).collectAsList();
+    return spark
+        .sql(
+            String.format(
+                "SELECT id, name, _metadata.row_id, _metadata.row_commit_version "
+                    + "FROM dsv2.delta.`%s` ORDER BY id",
+                path))
+        .collectAsList();
   }
-
 }
