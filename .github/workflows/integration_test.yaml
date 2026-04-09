@@ -30,13 +30,15 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
+      - name: Set up uv
+        run: bash project/scripts/install-uv.sh
       - name: Generate Spark version info
         id: generate
         run: |
-          RELEASED=$(python3 project/scripts/get_spark_version_info.py --released-spark-versions)
+          RELEASED=$(uv run python3 project/scripts/get_spark_version_info.py --released-spark-versions)
           FULL_VERSION_LIST="[]"
           for SHORT in $(echo "$RELEASED" | jq -r '.[]'); do
-            FULL=$(python3 project/scripts/get_spark_version_info.py --get-field "$SHORT" fullVersion | jq -r)
+            FULL=$(uv run python3 project/scripts/get_spark_version_info.py --get-field "$SHORT" fullVersion | jq -r)
             FULL_VERSION_LIST=$(echo "$FULL_VERSION_LIST" | jq -c --arg v "$FULL" '. + [$v]')
           done
           echo "spark_full_version_list=$FULL_VERSION_LIST" >> $GITHUB_OUTPUT
@@ -52,9 +54,8 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+      - name: Set up uv
+        run: bash project/scripts/install-uv.sh
       - name: Cache SBT and dependencies
         uses: actions/cache@v4
         with:
@@ -67,7 +68,7 @@ jobs:
       - name: Download Spark distributions
         run: bash project/scripts/install-spark.sh '${{ needs.generate-spark-info.outputs.spark_full_version_list }}'
       - name: Run Scala + Python integration tests
-        run: python run-integration-tests.py --use-local --no-pip
+        run: uv run python run-integration-tests.py --use-local --no-pip
 
   iceberg-integration:
     name: "Iceberg Integration"
@@ -79,9 +80,8 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+      - name: Set up uv
+        run: bash project/scripts/install-uv.sh
       - name: Cache SBT and dependencies
         uses: actions/cache@v4
         with:
@@ -94,4 +94,4 @@ jobs:
       - name: Download Spark distributions
         run: bash project/scripts/install-spark.sh '${{ needs.generate-spark-info.outputs.spark_full_version_list }}'
       - name: Run Iceberg integration tests
-        run: python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
+        run: uv run python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1
