@@ -431,23 +431,12 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "variantShredding-preview",
       "icebergCompatV2",
       "icebergWriterCompatV1",
+      "allowColumnDefaults",
       "catalogManaged")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     validateAndUpdateIcebergWriterCompatV3Metadata(true, metadata, protocol, Optional.empty())
     validateAndUpdateIcebergWriterCompatV3Metadata(false, metadata, protocol, Optional.empty())
-  }
-
-  Seq("defaultColumns").foreach { unsupportedIncompatibleFeature =>
-    test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
-      // We add this test here so that it will fail when we add Kernel support for these features
-      // When this happens -> add the feature to the test above
-      checkUnsupportedOrIncompatibleFeature(
-        unsupportedIncompatibleFeature,
-        "Unsupported Delta table feature: table requires feature " +
-          s""""$unsupportedIncompatibleFeature" which is unsupported by this version of """ +
-          "Delta Kernel")
-    }
   }
 
   /* --- INVARIANTS_INACTIVE_CHECK tests --- */
