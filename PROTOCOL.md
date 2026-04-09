@@ -2434,6 +2434,14 @@ The requirements of the readers according to the protocol versions are summarize
 Reader Version 2 | Respect [Column Mapping](#column-mapping)
 Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - Writer Version must be 7
 
+# Table Properties
+
+Delta Lake tables support a set of properties stored in the `configuration` field of the `metaData` action that control various aspects of table behavior.
+
+Property | Description | Details
+-|-|-
+`delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
+
 # Appendix
 
 ## Valid Feature Names in Table Features

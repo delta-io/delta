@@ -21,11 +21,12 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, VariantShreddingPreviewTableFeature, VariantShreddingTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
@@ -1501,22 +1502,27 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   Seq(
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
-    VariantShreddingPreviewTableFeature
+    VariantShreddingPreviewTableFeature,
+    VariantShreddingTableFeature
   ).foreach { feature =>
     test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
+        val shreddingConfs = Map(
+          "spark.sql.variant.writeShredding.enabled" -> "true",
+          "spark.sql.variant.allowReadingShredded" -> "true",
+          "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
+        )
         val extraConfs = feature match {
-          case VariantShreddingPreviewTableFeature => Map(
-            "spark.sql.variant.writeShredding.enabled" -> "true",
-            "spark.sql.variant.allowReadingShredded" -> "true",
-            "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
-          )
-          case _ => Map.empty
+          case VariantShreddingPreviewTableFeature => shreddingConfs
+          case VariantShreddingTableFeature => shreddingConfs +
+            (DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false")
+          case _ => Map.empty[String, String]
         }
         withSQLConf(extraConfs.toSeq: _*) {
           val deltaTableName = s"variant_table_${feature.name.replaceAll("-", "_")}"
           withTable(deltaTableName) {
-            if (feature == VariantShreddingPreviewTableFeature) {
+            if (feature == VariantShreddingPreviewTableFeature ||
+                feature == VariantShreddingTableFeature) {
               spark.sql(s"CREATE TABLE $deltaTableName(v variant) USING DELTA " +
                 s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
             } else {
@@ -1530,6 +1536,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               .format("delta")
               .mode("append")
               .insertInto(deltaTableName)
+
+            val (_, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(deltaTableName))
+            assert(snapshot.protocol.readerAndWriterFeatures.contains(feature),
+              s"Expected table feature ${feature.name} not found in " +
+                s"protocol: ${snapshot.protocol}")
 
             val sharedTableName = s"shared_table_variant_${feature.name.replaceAll("-", "_")}"
             prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
