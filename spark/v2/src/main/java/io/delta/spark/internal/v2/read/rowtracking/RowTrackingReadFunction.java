@@ -108,10 +108,8 @@ public class RowTrackingReadFunction
                 int rowIndexColumnIndex = rowTrackingSchemaContext.getRowIndexColumnIndex();
                 long physicalRowIndex = row.getLong(rowIndexColumnIndex);
                 // When reading tables with f.e. mixed file history, the materialized RowIds can be
-                // absent
-                // so materializedRowIdIndex can be beyond the row's width. Treat this case like
-                // null and
-                // fall back to baseRowId + physicalRowIndex.
+                // absent so materializedRowIdIndex can be beyond the row's width. Treat this case
+                // like null and fall back to baseRowId + physicalRowIndex.
                 long rowId =
                     (row.numFields() <= materializedRowIdIndex
                             || row.isNullAt(materializedRowIdIndex))
@@ -134,9 +132,8 @@ public class RowTrackingReadFunction
               metadataStruct.update(0, rowTrackingFields.copy());
 
               // Partition columns are appended after data columns in readSchema, so insert
-              // `_metadata`
-              // between projected data columns and partition columns to preserve output column
-              // order.
+              // `_metadata` between projected data columns and partition columns to preserve
+              // output column order.
               // Assuming that metadata column is always inserted after all data columns in
               // readSchema.
               // Needs to be revisited if the _metadata struct position can be arbitrary.
