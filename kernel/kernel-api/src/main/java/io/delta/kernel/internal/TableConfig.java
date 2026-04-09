@@ -351,6 +351,16 @@ public class TableConfig<T> {
     public static final String FORMAT_HUDI = "hudi";
   }
 
+  /**
+   * The set of compression codecs that Kernel currently recognizes and enforces. This is
+   * intentionally strict for now. In the future we may add new codecs or relax validation to allow
+   * any codec string.
+   */
+  private static final Set<String> VALID_COMPRESSION_CODECS =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList("uncompressed", "none", "snappy", "gzip", "lz4", "lz4_raw", "zstd")));
+
   private static final Collection<String> ALLOWED_UNIFORM_FORMATS =
       Collections.unmodifiableList(
           Arrays.asList(UniversalFormats.FORMAT_HUDI, UniversalFormats.FORMAT_ICEBERG));
@@ -380,6 +390,23 @@ public class TableConfig<T> {
           Boolean::valueOf,
           value -> true,
           "needs to be a boolean.",
+          true);
+
+  /**
+   * Compression codec writers should use for new Parquet data and checkpoint files. Changing this
+   * property does not affect existing files; a table may contain files written with different
+   * codecs.
+   *
+   * <p>Valid values (case-insensitive): uncompressed, none, snappy, gzip, lz4, lz4_raw, zstd.
+   */
+  public static final TableConfig<String> PARQUET_COMPRESSION_CODEC =
+      new TableConfig<>(
+          "delta.parquet.compression.codec",
+          "snappy",
+          v -> v.toLowerCase(Locale.ROOT),
+          VALID_COMPRESSION_CODECS::contains,
+          "needs to be one of: 'uncompressed', 'none', 'snappy', 'gzip',"
+              + " 'lz4', 'lz4_raw', 'zstd'.",
           true);
 
   public static final TableConfig<String> MATERIALIZED_ROW_ID_COLUMN_NAME =
@@ -429,6 +456,7 @@ public class TableConfig<T> {
               addConfig(this, MATERIALIZED_ROW_ID_COLUMN_NAME);
               addConfig(this, MATERIALIZED_ROW_COMMIT_VERSION_COLUMN_NAME);
               addConfig(this, VARIANT_SHREDDING_ENABLED);
+              addConfig(this, PARQUET_COMPRESSION_CODEC);
 
               // The below configs do not yet have their behavior correctly implemented in Kernel.
               addConfig(this, DATA_SKIPPING_STATS_COLUMNS);
