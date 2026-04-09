@@ -18,8 +18,6 @@ package org.apache.spark.sql.delta.sources
 
 import java.util.Locale
 
-import scala.collection.mutable
-
 import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -125,44 +123,6 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   }
 
   /**
-   * Check the table metadata or protocol changed since the initial read snapshot. We make sure:
-   * 1. The schema is the same, except for internal metadata, AND
-   * 2. The delta related table configurations are strictly equal, AND
-   * 3. The incoming metadata change should not be considered a failure-causing change if we have
-   *    marked the persisted schema and the stream progress is behind that schema version.
-   *    This could happen when we've already merged consecutive schema changes during the analysis
-   *    phase and we are using the merged schema as the read schema. All the schema changes in
-   *    between can be safely ignored because they won't contribute any data.
-   */
-  private def hasMetadataOrProtocolChangeComparedToStreamMetadata(
-      metadataChangeOpt: Option[Metadata],
-      protocolChangeOpt: Option[Protocol],
-      newSchemaVersion: Long): Boolean = {
-    if (persistedMetadataAtSourceInit.exists(_.deltaCommitVersion >= newSchemaVersion)) {
-      false
-    } else {
-      protocolChangeOpt.exists(_ != readProtocolAtSourceInit) ||
-      metadataChangeOpt.exists { newMetadata =>
-         hasSchemaChangeComparedToStreamMetadata(newMetadata.schema) ||
-           newMetadata.partitionSchema != readPartitionSchemaAtSourceInit ||
-           newMetadata.configuration.filterKeys(_.startsWith("delta.")).toMap !=
-             readConfigurationsAtSourceInit.filterKeys(_.startsWith("delta.")).toMap
-      }
-    }
-  }
-
-  /**
-   * Check that the give schema is the same as the schema from the initial read snapshot.
-   */
-  private def hasSchemaChangeComparedToStreamMetadata(newSchema: StructType): Boolean =
-    if (spark.conf.get(DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE)) {
-      DeltaTableUtils.removeInternalWriterMetadata(spark, newSchema) !=
-        DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
-    } else {
-      newSchema != readSchemaAtSourceInit
-    }
-
-  /**
    * If the current stream metadata is not equal to the metadata change in [[metadataChangeOpt]],
    * return a metadata change barrier [[IndexedFile]].
    * Only returns something if [[trackingMetadataChange]]is true.
@@ -171,8 +131,12 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       metadataChangeOpt: Option[Metadata],
       protocolChangeOpt: Option[Protocol],
       version: Long): ClosableIterator[IndexedFile] = {
-    if (trackingMetadataChange && hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        metadataChangeOpt, protocolChangeOpt, version)) {
+    if (trackingMetadataChange &&
+      DeltaSourceMetadataEvolutionSupport.hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        spark, metadataChangeOpt, protocolChangeOpt, version,
+        readSchemaAtSourceInit, readPartitionSchemaAtSourceInit,
+        readProtocolAtSourceInit, readConfigurationsAtSourceInit,
+        persistedMetadataAtSourceInit.map(_.deltaCommitVersion))) {
       // Create an IndexedFile with metadata change
       Iterator.single(IndexedFile(version, DeltaSourceOffset.METADATA_CHANGE_INDEX, null))
         .toClosable
@@ -316,10 +280,14 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     // If the previous offset is already POST the schema change and schema evolution has not
     // occurred, simply block as no-op.
     if (previousOffset.index == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX &&
-      hasMetadataOrProtocolChangeComparedToStreamMetadata(
+      DeltaSourceMetadataEvolutionSupport.hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        spark,
         collectMetadataAtVersion(previousOffset.reservoirVersion),
         collectProtocolAtVersion(previousOffset.reservoirVersion),
-        previousOffset.reservoirVersion)) {
+        previousOffset.reservoirVersion,
+        readSchemaAtSourceInit, readPartitionSchemaAtSourceInit,
+        readProtocolAtSourceInit, readConfigurationsAtSourceInit,
+        persistedMetadataAtSourceInit.map(_.deltaCommitVersion))) {
       return Some(previousOffset)
     }
 
@@ -360,8 +328,12 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     val newMetadata = PersistedMetadata(tableId, version, metadata, protocol, metadataPath)
     // Always initialize the metadata log
     metadataTrackingLog.get.writeNewMetadata(newMetadata)
-    if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        Some(metadata), Some(protocol), version) || alwaysFailUponLogInitialized) {
+    if (DeltaSourceMetadataEvolutionSupport.hasMetadataOrProtocolChangeComparedToStreamMetadata(
+        spark, Some(metadata), Some(protocol), version,
+        readSchemaAtSourceInit, readPartitionSchemaAtSourceInit,
+        readProtocolAtSourceInit, readConfigurationsAtSourceInit,
+        persistedMetadataAtSourceInit.map(_.deltaCommitVersion)) ||
+        alwaysFailUponLogInitialized) {
       // But trigger evolution exception when there's a difference
       throw DeltaErrors.streamingMetadataEvolutionException(
         newMetadata.dataSchema,
@@ -399,33 +371,131 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
     }
   }
 
+  /** Convenience wrapper that passes this source's fields to the companion object. */
+  protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+      changedMetadataOpt: Option[Metadata],
+      changedProtocolOpt: Option[Protocol],
+      version: Long,
+      replace: Boolean = false): Unit = {
+    DeltaSourceMetadataEvolutionSupport.updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+      changedMetadataOpt,
+      changedProtocolOpt,
+      version,
+      deltaLog.unsafeVolatileTableId,
+      metadataTrackingLog.get,
+      readSnapshotDescriptor.metadata,
+      readSnapshotDescriptor.protocol,
+      metadataPath,
+      replace,
+      hasChange = DeltaSourceMetadataEvolutionSupport
+        .hasMetadataOrProtocolChangeComparedToStreamMetadata(
+          spark, changedMetadataOpt, changedProtocolOpt, version,
+          readSchemaAtSourceInit, readPartitionSchemaAtSourceInit,
+          readProtocolAtSourceInit, readConfigurationsAtSourceInit,
+          persistedMetadataAtSourceInit.map(_.deltaCommitVersion))
+    )
+  }
+}
+
+object DeltaSourceMetadataEvolutionSupport {
+
+  // ---------------------------------------------------------------------------
+  // Parameterized static methods — shared by V1 trait and V2 SparkMicroBatchStream.
+  // All DeltaSource state is passed as explicit parameters.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Check that the given schema is the same as the tracked stream schema.
+   * Optionally ignores internal writer metadata depending on the SQL conf.
+   */
+  def hasSchemaChangeComparedToStreamMetadata(
+      spark: SparkSession,
+      newSchema: StructType,
+      readSchemaAtSourceInit: StructType): Boolean = {
+    if (spark.conf.get(DeltaSQLConf.DELTA_STREAMING_IGNORE_INTERNAL_METADATA_FOR_SCHEMA_CHANGE)) {
+      DeltaTableUtils.removeInternalWriterMetadata(spark, newSchema) !=
+        DeltaTableUtils.removeInternalWriterMetadata(spark, readSchemaAtSourceInit)
+    } else {
+      newSchema != readSchemaAtSourceInit
+    }
+  }
+
+  /**
+   * Check the table metadata or protocol changed since the initial read snapshot. We make sure:
+   * 1. The schema is the same, except for internal metadata, AND
+   * 2. The delta related table configurations are strictly equal, AND
+   * 3. The incoming metadata change should not be considered a failure-causing change if we have
+   *    marked the persisted schema and the stream progress is behind that schema version.
+   *    This could happen when we've already merged consecutive schema changes during the analysis
+   *    phase and we are using the merged schema as the read schema. All the schema changes in
+   *    between can be safely ignored because they won't contribute any data.
+   *
+   * @param persistedMetadataVersion If persisted metadata exists, its deltaCommitVersion.
+   *                                 Pass None if no persisted metadata.
+   */
+  def hasMetadataOrProtocolChangeComparedToStreamMetadata(
+      spark: SparkSession,
+      metadataChangeOpt: Option[Metadata],
+      protocolChangeOpt: Option[Protocol],
+      newSchemaVersion: Long,
+      readSchemaAtSourceInit: StructType,
+      readPartitionSchemaAtSourceInit: StructType,
+      readProtocolAtSourceInit: Protocol,
+      readConfigurationsAtSourceInit: Map[String, String],
+      persistedMetadataVersion: Option[Long]): Boolean = {
+    if (persistedMetadataVersion.exists(_ >= newSchemaVersion)) {
+      false
+    } else {
+      protocolChangeOpt.exists(_ != readProtocolAtSourceInit) ||
+        metadataChangeOpt.exists { newMetadata =>
+          hasSchemaChangeComparedToStreamMetadata(
+            spark, newMetadata.schema, readSchemaAtSourceInit) ||
+            newMetadata.partitionSchema != readPartitionSchemaAtSourceInit ||
+            newMetadata.configuration.filterKeys(_.startsWith("delta.")).toMap !=
+              readConfigurationsAtSourceInit.filterKeys(_.startsWith("delta.")).toMap
+        }
+    }
+  }
+
   /**
    * Write a new potentially changed metadata into the metadata tracking log. Then fail the stream
    * to allow reanalysis if there are changes.
    * @param changedMetadataOpt Potentially changed metadata action
    * @param changedProtocolOpt Potentially changed protocol action
    * @param version The version of change
+   * @param tableId The table identifier
+   * @param metadataTrackingLog The metadata tracking log to write to
+   * @param fallbackMetadata Fallback metadata if changedMetadataOpt is None
+   * @param fallbackProtocol Fallback protocol if changedProtocolOpt is None
+   * @param metadataPath The source-unique metadata path
+   * @param replace If true, replace the current log entry
+   * @param hasChange Pre-computed result of whether the metadata/protocol actually changed
+   *                  compared to the stream's current metadata
    */
-  protected def updateMetadataTrackingLogAndFailTheStreamIfNeeded(
+  def updateMetadataTrackingLogAndFailTheStreamIfNeeded(
       changedMetadataOpt: Option[Metadata],
       changedProtocolOpt: Option[Protocol],
       version: Long,
-      replace: Boolean = false): Unit = {
-    if (hasMetadataOrProtocolChangeComparedToStreamMetadata(
-        changedMetadataOpt, changedProtocolOpt, version)) {
-
+      tableId: String,
+      metadataTrackingLog: DeltaSourceMetadataTrackingLog,
+      fallbackMetadata: Metadata,
+      fallbackProtocol: Protocol,
+      metadataPath: String,
+      replace: Boolean,
+      hasChange: Boolean): Unit = {
+    if (hasChange) {
       val schemaToPersist = PersistedMetadata(
-        deltaLog.unsafeVolatileTableId,
+        tableId,
         version,
-        changedMetadataOpt.getOrElse(readSnapshotDescriptor.metadata),
-        changedProtocolOpt.getOrElse(readSnapshotDescriptor.protocol),
+        changedMetadataOpt.getOrElse(fallbackMetadata),
+        changedProtocolOpt.getOrElse(fallbackProtocol),
         metadataPath
       )
       // Update schema log
       if (replace) {
-        metadataTrackingLog.get.writeNewMetadata(schemaToPersist, replaceCurrent = true)
+        metadataTrackingLog.writeNewMetadata(schemaToPersist, replaceCurrent = true)
       } else {
-        metadataTrackingLog.get.writeNewMetadata(schemaToPersist)
+        metadataTrackingLog.writeNewMetadata(schemaToPersist)
       }
       // Fail the stream with schema evolution exception
       throw DeltaErrors.streamingMetadataEvolutionException(
@@ -435,9 +505,11 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
       )
     }
   }
-}
 
-object DeltaSourceMetadataEvolutionSupport {
+  // ---------------------------------------------------------------------------
+  // Schema change classification and validation
+  // ---------------------------------------------------------------------------
+
   /** SQL configs that allow unblocking each type of schema changes. */
   private val SQL_CONF_PREFIX = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
 
