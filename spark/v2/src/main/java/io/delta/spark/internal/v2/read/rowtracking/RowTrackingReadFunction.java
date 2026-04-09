@@ -76,21 +76,24 @@ public class RowTrackingReadFunction extends AbstractFunction1<PartitionedFile, 
 
     ProjectingInternalRow dataProjection =
     ProjectingInternalRow.apply(
-        rowTrackingSchemaContext.getDataPrefixSchema(),
-        rowTrackingSchemaContext.getDataPrefixOrdinals());
+        rowTrackingSchemaContext.getDataSchema(),
+        rowTrackingSchemaContext.getDataColumnsOrdinals());
     ProjectingInternalRow partitionProjection =
         ProjectingInternalRow.apply(
-            rowTrackingSchemaContext.getPartitionTailSchema(),
-            rowTrackingSchemaContext.getPartitionTailOrdinals());
+            rowTrackingSchemaContext.getPartitionSchema(),
+            rowTrackingSchemaContext.getPartitionColumnsOrdinals());
     JoinedRow joinedDataAndMetadata = new JoinedRow();
     JoinedRow joinedWithPartitions = new JoinedRow();
 
     return CloseableIterator.wrap(baseIterator).mapCloseable(row -> {
       int index = 0;
-      if(rowTrackingSchemaContext.isRowIdRequested()) {
+      if (rowTrackingSchemaContext.isRowIdRequested()) {
         int materializedRowIdIndex = rowTrackingSchemaContext.getMaterializedRowIdIndex();
         int rowIndexColumnIndex = rowTrackingSchemaContext.getRowIndexColumnIndex();
         long physicalRowIndex = row.getLong(rowIndexColumnIndex);
+        // When reading tables with f.e. mixed file history, the materialized RowIds can be absent
+        // so materializedRowIdIndex can be beyond the row's width. Treat this case like null and
+        // fall back to baseRowId + physicalRowIndex.
         long rowId =
             (row.numFields() <= materializedRowIdIndex || row.isNullAt(materializedRowIdIndex))
                 ? baseRowId + physicalRowIndex
@@ -98,7 +101,7 @@ public class RowTrackingReadFunction extends AbstractFunction1<PartitionedFile, 
         rowTrackingFields.setLong(index++, rowId);
       }
 
-      if(rowTrackingSchemaContext.isRowCommitVersionRequested()) {
+      if (rowTrackingSchemaContext.isRowCommitVersionRequested()) {
         int materializedCommitVersionIndex =
             rowTrackingSchemaContext.getMaterializedRowCommitVersionIndex();
         long rowCommitVersion =
@@ -114,6 +117,8 @@ public class RowTrackingReadFunction extends AbstractFunction1<PartitionedFile, 
 
       // Partition columns are appended after data columns in readSchema, so insert `_metadata`
       // between projected data columns and partition columns to preserve output column order.
+      // Assuming that metadata column is always inserted after all data columns in readSchema.
+      // Needs to be revisited if the _metadata struct position can be arbitrary.
       InternalRow dataWithMetadata =
      (InternalRow) joinedDataAndMetadata.apply(dataProjection, metadataStruct);
       if (rowTrackingSchemaContext.hasPartitionColumns()) {

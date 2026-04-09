@@ -25,7 +25,6 @@ import org.apache.spark.sql.execution.datasources.parquet.ParquetFileFormat;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
-import scala.collection.immutable.List;
 import scala.collection.immutable.Seq;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.rowtracking.MaterializedRowTrackingColumn;
@@ -55,35 +54,21 @@ public class RowTrackingSchemaContext implements Serializable {
   private int materializedRowIdIndex = -1;
   private int materializedRowCommitVersionIndex = -1;
   private int rowIndexColumnIndex = -1;
-  private final StructType readDataSchema;
-  private boolean rowIdRequested = false;
-  private boolean rowCommitVersionRequested = false;
-  private int helperColumnsCount = 0;
-  private int helperStartIndex = -1;
-  private int inputColumnCount = -1;
-  private StructType dataPrefixSchema;
-  private Seq<Object> dataPrefixOrdinals;
-  private StructType partitionTailSchema;
-  private Seq<Object> partitionTailOrdinals;
-  private int partitionColumnCount = 0;
+  private StructType dataSchema;
+  private Seq<Object> dataColumnsOrdinals;
+  private StructType partitionSchema;
+  private Seq<Object> partitionColumnsOrdinals;
 
   public RowTrackingSchemaContext(
       StructType readDataSchema, Metadata metadata, StructType partitionSchema) {
-    this.readDataSchema = readDataSchema;
     StructField metadataColumn =
       Arrays.stream(readDataSchema.fields())
         .filter(field -> METADATA_COLUMN_NAME.equals(field.name()))
         .findFirst()
         .orElse(null);
     if (metadataColumn == null || !(metadataColumn.dataType() instanceof StructType metadataType)) {
-      this.rowIdRequested = false;
-      this.rowCommitVersionRequested = false;
       return;
     }
-    
-    this.rowIdRequested = containsRowTrackingMetadataField(metadataType, ROW_ID_METADATA_FIELD_NAME);
-    this.rowCommitVersionRequested =
-        containsRowTrackingMetadataField(metadataType, ROW_COMMIT_VERSION_METADATA_FIELD_NAME);
 
     StructType baseSchemaWithoutMetadata = new StructType(
         Arrays.stream(readDataSchema.fields())
@@ -91,21 +76,26 @@ public class RowTrackingSchemaContext implements Serializable {
             .toArray(StructField[]::new));
 
     this.schemaWithRowTrackingColumns = baseSchemaWithoutMetadata;
-    this.helperStartIndex = baseSchemaWithoutMetadata.fields().length;
 
-    int index = helperStartIndex;
+    int internalColumnsStartIndex = baseSchemaWithoutMetadata.fields().length;
+    int index = internalColumnsStartIndex;
+    int internalColumnsCount = 0;
+
+    boolean rowIdRequested = containsRowTrackingMetadataField(metadataType, ROW_ID_METADATA_FIELD_NAME);
+    boolean rowCommitVersionRequested =
+        containsRowTrackingMetadataField(metadataType, ROW_COMMIT_VERSION_METADATA_FIELD_NAME);
     
     if (rowIdRequested) {
       String rowIdColumnName = MaterializedRowTrackingColumn.MATERIALIZED_ROW_ID.getPhysicalColumnName(
           metadata.getConfiguration());
       schemaWithRowTrackingColumns = schemaWithRowTrackingColumns.add(rowIdColumnName, DataTypes.LongType, true);
       materializedRowIdIndex = index++;
-      helperColumnsCount++;
+      internalColumnsCount++;
 
       schemaWithRowTrackingColumns = schemaWithRowTrackingColumns
           .add(ParquetFileFormat.ROW_INDEX_TEMPORARY_COLUMN_NAME(), DataTypes.LongType, true);
       rowIndexColumnIndex = index++;
-      helperColumnsCount++;
+      internalColumnsCount++;
     }
 
     if (rowCommitVersionRequested) {
@@ -115,17 +105,13 @@ public class RowTrackingSchemaContext implements Serializable {
       schemaWithRowTrackingColumns = schemaWithRowTrackingColumns.add(rowCommitVersionColumnName, DataTypes.LongType,
           true);
       materializedRowCommitVersionIndex = index++;
-      helperColumnsCount++;
+      internalColumnsCount++;
     }
-
-    this.inputColumnCount = schemaWithRowTrackingColumns.fields().length + partitionSchema.fields().length;
     
-    this.partitionColumnCount = partitionSchema.fields().length;
-    
-    this.dataPrefixSchema = baseSchemaWithoutMetadata;
-    this.dataPrefixOrdinals = buildDataPrefixOdrinals();
-    this.partitionTailSchema = partitionSchema;
-    this.partitionTailOrdinals = buildPartitionSuffixOdrinals();
+    this.dataSchema = baseSchemaWithoutMetadata;
+    this.dataColumnsOrdinals = buildRangeOrdinals(0, internalColumnsStartIndex);
+    this.partitionSchema = partitionSchema;
+    this.partitionColumnsOrdinals = buildRangeOrdinals(internalColumnsStartIndex + internalColumnsCount, schemaWithRowTrackingColumns.fields().length + partitionSchema.fields().length);
   }
   
   public StructType getSchemaWithRowTrackingColumns() {
@@ -135,11 +121,7 @@ public class RowTrackingSchemaContext implements Serializable {
   public int getMaterializedRowIdIndex() {
     return materializedRowIdIndex;
   }
-  
-  public StructType getReadDataSchema() {
-    return readDataSchema;
-  }
-  
+
   public int getMaterializedRowCommitVersionIndex() {
     return materializedRowCommitVersionIndex;
   }
@@ -148,31 +130,16 @@ public class RowTrackingSchemaContext implements Serializable {
     return rowIndexColumnIndex;
   }
 
-  public int getHelperColumnsCount() {
-    return helperColumnsCount;
-  }
-
   public boolean isRowIdRequested() {
-    return rowIdRequested;
+    return materializedRowIdIndex != -1;
   }
 
   public boolean isRowCommitVersionRequested() {
-    return rowCommitVersionRequested;
+    return materializedRowCommitVersionIndex != -1;
   }
 
   public boolean areRowTrackingMetadataFieldsRequested() {
-    return rowIdRequested || rowCommitVersionRequested;
-  }
-    
-  // data prefix: [0, helperStartIndex)
-  private Seq<Object> buildDataPrefixOdrinals(){
-    return buildRangeOrdinals(0, this.helperStartIndex);
-  }
-  
-  // partition tail: [helperStartIndex + helperColumnsCount, inputColumnCount)
-  private Seq<Object> buildPartitionSuffixOdrinals(){
-    int partitionStart = this.helperStartIndex + this.helperColumnsCount;
-    return buildRangeOrdinals(partitionStart, inputColumnCount);
+    return isRowIdRequested() || isRowCommitVersionRequested();
   }
 
   private static Seq<Object> buildRangeOrdinals(int startInclusive, int endExclusive) {
@@ -184,24 +151,24 @@ public class RowTrackingSchemaContext implements Serializable {
     return scala.Predef.wrapIntArray(ordinals).toList();
   }
 
-  public StructType getDataPrefixSchema() { 
-    return dataPrefixSchema;
+  public StructType getDataSchema() {
+    return dataSchema;
   }
 
-  public Seq<Object> getDataPrefixOrdinals() { 
-    return dataPrefixOrdinals;
+  public Seq<Object> getDataColumnsOrdinals() {
+    return dataColumnsOrdinals;
   }
 
-  public StructType getPartitionTailSchema() { 
-    return partitionTailSchema;
+  public StructType getPartitionSchema() {
+    return partitionSchema;
   }
 
-  public Seq<Object> getPartitionTailOrdinals() { 
-    return partitionTailOrdinals; 
+  public Seq<Object> getPartitionColumnsOrdinals() {
+    return partitionColumnsOrdinals; 
   }
 
   public boolean hasPartitionColumns() { 
-    return partitionColumnCount > 0;
+    return partitionSchema.fields().length > 0;
   }
 
   private static boolean containsRowTrackingMetadataField(StructType metadataType, String metadataFieldName) {
