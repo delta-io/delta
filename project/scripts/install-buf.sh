@@ -22,4 +22,4 @@ mkdir -p ~/buf
 tar -xzf "$TARBALL" -C ~/buf --strip-components 1
 rm "$TARBALL"
 
-~/buf/buf --version
+~/buf/bin/buf --version
