@@ -56,7 +56,12 @@ jobs:
           java-version: "17"
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Cache SBT and dependencies
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ env.UV_EXCLUDE_NEWER }}
+      - name: Cache SBT and Coursier dependencies
         uses: actions/cache@v4
         with:
           path: |
@@ -64,7 +69,13 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-integration-scala-python-${{ runner.os }}
+          key: sbt-integration-${{ runner.os }}-${{ hashFiles('build.sbt', 'project/**') }}
+          restore-keys: sbt-integration-${{ runner.os }}-
+      - name: Cache Spark distributions
+        uses: actions/cache@v4
+        with:
+          path: ~/spark-*-bin-hadoop3
+          key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_full_version_list }}
       - name: Download Spark distributions
         run: bash project/scripts/install-spark.sh '${{ needs.generate-spark-info.outputs.spark_full_version_list }}'
       - name: Run Scala + Python integration tests
@@ -82,7 +93,12 @@ jobs:
           java-version: "17"
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Cache SBT and dependencies
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ env.UV_EXCLUDE_NEWER }}
+      - name: Cache SBT and Coursier dependencies
         uses: actions/cache@v4
         with:
           path: |
@@ -90,7 +106,13 @@ jobs:
             ~/.ivy2/cache
             ~/.coursier/cache
             ~/.cache/coursier
-          key: sbt-integration-iceberg-${{ runner.os }}
+          key: sbt-integration-${{ runner.os }}-${{ hashFiles('build.sbt', 'project/**') }}
+          restore-keys: sbt-integration-${{ runner.os }}-
+      - name: Cache Spark distributions
+        uses: actions/cache@v4
+        with:
+          path: ~/spark-*-bin-hadoop3
+          key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_full_version_list }}
       - name: Download Spark distributions
         run: bash project/scripts/install-spark.sh '${{ needs.generate-spark-info.outputs.spark_full_version_list }}'
       - name: Run Iceberg integration tests
