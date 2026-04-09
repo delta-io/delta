@@ -71,8 +71,8 @@ jobs:
           key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_version_cache_key }}
       - name: Download Spark distributions
         run: |
-          for fullSparkVersion in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
-            bash project/scripts/install-spark.sh "$fullSparkVersion"
+          for full_spark_version in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
+            bash project/scripts/install-spark.sh "$full_spark_version"
           done
       - name: Run Scala + Python integration tests
         run: uv run python run-integration-tests.py --use-local --no-pip
@@ -106,8 +106,8 @@ jobs:
           key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_version_cache_key }}
       - name: Download Spark distributions
         run: |
-          for fullSparkVersion in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
-            bash project/scripts/install-spark.sh "$fullSparkVersion"
+          for full_spark_version in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
+            bash project/scripts/install-spark.sh "$full_spark_version"
           done
       - name: Run Iceberg integration tests
         run: uv run python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1

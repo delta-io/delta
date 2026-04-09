@@ -22,4 +22,5 @@ mkdir -p ~/buf
 tar -xzf "$TARBALL" -C ~/buf --strip-components 1
 rm "$TARBALL"
 
+echo "$HOME/buf/bin" >> "${GITHUB_PATH:-/dev/null}"
 ~/buf/bin/buf --version

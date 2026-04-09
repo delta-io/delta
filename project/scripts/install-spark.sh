@@ -11,14 +11,14 @@
 # The version is extracted to ~/spark-<version>-bin-hadoop3.
 set -eu
 
-fullSparkVersion="${1:?Usage: install-spark.sh <spark_full_version>}"
+full_spark_version="${1:?Usage: install-spark.sh <spark_full_version>}"
 
-if [ -d ~/spark-${fullSparkVersion}-bin-hadoop3 ]; then
-  echo "Spark ${fullSparkVersion} already present, skipping download."
+if [ -d ~/spark-${full_spark_version}-bin-hadoop3 ]; then
+  echo "Spark ${full_spark_version} already present, skipping download."
 else
-  echo "Downloading Spark ${fullSparkVersion}..."
-  wget -q "https://archive.apache.org/dist/spark/spark-${fullSparkVersion}/spark-${fullSparkVersion}-bin-hadoop3.tgz"
-  tar xzf "spark-${fullSparkVersion}-bin-hadoop3.tgz" -C ~/
-  rm "spark-${fullSparkVersion}-bin-hadoop3.tgz"
-  echo "Spark ${fullSparkVersion} installed to ~/spark-${fullSparkVersion}-bin-hadoop3."
+  echo "Downloading Spark ${full_spark_version}..."
+  wget -q "https://archive.apache.org/dist/spark/spark-${full_spark_version}/spark-${full_spark_version}-bin-hadoop3.tgz"
+  tar xzf "spark-${full_spark_version}-bin-hadoop3.tgz" -C ~/
+  rm "spark-${full_spark_version}-bin-hadoop3.tgz"
+  echo "Spark ${full_spark_version} installed to ~/spark-${full_spark_version}-bin-hadoop3."
 fi
