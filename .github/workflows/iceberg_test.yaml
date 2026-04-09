@@ -17,16 +17,11 @@ env:
   # This date is a pre-attack baseline (before the active PyPI supply chain attack).
   UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   test:
     name: "DIL: Scala ${{ matrix.scala }}"
     runs-on: ubuntu-24.04
     strategy:
-      fail-fast: true
       matrix:
         # These Scala versions must match those in the build.sbt
         scala: [2.13.16]

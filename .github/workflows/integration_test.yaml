@@ -2,15 +2,10 @@ name: "Integration Tests (Release Validation)"
 
 on:
   pull_request:
-    #    branches:
-    #      - 'branch-*'
+    branches: [master]
     paths-ignore:
       - '**.md'
       - '**.txt'
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 env:
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
@@ -72,7 +67,10 @@ jobs:
           path: ~/spark-*-bin-hadoop3
           key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_full_version_list }}
       - name: Download Spark distributions
-        run: bash project/scripts/install-spark.sh '${{ needs.generate-spark-info.outputs.spark_full_version_list }}'
+        run: |
+          for FULL in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
+            bash project/scripts/install-spark.sh "$FULL"
+          done
       - name: Run Scala + Python integration tests
         run: uv run python run-integration-tests.py --use-local --no-pip
 
@@ -104,6 +102,9 @@ jobs:
           path: ~/spark-*-bin-hadoop3
           key: spark-dist-${{ runner.os }}-${{ needs.generate-spark-info.outputs.spark_full_version_list }}
       - name: Download Spark distributions
-        run: bash project/scripts/install-spark.sh '${{ needs.generate-spark-info.outputs.spark_full_version_list }}'
+        run: |
+          for FULL in $(echo '${{ needs.generate-spark-info.outputs.spark_full_version_list }}' | jq -r '.[]'); do
+            bash project/scripts/install-spark.sh "$FULL"
+          done
       - name: Run Iceberg integration tests
         run: uv run python run-integration-tests.py --use-local --run-iceberg-integration-tests --iceberg-lib-version 1.10.1

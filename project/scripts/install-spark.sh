@@ -1,27 +1,24 @@
 #!/bin/sh
-# Download and extract Spark binary distributions.
+# Download and extract a single Spark binary distribution.
 # Single source of truth for Spark download logic across CI workflows.
 #
 # Usage:
-#   bash project/scripts/install-spark.sh <spark_full_version_list_json>
+#   bash project/scripts/install-spark.sh <spark_full_version>
 #
 # Arguments:
-#   spark_full_version_list_json  JSON array of full Spark versions to install,
-#                                 e.g. '["3.5.4","4.0.0"]'
+#   spark_full_version  Full Spark version, e.g. "4.0.1"
 #
-# Each version is extracted to ~/spark-<version>-bin-hadoop3 and skipped if
-# that directory already exists (cache-friendly).
+# The version is extracted to ~/spark-<version>-bin-hadoop3.
 set -eu
 
-SPARK_FULL_VERSION_LIST="${1:?Usage: install-spark.sh <spark_full_version_list_json>}"
+FULL="${1:?Usage: install-spark.sh <spark_full_version>}"
 
-for FULL in $(echo "$SPARK_FULL_VERSION_LIST" | jq -r '.[]'); do
-  if [ ! -d ~/spark-${FULL}-bin-hadoop3 ]; then
-    echo "Downloading Spark ${FULL}..."
-    wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
-    tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
-    rm "spark-${FULL}-bin-hadoop3.tgz"
-  else
-    echo "Spark ${FULL} already present, skipping download."
-  fi
-done
+if [ -d ~/spark-${FULL}-bin-hadoop3 ]; then
+  echo "Spark ${FULL} already present, skipping download."
+else
+  echo "Downloading Spark ${FULL}..."
+  wget -q "https://archive.apache.org/dist/spark/spark-${FULL}/spark-${FULL}-bin-hadoop3.tgz"
+  tar xzf "spark-${FULL}-bin-hadoop3.tgz" -C ~/
+  rm "spark-${FULL}-bin-hadoop3.tgz"
+  echo "Spark ${FULL} installed to ~/spark-${FULL}-bin-hadoop3."
+fi
