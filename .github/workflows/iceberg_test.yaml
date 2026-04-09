@@ -48,8 +48,6 @@ jobs:
           key: delta-sbt-cache-spark4.0-scala${{ matrix.scala }}
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Set up buf
-        run: bash project/scripts/install-buf.sh
       - name: Install Job dependencies
         run: |
           sudo apt-get update
