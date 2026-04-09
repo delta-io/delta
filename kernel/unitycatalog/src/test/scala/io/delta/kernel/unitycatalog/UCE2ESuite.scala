@@ -277,10 +277,10 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
       // Capture expected values from the post-commit snapshot
       // Assert CRC is present in post-commit snapshot
       assert(currentSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.SIMPLE)
-      val expectedStats = currentSnapshot.getStatistics.getTableStats(engine)
-      assert(expectedStats.isPresent)
-      val expectedNumFiles = expectedStats.get().getNumFiles
-      val expectedTableSizeBytes = expectedStats.get().getTableSizeBytes
+      val postCommitCrc = currentSnapshot.asInstanceOf[SnapshotImpl].getCurrentCrcInfo()
+      assert(postCommitCrc.isPresent)
+      val expectedNumFiles = postCommitCrc.get().getNumFiles
+      val expectedTableSizeBytes = postCommitCrc.get().getTableSizeBytes
 
       // Load fresh snapshot -- v1-v3 are ratified but unbackfilled catalog commits
       val freshSnapshot = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
