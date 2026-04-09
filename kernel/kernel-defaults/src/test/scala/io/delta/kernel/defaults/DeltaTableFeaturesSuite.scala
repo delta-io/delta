@@ -405,6 +405,83 @@ trait DeltaTableFeaturesSuiteBase extends AnyFunSuite with AbstractWriteUtils {
   }
   /* ---- End: type widening tests ---- */
 
+  /* ---- Start: variant shredding tests ---- */
+  test("only variantShredding feature is enabled when metadata supports it: new table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.enableVariantShredding" -> "true"))
+
+      val protocolV0 = getProtocol(engine, tablePath)
+      assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+      assert(protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableVariantShredding" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(protocolV1 === protocolV0)
+    }
+  }
+
+  test("only variantShredding feature is enabled when new metadata supports it: existing table") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(engine, tablePath = tablePath, schema = testSchema)
+      val protocolV0 = getProtocol(engine, tablePath)
+      assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+      assert(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableVariantShredding" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(!protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+      assert(protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+    }
+  }
+
+  test("variantShredding-preview in existing table is respected") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map("delta.feature.variantShredding-preview" -> "supported"))
+
+      val protocolV0 = getProtocol(engine, tablePath)
+      require(protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+      require(!protocolV0.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+
+      updateTableMetadata(
+        engine = engine,
+        tablePath = tablePath,
+        tableProperties = Map("delta.enableVariantShredding" -> "true"))
+      val protocolV1 = getProtocol(engine, tablePath)
+      assert(protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+      assert(!protocolV1.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+    }
+  }
+  test("both variantShredding and variantShredding-preview can coexist") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      createEmptyTable(
+        engine,
+        tablePath = tablePath,
+        schema = testSchema,
+        tableProperties = Map(
+          "delta.enableVariantShredding" -> "true",
+          "delta.feature.variantShredding-preview" -> "supported"))
+
+      val protocol = getProtocol(engine, tablePath)
+      assert(protocol.supportsFeature(TableFeatures.VARIANT_SHREDDING_RW_FEATURE))
+      assert(protocol.supportsFeature(TableFeatures.VARIANT_SHREDDING_PREVIEW_RW_FEATURE))
+    }
+  }
+  /* ---- End: variant shredding tests ---- */
+
   ///////////////////////////////////////////////////////////////////////////
   // Helper methods
   ///////////////////////////////////////////////////////////////////////////
