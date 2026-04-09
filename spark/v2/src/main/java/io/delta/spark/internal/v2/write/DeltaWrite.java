@@ -23,16 +23,13 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.Transaction;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
-import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import java.util.*;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Attribute;
 import org.apache.spark.sql.catalyst.types.DataTypeUtils;
 import org.apache.spark.sql.connector.distributions.Distribution;
@@ -45,6 +42,7 @@ import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.RequiresDistributionAndOrdering;
 import org.apache.spark.sql.connector.write.Write;
 import org.apache.spark.sql.delta.files.DelayedCommitProtocol;
+import org.apache.spark.sql.delta.files.DeltaFileFormatWriter;
 import org.apache.spark.sql.delta.stats.DeltaJobStatisticsTracker;
 import org.apache.spark.sql.execution.datasources.OutputWriterFactory;
 import org.apache.spark.sql.execution.datasources.WriteJobDescription;
@@ -74,20 +72,35 @@ import scala.collection.immutable.Seq;
  */
 public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
 
-  private final SparkTable table;
+  private final Snapshot snapshot;
+  private final String tablePath;
+  private final Configuration hadoopConf;
+  private final StructType tableSchema;
+  private final StructType dataSchema;
+  private final StructType partitionSchema;
   private final LogicalWriteInfo info;
   private final List<String> partitionColumnNames;
   private final WriteMode writeMode;
   private final io.delta.kernel.expressions.Predicate replaceWherePredicate;
 
   DeltaWrite(
-      SparkTable table,
+      Snapshot snapshot,
+      String tablePath,
+      Configuration hadoopConf,
+      StructType tableSchema,
+      StructType dataSchema,
+      StructType partitionSchema,
       LogicalWriteInfo info,
       WriteMode writeMode,
       io.delta.kernel.expressions.Predicate replaceWherePredicate) {
-    this.table = requireNonNull(table, "table is null");
+    this.snapshot = requireNonNull(snapshot, "snapshot is null");
+    this.tablePath = requireNonNull(tablePath, "tablePath is null");
+    this.hadoopConf = requireNonNull(hadoopConf, "hadoopConf is null");
+    this.tableSchema = requireNonNull(tableSchema, "tableSchema is null");
+    this.dataSchema = requireNonNull(dataSchema, "dataSchema is null");
+    this.partitionSchema = requireNonNull(partitionSchema, "partitionSchema is null");
     this.info = requireNonNull(info, "info is null");
-    this.partitionColumnNames = table.getInitialSnapshot().getPartitionColumnNames();
+    this.partitionColumnNames = snapshot.getPartitionColumnNames();
     this.writeMode = requireNonNull(writeMode, "writeMode is null");
     this.replaceWherePredicate = replaceWherePredicate;
   }
@@ -124,24 +137,20 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
   @SuppressWarnings({"unchecked", "rawtypes"})
   public BatchWrite toBatch() {
     SparkSession spark = SparkSession.active();
-    String tablePath = table.getTablePath().toString();
-
-    // -- Kernel: create transaction --
-    Snapshot snapshot = table.getInitialSnapshot();
 
     // -- Hadoop conf: merge table metadata configuration --
     // V1 does: newHadoopConfWithOptions(metadata.configuration ++ deltaLog.options)
     // This ensures Delta table properties (e.g. column mapping config) are visible to
     // Parquet writers and the commit protocol.
-    Configuration hadoopConf = new Configuration(table.getHadoopConf());
+    Configuration mergedHadoopConf = new Configuration(hadoopConf);
     io.delta.kernel.internal.SnapshotImpl snapshotImpl =
         (io.delta.kernel.internal.SnapshotImpl) snapshot;
     for (java.util.Map.Entry<String, String> e :
         snapshotImpl.getMetadata().getConfiguration().entrySet()) {
-      hadoopConf.set(e.getKey(), e.getValue());
+      mergedHadoopConf.set(e.getKey(), e.getValue());
     }
 
-    Engine engine = DefaultEngine.create(hadoopConf);
+    Engine engine = DefaultEngine.create(mergedHadoopConf);
 
     // -- Schema evolution --
     boolean mergeSchema =
@@ -157,7 +166,6 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
         Boolean.parseBoolean(info.options().getOrDefault("overwriteSchema", "false"))
             && (writeMode == WriteMode.TRUNCATE || writeMode == WriteMode.REPLACE_WHERE);
 
-    StructType tableSchema = table.schema();
     StructType incomingSchema = info.schema();
 
     io.delta.kernel.transaction.UpdateTableTransactionBuilder txnBuilder =
@@ -180,9 +188,6 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
     Transaction txn = txnBuilder.build(engine);
 
     // -- Schema: split into data + partition columns --
-    // Use the incoming schema for data writing (the DataFrame's actual columns).
-    StructType dataSchema = table.getDataSchema();
-    StructType partitionSchema = table.getPartitionSchema();
 
     // -- DelayedCommitProtocol (reuse V1) --
     // V1 TransactionalWrite.getCommitter: uses random prefix if randomizeFilePrefixes is
@@ -216,16 +221,8 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
     DelayedCommitProtocol committer =
         new DelayedCommitProtocol(jobId, tablePath, randomPrefixLengthOpt, deltaDataSubdir);
 
-    // -- Hadoop Job + OutputWriterFactory (same as FileWrite.toBatch) --
-    Job job;
-    try {
-      job = Job.getInstance(hadoopConf);
-    } catch (java.io.IOException e) {
-      throw new RuntimeException("Failed to create Hadoop Job", e);
-    }
-    job.setOutputKeyClass(Void.class);
-    job.setOutputValueClass(InternalRow.class);
-    FileOutputFormat.setOutputPath(job, new Path(tablePath));
+    // -- Hadoop Job + OutputWriterFactory (reuse V1 DeltaFileFormatWriterBase) --
+    Job job = DeltaFileFormatWriter.createHadoopJob(mergedHadoopConf, tablePath);
 
     // DeltaParquetFileFormatV2 extends DeltaParquetFileFormatBase → ParquetFileFormat.
     // Adds Delta-specific Parquet config: IcebergCompat timestamp types, DeltaParquetWriteSupport
@@ -313,7 +310,7 @@ public class DeltaWrite implements Write, RequiresDistributionAndOrdering {
     // DeltaJobStatisticsTracker: per-file column-level stats (min/max/nullCount) for data skipping
     scala.Option<DeltaJobStatisticsTracker> deltaStatsTrackerOpt =
         DeltaStatsTrackerHelper.createStatsTracker(
-            spark, snapshot, hadoopConf, new Path(tablePath), dataSchema);
+            spark, snapshot, mergedHadoopConf, new Path(tablePath), dataSchema);
 
     List<org.apache.spark.sql.execution.datasources.WriteJobStatsTracker> trackerList =
         new ArrayList<>();

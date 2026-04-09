@@ -16,11 +16,7 @@
 package io.delta.spark.internal.v2.write;
 
 import java.util.*;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.mapreduce.TaskAttemptID;
-import org.apache.hadoop.mapreduce.TaskID;
-import org.apache.hadoop.mapreduce.TaskType;
-import org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl;
+import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.spark.internal.io.SparkHadoopWriterUtils;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.expressions.Attribute;
@@ -39,15 +35,17 @@ import scala.collection.immutable.Map$;
 import scala.collection.mutable.Builder;
 
 /**
- * Custom {@link DataWriterFactory} that creates {@link
- * DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl} for partitioned table writes.
+ * Custom {@link DataWriterFactory} for Delta DSv2 writes.
  *
- * <p>{@link DelayedCommitProtocol#parsePartitions} requires {@code
- * PartitionedTaskAttemptContextImpl} to extract partition column types for proper partition value
- * encoding (e.g. UTC-normalized timestamps). Spark's standard {@code FileWriterFactory} creates a
- * plain {@code TaskAttemptContextImpl} which would cause a {@code ClassCastException}.
+ * <p>Delegates {@link TaskAttemptContext} creation to {@link
+ * DeltaFileFormatWriter#createTaskAttemptContext}, which produces a {@link
+ * DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl} for partitioned tables. This is required
+ * because {@link DelayedCommitProtocol#parsePartitions} needs partition column types for proper
+ * partition value encoding (e.g. UTC-normalized timestamps).
  *
- * <p>For unpartitioned tables, this factory behaves identically to {@code FileWriterFactory}.
+ * <p>Spark's standard {@code FileWriterFactory} always creates a plain {@code
+ * TaskAttemptContextImpl}, which would cause a {@code ClassCastException} with {@link
+ * DelayedCommitProtocol}.
  */
 public class DeltaFileWriterFactory implements DataWriterFactory {
 
@@ -56,7 +54,6 @@ public class DeltaFileWriterFactory implements DataWriterFactory {
 
   private final String jobTrackerID;
 
-  @SuppressWarnings("unchecked")
   DeltaFileWriterFactory(WriteJobDescription description, DelayedCommitProtocol committer) {
     this.description = description;
     this.committer = committer;
@@ -66,11 +63,18 @@ public class DeltaFileWriterFactory implements DataWriterFactory {
   @Override
   @SuppressWarnings({"unchecked", "rawtypes"})
   public DataWriter<InternalRow> createWriter(int partitionId, long taskId) {
-    TaskAttemptContextImpl taskAttemptContext =
-        createTaskAttemptContext(partitionId, (int) (taskId & Integer.MAX_VALUE));
+    scala.collection.immutable.Map<String, DataType> partColMap = buildPartitionColumnMap();
+
+    TaskAttemptContext taskAttemptContext =
+        DeltaFileFormatWriter.createTaskAttemptContext(
+            description.serializableHadoopConf(),
+            jobTrackerID,
+            0,
+            partitionId,
+            (int) (taskId & Integer.MAX_VALUE),
+            partColMap);
     committer.setupTask(taskAttemptContext);
 
-    @SuppressWarnings({"unchecked", "rawtypes"})
     scala.collection.immutable.Map<String, SQLMetric> emptyMetrics =
         (scala.collection.immutable.Map) scala.collection.immutable.Map$.MODULE$.empty();
 
@@ -84,39 +88,17 @@ public class DeltaFileWriterFactory implements DataWriterFactory {
   }
 
   @SuppressWarnings({"unchecked", "rawtypes"})
-  private TaskAttemptContextImpl createTaskAttemptContext(int partitionId, int realTaskId) {
-    org.apache.hadoop.mapreduce.JobID jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, 0);
-    TaskID taskId = new TaskID(jobId, TaskType.MAP, partitionId);
-    TaskAttemptID taskAttemptId = new TaskAttemptID(taskId, realTaskId);
-
-    Configuration hadoopConf = description.serializableHadoopConf().value();
-    hadoopConf.set("mapreduce.job.id", jobId.toString());
-    hadoopConf.set("mapreduce.task.id", taskId.toString());
-    hadoopConf.set("mapreduce.task.attempt.id", taskAttemptId.toString());
-    hadoopConf.setBoolean("mapreduce.task.ismap", true);
-    hadoopConf.setInt("mapreduce.task.partition", 0);
-
+  private scala.collection.immutable.Map<String, DataType> buildPartitionColumnMap() {
     if (description.partitionColumns().isEmpty()) {
-      return new TaskAttemptContextImpl(hadoopConf, taskAttemptId);
+      return (scala.collection.immutable.Map) Map$.MODULE$.empty();
     }
-
-    // Build Map[String, DataType] for PartitionedTaskAttemptContextImpl
-    Map<String, DataType> partColToDataType = new LinkedHashMap<>();
+    Builder<Tuple2<String, DataType>, scala.collection.immutable.Map<String, DataType>> b =
+        (Builder) Map$.MODULE$.newBuilder();
     Iterator<Attribute> it = (Iterator<Attribute>) description.partitionColumns().iterator();
     while (it.hasNext()) {
       Attribute attr = it.next();
-      partColToDataType.put(attr.name(), attr.dataType());
+      b.$plus$eq(new Tuple2<>(attr.name(), attr.dataType()));
     }
-
-    // Build Scala Map[String, DataType] for PartitionedTaskAttemptContextImpl
-    @SuppressWarnings({"rawtypes", "unchecked"})
-    Builder<Tuple2<String, DataType>, scala.collection.immutable.Map<String, DataType>> b =
-        (Builder) Map$.MODULE$.newBuilder();
-    for (Map.Entry<String, DataType> e : partColToDataType.entrySet()) {
-      b.$plus$eq(new Tuple2<>(e.getKey(), e.getValue()));
-    }
-
-    return new DeltaFileFormatWriter.PartitionedTaskAttemptContextImpl(
-        hadoopConf, taskAttemptId, b.result());
+    return b.result();
   }
 }

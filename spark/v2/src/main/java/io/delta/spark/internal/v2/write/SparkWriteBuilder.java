@@ -90,6 +90,15 @@ public class SparkWriteBuilder
 
   @Override
   public Write build() {
-    return new DeltaWrite(table, info, writeMode, replaceWherePredicate);
+    return new DeltaWrite(
+        table.getInitialSnapshot(),
+        table.getTablePath().toString(),
+        table.getHadoopConf(),
+        table.schema(),
+        table.getDataSchema(),
+        table.getPartitionSchema(),
+        info,
+        writeMode,
+        replaceWherePredicate);
   }
 }

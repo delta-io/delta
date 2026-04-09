@@ -27,6 +27,7 @@ import org.apache.spark.sql.catalyst.expressions.{Attribute, Expression}
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.delta.{DataFrameUtils, DeltaColumnMappingMode, NoMapping, TableFeature}
+import org.apache.spark.sql.delta.files.DeltaFileFormatWriter
 import org.apache.spark.sql.delta.actions.{Metadata => V1Metadata, Protocol => V1Protocol}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.{
@@ -34,7 +35,7 @@ import org.apache.spark.sql.delta.stats.{
   StatisticsCollection,
   StatsCollectionUtils
 }
-import org.apache.spark.sql.execution.datasources.{WriteJobStatsTracker, WriteTaskResult, WriteTaskStats}
+import org.apache.spark.sql.execution.datasources.{WriteJobStatsTracker, WriteTaskResult}
 import org.apache.spark.sql.functions.to_json
 import org.apache.spark.sql.types.StructType
 
@@ -117,23 +118,14 @@ object DeltaStatsTrackerHelper {
 
   /**
    * Processes task-level stats through each tracker, populating recordedStats.
-   *
-   * Mirrors the private `DeltaFileFormatWriter.processStats()` logic: transpose the
-   * per-task stats matrix so each tracker gets its own column of stats, then call
-   * `tracker.processStats(stats, jobCommitDuration)`. We cannot call
-   * `DeltaFileFormatWriter.processStats` directly because it is private.
+   * Delegates to [[DeltaFileFormatWriter.processStats]].
    */
   def processStats(
       statsTrackers: Seq[WriteJobStatsTracker],
       taskResults: Array[WriteTaskResult]): Unit = {
     if (taskResults.isEmpty || statsTrackers.isEmpty) return
-    val statsPerTask: Seq[Seq[WriteTaskStats]] = taskResults.map(_.summary.stats).toSeq
-    val statsPerTracker = if (statsPerTask.nonEmpty) statsPerTask.transpose else {
-      statsTrackers.map(_ => Seq.empty)
-    }
-    statsTrackers.zip(statsPerTracker).foreach {
-      case (tracker, stats) => tracker.processStats(stats, 0L)
-    }
+    DeltaFileFormatWriter.processStats(
+      statsTrackers, taskResults.map(_.summary.stats).toSeq)
   }
 
   /**
