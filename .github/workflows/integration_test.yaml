@@ -56,11 +56,6 @@ jobs:
           java-version: "17"
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Cache uv packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ env.UV_EXCLUDE_NEWER }}
       - name: Cache SBT and Coursier dependencies
         uses: actions/cache@v4
         with:
@@ -93,11 +88,6 @@ jobs:
           java-version: "17"
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Cache uv packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/uv
-          key: uv-${{ runner.os }}-${{ env.UV_EXCLUDE_NEWER }}
       - name: Cache SBT and Coursier dependencies
         uses: actions/cache@v4
         with:
