@@ -604,7 +604,8 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             "InitialSnapshot_Version2_MaxBytes"));
   }
 
-  private void compareFileChanges(
+  /** Package-private so CDC tests can reuse without duplication. */
+  static void compareFileChanges(
       List<org.apache.spark.sql.delta.sources.IndexedFile> deltaSourceFiles,
       List<IndexedFile> kernelFiles) {
     assertEquals(
@@ -637,8 +638,9 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
       String kernelPath = null;
       if (kernelFile.getAddFile() != null) {
         kernelPath = kernelFile.getAddFile().getPath();
-      } else if (kernelFile.getCDCFile() != null && kernelFile.getCDCFile().getAddFile() != null) {
-        kernelPath = kernelFile.getCDCFile().getAddFile().getPath();
+      } else if (kernelFile.getCDCDataFile() != null
+          && kernelFile.getCDCDataFile().getAddFile() != null) {
+        kernelPath = kernelFile.getCDCDataFile().getAddFile().getPath();
       }
 
       if (deltaPath != null || kernelPath != null) {

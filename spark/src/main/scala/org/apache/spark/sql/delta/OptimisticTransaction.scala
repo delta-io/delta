@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
@@ -47,6 +48,7 @@ import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfig
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
 import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
@@ -2075,7 +2077,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
-          attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+          attemptVersion,
+          jsonActions,
+          updatedActions,
+          catalogTable.map(_.identifier),
+          CatalogTrackedInfo.EMPTY
+        )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
@@ -2111,6 +2118,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         // We manually triggered a checkpoint in `updateAndCheckpoint` above.
         computedNeedsCheckpoint = true,
         isolationLevel = Serializable,
+        // commitLarge always triggers state reconstruction, so it is safe to
+        // access postCommitSnapshot.fileSizeHistogram here as opposed to the other
+        // commit code path.
+        fileSizeHistogramOpt = postCommitSnapshot.fileSizeHistogram,
         commitInfoOpt = Some(commitInfo),
         commitSizeBytes = commitSizeBytes
       )
@@ -2667,6 +2678,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       postCommitSnapshot = postCommitSnapshot,
       computedNeedsCheckpoint = needsCheckpoint,
       isolationLevel = isolationLevel,
+      // We don't use postCommitSnapshot.fileSizeHistogram here
+      // because it can trigger full state reconstruction.
+      fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.histogramOpt),
       commitInfoOpt = currentTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes
     )
@@ -2783,7 +2797,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
-        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+        attemptVersion,
+        jsonActions,
+        updatedActions,
+        catalogTable.map(_.identifier),
+        CatalogTrackedInfo.EMPTY)
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
@@ -2819,6 +2837,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
+      mustIncludeFileSizeHistogram =
+        spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
       includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
     ).toOption
   }

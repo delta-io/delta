@@ -1575,6 +1575,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_FILE_SIZE_HISTOGRAM_ENABLED =
+    buildConf("fileSizeHistogramMetrics.enabled")
+      .internal()
+      .doc(s"""When enabled, each delta transaction reports file size distribution histogram
+              |of all the files in the latest snapshot after the commit and histograms of new
+              |files added and old files removed.""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val DELTA_CHECKPOINT_THROW_EXCEPTION_WHEN_FAILED =
       buildConf("checkpoint.exceptionThrowing.enabled")
         .internal()
@@ -3068,6 +3077,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
     .booleanConf
     .createWithDefault(true)
+
+  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
+    buildConf("variant.disableVariantTableFeatureForSpark40")
+    .internal()
+    .doc(
+      """
+        | If true, disables support for the 'variantType' and 'variantType-preview' table
+        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
+        | logical type annotation, which causes interoperability issues with Spark 4.1+.
+        |""".stripMargin)
+    .booleanConf
+    .createWithDefault(false)
 
   val COLLECT_VARIANT_DATA_SKIPPING_STATS =
     buildConf("variantShredding.collectVariantDataSkippingStats")

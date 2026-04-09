@@ -431,8 +431,21 @@ class DeltaTableV2 private(
     deltaTableV2
   }
 
-  override def toString: String =
-    s"DeltaTableV2($spark,$path,$catalogTable,$tableIdentifier,$timeTravelOpt,$options)"
+  // Filter fs.* keys from CatalogTable storage properties and from options before stringifying,
+  // to prevent catalog-injected or user-supplied credentials from leaking into exception messages,
+  // EXPLAIN output, and logs.
+  override def toString: String = {
+    val safeCatalogTable = catalogTable.map { ct =>
+      ct.copy(storage = ct.storage.copy(properties =
+        ct.storage.properties.filterNot { case (k, _) =>
+          DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(k.startsWith)
+        }))
+    }
+    val safeOptions = options.filterNot { case (k, _) =>
+      DeltaTableV2.HIDDEN_STORAGE_PROPERTY_PREFIXES.exists(k.startsWith)
+    }
+    s"DeltaTableV2($spark,$path,$safeCatalogTable,$tableIdentifier,$timeTravelOpt,$safeOptions)"
+  }
 }
 
 object DeltaTableV2 {
