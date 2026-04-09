@@ -1350,7 +1350,7 @@ lazy val hudi = (project in file("hudi"))
             ExclusionRule(organization = "org.apache.zookeeper"),
           ),
           "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-          "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
+          "org.apache.parquet" % "parquet-avro" % "1.16.0" % "compile"
         )
       } else {
         Seq.empty
