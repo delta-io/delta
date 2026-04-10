@@ -1253,8 +1253,7 @@ case class Metadata(
 
   /** Returns the partitionSchema as a [[StructType]] */
   @JsonIgnore
-  lazy val partitionSchema: StructType =
-    new StructType(partitionColumns.map(c => schema(c)).toArray)
+  override lazy val partitionSchema: StructType = super.partitionSchema
 
   /** Partition value keys in the AddFile map. */
   @JsonIgnore
