@@ -2671,6 +2671,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  // TODO:
+  // 1. Either block nested subqueries or add more testing coverage.
+  //    Currently we cannot block them because the [[postHocResolutionRule]]
+  //    runs after Spark's analyzer has already decorrelated inner
+  //    [[SubqueryExpression]] nodes, so they are no longer visible in the
+  //    condition by the time [[PreprocessTableDelete]] fires.
+  // 2. Support non-deterministic sources in DELETE with subqueries. At the
+  //    moment, each of the 2 DELETE jobs does a JOIN between the source and
+  //    target due to subquery decorrelation. The source can return different
+  //    data for each of the JOINs.
+  val ALLOW_EXISTS_SUBQUERY_IN_DELETE =
+    buildConf("delete.allowExistsSubquery")
+      .internal()
+      .doc("Allow EXISTS/NOT EXISTS subqueries in DELETE conditions. " +
+        "Other subquery types (IN, lateral, scalar, ...) are not supported.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()
@@ -3075,30 +3093,6 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       """
         | If true, attach the 'variantShredding-preview' table feature when enabling shredding
         | on a table. When false, the 'variantShredding' feature is used instead.""".stripMargin)
-    .booleanConf
-    .createWithDefault(true)
-
-  val DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40 =
-    buildConf("variant.disableVariantTableFeatureForSpark40")
-    .internal()
-    .doc(
-      """
-        | If true, disables support for the 'variantType' and 'variantType-preview' table
-        | features on Spark 4.0 clients. Spark 4.0 does not support the parquet variant
-        | logical type annotation, which causes interoperability issues with Spark 4.1+.
-        |""".stripMargin)
-    .booleanConf
-    .createWithDefault(false)
-
-  val COLLECT_VARIANT_DATA_SKIPPING_STATS =
-    buildConf("variantShredding.collectVariantDataSkippingStats")
-    .internal()
-    .doc(
-      """
-        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
-        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
-        | Variant stats."""
-        .stripMargin)
     .booleanConf
     .createWithDefault(true)
 
