@@ -2671,6 +2671,24 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  // TODO:
+  // 1. Either block nested subqueries or add more testing coverage.
+  //    Currently we cannot block them because the [[postHocResolutionRule]]
+  //    runs after Spark's analyzer has already decorrelated inner
+  //    [[SubqueryExpression]] nodes, so they are no longer visible in the
+  //    condition by the time [[PreprocessTableDelete]] fires.
+  // 2. Support non-deterministic sources in DELETE with subqueries. At the
+  //    moment, each of the 2 DELETE jobs does a JOIN between the source and
+  //    target due to subquery decorrelation. The source can return different
+  //    data for each of the JOINs.
+  val ALLOW_EXISTS_SUBQUERY_IN_DELETE =
+    buildConf("delete.allowExistsSubquery")
+      .internal()
+      .doc("Allow EXISTS/NOT EXISTS subqueries in DELETE conditions. " +
+        "Other subquery types (IN, lateral, scalar, ...) are not supported.")
+      .booleanConf
+      .createWithDefault(false)
+
   val DELETE_USE_PERSISTENT_DELETION_VECTORS =
     buildConf("delete.deletionVectors.persistent")
       .internal()
