@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.uniform
 import shadedForDelta.org.apache.iceberg.hadoop.HadoopTables
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.Row
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.delta.{CurrentTransactionInfo, DeltaLog, DeltaOperations, DeltaTableReadPredicate, Snapshot}
+import org.apache.spark.sql.delta.NonSparkReadIceberg
 import org.apache.spark.sql.delta.actions.{Action, AddFile, CommitInfo, DomainMetadata, Metadata}
 import org.apache.spark.sql.delta.icebergShaded.{IcebergConverter, UNIFORM_CC_MODE, UNIFORM_POST_COMMIT_MODE}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
@@ -51,7 +53,8 @@ class IcebergConverterForTest extends IcebergConverter {
   }
 }
 
-class UniFormConverterSuite extends QueryTest with SharedSparkSession with DeltaSQLCommandTest {
+class UniFormConverterSuite extends
+  QueryTest with SharedSparkSession with DeltaSQLCommandTest with NonSparkReadIceberg {
   def constructDummyAddFile(path: String = "s3://path1/1.parquet"): AddFile = {
     AddFile(
       path = path,
@@ -87,7 +90,7 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
     )
   }
 
-  test("convertSnapshot writes Iceberg metadata and file count matches Delta snapshot") {
+  test("Verify convertSnapshot writes Iceberg metadata") {
     val tableName = "test_iceberg_converter"
     withTable(tableName) {
       spark.sql(
@@ -115,10 +118,13 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
         numFilesInIceberg == snapshot.numOfFiles,
         s"Iceberg total-data-files ($numFilesInIceberg) must equal " +
           s"Delta numOfFiles (${snapshot.numOfFiles})")
+      verifyReadByPath(metadataPath,
+        snapshot.schema, fields = "id", orderBy = "id", Seq(Row(1), Row(2), Row(3))
+      )
     }
   }
 
-  test("convertSnapshot file count matches Delta snapshot after multiple inserts") {
+  test("Verify convertSnapshot after multiple inserts") {
     val tableName = "test_iceberg_converter_multi"
     withTable(tableName) {
       spark.sql(
@@ -148,8 +154,65 @@ class UniFormConverterSuite extends QueryTest with SharedSparkSession with Delta
         numFilesInIceberg == snapshot.numOfFiles,
         s"Iceberg total-data-files ($numFilesInIceberg) must equal " +
           s"Delta numOfFiles (${snapshot.numOfFiles})")
+      verifyReadByPath(metadataPath,
+        snapshot.schema, fields = "id", orderBy = "id", Seq(Row(1), Row(2), Row(3))
+      )
     }
   }
+
+  test("Field ID consistency for CREATE_TABLE with nested schema and partition") {
+    val tableName = "test_field_id_nested_v2"
+    withTable(tableName) {
+      // Iceberg CREATE_TABLE reassigns the field id in schema, which
+      // is not consistent with Delta in edge cases (For nested schemas)
+      // This test checks that UniForm conversion handles this case well so that
+      // converted Iceberg is utilizing the Delta assigned field for schema
+      spark.sql(
+        s"""CREATE TABLE $tableName
+           |(col1 INT,
+           | col2 STRUCT<f1: STRUCT<f2: INT, f3: STRUCT<f4: INT, f5: INT>, f6: INT>, f7: INT>,
+           | col3 INT)
+           |USING DELTA
+           |PARTITIONED BY (col3)
+           |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')
+           |""".stripMargin)
+
+      import org.apache.spark.sql.types._
+      val schema = StructType(Seq(
+        StructField("col1", IntegerType),
+        StructField("col2", StructType(Seq(
+          StructField("f1", StructType(Seq(
+            StructField("f2", IntegerType),
+            StructField("f3", StructType(Seq(
+              StructField("f4", IntegerType),
+              StructField("f5", IntegerType)))),
+            StructField("f6", IntegerType)))),
+          StructField("f7", IntegerType)))),
+        StructField("col3", IntegerType)))
+
+      val data = Seq(Row(1, Row(Row(2, Row(3, 4), 5), 6), 7))
+      spark.createDataFrame(spark.sparkContext.parallelize(data), schema)
+        .write.format("delta").mode("append").saveAsTable(tableName)
+      spark.sql(
+        s"""ALTER TABLE $tableName SET TBLPROPERTIES (
+           |  'delta.enableIcebergCompatV2' = 'true',
+           |  'delta.universalFormat.enabledFormats' = 'iceberg'
+           |)""".stripMargin)
+
+      val tableId = TableIdentifier(tableName)
+      val deltaLog = DeltaLog.forTable(spark, tableId)
+      val snapshot = deltaLog.update()
+      val catalogTable = spark.sessionState.catalog.getTableMetadata(tableId)
+      // Trigger an Iceberg full conversion
+      val converter = new IcebergConverterForTest()
+      val metadataPath = converter.convertSnapshotAndReturnMetadataPath(snapshot, catalogTable)
+
+      // Without the special fix, Iceberg reassigns field IDs during CREATE_TABLE
+      // so the read would fail
+      verifyReadByPath(metadataPath, schema, fields = "col1, col2, col3", orderBy = "col1", data)
+    }
+  }
+
 
   test("IcebergConverter convertUncommitedTxn - initial conversion") {
     val tableName = "test_table_1"

@@ -1,6 +1,20 @@
 name: "Delta Flink"
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'flink/**'
+      - 'kernel/**'
+      - '!**/*.md'
+      - '!**/*.txt'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'flink/**'
+      - 'kernel/**'
+      - '!**/*.md'
+      - '!**/*.txt'
 
 # Cancel previous runs when new commits are pushed
 concurrency:

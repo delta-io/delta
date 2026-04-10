@@ -193,12 +193,15 @@ public class UCCatalogManagedClient {
    * transaction is built and committed, creating 000.json, you must call {@code
    * TablesApi::createTable} to inform Unity Catalog of the successful table creation.
    *
+   * @deprecated Use {@link #buildCreateTableTransaction(String, String, StructType, String,
+   *     UCTableIdentifier)} which automatically finalizes the table.
    * @param ucTableId The Unity Catalog table ID.
    * @param tablePath The staging path to the Delta table.
    * @param schema The table schema.
    * @param engineInfo Information about the creating engine.
    * @return A {@link CreateTableTransactionBuilder} configured for UC managed tables.
    */
+  @Deprecated
   public CreateTableTransactionBuilder buildCreateTableTransaction(
       String ucTableId, String tablePath, StructType schema, String engineInfo) {
     Objects.requireNonNull(ucTableId, "ucTableId is null");
@@ -208,6 +211,30 @@ public class UCCatalogManagedClient {
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
         .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+        .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
+  }
+
+  /**
+   * Builds a create table transaction with automatic UC finalization. When committed, the committer
+   * writes 000.json and then calls UC to finalize (promote) the staging table.
+   *
+   * @param ucTableIdentifier Logical UC table identifier for create-time registration.
+   */
+  public CreateTableTransactionBuilder buildCreateTableTransaction(
+      String ucTableId,
+      String tablePath,
+      StructType schema,
+      String engineInfo,
+      UCTableIdentifier ucTableIdentifier) {
+    Objects.requireNonNull(ucTableId, "ucTableId is null");
+    Objects.requireNonNull(tablePath, "tablePath is null");
+    Objects.requireNonNull(schema, "schema is null");
+    Objects.requireNonNull(engineInfo, "engineInfo is null");
+    Objects.requireNonNull(ucTableIdentifier, "ucTableIdentifier is null");
+
+    return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
+        .withCommitter(
+            new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 

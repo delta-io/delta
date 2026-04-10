@@ -588,7 +588,7 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertEquals(
         "The following streaming options are not supported: [readchangefeed]. "
             + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex].",
+            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex].",
         exception.getMessage());
   }
 
@@ -1584,6 +1584,61 @@ public class SparkScanTest extends DeltaV2TestBase {
           assertFalse(stats.numRows().isPresent(), "numRows should be empty without catalog stats");
           assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
           assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+        });
+  }
+
+  @Test
+  public void testEstimateStatisticsWithCatalogStats_noNumRows(@TempDir File tempDir)
+      throws Exception {
+    // Catalog stats with sizeInBytes but no numRows should be treated the same as no catalog
+    // stats: fall through to post-pruned/filtered file sizes instead of using the stale
+    // catalog sizeInBytes.
+    String path = tempDir.getAbsolutePath();
+    String tblName = "stats_no_numrows";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
+
+    // Catalog stats with sizeInBytes only, no numRows
+    CatalogStatistics catalogStats =
+        new CatalogStatistics(
+            scala.math.BigInt.apply(99999L),
+            scala.Option.empty(), // no numRows
+            scala.collection.immutable.Map$.MODULE$.empty());
+
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
+
+    withSQLConf(
+        "spark.sql.cbo.enabled",
+        "true",
+        () -> {
+          Identifier id = Identifier.of(new String[] {"default"}, tblName);
+          SparkTable sparkTable = new SparkTable(id, catalogTable, Collections.emptyMap());
+
+          SparkScanBuilder builder =
+              (SparkScanBuilder)
+                  sparkTable.newScanBuilder(new CaseInsensitiveStringMap(new HashMap<>()));
+          SparkScan scan = (SparkScan) builder.build();
+          Statistics stats = scan.estimateStatistics();
+
+          // Should behave like no catalog stats: numRows empty, sizeInBytes from planned files
+          assertFalse(
+              stats.numRows().isPresent(),
+              "numRows should be empty when catalog stats have no numRows");
+          assertTrue(stats.sizeInBytes().isPresent(), "sizeInBytes should be present");
+          assertTrue(stats.sizeInBytes().getAsLong() > 0, "sizeInBytes should be positive");
+
+          // sizeInBytes should NOT be the catalog sizeInBytes (99999)
+          assertNotEquals(
+              99999L,
+              stats.sizeInBytes().getAsLong(),
+              "sizeInBytes should come from planned files, not catalog stats");
+
+          // columnStats should be empty (not inheriting from catalog stats)
+          assertTrue(
+              stats.columnStats().isEmpty(),
+              "columnStats should be empty when catalog stats have no numRows");
         });
   }
 

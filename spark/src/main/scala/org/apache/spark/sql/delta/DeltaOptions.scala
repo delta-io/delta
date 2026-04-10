@@ -57,6 +57,8 @@ trait DeltaWriteOptions
   def isReplaceOnOrUsingDefined: Boolean =
     replaceOn.isDefined || replaceUsing.isDefined
 
+  val targetAlias: Option[String] = options.get(TARGET_ALIAS_OPTION)
+
   val replaceWhere: Option[String] = options.get(REPLACE_WHERE_OPTION)
   val userMetadata: Option[String] = options.get(USER_METADATA_OPTION)
 
@@ -276,6 +278,13 @@ object DeltaOptions extends DeltaLogging {
    */
   val REPLACE_USING_OPTION = "replaceUsing"
 
+  /**
+   * An option to alias the target table in replaceOn/replaceWhere conditions.
+   * Allows users to reference target table columns using the alias in conditions,
+   * e.g., .option("targetAlias", "t").option("replaceOn", "t.id = s.id").
+   */
+  val TARGET_ALIAS_OPTION = "targetAlias"
+
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
   /** An option to allow automatic schema merging during a write operation. */
@@ -354,6 +363,7 @@ object DeltaOptions extends DeltaLogging {
     IS_DATAFRAME_WRITER_V1_SAVE_AS_TABLE_OVERWRITE,
     REPLACE_ON_OPTION,
     REPLACE_USING_OPTION,
+    TARGET_ALIAS_OPTION,
     REPLACE_WHERE_OPTION,
     MERGE_SCHEMA_OPTION,
     EXCLUDE_REGEX_OPTION,
