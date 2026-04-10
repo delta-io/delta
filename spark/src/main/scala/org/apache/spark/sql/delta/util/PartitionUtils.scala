@@ -839,7 +839,12 @@ private[delta] object PartitionUtils {
    * @param rawValue The raw string value of the partition.
    * @param dataType Optional data type from the schema. If None, type inference is used.
    * @param typeInference Whether to infer the type when dataType is None.
-   * @param timeZone Time zone for timestamp parsing.
+   * @param timeZone Time zone used as a fallback for timestamp parsing. The timestampFormatter is
+   *                 always tried first. Only when it fails (e.g., "2026-01-01T12:00:00" with a 'T'
+   *                 separator) and the timestamp does not have a timezone identifier, the Cast
+   *                 fallback uses this timezone to interpret the timestamp. For data written by
+   *                 Spark this will not happen as the timestamp format always matches the
+   *                 timestampFormatter format.
    * @param dateFormatter Formatter for date parsing.
    * @param timestampFormatter Formatter for timestamp parsing.
    * @param validatePartitionColumns Throw an error when casting fails.
