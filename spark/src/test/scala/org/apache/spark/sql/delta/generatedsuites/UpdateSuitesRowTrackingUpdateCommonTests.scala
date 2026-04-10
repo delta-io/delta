@@ -34,44 +34,44 @@ import org.apache.spark.sql.delta.rowid._
 import org.apache.spark.sql.delta.rowtracking._
 
 class RowTrackingUpdateCommonCDCOnColMapIdModeSuite
-  extends RowTrackingUpdateCommonTests
-  with CDCEnabled
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingUpdateCommonTests
+    with CDCEnabled
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingUpdateCommonCDCOnColMapNameModeSuite
-  extends RowTrackingUpdateCommonTests
-  with CDCEnabled
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingUpdateCommonTests
+    with CDCEnabled
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingUpdateCommonCDCOnSuite extends RowTrackingUpdateCommonTests with CDCEnabled
 
 class RowTrackingUpdateCommonColMapIdModeSuite
-  extends RowTrackingUpdateCommonTests
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingUpdateCommonTests
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingUpdateCommonColMapNameModeSuite
-  extends RowTrackingUpdateCommonTests
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingUpdateCommonTests
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingUpdateCommonRowTrackingUpdateDVCDCOnColMapIdModeSuite
-  extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVMixin
-  with CDCEnabled
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingUpdateCommonTests
+    with RowTrackingUpdateDVMixin
+    with CDCEnabled
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingUpdateCommonRowTrackingUpdateDVCDCOnColMapNameModeSuite
-  extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVMixin
-  with CDCEnabled
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingUpdateCommonTests
+    with RowTrackingUpdateDVMixin
+    with CDCEnabled
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingUpdateCommonRowTrackingUpdateDVCDCOnSuite
-  extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVMixin
-  with CDCEnabled
+    extends RowTrackingUpdateCommonTests
+    with RowTrackingUpdateDVMixin
+    with CDCEnabled
 
 class RowTrackingUpdateCommonRowTrackingUpdateDVSuite
-  extends RowTrackingUpdateCommonTests
-  with RowTrackingUpdateDVMixin
+    extends RowTrackingUpdateCommonTests
+    with RowTrackingUpdateDVMixin
 
 class RowTrackingUpdateCommonSuite extends RowTrackingUpdateCommonTests

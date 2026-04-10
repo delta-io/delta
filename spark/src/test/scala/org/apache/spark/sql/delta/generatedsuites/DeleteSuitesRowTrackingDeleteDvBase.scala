@@ -33,20 +33,20 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class RowTrackingDeleteDvBaseCDCOnDVOnColMapIdModeSuite
-  extends RowTrackingDeleteDvBase
-  with CDCEnabled
-  with PersistentDVEnabled
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingDeleteDvBase
+    with CDCEnabled
+    with PersistentDVEnabled
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingDeleteDvBaseCDCOnDVOnColMapNameModeSuite
-  extends RowTrackingDeleteDvBase
-  with CDCEnabled
-  with PersistentDVEnabled
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingDeleteDvBase
+    with CDCEnabled
+    with PersistentDVEnabled
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingDeleteDvBaseCDCOnDVOnSuite
-  extends RowTrackingDeleteDvBase
-  with CDCEnabled
-  with PersistentDVEnabled
+    extends RowTrackingDeleteDvBase
+    with CDCEnabled
+    with PersistentDVEnabled
 
 class RowTrackingDeleteDvBaseDVOnSuite extends RowTrackingDeleteDvBase with PersistentDVEnabled

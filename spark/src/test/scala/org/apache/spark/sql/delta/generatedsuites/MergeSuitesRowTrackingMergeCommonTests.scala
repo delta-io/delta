@@ -33,58 +33,58 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class RowTrackingMergeCommonNameBasedCDCOnDVOffMergePersistentDVOffSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with CDCEnabled
-  with PersistentDVDisabled
-  with MergePersistentDVDisabled
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with CDCEnabled
+    with PersistentDVDisabled
+    with MergePersistentDVDisabled
 
 class RowTrackingMergeCommonNameBasedCDCOnRowTrackingMergeDVSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with CDCEnabled
-  with RowTrackingMergeDVMixin
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with CDCEnabled
+    with RowTrackingMergeDVMixin
 
 class RowTrackingMergeCommonNameBasedCDCOnSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with CDCEnabled
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with CDCEnabled
 
 class RowTrackingMergeCommonNameBasedColMapIdModeCDCOnRowTrackingMergeDVSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with DeltaColumnMappingEnableIdMode
-  with CDCEnabled
-  with RowTrackingMergeDVMixin
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with DeltaColumnMappingEnableIdMode
+    with CDCEnabled
+    with RowTrackingMergeDVMixin
 
 class RowTrackingMergeCommonNameBasedColMapIdModeSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingMergeCommonNameBasedColMapNameModeCDCOnRowTrackingMergeDVSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with DeltaColumnMappingEnableNameMode
-  with CDCEnabled
-  with RowTrackingMergeDVMixin
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with DeltaColumnMappingEnableNameMode
+    with CDCEnabled
+    with RowTrackingMergeDVMixin
 
 class RowTrackingMergeCommonNameBasedColMapNameModeSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingMergeCommonNameBasedDVOffMergePersistentDVOffSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with PersistentDVDisabled
-  with MergePersistentDVDisabled
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with PersistentDVDisabled
+    with MergePersistentDVDisabled
 
 class RowTrackingMergeCommonNameBasedRowTrackingMergeDVSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
-  with RowTrackingMergeDVMixin
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased
+    with RowTrackingMergeDVMixin
 
 class RowTrackingMergeCommonNameBasedSuite
-  extends RowTrackingMergeCommonTests
-  with DeltaDMLTestUtilsNameBased
+    extends RowTrackingMergeCommonTests
+    with DeltaDMLTestUtilsNameBased

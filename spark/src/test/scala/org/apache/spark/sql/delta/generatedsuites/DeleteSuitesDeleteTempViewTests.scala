@@ -33,45 +33,45 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class DeleteTempViewSQLNameBasedSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class DeleteTempViewSQLPathBasedCDCOnSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with DeleteCDCMixin
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with DeleteCDCMixin
 
 class DeleteTempViewSQLPathBasedColMapIdModeSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
 
 class DeleteTempViewSQLPathBasedColMapNameModeSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with DeleteSQLNameColumnMappingMixin
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with DeleteSQLNameColumnMappingMixin
 
 class DeleteTempViewSQLPathBasedDVPredPushOffSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeleteSQLWithDeletionVectorsMixin
-  with PredicatePushdownDisabled
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeleteSQLWithDeletionVectorsMixin
+    with PredicatePushdownDisabled
 
 class DeleteTempViewSQLPathBasedDVPredPushOnSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeleteSQLWithDeletionVectorsMixin
-  with PredicatePushdownEnabled
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeleteSQLWithDeletionVectorsMixin
+    with PredicatePushdownEnabled
 
 class DeleteTempViewSQLPathBasedSuite
-  extends DeleteTempViewTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends DeleteTempViewTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased

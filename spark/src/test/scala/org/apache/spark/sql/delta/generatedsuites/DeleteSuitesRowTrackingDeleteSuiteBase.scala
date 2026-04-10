@@ -33,41 +33,41 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class RowTrackingDeleteSuiteBaseCDCOnDVOffSuite
-  extends RowTrackingDeleteSuiteBase
-  with CDCEnabled
-  with PersistentDVDisabled
+    extends RowTrackingDeleteSuiteBase
+    with CDCEnabled
+    with PersistentDVDisabled
 
 class RowTrackingDeleteSuiteBaseCDCOnDVOnColMapIdModeSuite
-  extends RowTrackingDeleteSuiteBase
-  with CDCEnabled
-  with PersistentDVEnabled
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingDeleteSuiteBase
+    with CDCEnabled
+    with PersistentDVEnabled
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingDeleteSuiteBaseCDCOnDVOnColMapNameModeSuite
-  extends RowTrackingDeleteSuiteBase
-  with CDCEnabled
-  with PersistentDVEnabled
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingDeleteSuiteBase
+    with CDCEnabled
+    with PersistentDVEnabled
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingDeleteSuiteBaseCDCOnDVOnSuite
-  extends RowTrackingDeleteSuiteBase
-  with CDCEnabled
-  with PersistentDVEnabled
+    extends RowTrackingDeleteSuiteBase
+    with CDCEnabled
+    with PersistentDVEnabled
 
 class RowTrackingDeleteSuiteBaseDVOffColMapIdModeSuite
-  extends RowTrackingDeleteSuiteBase
-  with PersistentDVDisabled
-  with DeltaColumnMappingEnableIdMode
+    extends RowTrackingDeleteSuiteBase
+    with PersistentDVDisabled
+    with DeltaColumnMappingEnableIdMode
 
 class RowTrackingDeleteSuiteBaseDVOffColMapNameModeSuite
-  extends RowTrackingDeleteSuiteBase
-  with PersistentDVDisabled
-  with DeltaColumnMappingEnableNameMode
+    extends RowTrackingDeleteSuiteBase
+    with PersistentDVDisabled
+    with DeltaColumnMappingEnableNameMode
 
 class RowTrackingDeleteSuiteBaseDVOffSuite
-  extends RowTrackingDeleteSuiteBase
-  with PersistentDVDisabled
+    extends RowTrackingDeleteSuiteBase
+    with PersistentDVDisabled
 
 class RowTrackingDeleteSuiteBaseDVOnSuite
-  extends RowTrackingDeleteSuiteBase
-  with PersistentDVEnabled
+    extends RowTrackingDeleteSuiteBase
+    with PersistentDVEnabled

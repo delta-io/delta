@@ -33,35 +33,35 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoDVsSQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoDVsTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoDVsTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoDVsSQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoDVsTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoDVsTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoDVsSQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoDVsTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
+    extends MergeIntoDVsTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
 
 class MergeIntoDVsSQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoDVsTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
+    extends MergeIntoDVsTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled

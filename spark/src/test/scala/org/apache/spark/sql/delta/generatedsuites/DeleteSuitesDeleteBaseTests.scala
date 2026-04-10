@@ -33,47 +33,47 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class DeleteBaseSQLNameBasedSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class DeleteBaseSQLPathBasedCDCOnSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with DeleteCDCMixin
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with DeleteCDCMixin
 
 class DeleteBaseSQLPathBasedColMapIdModeSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
 
 class DeleteBaseSQLPathBasedColMapNameModeSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with DeleteSQLNameColumnMappingMixin
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with DeleteSQLNameColumnMappingMixin
 
 class DeleteBaseSQLPathBasedDVPredPushOffSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeleteSQLWithDeletionVectorsMixin
-  with PredicatePushdownDisabled
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeleteSQLWithDeletionVectorsMixin
+    with PredicatePushdownDisabled
 
 class DeleteBaseSQLPathBasedDVPredPushOnSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeleteSQLWithDeletionVectorsMixin
-  with PredicatePushdownEnabled
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeleteSQLWithDeletionVectorsMixin
+    with PredicatePushdownEnabled
 
 class DeleteBaseSQLPathBasedSuite
-  extends DeleteBaseTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends DeleteBaseTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class DeleteBaseScalaSuite extends DeleteBaseTests with DeleteScalaMixin

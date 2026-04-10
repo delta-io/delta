@@ -33,66 +33,66 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoSQLSQLNameBasedSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class MergeIntoSQLSQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoSQLSQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoSQLSQLPathBasedCDCOnSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeCDCMixin
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeCDCMixin
 
 class MergeIntoSQLSQLPathBasedColMapIdModeSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoSQLSQLPathBasedColMapNameModeSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoSQLSQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
 
 class MergeIntoSQLSQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
 
 class MergeIntoSQLSQLPathBasedSuite
-  extends MergeIntoSQLTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends MergeIntoSQLTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased

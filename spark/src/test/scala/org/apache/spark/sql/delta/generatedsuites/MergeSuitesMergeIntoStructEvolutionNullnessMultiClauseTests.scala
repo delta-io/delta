@@ -33,6 +33,6 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoStructEvolutionNullnessMultiClauseSQLNameBasedSuite
-  extends MergeIntoStructEvolutionNullnessMultiClauseTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoStructEvolutionNullnessMultiClauseTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased

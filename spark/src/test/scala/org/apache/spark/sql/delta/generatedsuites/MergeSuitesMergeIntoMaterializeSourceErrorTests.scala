@@ -33,5 +33,5 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoMaterializeSourceErrorMergePersistentDVOffSuite
-  extends MergeIntoMaterializeSourceErrorTests
-  with MergePersistentDVDisabled
+    extends MergeIntoMaterializeSourceErrorTests
+    with MergePersistentDVDisabled

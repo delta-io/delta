@@ -33,6 +33,6 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoNestedArrayStructEvolutionNullnessSQLNameBasedSuite
-  extends MergeIntoNestedArrayStructEvolutionNullnessTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoNestedArrayStructEvolutionNullnessTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased

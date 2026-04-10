@@ -33,8 +33,8 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class DeleteCDCSQLPathBasedCDCOnSuite
-  extends DeleteCDCTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with DeleteCDCMixin
+    extends DeleteCDCTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with DeleteCDCMixin

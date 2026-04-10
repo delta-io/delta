@@ -33,47 +33,47 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class DeleteSubqueryExistsSQLNameBasedSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class DeleteSubqueryExistsSQLPathBasedCDCOnSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with DeleteCDCMixin
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with DeleteCDCMixin
 
 class DeleteSubqueryExistsSQLPathBasedColMapIdModeSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
 
 class DeleteSubqueryExistsSQLPathBasedColMapNameModeSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with DeleteSQLNameColumnMappingMixin
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with DeleteSQLNameColumnMappingMixin
 
 class DeleteSubqueryExistsSQLPathBasedDVPredPushOffSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeleteSQLWithDeletionVectorsMixin
-  with PredicatePushdownDisabled
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeleteSQLWithDeletionVectorsMixin
+    with PredicatePushdownDisabled
 
 class DeleteSubqueryExistsSQLPathBasedDVPredPushOnSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeleteSQLWithDeletionVectorsMixin
-  with PredicatePushdownEnabled
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeleteSQLWithDeletionVectorsMixin
+    with PredicatePushdownEnabled
 
 class DeleteSubqueryExistsSQLPathBasedSuite
-  extends DeleteSubqueryExistsTests
-  with DeleteSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends DeleteSubqueryExistsTests
+    with DeleteSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class DeleteSubqueryExistsScalaSuite extends DeleteSubqueryExistsTests with DeleteScalaMixin

@@ -33,70 +33,70 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoUnlimitedMergeClausesSQLNameBasedSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedCDCOnSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeCDCMixin
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeCDCMixin
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedColMapIdModeSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedColMapNameModeSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
 
 class MergeIntoUnlimitedMergeClausesSQLPathBasedSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class MergeIntoUnlimitedMergeClausesScalaSuite
-  extends MergeIntoUnlimitedMergeClausesTests
-  with MergeIntoScalaMixin
+    extends MergeIntoUnlimitedMergeClausesTests
+    with MergeIntoScalaMixin

@@ -34,66 +34,66 @@ import org.apache.spark.sql.delta.rowid._
 import org.apache.spark.sql.delta.rowtracking._
 
 class UpdateBaseTempViewSQLNameBasedSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class UpdateBaseTempViewSQLPathBasedCDCOnDVSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with UpdateSQLWithDeletionVectorsMixin
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with UpdateSQLWithDeletionVectorsMixin
 
 class UpdateBaseTempViewSQLPathBasedCDCOnRowTrackingOffSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with RowTrackingDisabled
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with RowTrackingDisabled
 
 class UpdateBaseTempViewSQLPathBasedCDCOnRowTrackingOnSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with RowTrackingEnabled
-  with UpdateWithRowTrackingOverrides
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with RowTrackingEnabled
+    with UpdateWithRowTrackingOverrides
 
 class UpdateBaseTempViewSQLPathBasedCDCOnSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
 
 class UpdateBaseTempViewSQLPathBasedDVPredPushOffSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with UpdateSQLWithDeletionVectorsMixin
-  with PredicatePushdownDisabled
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with UpdateSQLWithDeletionVectorsMixin
+    with PredicatePushdownDisabled
 
 class UpdateBaseTempViewSQLPathBasedDVPredPushOnSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with UpdateSQLWithDeletionVectorsMixin
-  with PredicatePushdownEnabled
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with UpdateSQLWithDeletionVectorsMixin
+    with PredicatePushdownEnabled
 
 class UpdateBaseTempViewSQLPathBasedRowTrackingOffSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with RowTrackingDisabled
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with RowTrackingDisabled
 
 class UpdateBaseTempViewSQLPathBasedRowTrackingOnSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with RowTrackingEnabled
-  with UpdateWithRowTrackingOverrides
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with RowTrackingEnabled
+    with UpdateWithRowTrackingOverrides
 
 class UpdateBaseTempViewSQLPathBasedSuite
-  extends UpdateBaseTempViewTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends UpdateBaseTempViewTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased

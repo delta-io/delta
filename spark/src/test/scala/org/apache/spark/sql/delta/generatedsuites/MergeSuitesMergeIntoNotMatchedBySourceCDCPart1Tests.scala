@@ -33,70 +33,70 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLNameBasedSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedCDCOnSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeCDCMixin
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeCDCMixin
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedColMapIdModeSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedColMapNameModeSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
 
 class MergeIntoNotMatchedBySourceCDCPart1SQLPathBasedSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class MergeIntoNotMatchedBySourceCDCPart1ScalaSuite
-  extends MergeIntoNotMatchedBySourceCDCPart1Tests
-  with MergeIntoScalaMixin
+    extends MergeIntoNotMatchedBySourceCDCPart1Tests
+    with MergeIntoScalaMixin

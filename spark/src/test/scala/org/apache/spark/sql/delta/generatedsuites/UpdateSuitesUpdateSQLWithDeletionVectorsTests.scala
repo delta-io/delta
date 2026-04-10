@@ -34,22 +34,22 @@ import org.apache.spark.sql.delta.rowid._
 import org.apache.spark.sql.delta.rowtracking._
 
 class UpdateSQLWithDeletionVectorsSQLPathBasedCDCOnDVSuite
-  extends UpdateSQLWithDeletionVectorsTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with UpdateSQLWithDeletionVectorsMixin
+    extends UpdateSQLWithDeletionVectorsTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with UpdateSQLWithDeletionVectorsMixin
 
 class UpdateSQLWithDeletionVectorsSQLPathBasedDVPredPushOffSuite
-  extends UpdateSQLWithDeletionVectorsTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with UpdateSQLWithDeletionVectorsMixin
-  with PredicatePushdownDisabled
+    extends UpdateSQLWithDeletionVectorsTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with UpdateSQLWithDeletionVectorsMixin
+    with PredicatePushdownDisabled
 
 class UpdateSQLWithDeletionVectorsSQLPathBasedDVPredPushOnSuite
-  extends UpdateSQLWithDeletionVectorsTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with UpdateSQLWithDeletionVectorsMixin
-  with PredicatePushdownEnabled
+    extends UpdateSQLWithDeletionVectorsTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with UpdateSQLWithDeletionVectorsMixin
+    with PredicatePushdownEnabled

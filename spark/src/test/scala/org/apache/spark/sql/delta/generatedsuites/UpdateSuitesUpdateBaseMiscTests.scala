@@ -34,68 +34,68 @@ import org.apache.spark.sql.delta.rowid._
 import org.apache.spark.sql.delta.rowtracking._
 
 class UpdateBaseMiscSQLNameBasedSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class UpdateBaseMiscSQLPathBasedCDCOnDVSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with UpdateSQLWithDeletionVectorsMixin
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with UpdateSQLWithDeletionVectorsMixin
 
 class UpdateBaseMiscSQLPathBasedCDCOnRowTrackingOffSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with RowTrackingDisabled
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with RowTrackingDisabled
 
 class UpdateBaseMiscSQLPathBasedCDCOnRowTrackingOnSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with RowTrackingEnabled
-  with UpdateWithRowTrackingOverrides
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with RowTrackingEnabled
+    with UpdateWithRowTrackingOverrides
 
 class UpdateBaseMiscSQLPathBasedCDCOnSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
 
 class UpdateBaseMiscSQLPathBasedDVPredPushOffSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with UpdateSQLWithDeletionVectorsMixin
-  with PredicatePushdownDisabled
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with UpdateSQLWithDeletionVectorsMixin
+    with PredicatePushdownDisabled
 
 class UpdateBaseMiscSQLPathBasedDVPredPushOnSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with UpdateSQLWithDeletionVectorsMixin
-  with PredicatePushdownEnabled
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with UpdateSQLWithDeletionVectorsMixin
+    with PredicatePushdownEnabled
 
 class UpdateBaseMiscSQLPathBasedRowTrackingOffSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with RowTrackingDisabled
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with RowTrackingDisabled
 
 class UpdateBaseMiscSQLPathBasedRowTrackingOnSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with RowTrackingEnabled
-  with UpdateWithRowTrackingOverrides
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with RowTrackingEnabled
+    with UpdateWithRowTrackingOverrides
 
 class UpdateBaseMiscSQLPathBasedSuite
-  extends UpdateBaseMiscTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends UpdateBaseMiscTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class UpdateBaseMiscScalaSuite extends UpdateBaseMiscTests with UpdateScalaMixin

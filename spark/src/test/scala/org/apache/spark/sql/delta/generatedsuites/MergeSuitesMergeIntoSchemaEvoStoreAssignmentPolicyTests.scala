@@ -33,70 +33,70 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLNameBasedSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedCDCOnSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeCDCMixin
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeCDCMixin
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedColMapIdModeSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedColMapNameModeSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
 
 class MergeIntoSchemaEvoStoreAssignmentPolicySQLPathBasedSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class MergeIntoSchemaEvoStoreAssignmentPolicyScalaSuite
-  extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
-  with MergeIntoScalaMixin
+    extends MergeIntoSchemaEvoStoreAssignmentPolicyTests
+    with MergeIntoScalaMixin

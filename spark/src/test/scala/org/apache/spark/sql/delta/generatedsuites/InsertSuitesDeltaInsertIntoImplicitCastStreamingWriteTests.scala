@@ -31,4 +31,4 @@ package org.apache.spark.sql.delta.generatedsuites
 import org.apache.spark.sql.delta._
 
 class DeltaInsertIntoImplicitCastStreamingWriteSuite
-  extends DeltaInsertIntoImplicitCastStreamingWriteTests
+    extends DeltaInsertIntoImplicitCastStreamingWriteTests

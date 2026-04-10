@@ -34,29 +34,29 @@ import org.apache.spark.sql.delta.rowid._
 import org.apache.spark.sql.delta.rowtracking._
 
 class UpdateCDCSQLPathBasedCDCOnDVSuite
-  extends UpdateCDCTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with UpdateSQLWithDeletionVectorsMixin
+    extends UpdateCDCTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with UpdateSQLWithDeletionVectorsMixin
 
 class UpdateCDCSQLPathBasedCDCOnRowTrackingOffSuite
-  extends UpdateCDCTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with RowTrackingDisabled
+    extends UpdateCDCTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with RowTrackingDisabled
 
 class UpdateCDCSQLPathBasedCDCOnRowTrackingOnSuite
-  extends UpdateCDCTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with RowTrackingEnabled
-  with UpdateWithRowTrackingOverrides
+    extends UpdateCDCTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with RowTrackingEnabled
+    with UpdateWithRowTrackingOverrides
 
 class UpdateCDCSQLPathBasedCDCOnSuite
-  extends UpdateCDCTests
-  with UpdateSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
+    extends UpdateCDCTests
+    with UpdateSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled

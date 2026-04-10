@@ -33,70 +33,70 @@ import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLNameBasedSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsNameBased
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
+    with MergeCDCMixin
+    with MergeCDCWithDVsMixin
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedCDCOnSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeCDCMixin
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with CDCEnabled
+    with MergeCDCMixin
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedColMapIdModeSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableIdMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedColMapNameModeSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingOverrides
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with DeltaColumnMappingEnableNameMode
+    with MergeIntoSQLColumnMappingOverrides
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownDisabled
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
+    with MergeIntoDVsMixin
+    with PredicatePushdownEnabled
 
 class MergeIntoNestedStructEvolutionUpdateOnlySQLPathBasedSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoSQLMixin
+    with DeltaDMLTestUtilsPathBased
 
 class MergeIntoNestedStructEvolutionUpdateOnlyScalaSuite
-  extends MergeIntoNestedStructEvolutionUpdateOnlyTests
-  with MergeIntoScalaMixin
+    extends MergeIntoNestedStructEvolutionUpdateOnlyTests
+    with MergeIntoScalaMixin
