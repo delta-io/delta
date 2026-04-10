@@ -40,8 +40,10 @@ import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -176,12 +178,13 @@ public class PartitionUtils {
         buildDvMetadata(addFile.getDeletionVector());
     scala.collection.immutable.Map<String, Object> rowTrackingMetadata =
         buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion());
-    Map<String, Object> combinedMetadata = new HashMap<>();
-    combinedMetadata.putAll(CollectionConverters.asJava(deletionVectorMetadata));
-    combinedMetadata.putAll(CollectionConverters.asJava(rowTrackingMetadata));
     scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
-        scala.collection.immutable.Map$.MODULE$.from(
-            CollectionConverters.asScala(combinedMetadata));
+        deletionVectorMetadata;
+    for (Map.Entry<String, Object> entry :
+        CollectionConverters.asJava(rowTrackingMetadata).entrySet()) {
+      otherConstantMetadataColumnValues =
+          otherConstantMetadataColumnValues.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
+    }
 
     return new PartitionedFile(
         partitionRow,
@@ -360,12 +363,11 @@ public class PartitionUtils {
               + "be either both set or both unset");
     }
     if (baseRowId.isPresent() && defaultRowCommitVersion.isPresent()) {
-      result =
-          result.$plus(new Tuple2<>(DeltaParquetFileFormat.BASE_ROW_ID_KEY(), baseRowId.get()));
+      result = result.$plus(new Tuple2<>(RowId$.MODULE$.BASE_ROW_ID(), baseRowId.get()));
       result =
           result.$plus(
               new Tuple2<>(
-                  DeltaParquetFileFormat.DEFAULT_ROW_COMMIT_VERSION_KEY(),
+                  DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
                   defaultRowCommitVersion.get()));
     }
     return result;

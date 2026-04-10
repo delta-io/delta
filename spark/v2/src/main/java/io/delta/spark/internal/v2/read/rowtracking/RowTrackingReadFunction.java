@@ -21,7 +21,8 @@ import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.catalyst.ProjectingInternalRow;
 import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
 import org.apache.spark.sql.catalyst.expressions.JoinedRow;
-import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import scala.Function1;
 import scala.collection.Iterator;
@@ -59,9 +60,7 @@ public class RowTrackingReadFunction
     final long baseRowId;
     if (rowTrackingSchemaContext.isRowIdRequested()) {
       baseRowId =
-          ((Number)
-                  file.otherConstantMetadataColumnValues()
-                      .apply(DeltaParquetFileFormat.BASE_ROW_ID_KEY()))
+          ((Number) file.otherConstantMetadataColumnValues().apply(RowId$.MODULE$.BASE_ROW_ID()))
               .longValue();
     } else {
       baseRowId = 0L;
@@ -72,7 +71,7 @@ public class RowTrackingReadFunction
       commitVersionId =
           ((Number)
                   file.otherConstantMetadataColumnValues()
-                      .apply(DeltaParquetFileFormat.DEFAULT_ROW_COMMIT_VERSION_KEY()))
+                      .apply(DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME()))
               .longValue();
     } else {
       commitVersionId = 0L;

@@ -596,14 +596,6 @@ object DeltaParquetFileFormat {
    * [[PartitionedFile]]'s otherConstantMetadataColumnValues map. */
   val FILE_ROW_INDEX_FILTER_TYPE = "row_index_filter_type"
 
-  /** The key to the base row ID value of the
-   * [[PartitionedFile]]'s otherConstantMetadataColumnValues map. */
-  val BASE_ROW_ID_KEY = "base_row_id"
-
-  /** The key to the default row commit version value of the
-   * [[PartitionedFile]]'s otherConstantMetadataColumnValues map. */
-  val DEFAULT_ROW_COMMIT_VERSION_KEY = "default_row_commit_version"
-
   /** Utility method to create a new writable vector */
   private[delta] def newVector(
       useOffHeapBuffers: Boolean, size: Int, dataType: StructField): WritableColumnVector = {
