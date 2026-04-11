@@ -66,6 +66,31 @@ public class AddFile extends RowBackedAction {
   /** Full schema of the {@code add} action in the Delta Log. */
   public static final StructType FULL_SCHEMA = SCHEMA_WITH_STATS;
 
+  /**
+   * Builds the stats_parsed StructType for a given physical table schema. The resulting struct has
+   * the shape: { numRecords: long, minValues: { <col>: <type>, ... }, maxValues: { ... },
+   * nullCount: { <col>: long, ... } }
+   */
+  public static StructType buildStatsParsedSchema(StructType physicalSchema) {
+    StructType minMaxFields = new StructType();
+    StructType nullCountFields = new StructType();
+
+    for (StructField field : physicalSchema.fields()) {
+      // Only leaf primitive types get stats (no Maps, no Arrays)
+      if (field.getDataType() instanceof StructType) continue;
+      if (field.getDataType() instanceof MapType) continue;
+      if (field.getDataType() instanceof ArrayType) continue;
+      minMaxFields = minMaxFields.add(field.getName(), field.getDataType(), true);
+      nullCountFields = nullCountFields.add(field.getName(), LongType.LONG, true);
+    }
+
+    return new StructType()
+        .add("numRecords", LongType.LONG, true)
+        .add("minValues", minMaxFields, true)
+        .add("maxValues", minMaxFields, true)
+        .add("nullCount", nullCountFields, true);
+  }
+
   // There are more fields which are added when row-id tracking and clustering is enabled.
   // When Kernel starts supporting row-ids and clustering, we should add those fields here.
 

@@ -17,17 +17,24 @@
 package io.delta.kernel.internal.replay;
 
 import static io.delta.kernel.internal.DeltaErrors.wrapEngineException;
-import static io.delta.kernel.internal.actions.SingleAction.CHECKPOINT_SCHEMA;
 import static io.delta.kernel.internal.replay.LogReplayUtils.*;
 import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import io.delta.kernel.data.*;
+import io.delta.kernel.data.ArrayValue;
+import io.delta.kernel.data.MapValue;
+import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.actions.SetTransaction;
+import io.delta.kernel.internal.actions.SingleAction;
+import io.delta.kernel.internal.data.GenericColumnVector;
 import io.delta.kernel.internal.snapshot.LogSegment;
 import io.delta.kernel.internal.util.Utils;
+import io.delta.kernel.statistics.DataFileStatistics;
+import io.delta.kernel.types.*;
 import io.delta.kernel.utils.CloseableIterator;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.*;
 
 /**
@@ -62,24 +69,17 @@ import java.util.*;
  */
 public class CreateCheckpointIterator implements CloseableIterator<FilteredColumnarBatch> {
 
-  private static final int[] ADD_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "add");
-  private static final int[] ADD_PATH_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "add", "path");
-  private static final int[] ADD_DV_ORDINAL =
-      getPathOrdinals(CHECKPOINT_SCHEMA, "add", "deletionVector");
-
-  private static final int[] REMOVE_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "remove");
-  private static final int[] REMOVE_PATH_ORDINAL =
-      getPathOrdinals(CHECKPOINT_SCHEMA, "remove", "path");
-  private static final int[] REMOVE_DV_ORDINAL =
-      getPathOrdinals(CHECKPOINT_SCHEMA, "remove", "deletionVector");
-  private static final int[] REMOVE_DELETE_TIMESTAMP_ORDINAL =
-      getPathOrdinals(CHECKPOINT_SCHEMA, "remove", "deletionTimestamp");
-
-  private static final int[] PROTOCOL_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "protocol");
-  private static final int[] METADATA_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "metaData");
-  private static final int[] TXN_ORDINAL = getPathOrdinals(CHECKPOINT_SCHEMA, "txn");
-  private static final int[] DOMAIN_METADATA_DOMAIN_NAME_ORDINAL =
-      getPathOrdinals(CHECKPOINT_SCHEMA, "domainMetadata", "domain");
+  private final int[] ADD_ORDINAL;
+  private final int[] ADD_PATH_ORDINAL;
+  private final int[] ADD_DV_ORDINAL;
+  private final int[] REMOVE_ORDINAL;
+  private final int[] REMOVE_PATH_ORDINAL;
+  private final int[] REMOVE_DV_ORDINAL;
+  private final int[] REMOVE_DELETE_TIMESTAMP_ORDINAL;
+  private final int[] PROTOCOL_ORDINAL;
+  private final int[] METADATA_ORDINAL;
+  private final int[] TXN_ORDINAL;
+  private final int[] DOMAIN_METADATA_DOMAIN_NAME_ORDINAL;
 
   private final Engine engine;
   private final LogSegment logSegment;
@@ -94,6 +94,7 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
   private CloseableIterator<ActionWrapper> actionsIter;
   private boolean closed;
   private Optional<FilteredColumnarBatch> toReturnNext = Optional.empty();
+
   /**
    * This buffer is reused across batches to keep the memory allocations minimal. It is resized as
    * required and the array entries are reset between batches.
@@ -123,15 +124,313 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
   // Metadata about the checkpoint to store in `_last_checkpoint` file
   private long numberOfAddActions = 0; // final number of add actions survived in the checkpoint
 
+  private final StructType checkpointSchema;
+  private final boolean writeStatsAsStruct;
+  private final StructType physicalSchema;
+
+  /**
+   * If writeStatsAsStruct is enabled, transforms the columnar batch to populate the stats_parsed
+   * struct column in each AddFile row by parsing the stats JSON string. Returns the batch unchanged
+   * if writeStatsAsStruct is false.
+   */
+  private ColumnarBatch injectStatsParsed(ColumnarBatch batch) {
+    if (!writeStatsAsStruct || physicalSchema == null) {
+      return batch;
+    }
+
+    StructType addSchema = (StructType) checkpointSchema.get("add").getDataType();
+    int statsParsedOrdinalInAdd = addSchema.indexOf("stats_parsed");
+    if (statsParsedOrdinalInAdd < 0) {
+      return batch;
+    }
+
+    StructType statsParsedSchema = (StructType) addSchema.get("stats_parsed").getDataType();
+    int addOrdinalInBatch = checkpointSchema.indexOf("add");
+    int statsJsonOrdinalInAdd = addSchema.indexOf("stats");
+
+    int numRows = batch.getSize();
+    List<Row> newBatchRows = new ArrayList<>(numRows);
+
+    try (CloseableIterator<Row> rows = batch.getRows()) {
+      while (rows.hasNext()) {
+        Row batchRow = rows.next();
+
+        if (batchRow.isNullAt(addOrdinalInBatch)) {
+          newBatchRows.add(batchRow);
+          continue;
+        }
+
+        Row addRow = batchRow.getStruct(addOrdinalInBatch);
+
+        Row statsParsedRow = null;
+        if (statsJsonOrdinalInAdd >= 0 && !addRow.isNullAt(statsJsonOrdinalInAdd)) {
+          String statsJson = addRow.getString(statsJsonOrdinalInAdd);
+          statsParsedRow =
+              DataFileStatistics.deserializeFromJson(statsJson, physicalSchema)
+                  .map(s -> s.toRow(statsParsedSchema))
+                  .orElse(null);
+        }
+
+        final Row finalStatsParsedRow = statsParsedRow;
+        Row newAddRow =
+            new Row() {
+              @Override
+              public StructType getSchema() {
+                return addSchema;
+              }
+
+              @Override
+              public boolean isNullAt(int ordinal) {
+                if (ordinal == statsParsedOrdinalInAdd) return finalStatsParsedRow == null;
+                return addRow.isNullAt(ordinal);
+              }
+
+              @Override
+              public boolean getBoolean(int ordinal) {
+                return addRow.getBoolean(ordinal);
+              }
+
+              @Override
+              public byte getByte(int ordinal) {
+                return addRow.getByte(ordinal);
+              }
+
+              @Override
+              public short getShort(int ordinal) {
+                return addRow.getShort(ordinal);
+              }
+
+              @Override
+              public int getInt(int ordinal) {
+                return addRow.getInt(ordinal);
+              }
+
+              @Override
+              public long getLong(int ordinal) {
+                return addRow.getLong(ordinal);
+              }
+
+              @Override
+              public float getFloat(int ordinal) {
+                return addRow.getFloat(ordinal);
+              }
+
+              @Override
+              public double getDouble(int ordinal) {
+                return addRow.getDouble(ordinal);
+              }
+
+              @Override
+              public String getString(int ordinal) {
+                return addRow.getString(ordinal);
+              }
+
+              @Override
+              public byte[] getBinary(int ordinal) {
+                return addRow.getBinary(ordinal);
+              }
+
+              @Override
+              public BigDecimal getDecimal(int ordinal) {
+                return addRow.getDecimal(ordinal);
+              }
+
+              @Override
+              public MapValue getMap(int ordinal) {
+                return addRow.getMap(ordinal);
+              }
+
+              @Override
+              public ArrayValue getArray(int ordinal) {
+                return addRow.getArray(ordinal);
+              }
+
+              @Override
+              public Row getStruct(int ordinal) {
+                if (ordinal == statsParsedOrdinalInAdd) return finalStatsParsedRow;
+                return addRow.getStruct(ordinal);
+              }
+            };
+
+        newBatchRows.add(
+            new Row() {
+              @Override
+              public StructType getSchema() {
+                return checkpointSchema;
+              }
+
+              @Override
+              public boolean isNullAt(int ordinal) {
+                return batchRow.isNullAt(ordinal);
+              }
+
+              @Override
+              public boolean getBoolean(int ordinal) {
+                return batchRow.getBoolean(ordinal);
+              }
+
+              @Override
+              public byte getByte(int ordinal) {
+                return batchRow.getByte(ordinal);
+              }
+
+              @Override
+              public short getShort(int ordinal) {
+                return batchRow.getShort(ordinal);
+              }
+
+              @Override
+              public int getInt(int ordinal) {
+                return batchRow.getInt(ordinal);
+              }
+
+              @Override
+              public long getLong(int ordinal) {
+                return batchRow.getLong(ordinal);
+              }
+
+              @Override
+              public float getFloat(int ordinal) {
+                return batchRow.getFloat(ordinal);
+              }
+
+              @Override
+              public double getDouble(int ordinal) {
+                return batchRow.getDouble(ordinal);
+              }
+
+              @Override
+              public String getString(int ordinal) {
+                return batchRow.getString(ordinal);
+              }
+
+              @Override
+              public byte[] getBinary(int ordinal) {
+                return batchRow.getBinary(ordinal);
+              }
+
+              @Override
+              public BigDecimal getDecimal(int ordinal) {
+                return batchRow.getDecimal(ordinal);
+              }
+
+              @Override
+              public MapValue getMap(int ordinal) {
+                return batchRow.getMap(ordinal);
+              }
+
+              @Override
+              public ArrayValue getArray(int ordinal) {
+                return batchRow.getArray(ordinal);
+              }
+
+              @Override
+              public Row getStruct(int ordinal) {
+                if (ordinal == addOrdinalInBatch) return newAddRow;
+                return batchRow.getStruct(ordinal);
+              }
+            });
+      }
+    } catch (IOException e) {
+      throw new RuntimeException("Failed to iterate batch rows during stats_parsed injection", e);
+    }
+
+    int numCols = checkpointSchema.length();
+    ColumnVector[] vectors = new ColumnVector[numCols];
+    for (int col = 0; col < numCols; col++) {
+      DataType colType = checkpointSchema.at(col).getDataType();
+      List<Object> colValues = new ArrayList<>(numRows);
+      for (Row r : newBatchRows) {
+        colValues.add(extractRowField(r, col, colType));
+      }
+      vectors[col] = new GenericColumnVector(colValues, colType);
+    }
+    final ColumnVector[] finalVectors = vectors;
+    return new ColumnarBatch() {
+      @Override
+      public StructType getSchema() {
+        return checkpointSchema;
+      }
+
+      @Override
+      public int getSize() {
+        return numRows;
+      }
+
+      @Override
+      public ColumnVector getColumnVector(int ordinal) {
+        return finalVectors[ordinal];
+      }
+    };
+  }
+
+  private Object extractRowField(Row row, int ordinal, DataType dataType) {
+    if (row.isNullAt(ordinal)) return null;
+    if (dataType instanceof BooleanType) return row.getBoolean(ordinal);
+    if (dataType instanceof ByteType) return row.getByte(ordinal);
+    if (dataType instanceof ShortType) return row.getShort(ordinal);
+    if (dataType instanceof IntegerType || dataType instanceof DateType) return row.getInt(ordinal);
+    if (dataType instanceof LongType
+        || dataType instanceof TimestampType
+        || dataType instanceof TimestampNTZType) return row.getLong(ordinal);
+    if (dataType instanceof FloatType) return row.getFloat(ordinal);
+    if (dataType instanceof DoubleType) return row.getDouble(ordinal);
+    if (dataType instanceof StringType) return row.getString(ordinal);
+    if (dataType instanceof BinaryType) return row.getBinary(ordinal);
+    if (dataType instanceof DecimalType) return row.getDecimal(ordinal);
+    if (dataType instanceof MapType) return row.getMap(ordinal);
+    if (dataType instanceof ArrayType) return row.getArray(ordinal);
+    if (dataType instanceof StructType) return row.getStruct(ordinal);
+    throw new UnsupportedOperationException("Unsupported type: " + dataType);
+  }
+
   /////////////////
   // Public APIs //
   /////////////////
 
   public CreateCheckpointIterator(
-      Engine engine, LogSegment logSegment, long minFileRetentionTimestampMillis) {
+      Engine engine,
+      LogSegment logSegment,
+      long minFileRetentionTimestampMillis,
+      StructType checkpointSchema,
+      boolean writeStatsAsStruct,
+      StructType physicalSchema) {
     this.engine = engine;
     this.logSegment = logSegment;
     this.minFileRetentionTimestampMillis = minFileRetentionTimestampMillis;
+    this.checkpointSchema = checkpointSchema;
+    this.writeStatsAsStruct = writeStatsAsStruct;
+    this.physicalSchema = physicalSchema;
+
+    this.ADD_ORDINAL = getPathOrdinals(checkpointSchema, "add");
+    this.ADD_PATH_ORDINAL = getPathOrdinals(checkpointSchema, "add", "path");
+    this.ADD_DV_ORDINAL = getPathOrdinals(checkpointSchema, "add", "deletionVector");
+    this.REMOVE_ORDINAL = getPathOrdinals(checkpointSchema, "remove");
+    this.REMOVE_PATH_ORDINAL = getPathOrdinals(checkpointSchema, "remove", "path");
+    this.REMOVE_DV_ORDINAL = getPathOrdinals(checkpointSchema, "remove", "deletionVector");
+    this.REMOVE_DELETE_TIMESTAMP_ORDINAL =
+        getPathOrdinals(checkpointSchema, "remove", "deletionTimestamp");
+    this.PROTOCOL_ORDINAL = getPathOrdinals(checkpointSchema, "protocol");
+    this.METADATA_ORDINAL = getPathOrdinals(checkpointSchema, "metaData");
+    this.TXN_ORDINAL = getPathOrdinals(checkpointSchema, "txn");
+    this.DOMAIN_METADATA_DOMAIN_NAME_ORDINAL =
+        getPathOrdinals(checkpointSchema, "domainMetadata", "domain");
+  }
+
+  /**
+   * Convenience constructor that uses the default CHECKPOINT_SCHEMA with writeStatsAsJson=true and
+   * writeStatsAsStruct=false, matching the pre-existing behavior for callers that don't need to
+   * respect table config (e.g. checksum computation, log compaction).
+   */
+  public CreateCheckpointIterator(
+      Engine engine, LogSegment logSegment, long minFileRetentionTimestampMillis) {
+    this(
+        engine,
+        logSegment,
+        minFileRetentionTimestampMillis,
+        SingleAction.CHECKPOINT_SCHEMA,
+        false,
+        null);
   }
 
   @Override
@@ -180,7 +479,7 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
           new ActionsIterator(
               engine,
               logSegment.allLogFilesReversed(),
-              CHECKPOINT_SCHEMA,
+              this.checkpointSchema,
               Optional.empty() /* checkpoint predicate */);
     }
   }
@@ -248,7 +547,8 @@ public class CreateCheckpointIterator implements CloseableIterator<FilteredColum
 
     Optional<ColumnVector> selectionVector =
         Optional.of(createSelectionVector(selectionVectorBuffer, actionsBatch.getSize()));
-    toReturnNext = Optional.of(new FilteredColumnarBatch(actionsBatch, selectionVector));
+    ColumnarBatch transformedBatch = injectStatsParsed(actionsBatch);
+    toReturnNext = Optional.of(new FilteredColumnarBatch(transformedBatch, selectionVector));
     return true;
   }
 

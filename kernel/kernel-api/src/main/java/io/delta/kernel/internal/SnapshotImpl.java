@@ -16,7 +16,6 @@
 package io.delta.kernel.internal;
 
 import static io.delta.kernel.internal.TableConfig.*;
-import static io.delta.kernel.internal.TableConfig.TOMBSTONE_RETENTION;
 import static io.delta.kernel.internal.util.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
@@ -414,6 +413,26 @@ public class SnapshotImpl implements Snapshot {
     return lazyLogSegment;
   }
 
+  public CreateCheckpointIterator getCreateCheckpointIterator(
+      Engine engine,
+      StructType checkpointSchema,
+      boolean writeStatsAsStruct,
+      StructType physicalSchema) {
+    long minFileRetentionTimestampMillis =
+        System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);
+    return new CreateCheckpointIterator(
+        engine,
+        getLogSegment(),
+        minFileRetentionTimestampMillis,
+        checkpointSchema,
+        writeStatsAsStruct,
+        physicalSchema);
+  }
+
+  /**
+   * Convenience overload that uses default checkpoint schema (writeStatsAsJson=true,
+   * writeStatsAsStruct=false). For callers that don't need to respect table config.
+   */
   public CreateCheckpointIterator getCreateCheckpointIterator(Engine engine) {
     long minFileRetentionTimestampMillis =
         System.currentTimeMillis() - TOMBSTONE_RETENTION.fromMetadata(metadata);

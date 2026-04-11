@@ -17,6 +17,7 @@ package io.delta.kernel.internal.actions;
 
 import io.delta.kernel.data.Row;
 import io.delta.kernel.internal.data.GenericRow;
+import io.delta.kernel.types.StringType;
 import io.delta.kernel.types.StructType;
 import java.util.Collections;
 import java.util.HashMap;
@@ -35,6 +36,28 @@ public class SingleAction {
           .add("metaData", Metadata.FULL_SCHEMA)
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+
+  // Replace the static field with a method:
+  public static StructType getCheckpointSchema(
+      boolean writeStatsAsJson, boolean writeStatsAsStruct, StructType physicalSchema) {
+
+    StructType addSchema = AddFile.SCHEMA_WITHOUT_STATS;
+    if (writeStatsAsJson) {
+      addSchema = addSchema.add("stats", StringType.STRING, true);
+    }
+    if (writeStatsAsStruct) {
+      addSchema =
+          addSchema.add("stats_parsed", AddFile.buildStatsParsedSchema(physicalSchema), true);
+    }
+
+    return new StructType()
+        .add("txn", SetTransaction.FULL_SCHEMA)
+        .add("add", addSchema)
+        .add("remove", RemoveFile.FULL_SCHEMA)
+        .add("metaData", Metadata.FULL_SCHEMA)
+        .add("protocol", Protocol.FULL_SCHEMA)
+        .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
+  }
 
   // Once we start supporting updating CDC or domain metadata enabled tables, we should add the
   // schema for those fields here.
