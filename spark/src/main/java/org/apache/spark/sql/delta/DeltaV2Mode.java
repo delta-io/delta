@@ -119,6 +119,21 @@ public class DeltaV2Mode {
   }
 
   /**
+   * Determines if CREATE TABLE should use the DSv2 connector path.
+   *
+   * <p>Currently only enabled in STRICT mode for UC-managed tables. The DSv2 CREATE path supports
+   * metadata-only CREATE TABLE but does not yet cover CTAS or REPLACE TABLE. Non-UC tables always
+   * use V1 because the DSv2 path does not register tables in the Hive metastore. Once feature
+   * parity is reached, AUTO mode will also route UC-managed tables through DSv2, matching the
+   * pattern of {@link #isStreamingReadsEnabled}.
+   *
+   * @param isUCManagedTable true if UC table info is present (table is UC-managed)
+   */
+  public boolean shouldUseDSv2ForCreateTable(boolean isUCManagedTable) {
+    return STRICT.equals(mode()) && isUCManagedTable;
+  }
+
+  /**
    * Gets the current mode string (for logging/debugging).
    */
   public String getMode() {

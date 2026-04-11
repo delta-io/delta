@@ -1,0 +1,277 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package io.sparkuctest;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+import io.unitycatalog.client.api.TablesApi;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
+public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationBaseTest {
+
+  private static final String DEFAULT_FEATURES_RESTATEMENT =
+      "TBLPROPERTIES ("
+          + "'delta.feature.catalogManaged'='supported', "
+          + "'delta.feature.vacuumProtocolCheck'='supported', "
+          + "'delta.feature.inCommitTimestamp'='supported')";
+
+  private static final String FULL_NON_DEFAULT_RESTATEMENT =
+      "TBLPROPERTIES ("
+          + "'delta.feature.catalogManaged'='supported', "
+          + "'delta.enableChangeDataFeed'='true', "
+          + "'delta.enableTypeWidening'='true')";
+
+  private static final String PARTIAL_NON_DEFAULT_RESTATEMENT =
+      "TBLPROPERTIES ("
+          + "'delta.feature.catalogManaged'='supported', "
+          + "'delta.enableChangeDataFeed'='true')";
+
+  private enum ReplaceOperation {
+    REPLACE("REPLACE TABLE", false),
+    REPLACE_AS_SELECT("REPLACE TABLE", true),
+    CREATE_OR_REPLACE("CREATE OR REPLACE TABLE", false);
+
+    private final String sqlPrefix;
+    private final boolean asSelect;
+
+    ReplaceOperation(String sqlPrefix, boolean asSelect) {
+      this.sqlPrefix = sqlPrefix;
+      this.asSelect = asSelect;
+    }
+
+    private boolean isAsSelect() {
+      return asSelect;
+    }
+  }
+
+  @Test
+  public void testDefaultFeatureRestatementIsAllowedForManagedReplaceOperations() throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("default_features", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          TableType.MANAGED,
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertSuccessfulReplace(
+                operation,
+                fullTableName,
+                buildStatement(
+                    operation,
+                    fullTableName,
+                    "i INT, s STRING",
+                    DEFAULT_FEATURES_RESTATEMENT,
+                    null,
+                    "2 AS i, 'new' AS s"));
+          });
+    }
+  }
+
+  @Test
+  public void testExactNonDefaultFeatureMatchIsAllowedForManagedReplaceOperations()
+      throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("full_feature_match", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          null,
+          TableType.MANAGED,
+          "'delta.enableChangeDataFeed'='true', " + "'delta.enableTypeWidening'='true'",
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertSuccessfulReplace(
+                operation,
+                fullTableName,
+                buildStatement(
+                    operation,
+                    fullTableName,
+                    "i INT, s STRING",
+                    FULL_NON_DEFAULT_RESTATEMENT,
+                    null,
+                    "2 AS i, 'new' AS s"));
+          });
+    }
+  }
+
+  @Test
+  public void testMissingNonDefaultFeatureRestatementIsRejectedForManagedReplaceOperations()
+      throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("missing_feature_match", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          null,
+          TableType.MANAGED,
+          "'delta.enableChangeDataFeed'='true', " + "'delta.enableTypeWidening'='true'",
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertRejectedReplacePreservesTable(
+                fullTableName,
+                buildStatement(
+                    operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"));
+          });
+    }
+  }
+
+  @Test
+  public void testPartialNonDefaultFeatureRestatementIsRejectedForManagedReplaceOperations()
+      throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("partial_feature_match", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          null,
+          TableType.MANAGED,
+          "'delta.enableChangeDataFeed'='true', " + "'delta.enableTypeWidening'='true'",
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertRejectedReplacePreservesTable(
+                fullTableName,
+                buildStatement(
+                    operation,
+                    fullTableName,
+                    "i INT, s STRING",
+                    PARTIAL_NON_DEFAULT_RESTATEMENT,
+                    null,
+                    "2 AS i, 'new' AS s"));
+          });
+    }
+  }
+
+  @Test
+  public void testCommentChangeIsRejectedForManagedReplaceOperations() throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("comment_change", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          TableType.MANAGED,
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertRejectedReplacePreservesTable(
+                fullTableName,
+                buildStatement(
+                    operation,
+                    fullTableName,
+                    "i INT, s STRING",
+                    "",
+                    "new description",
+                    "2 AS i, 'new' AS s"));
+          });
+    }
+  }
+
+  @Test
+  public void testUserPropertyChangeIsRejectedForManagedReplaceOperations() throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("property_change", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          TableType.MANAGED,
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertRejectedReplacePreservesTable(
+                fullTableName,
+                buildStatement(
+                    operation,
+                    fullTableName,
+                    "i INT, s STRING",
+                    "TBLPROPERTIES ('myapp.version'='2')",
+                    null,
+                    "2 AS i, 'new' AS s"));
+          });
+    }
+  }
+
+  private void assertSuccessfulReplace(
+      ReplaceOperation operation, String tableName, String statement) throws Exception {
+    String ucTableIdBeforeReplace = currentUcTableId(tableName);
+    long versionBeforeReplace = currentVersion(tableName);
+
+    sql(statement);
+
+    assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
+    assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace + 1);
+    assertThat(sql("SELECT CAST(COUNT(*) AS STRING) FROM %s", tableName))
+        .containsExactly(row(operation.isAsSelect() ? "1" : "0"));
+  }
+
+  private void assertRejectedReplacePreservesTable(String tableName, String statement)
+      throws Exception {
+    String ucTableIdBeforeReplace = currentUcTableId(tableName);
+    long versionBeforeReplace = currentVersion(tableName);
+
+    assertThrowsWithCauseContaining("not supported", () -> sql(statement));
+
+    assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
+    assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace);
+    assertThat(sql("SELECT CAST(COUNT(*) AS STRING) FROM %s", tableName)).containsExactly(row("1"));
+  }
+
+  private String currentUcTableId(String fullTableName) throws Exception {
+    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
+    return tablesApi.getTable(fullTableName, false, false).getTableId();
+  }
+
+  private String uniqueTableName(String prefix, ReplaceOperation operation) {
+    return prefix
+        + "_"
+        + operation.name().toLowerCase()
+        + "_"
+        + UUID.randomUUID().toString().replace("-", "");
+  }
+
+  private String buildStatement(
+      ReplaceOperation operation,
+      String tableName,
+      String schema,
+      String tablePropertiesClause,
+      String comment,
+      String query) {
+    List<String> parts = new ArrayList<>();
+    parts.add(operation.sqlPrefix);
+    parts.add(tableName);
+    if (!operation.isAsSelect()) {
+      parts.add("(" + schema + ")");
+    }
+    parts.add("USING DELTA");
+    if (!tablePropertiesClause.isEmpty()) {
+      parts.add(tablePropertiesClause);
+    }
+    if (comment != null) {
+      parts.add(String.format("COMMENT '%s'", comment));
+    }
+    if (operation.isAsSelect()) {
+      parts.add("AS SELECT " + query);
+    }
+    return String.join(" ", parts);
+  }
+}
