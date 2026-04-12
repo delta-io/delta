@@ -140,8 +140,9 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
    *                       period
    * @param inventory An optional dataframe of files and directories within the table generated
    *                  from sources like blob store inventory report
-   * @return A Dataset containing the paths of the files/folders to delete in dryRun mode. Otherwise
-   *         returns the base path of the table.
+   * @return In dryRun mode, a DataFrame with columns (path: String, fileSize: Long) listing all
+   *         files eligible for deletion and their sizes in bytes. Otherwise returns a DataFrame
+   *         with a single row containing the base path of the table.
    */
   // scalastyle:off argcount
   def gc(
@@ -358,7 +359,24 @@ object VacuumCommand extends VacuumCommandImpl with Serializable {
               log"a total of ${MDC(DeltaLogKeys.NUM_DIRS, dirCounts)} directories " +
               log"that are safe to delete. Vacuum stats: ${MDC(DeltaLogKeys.VACUUM_STATS, stats)}")
 
-            return diffFiles.map(f => urlEncodedStringToPath(f).toString).toDF("path")
+            // Return all eligible files with their sizes so users can fully understand
+            // what will be deleted. Previously only paths were returned without size info.
+            return diff
+              .select(col("path"), col("length"))
+              .as[FileNameAndSize]
+              .map { fileAndSize =>
+                assert(!urlEncodedStringToPath(fileAndSize.path).isAbsolute,
+                  "Shouldn't have any absolute paths for deletion here.")
+                FileNameAndSize(
+                  urlEncodedStringToPath(
+                    pathToUrlEncodedString(
+                      DeltaFileOperations.absolutePath(basePath, fileAndSize.path)
+                    )
+                  ).toString,
+                  fileAndSize.length
+                )
+              }
+              .toDF("path", "fileSize")
           }
           logVacuumStart(
             spark,
