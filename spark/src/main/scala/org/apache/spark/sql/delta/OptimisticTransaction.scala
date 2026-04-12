@@ -770,6 +770,24 @@ trait OptimisticTransactionImpl extends TransactionHelper
         Protocol.getWriterVersionFromTableConf(newMetadataTmp.configuration)
           .getOrElse(protocolBeforeUpdate.minWriterVersion)
 
+      // Validate that user-supplied version numbers are recognized by this release of Delta.
+      // An unrecognized version silently corrupts the table log and makes it unreadable, so
+      // we reject it here before anything is committed. Note: versions coming from the existing
+      // snapshot (the .getOrElse fallback above) are already valid, so we only need to check
+      // when the user explicitly set a value in the configuration.
+      Protocol.getReaderVersionFromTableConf(newMetadataTmp.configuration).foreach { v =>
+        if (!Action.supportedReaderVersionNumbers.contains(v)) {
+          throw DeltaErrors.invalidProtocolVersionForUpgrade(
+            "Reader", v, Action.supportedReaderVersionNumbers.toSeq)
+        }
+      }
+      Protocol.getWriterVersionFromTableConf(newMetadataTmp.configuration).foreach { v =>
+        if (!Action.supportedWriterVersionNumbers.contains(v)) {
+          throw DeltaErrors.invalidProtocolVersionForUpgrade(
+            "Writer", v, Action.supportedWriterVersionNumbers.toSeq)
+        }
+      }
+
       val newProtocolForLatestMetadata =
         Protocol(readerVersionAsTableProp, writerVersionAsTableProp)
 
