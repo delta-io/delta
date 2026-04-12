@@ -165,7 +165,7 @@ sealed trait Action {
  * Note: Please initialize this class using the companion object's `apply` method, which will
  * assign correct values (`Set()` vs `None`) to [[readerFeatures]] and [[writerFeatures]].
  */
-case class Protocol private (
+case class Protocol (
     minReaderVersion: Int,
     minWriterVersion: Int,
     @JsonInclude(Include.NON_ABSENT) // write to JSON only when the field is not `None`
