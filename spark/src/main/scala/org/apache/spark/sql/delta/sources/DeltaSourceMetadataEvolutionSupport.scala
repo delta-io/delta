@@ -21,12 +21,14 @@ import java.util.Locale
 import scala.collection.mutable
 
 import org.apache.spark.sql.delta._
-import org.apache.spark.sql.delta.actions.{Action, Metadata, Protocol}
+import org.apache.spark.sql.delta.actions.{Action, FileAction, Metadata, Protocol}
 import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.storage.ClosableIterator
 import org.apache.spark.sql.delta.storage.ClosableIterator._
 
+import org.apache.spark.internal.Logging
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.types.StructType
 
@@ -437,7 +439,7 @@ trait DeltaSourceMetadataEvolutionSupport extends DeltaSourceBase { base: DeltaS
   }
 }
 
-object DeltaSourceMetadataEvolutionSupport {
+object DeltaSourceMetadataEvolutionSupport extends Logging {
   /** SQL configs that allow unblocking each type of schema changes. */
   private val SQL_CONF_PREFIX = s"${DeltaSQLConf.SQL_CONF_PREFIX}.streaming"
 
@@ -682,6 +684,62 @@ object DeltaSourceMetadataEvolutionSupport {
   def bypassTypeChangeCheck(spark: SparkSession): Boolean =
     spark.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_TYPE_WIDENING_BYPASS_STREAMING_TYPE_CHANGE_CHECK)
+
+  /**
+   * Speculate ahead and find the next merged consecutive metadata change if possible.
+   * A metadata change is either:
+   * 1. A [[Metadata]] action change. OR
+   * 2. A [[Protocol]] change.
+   */
+  private[sources] def getMergedConsecutiveMetadataChanges(
+      spark: SparkSession,
+      deltaLog: DeltaLog,
+      catalogTableOpt: Option[CatalogTable],
+      currentMetadata: PersistedMetadata): Option[PersistedMetadata] = {
+    val currentMetadataVersion = currentMetadata.deltaCommitVersion
+    // We start from the currentSchemaVersion so that we can stop early in case the current
+    // version still has file actions that potentially needs to be processed.
+    val untilMetadataChange =
+      deltaLog.getChangeLogFiles(
+        currentMetadataVersion, catalogTableOpt).map { case (version, fileStatus) =>
+        var metadataAction: Option[Metadata] = None
+        var protocolAction: Option[Protocol] = None
+        var hasFileAction = false
+        DeltaSource.createRewindableActionIterator(spark, deltaLog, fileStatus)
+          .processAndClose { actionsIter =>
+            actionsIter.foreach {
+              case m: Metadata => metadataAction = Some(m)
+              case p: Protocol => protocolAction = Some(p)
+              case _: FileAction => hasFileAction = true
+              case _ =>
+            }
+          }
+        (!hasFileAction && (metadataAction.isDefined || protocolAction.isDefined),
+          version, metadataAction, protocolAction)
+      }.takeWhile(_._1)
+    DeltaSource.iteratorLast(untilMetadataChange.toClosable)
+      .flatMap { case (_, version, metadataOpt, protocolOpt) =>
+        if (version == currentMetadataVersion) {
+          None
+        } else {
+          log.info(s"Looked ahead from version $currentMetadataVersion and " +
+            s"will use metadata at version $version to read Delta stream.")
+          Some(
+            currentMetadata.copy(
+              deltaCommitVersion = version,
+              dataSchemaJson =
+                metadataOpt.map(_.schema.json).getOrElse(currentMetadata.dataSchemaJson),
+              partitionSchemaJson =
+                metadataOpt.map(_.partitionSchema.json)
+                  .getOrElse(currentMetadata.partitionSchemaJson),
+              tableConfigurations = metadataOpt.map(_.configuration)
+                .orElse(currentMetadata.tableConfigurations),
+              protocolJson = protocolOpt.map(_.json).orElse(currentMetadata.protocolJson)
+            )
+          )
+        }
+      }
+  }
 
   // scalastyle:off
   /**
