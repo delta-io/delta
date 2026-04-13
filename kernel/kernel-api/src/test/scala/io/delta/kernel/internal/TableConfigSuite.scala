@@ -72,4 +72,32 @@ class TableConfigSuite extends AnyFunSuite {
     val formats = TableConfig.UNIVERSAL_FORMAT_ENABLED_FORMATS.fromMetadata(config)
     assert(formats == Set("iceberg", "hudi").asJava)
   }
+
+  test("delta.liquid.* properties bypass validation and are accepted") {
+    val result = TableConfig.validateAndNormalizeDeltaProperties(
+      Map(
+        "delta.liquid.someProperty" -> "value1",
+        "delta.liquid.anotherProperty" -> "value2").asJava)
+    assert(result.get("delta.liquid.someProperty") === "value1")
+    assert(result.get("delta.liquid.anotherProperty") === "value2")
+  }
+
+  test("delta.liquid.* properties can coexist with valid delta properties") {
+    val result = TableConfig.validateAndNormalizeDeltaProperties(
+      Map(
+        TableConfig.TOMBSTONE_RETENTION.getKey -> "interval 2 week",
+        "delta.liquid.someProperty" -> "someValue").asJava)
+    // Valid delta property is normalized
+    assert(result.containsKey(TableConfig.TOMBSTONE_RETENTION.getKey))
+    // Liquid property is preserved
+    assert(result.get("delta.liquid.someProperty") === "someValue")
+  }
+
+  test("unknown delta.* properties that are not delta.liquid.* still blocked") {
+    val e = intercept[KernelException] {
+      TableConfig.validateAndNormalizeDeltaProperties(
+        Map("delta.unknownProperty" -> "value").asJava)
+    }
+    assert(e.getMessage.contains("delta.unknownProperty"))
+  }
 }
