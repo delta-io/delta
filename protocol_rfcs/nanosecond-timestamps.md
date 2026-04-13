@@ -6,23 +6,24 @@ Nanosecond resolution timestamps are widely supported in related formats (Arrow,
 
 --------
 
-## Add a new feature: Nanosecond timestamps (TimestampNanos)
+## Add a new feature: Nanosecond timestamps (TimestampNanos and TimestampNanosNtz)
 
 Add a new feature:
 
-> This feature introduces two new data types to support timestamps with nanosecond resolution. One UTC, one without a timezone corresponding to TimestampWithoutTimezone. For example: `1970-01-01 00:00:00.123456789+00:00` and `1970-01-01 00:00:00.123456789`, respectively.
+> This feature introduces two new data types to support timestamps with nanosecond resolution. One UTC, one without a timezone corresponding to `TimestampNtz`. For example: `1970-01-01 00:00:00.123456789+00:00` and `1970-01-01 00:00:00.123456789`, respectively.
 > The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
 >
 > To support this feature:
-> - To have a column of TimestampNanos or TimestampNanosWithoutTimezone type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNanos` must exist in the table's `readerFeatures` and `writerFeatures`.
+> - To have a column of `TimestampNanos` or `TimestampNanosNtz` type in a table, the table must have Reader Version 3 and Writer Version 7. A feature name `timestampNanos` must exist in the table's `readerFeatures` and `writerFeatures`.
+> - The `timestampNtz` feature must also be enabled in `readerFeatures` and `writerFeatures`.
 
 ## Add nanosecond timestamps to the Schema Serialization Format
 
 Add entries for nanosecond timestamps to the Primitive Types table:
 
-> nanosecond timestamp: Nanosecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`. To use this type, a table must support a feature `timestampNanos`.
+> nanosecond timestamp: Nanosecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `true`. To use this type, a table must support feature `timestampNanos` and `timestampNtz`.
 
-> nanosecond timestamp without timezone: Nanosecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC, in local timezone. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support a feature `timestampNanos`.
+> nanosecond timestamp without timezone: Nanosecond precision timestamp elapsed since the Unix epoch, 1970-01-01 00:00:00 UTC, in local timezone. It doesn't have the timezone information, and a value of this type can map to multiple physical time instants. It should always be displayed in the same way, regardless of the local time zone in effect. When this is stored in a parquet file, its `isAdjustedToUTC` must be set to `false`. To use this type, a table must support feature `timestampNanos` and `timestampNtz`.
 
 ## Add nanosecond timestamps to the Partition Value Serialization
 
