@@ -354,7 +354,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       }
       // Check that columns are not duplicated in the cluster by statement.
       PartitionUtils.checkColumnNameDuplication(
-        clusterBy.columnNames.map(_.toString), "in CLUSTER BY", resolver)
+        clusterBy.columnNames.map(_.toString), "CLUSTER_BY", resolver)
       // Check number of clustering columns is within allowed range.
       ClusteredTableUtils.validateNumClusteringColumns(
         clusterBy.columnNames.map(_.fieldNames.toSeq))
