@@ -28,7 +28,6 @@ import java.util.stream.Stream;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.streaming.StreamingQuery;
-import org.apache.spark.sql.streaming.StreamingQueryException;
 import org.apache.spark.sql.streaming.Trigger;
 import org.junit.jupiter.api.DynamicNode;
 import org.junit.jupiter.api.DynamicTest;
@@ -98,9 +97,7 @@ public abstract class DSv2StreamingTestBase extends UCDeltaTableIntegrationBaseT
         });
   }
 
-  /**
-   * Snapshot mode: stream all existing data with AvailableNow, then compare to batch read.
-   */
+  /** Snapshot mode: stream all existing data with AvailableNow, then compare to batch read. */
   private void runSnapshotTest(TableSetup setup, String tableName) throws Exception {
     String queryName = "snapshot_" + UUID.randomUUID().toString().replace("-", "");
     spark()
@@ -157,10 +154,9 @@ public abstract class DSv2StreamingTestBase extends UCDeltaTableIntegrationBaseT
    * Comparison is order-independent (both sides sorted by first column).
    */
   private void assertStreamingEqualsBatch(String queryName, String tableName) {
-    List<List<String>> streamingRows = toSortedStringRows(
-        spark().sql("SELECT * FROM " + queryName));
-    List<List<String>> batchRows = toSortedStringRows(
-        spark().read().table(tableName));
+    List<List<String>> streamingRows =
+        toSortedStringRows(spark().sql("SELECT * FROM " + queryName));
+    List<List<String>> batchRows = toSortedStringRows(spark().read().table(tableName));
     assertThat(streamingRows)
         .as("Streaming output for %s should match batch read of %s", queryName, tableName)
         .isEqualTo(batchRows);
