@@ -354,22 +354,22 @@ case class WriteIntoDelta(
         val deletedFiles = if (useDynamicPartitionOverwriteMode) {
           // with dynamic partition overwrite for any partition that is being written to all
           // existing data in that partition will be deleted.
-          // the selection what to delete is determined by `updatePartitions`.
+          // the selection what to delete is determined by `filesToFilter`.
 
           // Dynamic Partition Overwrite (DPO) uses null-tolerant equality, meaning NULL partitions
           // in the table will be overwritten if there are matching NULL values in the query.
           // This option simulates null-intolerant equality by not including partitions with
           // NULL values in the set of partitions to be overwritten.
-          val updatePartitions =
+          val filesToFilter =
             if (options.useNullIntolerantEqualityWithDPO.contains(true)) {
               addFiles.collect { case addFile
                 if addFile.partitionValues.forall { case (_, value) => value != null }
-                  => addFile.partitionValues
-              }.toSet
+                  => addFile
+              }
             } else {
-              addFiles.map(_.partitionValues).toSet
+              addFiles
             }
-          txn.filterFiles(updatePartitions).map(_.remove)
+          txn.filterFiles(filesToFilter).map(_.remove)
         } else {
           txn.filterFiles().map(_.remove)
         }
