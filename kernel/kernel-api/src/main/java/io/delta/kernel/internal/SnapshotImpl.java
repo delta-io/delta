@@ -59,6 +59,7 @@ import io.delta.kernel.types.StructType;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
@@ -432,6 +433,30 @@ public class SnapshotImpl implements Snapshot {
    */
   public Optional<Long> getLatestTransactionVersion(Engine engine, String applicationId) {
     return logReplay.getLatestTransactionIdentifier(engine, applicationId);
+  }
+
+  ////////////////////////
+  // equals / hashCode //
+  ////////////////////////
+
+  /**
+   * Value-based equality on table path and snapshot version. Two SnapshotImpl instances for the
+   * same table at the same version are logically equivalent. Without this, independently created
+   * Snapshot objects (e.g., from separate catalog lookups) would use Java's default reference
+   * equality, causing downstream consumers that embed Snapshot in equality-sensitive containers
+   * (e.g., Batch implementations, hash maps) to treat logically identical snapshots as different.
+   */
+  @Override
+  public boolean equals(Object o) {
+    if (this == o) return true;
+    if (o == null || getClass() != o.getClass()) return false;
+    SnapshotImpl that = (SnapshotImpl) o;
+    return version == that.version && Objects.equals(dataPath, that.dataPath);
+  }
+
+  @Override
+  public int hashCode() {
+    return Objects.hash(dataPath, version);
   }
 
   ////////////////////
