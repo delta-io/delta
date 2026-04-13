@@ -177,7 +177,9 @@ class SchemaUtilsSuite extends QueryTest
           .add("dupColName", StringType))))
         .add("d", IntegerType)
       )
-    expectFailure("top.b.element.element.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("top.b.element.element.dupColName") {
+      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+    }
   }
 
   test("duplicate column name in double nested map") {

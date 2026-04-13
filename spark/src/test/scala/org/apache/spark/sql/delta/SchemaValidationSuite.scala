@@ -398,10 +398,11 @@ class SchemaValidationSuite
       spark.range(10).write.format("delta").saveAsTable(tblName)
     },
     actionToTest = (spark: SparkSession, tblName: String) => {
-      val e = intercept[AnalysisException] {
+      val e = intercept[DeltaAnalysisException] {
         spark.sql(s"ALTER TABLE `$tblName` ADD COLUMNS (col2 string)")
       }
-      assert(e.getMessage.contains("Found duplicate column(s): col2"))
+      checkError(e, "DELTA_DUPLICATE_COLUMNS_FOUND.ADDING_COLUMNS", "42711",
+        Map("duplicateCols" -> "col2"))
     },
     concurrentChange = (spark: SparkSession, tblName: String) => {
       spark.read.format("delta").table(tblName)

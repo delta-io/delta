@@ -918,57 +918,57 @@
     "subClass" : {
       "ADDING_COLUMNS" : {
         "message" : [
-          "Duplicate found while adding columns."
+          "The duplicate was found while adding columns."
         ]
       },
       "CLUSTER_BY" : {
         "message" : [
-          "Duplicate found in CLUSTER BY."
+          "The duplicate was found in CLUSTER BY."
         ]
       },
       "DATA" : {
         "message" : [
-          "Duplicate found in the data to save."
+          "The duplicate was found in the data being saved."
         ]
       },
       "EXISTING_SCHEMA" : {
         "message" : [
-          "Duplicate found in the existing schema."
+          "The duplicate was found in the existing table schema."
         ]
       },
       "METADATA_UPDATE" : {
         "message" : [
-          "Duplicate found in the metadata update."
+          "The duplicate was found in the metadata update."
         ]
       },
       "PARTITION_COLUMNS" : {
         "message" : [
-          "Duplicate found in the partition columns."
+          "The duplicate was found in the partition columns."
         ]
       },
       "PARTITION_SCHEMA" : {
         "message" : [
-          "Duplicate found in the partition schema."
+          "The duplicate was found in the partition schema."
         ]
       },
       "READ_SCHEMA" : {
         "message" : [
-          "Duplicate found in the read schema."
+          "The duplicate was found in the schema of the data being read."
         ]
       },
       "REPLACING_COLUMNS" : {
         "message" : [
-          "Duplicate found while replacing columns."
+          "The duplicate was found while replacing columns."
         ]
       },
       "SPECIFIED_COLUMNS" : {
         "message" : [
-          "Duplicate found in the specified columns."
+          "The duplicate was found in the specified columns."
         ]
       },
       "TABLE_SCHEMA" : {
         "message" : [
-          "Duplicate found in the table schema."
+          "The duplicate was found in the table schema."
         ]
       }
     },
