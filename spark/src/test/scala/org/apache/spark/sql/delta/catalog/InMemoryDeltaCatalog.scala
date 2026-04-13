@@ -31,9 +31,11 @@ import org.apache.spark.sql.connector.expressions.Transform
  * to return [[InMemorySparkTable]].
  */
 class InMemoryDeltaCatalog extends DeltaCatalog {
-  override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
+  override def dropTable(ident: Identifier): Boolean =
+    InMemoryDeltaCatalog.dropTable(ident)
+
+  override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table =
     InMemoryDeltaCatalog.getOrCreateTable(ident, catalogTable, spark)
-  }
 }
 
 object InMemoryDeltaCatalog {
@@ -66,6 +68,18 @@ object InMemoryDeltaCatalog {
         props)
     })
   }
+
+  /**
+   * Remove a table defined by [[ident]] from the table list.
+   * Returns true if there was a table and it was removed, false otherwise.
+   */
+  def dropTable(ident: Identifier): Boolean =
+    tables.remove(ident.name()) != null
+
+  /**
+   * Check whether table [[name]] exists here.
+   */
+  def contains(name: String): Boolean = tables.containsKey(name)
 
   /**
    * Reset the catalog, removing all created tables from the storage.

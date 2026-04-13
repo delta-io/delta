@@ -42,9 +42,15 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
 
   override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    super.withTable(tableNames: _*) {
-      f
-      tableNames.foreach(assertNoParquetFiles)
+    try {
+      super.withTable(tableNames: _*) {
+        f
+        tableNames.foreach(assertNoParquetFiles)
+      }
+    } finally {
+      for (tableName <- tableNames) {
+        assert(!InMemoryDeltaCatalog.contains(tableName))
+      }
     }
   }
 
