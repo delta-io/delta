@@ -78,7 +78,7 @@ class TableConfigSuite extends AnyFunSuite {
     val validValues = Seq(
       "snappy",
       "SNAPPY",
-      "Zstd",
+      "ZSTD",
       "gzip",
       "GZIP",
       "lz4",

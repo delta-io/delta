@@ -407,7 +407,7 @@ public class TableConfig<T> {
           VALID_COMPRESSION_CODECS::contains,
           "needs to be one of: 'uncompressed', 'none', 'snappy', 'gzip',"
               + " 'lz4', 'lz4_raw', 'zstd'.",
-          true);
+          true /* editable */);
 
   public static final TableConfig<String> MATERIALIZED_ROW_ID_COLUMN_NAME =
       new TableConfig<>(
