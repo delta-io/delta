@@ -28,14 +28,7 @@ import org.apache.spark.sql.connector.expressions.Transform
 
 /**
  * Test-only catalog that extends [[DeltaCatalog]] and overrides [[loadCatalogTable]]
- * to return [[InMemorySparkTable]] instead of SparkTable or DeltaTableV2.
- *
- * This allows testing DSv2 DML operations (INSERT, DELETE, UPDATE, MERGE) through
- * Delta's catalog without requiring a fully functional SparkTable write implementation.
- *
- * Table creation still goes through the normal Delta path (creating real Delta tables
- * on disk for schema resolution), but subsequent table loads return cached in-memory
- * tables that support all V2 operations.
+ * to return [[InMemorySparkTable]].
  */
 class InMemoryDeltaCatalog extends DeltaCatalog {
   override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table = {
@@ -45,6 +38,10 @@ class InMemoryDeltaCatalog extends DeltaCatalog {
 
 object InMemoryDeltaCatalog {
 
+  /**
+   * The actual tables.
+   * Maps a table name -> [[InMemorySparkTable]].
+   */
   private val tables = new ConcurrentHashMap[String, InMemorySparkTable]()
 
   /**
@@ -70,5 +67,8 @@ object InMemoryDeltaCatalog {
     })
   }
 
+  /**
+   * Reset the catalog, removing all created tables from the storage.
+   */
   def reset(): Unit = tables.clear()
 }
