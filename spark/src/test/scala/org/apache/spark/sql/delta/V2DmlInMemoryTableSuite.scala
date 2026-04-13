@@ -54,14 +54,6 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
     }
   }
 
-  override def afterEach(): Unit = {
-    try {
-      InMemoryDeltaCatalog.reset()
-    } finally {
-      super.afterEach()
-    }
-  }
-
   /**
    * Asserts that no physical parquet data files exist under the table's location.
    * This validates that DML operations went through the in-memory V2 path and
