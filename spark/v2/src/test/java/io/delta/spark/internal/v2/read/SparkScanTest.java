@@ -2,6 +2,8 @@ package io.delta.spark.internal.v2.read;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.expressions.Column;
+import io.delta.kernel.expressions.Literal;
 import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.catalog.SparkTable;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
@@ -40,6 +42,11 @@ import org.apache.spark.sql.connector.read.partitioning.UnknownPartitioning;
 import org.apache.spark.sql.delta.DeltaOptions;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
+import org.apache.spark.sql.sources.And;
+import org.apache.spark.sql.sources.EqualTo;
+import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.sources.GreaterThan;
+import org.apache.spark.sql.sources.Or;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
@@ -586,9 +593,10 @@ public class SparkScanTest extends DeltaV2TestBase {
     // Verify exact error message - only the blocked option should appear
     // Note: DeltaOptions uses CaseInsensitiveMap which lowercases keys during iteration
     assertEquals(
-        "The following streaming options are not supported: [readchangefeed]. "
-            + "Supported options are: [startingVersion, startingTimestamp, maxFilesPerTrigger, "
-            + "maxBytesPerTrigger, ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex].",
+        "The following streaming options are not supported: [readchangefeed]. Supported options"
+            + " are: [startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger,"
+            + " ignoreFileDeletion, ignoreChanges, ignoreDeletes, skipChangeCommits,"
+            + " excludeRegex].",
         exception.getMessage());
   }
 
@@ -1650,5 +1658,220 @@ public class SparkScanTest extends DeltaV2TestBase {
       b.$plus$eq(new scala.Tuple2<>(keys[i], values[i]));
     }
     return (scala.collection.immutable.Map<String, CatalogColumnStat>) b.result();
+  }
+
+  // --- SparkBatch equality tests ---
+
+  @Test
+  public void testBatchEqualityFromSeparateCatalogLookups() {
+    Identifier id = Identifier.of(new String[] {"spark_catalog", "default"}, tableName);
+    SparkTable table1 = new SparkTable(id, tablePath, options);
+    SparkTable table2 = new SparkTable(id, tablePath, options);
+
+    Batch batch1 = table1.newScanBuilder(options).build().toBatch();
+    Batch batch2 = table2.newScanBuilder(options).build().toBatch();
+
+    assertNotSame(batch1, batch2, "Expected different SparkBatch instances");
+    assertEquals(batch1, batch2, "SparkBatch instances for the same table should be equal");
+    assertEquals(
+        batch1.hashCode(),
+        batch2.hashCode(),
+        "Equal SparkBatch instances should have the same hashCode");
+  }
+
+  @Test
+  public void testBatchInequalityForDifferentTables(@TempDir File tempDir2) {
+    String otherPath = tempDir2.getAbsolutePath();
+    String otherName = "sparkbatch_eq_test_other";
+    spark.sql(
+        String.format(
+            "CREATE TABLE %s (id INT, value DOUBLE) USING delta LOCATION '%s'",
+            otherName, otherPath));
+    spark.sql(String.format("INSERT INTO %s VALUES (1, 10.0)", otherName));
+
+    Identifier id1 = Identifier.of(new String[] {"spark_catalog", "default"}, tableName);
+    Identifier id2 = Identifier.of(new String[] {"spark_catalog", "default"}, otherName);
+    SparkTable table1 = new SparkTable(id1, tablePath, options);
+    SparkTable table2 = new SparkTable(id2, otherPath, options);
+
+    Batch batch1 = table1.newScanBuilder(options).build().toBatch();
+    Batch batch2 = table2.newScanBuilder(options).build().toBatch();
+
+    assertNotEquals(
+        batch1, batch2, "SparkBatch instances for different tables should not be equal");
+  }
+
+  // --- FilterComparisonUtils tests: Filter canonicalization ---
+
+  @Test
+  public void testCanonicalizeOrNesting() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+    Filter c = new EqualTo("id", 3);
+
+    // Or(a, Or(b, c)) and Or(Or(a, b), c) should produce the same canonical form.
+    assertEquals(
+        FilterComparisonUtils.canonicalize(new Or(a, new Or(b, c))),
+        FilterComparisonUtils.canonicalize(new Or(new Or(a, b), c)));
+  }
+
+  @Test
+  public void testCanonicalizeAndNesting() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+    Filter c = new EqualTo("id", 3);
+
+    // And(a, And(b, c)) and And(And(a, b), c) should produce the same canonical form.
+    assertEquals(
+        FilterComparisonUtils.canonicalize(new And(a, new And(b, c))),
+        FilterComparisonUtils.canonicalize(new And(new And(a, b), c)));
+  }
+
+  @Test
+  public void testCanonicalizeDistinguishesOrFromAnd() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+
+    // Or(a, b) and And(a, b) must produce different canonical forms.
+    assertNotEquals(
+        FilterComparisonUtils.canonicalize(new Or(a, b)),
+        FilterComparisonUtils.canonicalize(new And(a, b)));
+  }
+
+  @Test
+  public void testSemanticFilterEqualsWithDifferentOrNesting() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+    Filter c = new EqualTo("id", 3);
+
+    Filter[] arr1 = new Filter[] {new Or(a, new Or(b, c))};
+    Filter[] arr2 = new Filter[] {new Or(new Or(a, b), c)};
+    assertEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1),
+        FilterComparisonUtils.canonicalFilterSet(arr2),
+        "Differently nested Or trees with same leaves should be equal");
+  }
+
+  @Test
+  public void testSemanticFilterEqualsWithDifferentAndNesting() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+    Filter c = new EqualTo("id", 3);
+
+    Filter[] arr1 = new Filter[] {new And(a, new And(b, c))};
+    Filter[] arr2 = new Filter[] {new And(new And(a, b), c)};
+    assertEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1),
+        FilterComparisonUtils.canonicalFilterSet(arr2),
+        "Differently nested And trees with same leaves should be equal");
+  }
+
+  @Test
+  public void testSemanticFilterEqualsWithDifferentFilters() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+    Filter c = new GreaterThan("value", 10);
+
+    Filter[] arr1 = new Filter[] {new Or(a, b)};
+    Filter[] arr2 = new Filter[] {new Or(a, c)};
+    assertNotEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1),
+        FilterComparisonUtils.canonicalFilterSet(arr2),
+        "Filters with different leaves should not be equal");
+  }
+
+  @Test
+  public void testSemanticFilterEqualsNullHandling() {
+    Filter a = new EqualTo("id", 1);
+    Filter[] arr = new Filter[] {a};
+
+    assertEquals(Collections.emptySet(), FilterComparisonUtils.canonicalFilterSet(null));
+    assertNotEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr),
+        FilterComparisonUtils.canonicalFilterSet(null));
+  }
+
+  @Test
+  public void testSemanticFilterHashConsistency() {
+    Filter a = new EqualTo("id", 1);
+    Filter b = new EqualTo("id", 2);
+    Filter c = new EqualTo("id", 3);
+
+    Filter[] arr1 = new Filter[] {new Or(a, new Or(b, c))};
+    Filter[] arr2 = new Filter[] {new Or(new Or(a, b), c)};
+    assertEquals(
+        FilterComparisonUtils.canonicalFilterSet(arr1).hashCode(),
+        FilterComparisonUtils.canonicalFilterSet(arr2).hashCode(),
+        "Equal filter arrays must have the same hashCode");
+    assertEquals(0, FilterComparisonUtils.canonicalFilterSet(null).hashCode());
+  }
+
+  // --- FilterComparisonUtils tests: Kernel Predicate canonicalization ---
+
+  @Test
+  public void testCanonicalizePredicateOrNesting() {
+    io.delta.kernel.expressions.Predicate a =
+        new io.delta.kernel.expressions.Predicate(">", new Column("cnt"), Literal.ofInt(10));
+    io.delta.kernel.expressions.Predicate b =
+        new io.delta.kernel.expressions.Predicate("=", new Column("name"), Literal.ofString("foo"));
+    io.delta.kernel.expressions.Predicate c =
+        new io.delta.kernel.expressions.Predicate("<", new Column("value"), Literal.ofInt(100));
+
+    assertEquals(
+        FilterComparisonUtils.canonicalize(
+            new io.delta.kernel.expressions.Predicate(
+                "OR", a, new io.delta.kernel.expressions.Predicate("OR", b, c))),
+        FilterComparisonUtils.canonicalize(
+            new io.delta.kernel.expressions.Predicate(
+                "OR", new io.delta.kernel.expressions.Predicate("OR", a, b), c)));
+  }
+
+  @Test
+  public void testSemanticPredicateEqualsWithDifferentNesting() {
+    io.delta.kernel.expressions.Predicate a =
+        new io.delta.kernel.expressions.Predicate(">", new Column("cnt"), Literal.ofInt(10));
+    io.delta.kernel.expressions.Predicate b =
+        new io.delta.kernel.expressions.Predicate("=", new Column("name"), Literal.ofString("foo"));
+    io.delta.kernel.expressions.Predicate c =
+        new io.delta.kernel.expressions.Predicate("<", new Column("value"), Literal.ofInt(100));
+
+    io.delta.kernel.expressions.Predicate[] arr1 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", a, new io.delta.kernel.expressions.Predicate("OR", b, c))
+        };
+    io.delta.kernel.expressions.Predicate[] arr2 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", new io.delta.kernel.expressions.Predicate("OR", a, b), c)
+        };
+    assertEquals(
+        FilterComparisonUtils.canonicalPredicateSet(arr1),
+        FilterComparisonUtils.canonicalPredicateSet(arr2));
+  }
+
+  @Test
+  public void testSemanticPredicateHashConsistency() {
+    io.delta.kernel.expressions.Predicate a =
+        new io.delta.kernel.expressions.Predicate(">", new Column("cnt"), Literal.ofInt(10));
+    io.delta.kernel.expressions.Predicate b =
+        new io.delta.kernel.expressions.Predicate("=", new Column("name"), Literal.ofString("foo"));
+    io.delta.kernel.expressions.Predicate c =
+        new io.delta.kernel.expressions.Predicate("<", new Column("value"), Literal.ofInt(100));
+
+    io.delta.kernel.expressions.Predicate[] arr1 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", a, new io.delta.kernel.expressions.Predicate("OR", b, c))
+        };
+    io.delta.kernel.expressions.Predicate[] arr2 =
+        new io.delta.kernel.expressions.Predicate[] {
+          new io.delta.kernel.expressions.Predicate(
+              "OR", new io.delta.kernel.expressions.Predicate("OR", a, b), c)
+        };
+    assertEquals(
+        FilterComparisonUtils.canonicalPredicateSet(arr1).hashCode(),
+        FilterComparisonUtils.canonicalPredicateSet(arr2).hashCode());
+    assertEquals(0, FilterComparisonUtils.canonicalPredicateSet(null).hashCode());
   }
 }
