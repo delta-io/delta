@@ -19,7 +19,6 @@ package org.apache.spark.sql.delta.catalog
 import java.util
 
 import org.apache.spark.sql.connector.catalog.InMemoryRowLevelOperationTable
-import org.apache.spark.sql.connector.catalog.constraints.Constraint
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.sources.Filter
 import org.apache.spark.sql.types.StructType
@@ -34,10 +33,9 @@ class InMemorySparkTable(
     name: String,
     schema: StructType,
     partitioning: Array[Transform],
-    properties: util.Map[String, String],
-    constraints: Array[Constraint] = Array.empty)
+    properties: util.Map[String, String])
   extends InMemoryRowLevelOperationTable(
-    name, schema, partitioning, properties, constraints) {
+    name, schema, partitioning, properties) {
 
   // Force DELETE to go through the SupportsRowLevelOperations path instead of
   // the SupportsDeleteV2.deleteWhere path inherited from InMemoryTable, which
