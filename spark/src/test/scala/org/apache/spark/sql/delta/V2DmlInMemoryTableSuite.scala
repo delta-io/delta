@@ -150,7 +150,8 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       sql(s"INSERT INTO $targetTable VALUES (1, 'a'), (2, 'b')")
 
       withTempView("source") {
-        sql("CREATE TEMP VIEW source AS SELECT * FROM VALUES (1, 'updated'), (3, 'c') AS t(pk, value)")
+        sql("CREATE TEMP VIEW source AS SELECT * FROM VALUES (1, 'updated'), (3, 'c') " +
+            "AS t(pk, value)")
 
         sql(
           s"""MERGE INTO $targetTable t
