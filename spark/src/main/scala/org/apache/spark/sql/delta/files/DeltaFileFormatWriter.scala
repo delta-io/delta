@@ -57,6 +57,81 @@ import org.apache.spark.util.{SerializableConfiguration, Utils}
  */
 object DeltaFileFormatWriter extends Logging {
 
+  // ---------------------------------------------------------------------------
+  // Shared utilities: used by both V1 (this object) and DSv2 write paths.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Creates and configures a Hadoop [[Job]] for writing data files.
+   * Sets output key/value classes and the output path on [[FileOutputFormat]].
+   */
+  def createHadoopJob(hadoopConf: Configuration, outputPath: String): Job = {
+    val job = Job.getInstance(hadoopConf)
+    job.setOutputKeyClass(classOf[Void])
+    job.setOutputValueClass(classOf[InternalRow])
+    FileOutputFormat.setOutputPath(job, new Path(outputPath))
+    job
+  }
+
+  /**
+   * Creates a [[TaskAttemptContext]] with the standard Hadoop MapReduce configuration.
+   *
+   * For partitioned writes, returns a [[PartitionedTaskAttemptContextImpl]]
+   * so that [[DelayedCommitProtocol.parsePartitions]] can access partition column types.
+   */
+  def createTaskAttemptContext(
+      serializableHadoopConf: SerializableConfiguration,
+      jobTrackerID: String,
+      stageId: Int,
+      partitionId: Int,
+      attemptNumber: Int,
+      partitionColumnToDataType: Map[String, DataType]): TaskAttemptContext = {
+    val jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, stageId)
+    val taskId = new TaskID(jobId, TaskType.MAP, partitionId)
+    val taskAttemptId = new TaskAttemptID(taskId, attemptNumber)
+
+    val hadoopConf = serializableHadoopConf.value
+    hadoopConf.set("mapreduce.job.id", jobId.toString)
+    hadoopConf.set("mapreduce.task.id", taskId.toString)
+    hadoopConf.set("mapreduce.task.attempt.id", taskAttemptId.toString)
+    hadoopConf.setBoolean("mapreduce.task.ismap", true)
+    hadoopConf.setInt("mapreduce.task.partition", 0)
+
+    if (partitionColumnToDataType.isEmpty) {
+      new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
+    } else {
+      new PartitionedTaskAttemptContextImpl(
+        hadoopConf, taskAttemptId, partitionColumnToDataType)
+    }
+  }
+
+  /**
+   * Processes per-task stats through each tracker. Transposes the per-task stats matrix
+   * so each tracker receives its own column of stats.
+   */
+  def processStats(
+      statsTrackers: Seq[WriteJobStatsTracker],
+      statsPerTask: Seq[Seq[WriteTaskStats]],
+      jobCommitDuration: Long = 0L): Unit = {
+    val numStatsTrackers = statsTrackers.length
+    assert(
+      statsPerTask.forall(_.length == numStatsTrackers),
+      s"""Every WriteTask should have produced one `WriteTaskStats` object for every tracker.
+         |There are $numStatsTrackers statsTrackers, but some task returned
+         |${statsPerTask.find(_.length != numStatsTrackers).map(_.length).getOrElse(0)} results.
+       """.stripMargin
+    )
+
+    val statsPerTracker = if (statsPerTask.nonEmpty) {
+      statsPerTask.transpose
+    } else {
+      statsTrackers.map(_ => Seq.empty)
+    }
+    statsTrackers.zip(statsPerTracker).foreach {
+      case (tracker, stats) => tracker.processStats(stats, jobCommitDuration)
+    }
+  }
+
   /**
    * A variable used in tests to check whether the output ordering of the query matches the
    * required ordering of the write command.
@@ -97,10 +172,7 @@ object DeltaFileFormatWriter extends Logging {
       numStaticPartitionCols: Int = 0): Set[String] = {
     require(partitionColumns.size >= numStaticPartitionCols)
 
-    val job = Job.getInstance(hadoopConf)
-    job.setOutputKeyClass(classOf[Void])
-    job.setOutputValueClass(classOf[InternalRow])
-    FileOutputFormat.setOutputPath(job, new Path(outputSpec.outputPath))
+    val job = createHadoopJob(hadoopConf, outputSpec.outputPath)
 
     val partitionSet = AttributeSet(partitionColumns)
     // cleanup the internal metadata information of
@@ -403,26 +475,13 @@ object DeltaFileFormatWriter extends Logging {
       concurrentOutputWriterSpec: Option[ConcurrentOutputWriterSpec],
       partitionColumnToDataType: Map[String, DataType]): WriteTaskResult = {
 
-    val jobId = SparkHadoopWriterUtils.createJobID(jobTrackerID, sparkStageId)
-    val taskId = new TaskID(jobId, TaskType.MAP, sparkPartitionId)
-    val taskAttemptId = new TaskAttemptID(taskId, sparkAttemptNumber)
-
-    // Set up the attempt context required to use in the output committer.
-    val taskAttemptContext: TaskAttemptContext = {
-      // Set up the configuration object
-      val hadoopConf = description.serializableHadoopConf.value
-      hadoopConf.set("mapreduce.job.id", jobId.toString)
-      hadoopConf.set("mapreduce.task.id", taskAttemptId.getTaskID.toString)
-      hadoopConf.set("mapreduce.task.attempt.id", taskAttemptId.toString)
-      hadoopConf.setBoolean("mapreduce.task.ismap", true)
-      hadoopConf.setInt("mapreduce.task.partition", 0)
-
-      if (partitionColumnToDataType.isEmpty) {
-        new TaskAttemptContextImpl(hadoopConf, taskAttemptId)
-      } else {
-        new PartitionedTaskAttemptContextImpl(hadoopConf, taskAttemptId, partitionColumnToDataType)
-      }
-    }
+    val taskAttemptContext = createTaskAttemptContext(
+      description.serializableHadoopConf,
+      jobTrackerID,
+      sparkStageId,
+      sparkPartitionId,
+      sparkAttemptNumber,
+      partitionColumnToDataType)
 
     committer.setupTask(taskAttemptContext)
 
@@ -454,7 +513,7 @@ object DeltaFileFormatWriter extends Logging {
       })(catchBlock = {
         // If there is an error, abort the task
         dataWriter.abort()
-        logError(log"Job ${MDC(DeltaLogKeys.JOB_ID, jobId)} aborted.")
+        logError(log"Job ${MDC(DeltaLogKeys.JOB_ID, description.uuid)} aborted.")
       }, finallyBlock = {
         dataWriter.close()
       })
@@ -470,32 +529,4 @@ object DeltaFileFormatWriter extends Logging {
     }
   }
 
-  /**
-   * For every registered [[WriteJobStatsTracker]], call `processStats()` on it, passing it
-   * the corresponding [[WriteTaskStats]] from all executors.
-   */
-  private def processStats(
-      statsTrackers: Seq[WriteJobStatsTracker],
-      statsPerTask: Seq[Seq[WriteTaskStats]],
-      jobCommitDuration: Long): Unit = {
-
-    val numStatsTrackers = statsTrackers.length
-    assert(
-      statsPerTask.forall(_.length == numStatsTrackers),
-      s"""Every WriteTask should have produced one `WriteTaskStats` object for every tracker.
-         |There are $numStatsTrackers statsTrackers, but some task returned
-         |${statsPerTask.find(_.length != numStatsTrackers).get.length} results instead.
-       """.stripMargin
-    )
-
-    val statsPerTracker = if (statsPerTask.nonEmpty) {
-      statsPerTask.transpose
-    } else {
-      statsTrackers.map(_ => Seq.empty)
-    }
-
-    statsTrackers.zip(statsPerTracker).foreach {
-      case (statsTracker, stats) => statsTracker.processStats(stats, jobCommitDuration)
-    }
-  }
 }

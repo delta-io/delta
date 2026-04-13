@@ -27,6 +27,7 @@ import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
+import io.delta.spark.internal.v2.write.SparkWriteBuilder;
 import java.util.*;
 import java.util.function.Supplier;
 import org.apache.hadoop.conf.Configuration;
@@ -53,7 +54,10 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
           EnumSet.of(
               TableCapability.BATCH_READ,
               TableCapability.MICRO_BATCH_READ,
-              TableCapability.BATCH_WRITE));
+              TableCapability.BATCH_WRITE,
+              TableCapability.OVERWRITE_BY_FILTER,
+              TableCapability.OVERWRITE_DYNAMIC,
+              TableCapability.TRUNCATE));
 
   private final Identifier identifier;
   private final String tablePath;
@@ -259,17 +263,30 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
         merged);
   }
 
-  /**
-   * Batch write for Delta tables via the DSv2 connector is not yet supported.
-   *
-   * <p>The write entrypoint is intentionally present to advertise DSv2 write capability while
-   * follow-up changes land the full write implementation.
-   */
   @Override
   public WriteBuilder newWriteBuilder(LogicalWriteInfo info) {
     requireNonNull(info, "write info is null");
-    throw new UnsupportedOperationException(
-        "Batch write for Delta tables via the DSv2 connector is not yet supported.");
+    return new SparkWriteBuilder(this, info);
+  }
+
+  /** Returns the Hadoop configuration built from table options. */
+  public Configuration getHadoopConf() {
+    return hadoopConf;
+  }
+
+  /** Returns the initial Kernel snapshot loaded when this table was constructed. */
+  public Snapshot getInitialSnapshot() {
+    return initialSnapshot;
+  }
+
+  /** Returns the data schema (all columns except partition columns). */
+  public StructType getDataSchema() {
+    return schemaProvider.getDataSchema();
+  }
+
+  /** Returns the partition schema. */
+  public StructType getPartitionSchema() {
+    return schemaProvider.getPartitionSchema();
   }
 
   @Override
