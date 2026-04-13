@@ -1,4 +1,4 @@
-# Table feature name / meaningful name
+# timestampNanos / Nanosecond timestamp primitive types
 **Associated Github issue for discussions: https://github.com/delta-io/delta/issues/6081**
 
 Nanosecond resolution timestamps are widely supported in related formats (Arrow, Parquet) and tools (Pandas, Iceberg, etc). However, currently the protocol only supports microsecond resolution timestamps. This proposes adding two additional primitive type for nanosecond timestamps: UTC, and without timezones, corresponding to the two already existing microsecond timestamp types.
