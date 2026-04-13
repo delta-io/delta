@@ -1,5 +1,7 @@
 # float16 / Float16 primitive types
 
+**Issue for discussion: https://github.com/delta-io/delta/issues/6558**
+
 IEEE 754-2008 16-bit floats, also known as half-precision floats, are useful for machine learning, and are [supported by Parquet](https://parquet.apache.org/docs/file-format/types/logicaltypes/#float16) and [Arrow](https://arrow.apache.org/docs/python/generated/pyarrow.float16.html) (the [formal type spec](https://github.com/apache/arrow/blob/main/format/Schema.fbs) has "half" as one of the precisions for floating point numbers).
 
 --------
