@@ -23,7 +23,7 @@ import java.nio.file.{Files, Path}
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.connector.catalog.Identifier
+import org.apache.spark.sql.connector.catalog.{TableCatalog, Identifier}
 import org.apache.spark.sql.delta.catalog.{InMemoryDeltaCatalog, InMemorySparkTable}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
@@ -40,6 +40,13 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
 
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
+
+  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+    super.withTable(tableNames: _*) {
+      f
+      tableNames.foreach(assertNoParquetFiles)
+    }
+  }
 
   override def afterEach(): Unit = {
     try {
@@ -59,13 +66,18 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       TableIdentifier(tableName))
     val dataPath = new File(new URI(catalogTable.location.toString))
     if (dataPath.exists()) {
-      val parquetFiles = Files.walk(dataPath.toPath)
-        .filter(Files.isRegularFile(_))
-        .filter(_.toString.endsWith(".parquet"))
-        .toArray.map(_.asInstanceOf[Path].toString).toSeq
-      assert(parquetFiles.isEmpty,
-        s"Physical parquet files found under '$dataPath' while V2 in-memory mode is enabled. " +
-        s"DML may have fallen back to V1. Files: $parquetFiles")
+      val stream = Files.walk(dataPath.toPath)
+      try {
+        val parquetFiles = stream
+          .filter(Files.isRegularFile(_))
+          .filter(_.toString.endsWith(".parquet"))
+          .toArray.map(_.asInstanceOf[Path].toString).toSeq
+        assert(parquetFiles.isEmpty,
+          s"Physical parquet files found under '$dataPath' while V2 in-memory mode is enabled. " +
+          s"DML may have fallen back to V1. Files: $parquetFiles")
+      } finally {
+        stream.close()
+      }
     }
   }
 
@@ -74,8 +86,7 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
     withTable(tableName) {
       sql(s"CREATE TABLE $tableName (id LONG, value STRING) USING delta")
 
-      val catalog = spark.sessionState.catalogManager.v2SessionCatalog
-        .asInstanceOf[InMemoryDeltaCatalog]
+      val catalog = spark.sessionState.catalogManager.v2SessionCatalog.asInstanceOf[TableCatalog]
       val table = catalog.loadTable(Identifier.of(Array("default"), tableName))
 
       assert(table.isInstanceOf[InMemorySparkTable],
@@ -92,7 +103,6 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       checkAnswer(
         sql(s"SELECT id, value FROM $tableName ORDER BY id"),
         Seq(Row(1L, "a"), Row(2L, "b")))
-      assertNoParquetFiles(tableName)
     }
   }
 
@@ -106,7 +116,6 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       checkAnswer(
         sql(s"SELECT id, value FROM $tableName ORDER BY id"),
         Seq(Row(3L, "c")))
-      assertNoParquetFiles(tableName)
     }
   }
 
@@ -120,7 +129,6 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       checkAnswer(
         sql(s"SELECT pk, value FROM $tableName ORDER BY pk"),
         Seq(Row(1, "a"), Row(3, "c")))
-      assertNoParquetFiles(tableName)
     }
   }
 
@@ -134,7 +142,6 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       checkAnswer(
         sql(s"SELECT pk, value FROM $tableName ORDER BY pk"),
         Seq(Row(1, "a"), Row(2, "updated"), Row(3, "updated")))
-      assertNoParquetFiles(tableName)
     }
   }
 
@@ -158,7 +165,6 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
         checkAnswer(
           sql(s"SELECT pk, value FROM $targetTable ORDER BY pk"),
           Seq(Row(1, "updated"), Row(2, "b"), Row(3, "c")))
-        assertNoParquetFiles(targetTable)
       }
     }
   }

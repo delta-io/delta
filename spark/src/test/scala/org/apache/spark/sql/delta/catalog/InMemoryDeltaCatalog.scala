@@ -44,19 +44,24 @@ class InMemoryDeltaCatalog extends DeltaCatalog {
 }
 
 object InMemoryDeltaCatalog {
-  private val tableCache = new ConcurrentHashMap[String, InMemorySparkTable]()
 
+  private val tables = new ConcurrentHashMap[String, InMemorySparkTable]()
+
+  /**
+   * Get or create a table defined by [[ident]].
+   * [[catalogTable]] and [[spark]] are used to discover the table schema.
+   *
+   * NB: Ignores `ident.namespace()`, instead using `ident.name()` as the key.
+   */
   def getOrCreateTable(
       ident: Identifier,
       catalogTable: CatalogTable,
       spark: SparkSession): InMemorySparkTable = {
-    val tablePath = catalogTable.location.toString
-    tableCache.computeIfAbsent(tablePath, _ => {
+    val tableName = ident.name()
+    tables.computeIfAbsent(tableName, _ => {
       val deltaTable = DeltaTableV2(
         spark, new Path(catalogTable.location), catalogTable = Some(catalogTable))
-      val tableName = s"${ident.namespace().mkString(".")}.${ident.name()}"
       val props = new java.util.HashMap[String, String](catalogTable.properties.asJava)
-      props.put("supports-deltas", "true")
       new InMemorySparkTable(
         tableName,
         deltaTable.schema(),
@@ -65,5 +70,5 @@ object InMemoryDeltaCatalog {
     })
   }
 
-  def reset(): Unit = tableCache.clear()
+  def reset(): Unit = tables.clear()
 }
