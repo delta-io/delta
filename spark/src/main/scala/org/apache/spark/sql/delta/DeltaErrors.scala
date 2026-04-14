@@ -4021,8 +4021,7 @@ trait DeltaErrorsBase
     throw new AnalysisException(
       errorClass = "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS",
       messageParameters = Map(
-        "misalignedReplaceUsingCols" -> misalignedReplaceUsingCols.map(toSQLId).mkString(", "),
-      )
+        "misalignedReplaceUsingCols" -> misalignedReplaceUsingCols.map(toSQLId).mkString(", "))
     )
   }
 
