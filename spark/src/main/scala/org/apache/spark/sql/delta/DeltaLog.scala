@@ -302,7 +302,7 @@ class DeltaLog private(
 
     val txn = startTransaction(catalogTable, Some(snapshot))
     try {
-      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "in the table schema")
+      SchemaMergingUtils.checkColumnNameDuplication(txn.metadata.schema, "TABLE_SCHEMA")
     } catch {
       case e: AnalysisException =>
         throw DeltaErrors.duplicateColumnsOnUpdateTable(e)
@@ -413,8 +413,20 @@ class DeltaLog private(
         Seq.empty
       }
 
+    // Spark 4.0 does not support the parquet variant logical type annotation. When
+    // the config is enabled, treat the variant table features as unsupported to block
+    // all interactions with variant tables on Spark 4.0 clients.
+    val unsupportedVariantFeatures =
+      if (org.apache.spark.SPARK_VERSION.startsWith("4.0") &&
+          spark.conf.get(DeltaSQLConf.DISABLE_VARIANT_TABLE_FEATURE_FOR_SPARK_40)) {
+        Seq(VariantTypeTableFeature, VariantTypePreviewTableFeature)
+      } else {
+        Seq.empty
+      }
+
     val clientSupportedProtocol =
-      Action.supportedProtocolVersion(featuresToExclude = unsupportedTestFeatures)
+      Action.supportedProtocolVersion(
+        featuresToExclude = unsupportedTestFeatures ++ unsupportedVariantFeatures)
     // Depending on the operation, pull related protocol versions out of Protocol objects.
     // `getEnabledFeatures` is a pointer to pull reader/writer features out of a Protocol.
     val (clientSupportedVersions, tableRequiredVersion, getEnabledFeatures) = readOrWrite match {

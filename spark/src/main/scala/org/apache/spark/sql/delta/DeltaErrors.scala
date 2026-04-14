@@ -617,10 +617,10 @@ trait DeltaErrorsBase
       messageParameters = Array(colName, scheme))
   }
 
-  def foundDuplicateColumnsException(colType: String, duplicateCols: String): Throwable = {
+  def foundDuplicateColumnsException(subClass: String, duplicateCols: String): Throwable = {
     new DeltaAnalysisException(
-      errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
-      messageParameters = Array(colType, duplicateCols))
+      errorClass = s"DELTA_DUPLICATE_COLUMNS_FOUND.$subClass",
+      messageParameters = Array(duplicateCols))
   }
 
   def addColumnStructNotFoundException(pos: String): Throwable = {

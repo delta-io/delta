@@ -46,6 +46,7 @@ class DeltaV2SourceDeletionVectorsSuite
     "deleting files fails query if ignoreDeletes = false",
     "deleting files when ignoreChanges = true doesn't fail the query",
     "allow to delete files after staring a streaming query when ignoreDeletes is true",
+    "allow to delete files after staring a streaming query when ignoreFileDeletion is true",
     "updating the source table causes failure when ignoreChanges = false - using DELETE",
     "allow to update the source table when ignoreChanges = true - using DELETE",
     "updating source table when ignoreDeletes = true fails the query - using DELETE",
@@ -63,15 +64,11 @@ class DeltaV2SourceDeletionVectorsSuite
       " - List((skipChangeCommits,true))",
     "subsequent DML commands are processed correctly in a batch - INSERT->DELETE" +
       " - List((ignoreChanges,true))",
-    "multiple deletion vectors per file - List((ignoreChanges,true))"
-  )
-
-  private lazy val shouldFailTests = Set(
-    // TODO(#5319): enable these tests after ignoreChanges/ignoreFileDeletion read options
-    //  are supported by the V2 connector.
-    "allow to delete files after staring a streaming query when ignoreFileDeletion is true",
+    "multiple deletion vectors per file - List((ignoreChanges,true))",
     "multiple deletion vectors per file - List((ignoreFileDeletion,true))"
   )
+
+  private lazy val shouldFailTests = Set.empty[String]
 
   override protected def shouldFail(testName: String): Boolean = {
     val inPassList = shouldPassTests.contains(testName)

@@ -72,6 +72,7 @@ public class SparkScan
               DeltaOptions.STARTING_TIMESTAMP_OPTION(),
               DeltaOptions.MAX_FILES_PER_TRIGGER_OPTION(),
               DeltaOptions.MAX_BYTES_PER_TRIGGER_OPTION(),
+              DeltaOptions.IGNORE_FILE_DELETION_OPTION(),
               DeltaOptions.IGNORE_CHANGES_OPTION(),
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
@@ -79,15 +80,14 @@ public class SparkScan
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
-   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreChanges,
-   * ignoreDeletes, skipChangeCommits, and excludeRegex are supported. User-defined custom options
-   * (not in DeltaOptions) are allowed to pass through.
+   * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreFileDeletion,
+   * ignoreChanges, ignoreDeletes, skipChangeCommits, and excludeRegex are supported. User-defined
+   * custom options (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.IGNORE_FILE_DELETION_OPTION().toLowerCase(),
                   DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
@@ -187,6 +187,13 @@ public class SparkScan
    */
   @Override
   public Scan.ColumnarSupportMode columnarSupportMode() {
+    boolean metadataColumnRequested =
+        Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
+    if (metadataColumnRequested) {
+      return Scan.ColumnarSupportMode.UNSUPPORTED;
+    }
+
     // When the table supports deletion vectors, the reader factory augments the read schema
     // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
     // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in
@@ -257,12 +264,15 @@ public class SparkScan
     ensurePlanned();
     final long plannedBytes = estimatedSizeInBytes;
 
-    // When catalog stats are available and CBO is enabled, combine table-level stats
-    // (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // When catalog stats with numRows are available and CBO is enabled, combine table-level
+    // stats (for numRows/columnStats) with planned file stats (for sizeInBytes).
     // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
     // conf.cboEnabled || conf.planStatsEnabled.
+    // Catalog stats are typically all-or-nothing; having sizeInBytes without numRows is rare
+    // and not well-exercised in practice. For that case we fall through to the file-only path
+    // (planned file sizes), which aligns with V1's better-tested no-catalog-stats code path.
     boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-    if (useCatalogStats && catalogStats.isPresent()) {
+    if (useCatalogStats && catalogStats.isPresent() && catalogStats.get().numRows().isPresent()) {
       final Statistics stats = catalogStats.get();
       return new Statistics() {
         @Override

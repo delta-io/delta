@@ -23,6 +23,8 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
+import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.rowtracking.RowTracking;
 import io.delta.spark.internal.v2.read.SparkScanBuilder;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.snapshot.SnapshotManagerFactory;
@@ -42,12 +44,21 @@ import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.connector.write.WriteBuilder;
 import org.apache.spark.sql.delta.DeltaTableUtils;
+import org.apache.spark.sql.delta.RowCommitVersion$;
+import org.apache.spark.sql.delta.RowId$;
+import org.apache.spark.sql.execution.datasources.FileFormat$;
+import org.apache.spark.sql.types.DataType;
+import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 
 /** DataSource V2 Table implementation for Delta Lake using the Delta Kernel API. */
-public class SparkTable implements Table, SupportsRead, SupportsWrite {
+public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsMetadataColumns {
+  private static final String METADATA_COLUMN_NAME = FileFormat$.MODULE$.METADATA_NAME();
+  private static final String ROW_ID_METADATA_FIELD_NAME = RowId$.MODULE$.ROW_ID();
+  private static final String ROW_COMMIT_VERSION_METADATA_FIELD_NAME =
+      RowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME();
 
   private static final Set<TableCapability> CAPABILITIES =
       Collections.unmodifiableSet(
@@ -234,6 +245,48 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite {
   @Override
   public Set<TableCapability> capabilities() {
     return CAPABILITIES;
+  }
+
+  /**
+   * Exposes row-tracking metadata via a single DSv2 metadata struct column.
+   *
+   * <p>This always returns one metadata column named {@code _metadata}. When row tracking is
+   * enabled, the struct contains fields {@code row_id} and {@code row_commit_version}. When row
+   * tracking is disabled, those fields are omitted from the struct.
+   */
+  @Override
+  public MetadataColumn[] metadataColumns() {
+    SnapshotImpl snapshotImpl = (SnapshotImpl) initialSnapshot;
+    boolean rowTrackingEnabled =
+        RowTracking.isEnabled(snapshotImpl.getProtocol(), snapshotImpl.getMetadata());
+
+    final StructType metadataType =
+        rowTrackingEnabled
+            ? new StructType()
+                .add(ROW_ID_METADATA_FIELD_NAME, DataTypes.LongType, false)
+                .add(ROW_COMMIT_VERSION_METADATA_FIELD_NAME, DataTypes.LongType, false)
+            : new StructType();
+
+    MetadataColumn[] columns = new MetadataColumn[1];
+    columns[0] =
+        new MetadataColumn() {
+          @Override
+          public String name() {
+            return METADATA_COLUMN_NAME;
+          }
+
+          @Override
+          public DataType dataType() {
+            return metadataType;
+          }
+
+          @Override
+          public boolean isNullable() {
+            return false;
+          }
+        };
+
+    return columns;
   }
 
   @Override

@@ -17,9 +17,11 @@ package io.delta.spark.internal.v2.ddl;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.TableManager;
 import io.delta.kernel.defaults.engine.DefaultEngine;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
+import io.delta.kernel.transaction.CreateTableTransactionBuilder;
 import io.delta.kernel.transaction.DataLayoutSpec;
 import io.delta.kernel.types.IntegerType;
 import io.delta.kernel.types.StringType;
@@ -43,6 +45,7 @@ public class DDLRequestContextTest {
   @Test
   public void testConstructionWithAllFields() {
     Identifier ident = Identifier.of(new String[] {"prod_catalog", "analytics"}, "page_views");
+    String tablePath = "/managed/prod_catalog/analytics/page_views";
     StructType schema =
         new StructType()
             .add(new StructField("user_id", IntegerType.INTEGER, false))
@@ -52,26 +55,25 @@ public class DDLRequestContextTest {
         DataLayoutSpec.clustered(List.of(new Column("user_id"), new Column("event_ts")));
     UCTableInfo ucInfo =
         new UCTableInfo(
-            "uc-table-id-123",
-            "/managed/prod_catalog/analytics/page_views",
-            "https://uc.example.com",
-            Map.of("token", "fake-token"));
+            "uc-table-id-123", tablePath, "https://uc.example.com", Map.of("token", "fake-token"));
+    CreateTableTransactionBuilder txnBuilder =
+        TableManager.buildCreateTableTransaction(tablePath, schema, "test");
 
     DDLRequestContext request =
         new DDLRequestContext(
             ident,
-            "/managed/prod_catalog/analytics/page_views",
+            tablePath,
             schema,
             Map.of("delta.appendOnly", "true", "delta.logRetentionDuration", "interval 30 days"),
             Optional.of("Tracks page view events from the analytics pipeline"),
             clustering,
             ENGINE,
             Optional.of(ucInfo),
-            "Delta-Spark-DSv2/4.0.0");
+            txnBuilder);
 
     assertEquals("page_views", request.ident().name());
     assertArrayEquals(new String[] {"prod_catalog", "analytics"}, request.ident().namespace());
-    assertEquals("/managed/prod_catalog/analytics/page_views", request.tablePath());
+    assertEquals(tablePath, request.tablePath());
     assertEquals(3, request.kernelSchema().length());
     assertEquals("true", request.properties().get("delta.appendOnly"));
     assertEquals(
@@ -80,7 +82,7 @@ public class DDLRequestContextTest {
     assertEquals(2, request.dataLayoutSpec().getClusteringColumns().size());
     assertTrue(request.ucTableInfo().isPresent());
     assertEquals("uc-table-id-123", request.ucTableInfo().get().getTableId());
-    assertEquals("Delta-Spark-DSv2/4.0.0", request.engineInfo());
+    assertNotNull(request.transactionBuilder());
   }
 
   @Test
@@ -90,6 +92,8 @@ public class DDLRequestContextTest {
 
     HashMap<String, String> original = new HashMap<>();
     original.put("k", "v");
+    CreateTableTransactionBuilder txnBuilder =
+        TableManager.buildCreateTableTransaction("/p", schema, "test");
     DDLRequestContext request =
         new DDLRequestContext(
             ident,
@@ -100,7 +104,7 @@ public class DDLRequestContextTest {
             DataLayoutSpec.noDataLayout(),
             ENGINE,
             /* ucTableInfo = */ Optional.empty(),
-            "e");
+            txnBuilder);
 
     // Mutating the original map must not leak into the DDLRequestContext
     original.put("injected", "bad");
