@@ -31,6 +31,7 @@ import io.delta.kernel.internal.DeltaHistoryManager;
 import io.delta.kernel.internal.DeltaLogActionUtils.DeltaAction;
 import io.delta.kernel.internal.SnapshotImpl;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.util.ColumnMapping;
@@ -815,13 +816,7 @@ public class SparkMicroBatchStream
   }
 
   private void validateCDFEnabledOnTable() {
-    String cdcEnabled =
-        snapshotAtSourceInit
-            .getMetadata()
-            .getConfiguration()
-            .getOrDefault("delta.enableChangeDataFeed", "false");
-
-    if (!cdcEnabled.equalsIgnoreCase("true")) {
+    if (!isCDFEnabled(snapshotAtSourceInit.getMetadata())) {
       long version = snapshotAtSourceInit.getVersion();
       // DeltaErrors.changeDataNotRecordedException returns a DeltaAnalysisException (checked),
       // so we wrap it to propagate through the streaming pipeline.
@@ -1059,22 +1054,14 @@ public class SparkMicroBatchStream
           // Track Metadata for read-incompatible schema changes.
           Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
           if (metadataOpt.isPresent()) {
-            Metadata metadata = metadataOpt.get();
-            Preconditions.checkArgument(
-                metadataAction == null,
-                "Should not encounter two metadata actions in the same commit of version %d",
-                version);
-            metadataAction = metadata;
-            Long batchEndVersion =
-                endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
-            if (verifyMetadataAction) {
-              checkReadIncompatibleSchemaChanges(
-                  metadata,
-                  version,
-                  batchStartVersion,
-                  batchEndVersion,
-                  /* validatedDuringStreamStart */ false);
-            }
+            metadataAction =
+                validateMetadata(
+                    metadataOpt.get(),
+                    metadataAction,
+                    version,
+                    batchStartVersion,
+                    endOffsetOpt,
+                    verifyMetadataAction);
           }
         }
       }
@@ -1477,5 +1464,194 @@ public class SparkMicroBatchStream
 
     return new InitialSnapshotCache(
         version, Collections.unmodifiableList(indexedFiles), commitTimestamp);
+  }
+
+  /**
+   * Process a CDC commit into IndexedFiles. Validates metadata, collects CDC actions, and builds
+   * IndexedFiles.
+   *
+   * <p>Package-private for testing.
+   */
+  CloseableIterator<IndexedFile> processCommitToIndexedFilesForCDC(
+      CommitActions commit, long startVersion, Optional<DeltaSourceOffset> endOffsetOpt) {
+    try {
+      long version = commit.getVersion();
+      long timestamp = commit.getTimestamp();
+
+      if (isEndOffsetAtBaseIndex(endOffsetOpt, version)) {
+        Utils.closeCloseables(commit);
+        return Utils.toCloseableIterator(
+            Arrays.asList(
+                    IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()),
+                    IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()))
+                .iterator());
+      }
+
+      List<IndexedFile> result =
+          collectAndBuildCDCIndexedFiles(commit, version, timestamp, startVersion, endOffsetOpt);
+
+      result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+      Utils.closeCloseables(commit);
+      return Utils.toCloseableIterator(result.iterator());
+    } catch (IOException e) {
+      Utils.closeCloseables(commit);
+      throw new RuntimeException(e);
+    }
+  }
+
+  /**
+   * Scans a commit's actions in a single pass: validates metadata, checks CDF is enabled, detects
+   * no-op MERGEs, and collects CDC/Add/Remove files into IndexedFiles.
+   */
+  private List<IndexedFile> collectAndBuildCDCIndexedFiles(
+      CommitActions commit,
+      long version,
+      long timestamp,
+      long startVersion,
+      Optional<DeltaSourceOffset> endOffsetOpt)
+      throws IOException {
+    // Phase 1: scan actions to validate metadata and collect CDC/Add/Remove files.
+    List<CDCDataFile> cdcFiles = new ArrayList<>();
+    // Single ordered list for inferred CDC files, preserving delta-log action ordering.
+    // DSv1 assigns IndexedFile.index via zipWithIndex on the original action sequence.
+    List<CDCDataFile> inferredCdcFiles = new ArrayList<>();
+    boolean shouldSkip = false;
+    Metadata metadataAction = null;
+
+    try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
+      while (actionsIter.hasNext()) {
+        ColumnarBatch batch = actionsIter.next();
+        for (int rowId = 0; rowId < batch.getSize(); rowId++) {
+          // Metadata: check schema changes + CDF still enabled
+          Optional<Metadata> metadataOpt = StreamingHelper.getMetadata(batch, rowId);
+          if (metadataOpt.isPresent()) {
+            metadataAction =
+                validateMetadata(
+                    metadataOpt.get(),
+                    metadataAction,
+                    version,
+                    startVersion,
+                    endOffsetOpt,
+                    /* verifyMetadataAction= */ true);
+            if (!isCDFEnabled(metadataAction)) {
+              throw new RuntimeException(
+                  DeltaErrors.changeDataNotRecordedException(
+                      version,
+                      startVersion,
+                      endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(version)));
+            }
+          }
+
+          // CommitInfo: detect no-op MERGEs where the operation rewrites files without
+          // changing logical data. These produce file actions that cancel out; inferred CDC
+          // actions will be discarded after the scan to avoid emitting spurious changes.
+          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
+          if (commitInfoOpt.isPresent()) {
+            shouldSkip = shouldSkipFileActionsInCommit(commitInfoOpt.get());
+          }
+
+          // Explicit CDC files
+          Optional<CDCDataFile> cdcOpt = StreamingHelper.getCDCFile(batch, rowId, timestamp);
+          if (cdcOpt.isPresent()) {
+            cdcFiles.add(cdcOpt.get());
+            continue;
+          }
+
+          // RemoveFile(dataChange=true): collect for inferred CDC
+          Optional<RemoveFile> removeOpt = StreamingHelper.getDataChangeRemove(batch, rowId);
+          if (removeOpt.isPresent()) {
+            inferredCdcFiles.add(CDCDataFile.fromRemoveFile(removeOpt.get(), timestamp));
+            continue;
+          }
+
+          // AddFile(dataChange=true)
+          Optional<AddFile> addOpt = StreamingHelper.getAddFileWithDataChange(batch, rowId);
+          if (addOpt.isPresent()) {
+            inferredCdcFiles.add(CDCDataFile.fromAddFile(addOpt.get(), timestamp));
+          }
+        }
+      }
+    }
+
+    // No-op MERGE: discard inferred actions (DSv1's isValidIndexedFile / shouldSkip).
+    // shouldSkip doesn't apply to explicit CDC files — only inferred Add/Remove.
+    if (shouldSkip) {
+      inferredCdcFiles.clear();
+    }
+
+    // Phase 2: build IndexedFiles from collected actions.
+    List<IndexedFile> result = new ArrayList<>();
+    result.add(IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()));
+    long fileIndex = 0;
+
+    // Explicit CDC files and inferred files are mutually exclusive: if a commit contains any
+    // AddCDCFile actions, only those are emitted and AddFile/RemoveFile are ignored.
+    if (!cdcFiles.isEmpty()) {
+      for (CDCDataFile cdcFile : cdcFiles) {
+        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      }
+    } else {
+      for (CDCDataFile cdcFile : inferredCdcFiles) {
+        result.add(IndexedFile.cdc(version, fileIndex++, cdcFile));
+      }
+    }
+
+    return result;
+  }
+
+  /** Detects no-op MERGEs whose file actions should be skipped for CDC. */
+  private static boolean shouldSkipFileActionsInCommit(CommitInfo commitInfo) {
+    boolean isMerge = commitInfo.getOperation().filter("MERGE"::equals).isPresent();
+    if (!isMerge) {
+      return false;
+    }
+    Map<String, String> metrics = commitInfo.getOperationMetrics();
+    return "0".equals(metrics.get("numTargetRowsInserted"))
+        && "0".equals(metrics.get("numTargetRowsUpdated"))
+        && "0".equals(metrics.get("numTargetRowsDeleted"));
+  }
+
+  private static boolean isCDFEnabled(Metadata metadata) {
+    return metadata
+        .getConfiguration()
+        .getOrDefault("delta.enableChangeDataFeed", "false")
+        .equalsIgnoreCase("true");
+  }
+
+  /** Checks if the endOffset is at BASE_INDEX for the given version (early exit condition). */
+  private static boolean isEndOffsetAtBaseIndex(
+      Optional<DeltaSourceOffset> endOffsetOpt, long version) {
+    return endOffsetOpt.isPresent()
+        && endOffsetOpt.get().reservoirVersion() == version
+        && endOffsetOpt.get().index() == DeltaSourceOffset.BASE_INDEX();
+  }
+
+  /**
+   * Validates a metadata action: checks for duplicates and read-incompatible schema changes.
+   *
+   * @return the validated metadata (for assignment back to the caller's tracking variable)
+   */
+  private Metadata validateMetadata(
+      Metadata metadata,
+      Metadata existing,
+      long version,
+      long startVersion,
+      Optional<DeltaSourceOffset> endOffsetOpt,
+      boolean verifyMetadataAction) {
+    Preconditions.checkArgument(
+        existing == null,
+        "Should not encounter two metadata actions in the same commit of version %d",
+        version);
+    // TODO(#5319): don't verify metadata action when schema tracking is enabled
+    if (verifyMetadataAction) {
+      Long batchEndVersion = endOffsetOpt.map(DeltaSourceOffset::reservoirVersion).orElse(null);
+      checkReadIncompatibleSchemaChanges(
+          metadata,
+          version,
+          startVersion,
+          batchEndVersion,
+          /* validatedDuringStreamStart= */ false);
+    }
+    return metadata;
   }
 }

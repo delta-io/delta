@@ -974,7 +974,7 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
       "org.apache.hadoop" % "hadoop-client-runtime" % hadoopVersion,
       "com.fasterxml.jackson.core" % "jackson-databind" % "2.13.5",
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % "2.13.5",
-      "org.apache.parquet" % "parquet-hadoop" % "1.12.3",
+      "org.apache.parquet" % "parquet-hadoop" % "1.16.0",
 
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
       "junit" % "junit" % "4.13.2" % "test",
@@ -1143,9 +1143,18 @@ val deltaIcebergSparkIncludePrefixes = Seq(
 
   // We only want the files in this project from this package. e.g. we want to exclude
   // org/apache/spark/sql/delta/commands/convert/ConvertTargetFile.class (from delta-spark project).
+  "org/apache/spark/sql/delta/commands/convert/DataFileWrapper",
+  "org/apache/spark/sql/delta/commands/convert/DelegatingIcebergTable",
   "org/apache/spark/sql/delta/commands/convert/IcebergFileManifest",
+  "org/apache/spark/sql/delta/commands/convert/IcebergPartitionConverter",
   "org/apache/spark/sql/delta/commands/convert/IcebergSchemaUtils",
-  "org/apache/spark/sql/delta/commands/convert/IcebergTable"
+  "org/apache/spark/sql/delta/commands/convert/IcebergSparkWrappers",
+  "org/apache/spark/sql/delta/commands/convert/IcebergStatsUtils",
+  "org/apache/spark/sql/delta/commands/convert/IcebergTable",
+  "org/apache/spark/sql/delta/commands/convert/IcebergTableLike",
+  "org/apache/spark/sql/delta/commands/convert/ManifestFileWrapper",
+  "org/apache/spark/sql/delta/commands/convert/PartitionFieldSummaryWrapper",
+  "org/apache/spark/sql/delta/commands/convert/TypeToSparkTypeWithCustomCast"
 )
 
 // Build using: build/sbt clean icebergShaded/compile iceberg/compile
@@ -1350,7 +1359,7 @@ lazy val hudi = (project in file("hudi"))
             ExclusionRule(organization = "org.apache.zookeeper"),
           ),
           "org.apache.spark" %% "spark-avro" % sparkVersion.value % "test" excludeAll ExclusionRule(organization = "org.apache.hadoop"),
-          "org.apache.parquet" % "parquet-avro" % "1.12.3" % "compile"
+          "org.apache.parquet" % "parquet-avro" % "1.16.0" % "compile"
         )
       } else {
         Seq.empty

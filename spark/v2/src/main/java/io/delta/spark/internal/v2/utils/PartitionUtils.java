@@ -27,6 +27,8 @@ import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
+import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
+import io.delta.spark.internal.v2.read.rowtracking.RowTrackingSchemaContext;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -38,8 +40,10 @@ import org.apache.spark.paths.SparkPath;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.catalyst.InternalRow;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
+import org.apache.spark.sql.delta.DefaultRowCommitVersion$;
 import org.apache.spark.sql.delta.DeltaColumnMapping;
 import org.apache.spark.sql.delta.DeltaParquetFileFormat;
+import org.apache.spark.sql.delta.RowId$;
 import org.apache.spark.sql.delta.RowIndexFilterType;
 import org.apache.spark.sql.execution.datasources.FileFormat$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -170,8 +174,17 @@ public class PartitionUtils {
     String[] preferredLocations = new String[0];
 
     // Build metadata map with DV info if present
-    scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
+    scala.collection.immutable.Map<String, Object> deletionVectorMetadata =
         buildDvMetadata(addFile.getDeletionVector());
+    scala.collection.immutable.Map<String, Object> rowTrackingMetadata =
+        buildRowTrackingMetadata(addFile.getBaseRowId(), addFile.getDefaultRowCommitVersion());
+    scala.collection.immutable.Map<String, Object> otherConstantMetadataColumnValues =
+        deletionVectorMetadata;
+    for (Map.Entry<String, Object> entry :
+        CollectionConverters.asJava(rowTrackingMetadata).entrySet()) {
+      otherConstantMetadataColumnValues =
+          otherConstantMetadataColumnValues.$plus(new Tuple2<>(entry.getKey(), entry.getValue()));
+    }
 
     return new PartitionedFile(
         partitionRow,
@@ -215,18 +228,31 @@ public class PartitionUtils {
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
 
+    boolean metadataColumnRequested =
+        Arrays.stream(readDataSchema.fields())
+            .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
+    Optional<RowTrackingSchemaContext> rowTrackingSchemaContext = Optional.empty();
+    if (metadataColumnRequested) {
+      RowTrackingSchemaContext context =
+          new RowTrackingSchemaContext(readDataSchema, snapshotImpl.getMetadata(), partitionSchema);
+      rowTrackingSchemaContext = Optional.of(context);
+      readDataSchema = context.getSchemaWithRowTrackingColumns();
+    }
+
     // Create DV schema context if table supports deletion vectors
     Optional<DeletionVectorSchemaContext> dvSchemaContext =
         tableSupportsDeletionVectors(snapshot)
             ? Optional.of(new DeletionVectorSchemaContext(readDataSchema, partitionSchema))
             : Optional.empty();
-    StructType finalReadDataSchema =
-        dvSchemaContext
-            .map(DeletionVectorSchemaContext::getSchemaWithDvColumn)
-            .orElse(readDataSchema);
+    if (dvSchemaContext.isPresent()) {
+      readDataSchema = dvSchemaContext.get().getSchemaWithDvColumn();
+    }
 
     boolean enableVectorizedReader =
-        ParquetUtils.isBatchReadSupportedForSchema(sqlConf, finalReadDataSchema);
+        // Disabled because RowTrackingReadFunction operates on individual InternalRows to compute
+        // row_id from _tmp_metadata_row_index and coalesce with materialized columns.
+        !rowTrackingSchemaContext.isPresent()
+            && ParquetUtils.isBatchReadSupportedForSchema(sqlConf, readDataSchema);
     scala.collection.immutable.Map<String, String> optionsWithVectorizedReading =
         scalaOptions.$plus(
             new Tuple2<>(
@@ -248,15 +274,24 @@ public class PartitionUtils {
             SparkSession.active(),
             dataSchema,
             partitionSchema,
-            finalReadDataSchema,
+            readDataSchema,
             CollectionConverters.asScala(Arrays.asList(dataFilters)).toSeq(),
             optionsWithVectorizedReading,
             hadoopConf);
 
     // Wrap reader to filter deleted rows and remove internal columns if DV is enabled.
+    // DV must be the inner wrapper so it sees the raw reader output with the DV column
+    // at its expected index, before row tracking changes the column layout.
     if (dvSchemaContext.isPresent()) {
       readFunc =
           DeletionVectorReadFunction.wrap(readFunc, dvSchemaContext.get(), enableVectorizedReader);
+    }
+
+    // Wrap reader to add rowTracking metadata.
+    // RT is the outer wrapper: _tmp_metadata_row_index values are per-row physical positions
+    // generated by the Parquet reader, so they remain correct after DV filtering.
+    if (rowTrackingSchemaContext.isPresent()) {
+      readFunc = RowTrackingReadFunction.wrap(readFunc, rowTrackingSchemaContext.get());
     }
 
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
@@ -304,5 +339,37 @@ public class PartitionUtils {
           DeltaParquetFileFormat.FILE_ROW_INDEX_FILTER_TYPE(), RowIndexFilterType.IF_CONTAINED);
     }
     return scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
+  }
+
+  /**
+   * Build metadata map for PartitionedFile containing row tracking descriptor if present.
+   *
+   * <p>The metadata is used by DeltaParquetFileFormat to generate row-tracking values.
+   *
+   * <p>Both keys must be present together (or both absent) because they represent one row-tracking
+   * descriptor contract for a file.
+   *
+   * @throws IllegalStateException if only one of the two row-tracking constants is provided
+   */
+  @SuppressWarnings("unchecked")
+  private static scala.collection.immutable.Map<String, Object> buildRowTrackingMetadata(
+      Optional<Long> baseRowId, Optional<Long> defaultRowCommitVersion) {
+    scala.collection.immutable.Map<String, Object> result =
+        (scala.collection.immutable.Map<String, Object>)
+            (scala.collection.immutable.Map<?, ?>) scala.collection.immutable.Map$.MODULE$.empty();
+    if (baseRowId.isPresent() != defaultRowCommitVersion.isPresent()) {
+      throw new IllegalStateException(
+          "Expected row tracking metadata keys base_row_id and default_row_commit_version to "
+              + "be either both set or both unset");
+    }
+    if (baseRowId.isPresent() && defaultRowCommitVersion.isPresent()) {
+      result = result.$plus(new Tuple2<>(RowId$.MODULE$.BASE_ROW_ID(), baseRowId.get()));
+      result =
+          result.$plus(
+              new Tuple2<>(
+                  DefaultRowCommitVersion$.MODULE$.METADATA_STRUCT_FIELD_NAME(),
+                  defaultRowCommitVersion.get()));
+    }
+    return result;
   }
 }

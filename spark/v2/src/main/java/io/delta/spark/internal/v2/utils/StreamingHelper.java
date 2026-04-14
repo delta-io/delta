@@ -26,12 +26,14 @@ import io.delta.kernel.data.Row;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.internal.DeltaLogActionUtils;
 import io.delta.kernel.internal.actions.AddFile;
+import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.commitrange.CommitRangeImpl;
 import io.delta.kernel.internal.data.StructRow;
 import io.delta.kernel.internal.util.Preconditions;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.CDCDataFile;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import java.io.IOException;
 import java.util.*;
@@ -231,6 +233,34 @@ public class StreamingHelper {
     }
 
     return versionToMetadata;
+  }
+
+  /** Get explicit CDC file (AddCDCFile) from a batch at the specified row, if present. */
+  public static Optional<CDCDataFile> getCDCFile(
+      ColumnarBatch batch, int rowId, long commitTimestamp) {
+    int cdcIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.CDC.colName);
+    ColumnVector cdcVector = batch.getColumnVector(cdcIdx);
+    if (cdcVector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+
+    Row cdcRow = StructRow.fromStructVector(cdcVector, rowId);
+    checkState(
+        cdcRow != null,
+        String.format("Failed to extract CDC struct from batch at rowId=%d.", rowId));
+
+    return Optional.of(CDCDataFile.fromAddCDCFile(cdcRow, commitTimestamp));
+  }
+
+  /** Get CommitInfo action from a batch at the specified row, if present. */
+  public static Optional<CommitInfo> getCommitInfo(ColumnarBatch batch, int rowId) {
+    int commitInfoIdx = getFieldIndex(batch, DeltaLogActionUtils.DeltaAction.COMMITINFO.colName);
+    ColumnVector commitInfoVector = batch.getColumnVector(commitInfoIdx);
+    if (commitInfoVector.isNullAt(rowId)) {
+      return Optional.empty();
+    }
+    CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, rowId);
+    return Optional.ofNullable(commitInfo);
   }
 
   /** Private constructor to prevent instantiation of this utility class. */
