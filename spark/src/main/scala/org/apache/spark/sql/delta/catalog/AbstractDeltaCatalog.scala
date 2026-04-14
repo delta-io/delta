@@ -262,7 +262,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
-        v1Table => {
+        (v1Table, _snapshot) => {
           val t = V1Table(v1Table)
           super.createTable(ident, t.columns(), t.partitioning, t.properties)
         }
