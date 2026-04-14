@@ -189,6 +189,7 @@ trait DeltaErrorsBase
            |
            |  2. Use 'startingVersion' option to skip the initial snapshot and start
            |     from a specific version""".stripMargin
+      )
     )
   }
 
@@ -423,6 +424,7 @@ trait DeltaErrorsBase
         relationPath.mkString("."),
         targetType,
         targetPath.mkString(".")
+      )
     )
   }
 
@@ -882,6 +884,7 @@ trait DeltaErrorsBase
         // updateAndMergeCastingFollowsAnsiEnabledFlag
         DeltaSQLConf.UPDATE_AND_MERGE_CASTING_FOLLOWS_ANSI_ENABLED_FLAG.key,
         SQLConf.ANSI_ENABLED.key // ansiEnabledFlag
+      )
     )
   }
 
@@ -1064,6 +1067,7 @@ trait DeltaErrorsBase
       messageParameters = Array(
         s"${formatColumn(colName)}",
         s"${schema.map(_.name).mkString(", ")}"
+      )
     )
   }
 
@@ -1091,6 +1095,7 @@ trait DeltaErrorsBase
         operation,
         oldPartitionColumns.mkString(", "),
         newPartitionColumns.mkString(", ")
+      )
     )
   }
 
@@ -1198,6 +1203,7 @@ trait DeltaErrorsBase
         startVersion.toString,
         endVersion.toString,
         versionToLoad.toString
+      )
     )
   }
 
@@ -1541,6 +1547,7 @@ trait DeltaErrorsBase
         path.toString,
         specifiedColumns.mkString(", "),
         existingColumns.mkString(", ")
+      )
     )
   }
 
@@ -2016,6 +2023,7 @@ trait DeltaErrorsBase
         s"${current.name}",
         s"${current.dataType.sql}",
         s"${update.dataType.sql}"
+      )
     )
   }
 
@@ -2481,6 +2489,7 @@ trait DeltaErrorsBase
         additionalInfo,
         conflictingCommit.map(ci => s"\nConflicting commit: ${JsonUtils.toJson(ci)}").getOrElse(""),
         DeltaErrors.generateDocsLink(SparkEnv.get.conf, "/concurrency-control.html")
+      )
     )
   }
 
@@ -3086,6 +3095,7 @@ trait DeltaErrorsBase
         rightName,
         wrongName,
         dataTypeToString(schema)
+      )
     )
   }
 
@@ -3101,6 +3111,7 @@ trait DeltaErrorsBase
         s"$other",
         s"${SchemaUtils.prettyFieldName(column)}",
         dataTypeToString(schema)
+      )
     )
   }
 
@@ -3443,6 +3454,7 @@ trait DeltaErrorsBase
         unblockChangeConfs,
         unblockStreamConfs,
         unblockAllConfs
+      )
     )
   }
 
@@ -3559,6 +3571,7 @@ trait DeltaErrorsBase
         "Requires IcebergCompat to be explicitly enabled in order for Universal Format (Iceberg) " +
         "to be enabled on an existing table. Supported versions are IcebergCompatV1 and " +
         "IcebergCompatV2."
+      )
     )
   }
 
@@ -3568,6 +3581,7 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UniversalFormat.HUDI_FORMAT,
         "Requires delete vectors to be disabled."
+      )
     )
   }
 
@@ -3577,6 +3591,7 @@ trait DeltaErrorsBase
       messageParameters = Array(
         UniversalFormat.HUDI_FORMAT,
         s"DataType: $unsupportedType is not currently supported."
+      )
     )
   }
 
@@ -3605,6 +3620,7 @@ trait DeltaErrorsBase
         currVersion.toString,
         currVersion.toString,
         maxVersion.toString
+      )
     )
   }
 
@@ -3622,6 +3638,7 @@ trait DeltaErrorsBase
         tableVersion.toString,
         (addFilesCount - addFilesWithTagsCount).toString,
         icebergCompatVersion.toString
+      )
     )
   }
 
@@ -3650,6 +3667,7 @@ trait DeltaErrorsBase
         version.toString,
         prevPartitionCols.mkString("(", ",", ")"),
         newPartitionCols.mkString("(", ",", ")")
+      )
     )
   }
 
@@ -3742,6 +3760,7 @@ trait DeltaErrorsBase
         SchemaUtils.prettyFieldName(fieldPath),
         toSQLType(oldType),
         toSQLType(newType)
+      )
     )
   }
 
@@ -4002,7 +4021,8 @@ trait DeltaErrorsBase
     throw new AnalysisException(
       errorClass = "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS",
       messageParameters = Map(
-        "misalignedReplaceUsingCols" -> misalignedReplaceUsingCols.map(toSQLId).mkString(", "))
+        "misalignedReplaceUsingCols" -> misalignedReplaceUsingCols.map(toSQLId).mkString(", "),
+      )
     )
   }
 
