@@ -45,6 +45,31 @@ import org.junit.jupiter.api.io.TempDir;
  * <p>Each {@link TableVariant} is a data record describing how to create and populate a table. The
  * {@code @TestFactory} generates tests for each variant x table type (EXTERNAL, MANAGED). Adding a
  * new variant is one entry in {@link #TABLE_VARIANTS}.
+ *
+ * <h3>Append-only vs. data-modifying operations</h3>
+ *
+ * <p>Delta streaming in append mode replays the Delta log and emits every {@code AddFile} it
+ * encounters. For <b>append-only</b> operations (INSERT), the accumulated streaming output equals
+ * the current batch table state, so {@code assertStreamingEqualsBatch} is the right assertion.
+ *
+ * <p>For <b>data-modifying</b> operations (UPDATE, DELETE, MERGE, INSERT OVERWRITE, TRUNCATE),
+ * streaming output will NOT match batch. This is expected and correct behavior — not a bug. The
+ * reason: Delta implements these as file-level rewrites. For example, {@code DELETE WHERE id = 1}
+ * on a file containing rows {1, 2, 3} produces:
+ *
+ * <pre>
+ *   RemoveFile(old_file)          — the file with {1, 2, 3}
+ *   AddFile(new_file)             — rewritten file with {2, 3}
+ * </pre>
+ *
+ * <p>With {@code ignoreDeletes=true}, streaming skips the RemoveFile but still reads the new
+ * AddFile. So rows 2 and 3 appear twice in the streaming output (once from the original file, once
+ * from the rewrite), while batch only shows {2, 3}. The streaming read is a <b>log of all data ever
+ * added</b>, not a materialized view of the current table state.
+ *
+ * <p>Data-modifying variants use {@code streamingReadOptions} (e.g., {@code ignoreDeletes}, {@code
+ * ignoreChanges}) to prevent the stream from failing on RemoveFile actions. The assertion for these
+ * variants verifies that the stream completes without error — not that the output matches batch.
  */
 public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBaseTest {
 
