@@ -102,6 +102,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     return isUnityCatalogSparkAtLeast(0, 4, 1);
   }
 
+
   private static String expectedUcTableIdValidationKey(String providedKey) {
     return isUnityCatalogSparkAtLeast(0, 4, 1) ? UC_TABLE_ID_KEY : providedKey;
   }
@@ -288,6 +289,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     return tests.stream();
   }
 
+
   private void runTableCreationTest(
       int count,
       TableType tableType,
@@ -404,7 +406,8 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     // table creation succeeds and the old key does not survive as a user-visible property.
     try {
       sql(
-          "CREATE TABLE %s(name STRING) USING delta " + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
+          "CREATE TABLE %s(name STRING) USING delta "
+              + "TBLPROPERTIES ('%s'='%s', '%s'='some_id')",
           fullTableName, DELTA_CATALOG_MANAGED_KEY, SUPPORTED, UC_TABLE_ID_KEY_OLD);
       assertUCTableInfo(TableType.MANAGED, fullTableName, List.of("name"), Map.of(), null, null);
     } finally {
