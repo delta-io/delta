@@ -23,7 +23,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.apache.spark.api.java.function.VoidFunction2;
@@ -348,6 +350,166 @@ public class UCDeltaTableDataFrameStreamingTest extends UCDeltaTableIntegrationB
               tableName, r -> r.option("startingVersion", -1), "startingVersion");
           assertInvalidStreamOption(tableName, r -> r.option("startingVersion", 999999), "999999");
         });
+  }
+
+  // ---------------------------------------------------------------------------
+  // DSv2 streaming reads across table creation / mutation variants
+  // ---------------------------------------------------------------------------
+
+  /** Verifies streaming read works after multiple separate INSERT commits. */
+  @TestAllTableTypes
+  public void testStreamingAfterMultipleInserts(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_multi_insert",
+        "id INT, value STRING",
+        tableType,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a')", tableName);
+          sql("INSERT INTO %s VALUES (2, 'b'), (3, 'c')", tableName);
+          sql("INSERT INTO %s VALUES (4, 'd')", tableName);
+          assertSnapshotStreamMatchesBatch(tableName);
+        });
+  }
+
+  /** Verifies streaming read works from a partitioned table with data across partitions. */
+  @TestAllTableTypes
+  public void testStreamingPartitionedTable(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_partitioned",
+        "id INT, value STRING, part STRING",
+        "part",
+        tableType,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')", tableName);
+          assertSnapshotStreamMatchesBatch(tableName);
+        });
+  }
+
+  /** Verifies streaming read works from a table created with CLUSTER BY. */
+  @TestAllTableTypes
+  public void testStreamingClusteredTable(TableType tableType) throws Exception {
+    String tableName =
+        fullTableName("streaming_clustered_" + UUID.randomUUID().toString().replace("-", ""));
+    String tblProps =
+        tableType == TableType.MANAGED
+            ? "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')"
+            : "";
+    String location =
+        tableType == TableType.EXTERNAL
+            ? String.format("LOCATION '%s'", tempTableLocation("streaming_clustered"))
+            : "";
+    sql(
+        "CREATE TABLE %s (id INT, value STRING, category STRING) USING DELTA"
+            + " CLUSTER BY (category) %s %s",
+        tableName, tblProps, location);
+    try {
+      sql("INSERT INTO %s VALUES (1, 'a', 'cat1'), (2, 'b', 'cat2'), (3, 'c', 'cat1')", tableName);
+      assertSnapshotStreamMatchesBatch(tableName);
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
+  /**
+   * Verifies incremental streaming reads match batch after each round of inserts. Tests that the
+   * accumulated streaming output stays consistent with the batch table state.
+   */
+  @TestAllTableTypes
+  public void testStreamingIncrementalInserts(TableType tableType) throws Exception {
+    withNewTable(
+        "streaming_incremental",
+        "id INT, value STRING",
+        tableType,
+        tableName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tableName);
+          String queryName = "incr_" + UUID.randomUUID().toString().replace("-", "");
+          StreamingQuery query =
+              spark()
+                  .readStream()
+                  .format("delta")
+                  .table(tableName)
+                  .writeStream()
+                  .format("memory")
+                  .queryName(queryName)
+                  .outputMode("append")
+                  .option("checkpointLocation", checkpoint())
+                  .start();
+          try {
+            query.processAllAvailable();
+            assertSortedRowsEqual(queryName, tableName);
+
+            sql("INSERT INTO %s VALUES (3, 'c')", tableName);
+            query.processAllAvailable();
+            assertSortedRowsEqual(queryName, tableName);
+
+            sql("INSERT INTO %s VALUES (4, 'd'), (5, 'e')", tableName);
+            query.processAllAvailable();
+            assertSortedRowsEqual(queryName, tableName);
+          } finally {
+            query.stop();
+          }
+        });
+  }
+
+  /**
+   * Streams a table snapshot with {@link Trigger#AvailableNow()} into a memory sink, then asserts
+   * the streaming output matches a batch {@code SELECT *} from the same table.
+   */
+  private void assertSnapshotStreamMatchesBatch(String tableName) throws Exception {
+    String queryName = "snap_" + UUID.randomUUID().toString().replace("-", "");
+    spark()
+        .readStream()
+        .format("delta")
+        .table(tableName)
+        .writeStream()
+        .format("memory")
+        .queryName(queryName)
+        .outputMode("append")
+        .trigger(Trigger.AvailableNow())
+        .option("checkpointLocation", checkpoint())
+        .start()
+        .awaitTermination(60_000L);
+    assertSortedRowsEqual(queryName, tableName);
+  }
+
+  /**
+   * Asserts that {@code SELECT * FROM queryName} and {@code SELECT * FROM tableName} return the
+   * same rows (order-independent).
+   */
+  private void assertSortedRowsEqual(String queryName, String tableName) {
+    List<List<String>> streamingRows = sortedStringRows("SELECT * FROM " + queryName);
+    List<List<String>> batchRows = sortedStringRows("SELECT * FROM " + tableName);
+    assertThat(streamingRows)
+        .as("Streaming %s should match batch %s", queryName, tableName)
+        .isEqualTo(batchRows);
+  }
+
+  /** Executes SQL and returns rows as sorted string lists for deterministic comparison. */
+  private List<List<String>> sortedStringRows(String query) {
+    Row[] rows = (Row[]) spark().sql(query).collect();
+    return Arrays.stream(rows)
+        .map(
+            row -> {
+              List<String> cells = new ArrayList<>();
+              for (int i = 0; i < row.length(); i++) {
+                cells.add(row.isNullAt(i) ? "null" : row.get(i).toString());
+              }
+              return cells;
+            })
+        .sorted(
+            (a, b) -> {
+              for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+                int cmp = a.get(i).compareTo(b.get(i));
+                if (cmp != 0) return cmp;
+              }
+              return Integer.compare(a.size(), b.size());
+            })
+        .collect(Collectors.toList());
+  }
+
+  /** Returns a temp location path for external tables that need custom DDL. */
+  private String tempTableLocation(String prefix) throws IOException {
+    return unityCatalogInfo().baseTableLocation() + "/" + prefix + "-" + UUID.randomUUID();
   }
 
   /**
