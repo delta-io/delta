@@ -46,6 +46,16 @@ public interface TableSetup {
    *
    * @param round 1-based round number
    */
+  /** Optional partition columns (e.g., "part_col"). Return null for no partitioning. */
+  default String partitionColumns() {
+    return null;
+  }
+
+  /** Optional table properties (e.g., "'key'='value'"). Return null for defaults. */
+  default String tableProperties() {
+    return null;
+  }
+
   default void addIncrementalData(SparkSession spark, String tableName, int round) {}
 
   /** Number of incremental data rounds. Return 0 for snapshot-only setups. */

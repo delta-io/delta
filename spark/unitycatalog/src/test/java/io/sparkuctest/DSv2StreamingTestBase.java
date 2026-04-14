@@ -86,7 +86,9 @@ public abstract class DSv2StreamingTestBase extends UCDeltaTableIntegrationBaseT
     withNewTable(
         tableName,
         setup.schema(),
+        setup.partitionColumns(),
         TableType.MANAGED,
+        setup.tableProperties(),
         fullTableName -> {
           setup.setUp(spark(), fullTableName);
           if (mode == AssertionMode.SNAPSHOT) {
