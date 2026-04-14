@@ -130,7 +130,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
 
   private static final List<TableVariant> TABLE_VARIANTS =
       List.of(
-          // ===== Table creation variants =====
+
+          // -- Create table, then INSERT, then stream --
           new TableVariant(
               "SimpleCreateTable",
               "id INT, value STRING",
@@ -138,6 +139,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               null,
               List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
               List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
+
+          // -- Create table with PARTITIONED BY, INSERT across partitions, then stream --
           new TableVariant(
               "PartitionedTable",
               "id INT, value STRING, part STRING",
@@ -145,6 +148,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               null,
               List.of("INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')"),
               List.of("INSERT INTO %s VALUES (4, 'd', 'y'), (5, 'e', 'z')")),
+
+          // -- Create table with CLUSTER BY, INSERT, then stream --
           new TableVariant(
               "ClusteredTable",
               "id INT, value STRING, category STRING",
@@ -154,6 +159,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   + " USING DELTA CLUSTER BY (category) %s",
               List.of("INSERT INTO %s VALUES (1, 'a', 'cat1'), (2, 'b', 'cat2'), (3, 'c', 'cat1')"),
               List.of("INSERT INTO %s VALUES (4, 'd', 'cat2'), (5, 'e', 'cat3')")),
+
+          // -- Create table with IDENTITY column, INSERT, then stream --
           new TableVariant(
               "IdentityColumn",
               "id BIGINT, value STRING",
@@ -164,7 +171,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               List.of("INSERT INTO %s (value) VALUES ('a'), ('b'), ('c')"),
               List.of("INSERT INTO %s (value) VALUES ('d'), ('e')")),
 
-          // ===== Table states after INSERT variants =====
+          // -- Create table, INSERT 3 separate commits, then stream --
           new TableVariant(
               "MultipleInserts",
               "id INT, value STRING",
@@ -175,6 +182,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
               List.of(
                   "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
+
+          // -- Create table, INSERT, INSERT OVERWRITE, then stream with ignoreChanges --
           new TableVariant(
               "InsertOverwrite",
               "id INT, value STRING",
@@ -187,7 +196,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               List.of(),
               Map.of("ignoreChanges", "true")),
 
-          // ===== Table states after DML =====
+          // -- Create table, INSERT, UPDATE one row, then stream with ignoreChanges --
           new TableVariant(
               "AfterUpdate",
               "id INT, value STRING",
@@ -199,6 +208,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "UPDATE %s SET value = 'z' WHERE id = 1"),
               List.of(),
               Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, DELETE one row, then stream with ignoreDeletes --
           new TableVariant(
               "AfterDelete",
               "id INT, value STRING",
@@ -210,6 +221,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "DELETE FROM %s WHERE id = 1"),
               List.of(),
               Map.of("ignoreDeletes", "true")),
+
+          // -- Create table, INSERT, MERGE (update + insert), then stream with ignoreChanges --
           new TableVariant(
               "AfterMerge",
               "id INT, value STRING",
@@ -223,6 +236,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                       + " WHEN NOT MATCHED THEN INSERT *"),
               List.of(),
               Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, TRUNCATE, INSERT again, then stream with ignoreChanges --
           new TableVariant(
               "AfterTruncate",
               "id INT, value STRING",
@@ -235,7 +250,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               List.of(),
               Map.of("ignoreChanges", "true")),
 
-          // ===== Table states after utility operations =====
+          // -- Create table, INSERT 3 small files, OPTIMIZE (compaction), then stream --
           new TableVariant(
               "AfterOptimize",
               "id INT, value STRING",
@@ -247,6 +262,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (3, 'c')",
                   "OPTIMIZE %s"),
               List.of("INSERT INTO %s VALUES (4, 'd')")),
+
+          // -- Create table, INSERT, VACUUM, then stream --
           new TableVariant(
               "AfterVacuum",
               "id INT, value STRING",
@@ -257,6 +274,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", "VACUUM %s RETAIN 0 HOURS"),
               List.of("INSERT INTO %s VALUES (4, 'd')"),
               Collections.emptyMap()),
+
+          // -- Create table, INSERT v1, INSERT v2, RESTORE to v1, then stream with ignoreChanges --
           new TableVariant(
               "AfterRestore",
               "id INT, value STRING",
@@ -269,7 +288,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               List.of(),
               Map.of("ignoreChanges", "true")),
 
-          // ===== ALTER TABLE variants =====
+          // -- Create table, INSERT, ALTER TABLE ADD COLUMN, INSERT with new column, then stream --
           new TableVariant(
               "AlterTableAddColumn",
               "id INT, value STRING",
@@ -282,7 +301,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               List.of(),
               Collections.emptyMap()),
 
-          // ===== ANALYZE =====
+          // -- Create table, INSERT, ANALYZE TABLE, then stream --
           new TableVariant(
               "AfterAnalyze",
               "id INT, value STRING",
