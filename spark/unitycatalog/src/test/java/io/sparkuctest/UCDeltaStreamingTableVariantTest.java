@@ -137,7 +137,86 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a')",
                   "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
               /* incrementalSqls */ List.of(
-                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")));
+                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
+
+          // -- Create table with CLUSTER BY, INSERT, then stream --
+          new TableVariant(
+              /* name */ "ClusteredTable",
+              /* schema */ "id INT, value STRING, category STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ "CREATE TABLE %s (id INT, value STRING, category STRING)"
+                  + " USING DELTA CLUSTER BY (category) %s",
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a','cat1'), (2,'b','cat2'), (3,'c','cat1')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4,'d','cat2'), (5,'e','cat3')"),
+              /* streamReadOptions */ Collections.emptyMap()),
+
+          // -- Create table, INSERT, INSERT OVERWRITE, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "InsertOverwrite",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b')",
+                  "INSERT OVERWRITE %s VALUES (3,'c'), (4,'d')"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, UPDATE one row, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "AfterUpdate",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')",
+                  "UPDATE %s SET value = 'z' WHERE id = 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, DELETE one row, then stream with ignoreDeletes --
+          new TableVariant(
+              /* name */ "AfterDelete",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')", "DELETE FROM %s WHERE id = 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")),
+
+          // -- Create table, INSERT, MERGE (update + insert), then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "AfterMerge",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')",
+                  "MERGE INTO %s t USING (SELECT 1 AS id, 'merged' AS value) s"
+                      + " ON t.id = s.id WHEN MATCHED THEN UPDATE SET value = s.value"
+                      + " WHEN NOT MATCHED THEN INSERT *"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT v1, INSERT v2, RESTORE to v1, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "AfterRestore",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b')",
+                  "INSERT INTO %s VALUES (3,'c')", "RESTORE %s TO VERSION AS OF 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")));
 
   @TestFactory
   Stream<DynamicContainer> streamingTableVariants() {
