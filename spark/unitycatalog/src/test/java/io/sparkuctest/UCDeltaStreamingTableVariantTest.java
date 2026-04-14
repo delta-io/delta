@@ -133,184 +133,187 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
 
           // -- Create table, then INSERT, then stream --
           new TableVariant(
-              "SimpleCreateTable",
-              "id INT, value STRING",
-              null,
-              null,
-              List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
-              List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
+              /* name */ "SimpleCreateTable",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
 
           // -- Create table with PARTITIONED BY, INSERT across partitions, then stream --
           new TableVariant(
-              "PartitionedTable",
-              "id INT, value STRING, part STRING",
-              "part",
-              null,
-              List.of("INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')"),
-              List.of("INSERT INTO %s VALUES (4, 'd', 'y'), (5, 'e', 'z')")),
+              /* name */ "PartitionedTable",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd', 'y'), (5, 'e', 'z')")),
 
           // -- Create table with CLUSTER BY, INSERT, then stream --
           new TableVariant(
-              "ClusteredTable",
-              "id INT, value STRING, category STRING",
-              null,
-              null,
-              "CREATE TABLE %s (id INT, value STRING, category STRING)"
+              /* name */ "ClusteredTable",
+              /* schema */ "id INT, value STRING, category STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ "CREATE TABLE %s (id INT, value STRING, category STRING)"
                   + " USING DELTA CLUSTER BY (category) %s",
-              List.of("INSERT INTO %s VALUES (1, 'a', 'cat1'), (2, 'b', 'cat2'), (3, 'c', 'cat1')"),
-              List.of("INSERT INTO %s VALUES (4, 'd', 'cat2'), (5, 'e', 'cat3')")),
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'a', 'cat1'), (2, 'b', 'cat2'), (3, 'c', 'cat1')"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES (4, 'd', 'cat2'), (5, 'e', 'cat3')")),
 
           // -- Create table with IDENTITY column, INSERT, then stream --
           new TableVariant(
-              "IdentityColumn",
-              "id BIGINT, value STRING",
-              null,
-              null,
-              "CREATE TABLE %s (id BIGINT GENERATED ALWAYS AS IDENTITY, value STRING)"
-                  + " USING DELTA %s",
-              List.of("INSERT INTO %s (value) VALUES ('a'), ('b'), ('c')"),
-              List.of("INSERT INTO %s (value) VALUES ('d'), ('e')")),
+              /* name */ "IdentityColumn",
+              /* schema */ "id BIGINT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ "CREATE TABLE %s"
+                  + " (id BIGINT GENERATED ALWAYS AS IDENTITY, value STRING) USING DELTA %s",
+              /* setupSqls */ List.of("INSERT INTO %s (value) VALUES ('a'), ('b'), ('c')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s (value) VALUES ('d'), ('e')")),
 
           // -- Create table, INSERT 3 separate commits, then stream --
           new TableVariant(
-              "MultipleInserts",
-              "id INT, value STRING",
-              null,
-              null,
-              List.of(
+              /* name */ "MultipleInserts",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a')",
                   "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
-              List.of(
+              /* incrementalSqls */ List.of(
                   "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
 
           // -- Create table, INSERT, INSERT OVERWRITE, then stream with ignoreChanges --
           new TableVariant(
-              "InsertOverwrite",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "InsertOverwrite",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
                   "INSERT OVERWRITE %s VALUES (3, 'c'), (4, 'd')"),
-              List.of(),
-              Map.of("ignoreChanges", "true")),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
 
           // -- Create table, INSERT, UPDATE one row, then stream with ignoreChanges --
           new TableVariant(
-              "AfterUpdate",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AfterUpdate",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
                   "UPDATE %s SET value = 'z' WHERE id = 1"),
-              List.of(),
-              Map.of("ignoreChanges", "true")),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
 
           // -- Create table, INSERT, DELETE one row, then stream with ignoreDeletes --
           new TableVariant(
-              "AfterDelete",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AfterDelete",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
                   "DELETE FROM %s WHERE id = 1"),
-              List.of(),
-              Map.of("ignoreDeletes", "true")),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")),
 
           // -- Create table, INSERT, MERGE (update + insert), then stream with ignoreChanges --
           new TableVariant(
-              "AfterMerge",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AfterMerge",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
                   "MERGE INTO %s t USING (SELECT 1 AS id, 'merged' AS value) s"
                       + " ON t.id = s.id WHEN MATCHED THEN UPDATE SET value = s.value"
                       + " WHEN NOT MATCHED THEN INSERT *"),
-              List.of(),
-              Map.of("ignoreChanges", "true")),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
 
           // -- Create table, INSERT, TRUNCATE, INSERT again, then stream with ignoreChanges --
           new TableVariant(
-              "AfterTruncate",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AfterTruncate",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
                   "TRUNCATE TABLE %s", "INSERT INTO %s VALUES (4, 'd'), (5, 'e')"),
-              List.of(),
-              Map.of("ignoreChanges", "true")),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
 
           // -- Create table, INSERT 3 small files, OPTIMIZE (compaction), then stream --
           new TableVariant(
-              "AfterOptimize",
-              "id INT, value STRING",
-              null,
-              null,
-              List.of(
+              /* name */ "AfterOptimize",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a')",
                   "INSERT INTO %s VALUES (2, 'b')",
                   "INSERT INTO %s VALUES (3, 'c')",
                   "OPTIMIZE %s"),
-              List.of("INSERT INTO %s VALUES (4, 'd')")),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd')")),
 
           // -- Create table, INSERT, VACUUM, then stream --
           new TableVariant(
-              "AfterVacuum",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AfterVacuum",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", "VACUUM %s RETAIN 0 HOURS"),
-              List.of("INSERT INTO %s VALUES (4, 'd')"),
-              Collections.emptyMap()),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd')"),
+              /* streamReadOptions */ Collections.emptyMap()),
 
           // -- Create table, INSERT v1, INSERT v2, RESTORE to v1, then stream with ignoreChanges --
           new TableVariant(
-              "AfterRestore",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AfterRestore",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
                   "INSERT INTO %s VALUES (3, 'c')", "RESTORE %s TO VERSION AS OF 1"),
-              List.of(),
-              Map.of("ignoreChanges", "true")),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
 
           // -- Create table, INSERT, ALTER TABLE ADD COLUMN, INSERT with new column, then stream --
           new TableVariant(
-              "AlterTableAddColumn",
-              "id INT, value STRING",
-              null,
-              null,
-              null,
-              List.of(
+              /* name */ "AlterTableAddColumn",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
                   "ALTER TABLE %s ADD COLUMN extra STRING", "INSERT INTO %s VALUES (3, 'c', 'x')"),
-              List.of(),
-              Collections.emptyMap()),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Collections.emptyMap()),
 
           // -- Create table, INSERT, ANALYZE TABLE, then stream --
           new TableVariant(
-              "AfterAnalyze",
-              "id INT, value STRING",
-              null,
-              null,
-              List.of(
+              /* name */ "AfterAnalyze",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
                   "ANALYZE TABLE %s COMPUTE STATISTICS"),
-              List.of("INSERT INTO %s VALUES (4, 'd')")));
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd')")));
 
   // ---------------------------------------------------------------------------
   // Test generation
