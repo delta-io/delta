@@ -22,10 +22,12 @@ import org.apache.spark.sql.delta.util.JsonUtils
 
 import org.apache.spark.sql.QueryTest
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 trait DeltaInsertReplaceOnOrUsingTestUtils
   extends QueryTest
-  with SharedSparkSession {
+  with SharedSparkSession
+  with DeltaSQLCommandTest {
 
   protected def createTable(
      tableName: String,
