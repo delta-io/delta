@@ -38,7 +38,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.dsl.expressions._
 import org.apache.spark.sql.catalyst.expressions.{EqualTo, Literal}
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.types.{IntegerType, StructType}
+import org.apache.spark.sql.types.{IntegerType, StructType, TimestampType}
 import org.apache.spark.util.ManualClock
 
 
@@ -733,8 +733,7 @@ class OptimisticTransactionSuite
 
             // txn1: read files in partitions of our new data (part=0)
             val txn = log.startTransaction()
-            val addFiles =
-                txn.filterFiles(newData.map(_.partitionValues).toSet)
+            val addFiles = txn.filterFiles(newData)
 
             // txn2
             log.startTransaction().commit(concurrentActions(partCol), ManualUpdate)
@@ -799,6 +798,153 @@ class OptimisticTransactionSuite
     concurrentActions = partCol => Seq(
       RemoveFile("b", None, partitionValues = Map(partCol -> "1")))
   )
+
+  for (enableNormalization <- BOOLEAN_DOMAIN) {
+    test("filterFiles for timestamp partitions with different string formats, " +
+      s"enableNormalization = $enableNormalization") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key ->
+          enableNormalization.toString
+      ) {
+        DeltaTestUtils.withTimeZone("UTC") {
+          withTempDir { tempDir =>
+            val tablePath = tempDir.getCanonicalPath
+            val log = DeltaLog.forTable(spark, tablePath)
+
+            log.startTransaction().commit(Seq(
+              Metadata(
+                schemaString = new StructType()
+                  .add("ts", TimestampType)
+                  .add("value", IntegerType).json,
+                partitionColumns = Seq("ts"))
+            ), ManualUpdate)
+
+            // Add files with non-UTC formatted timestamp partition values
+            val nonUtcTimestamp = "2000-01-01 12:00:00"
+            log.startTransaction().commit(
+              Seq(
+                AddFile("a", Map("ts" -> nonUtcTimestamp), 1, 1, dataChange = true),
+                AddFile("b", Map("ts" -> "2000-02-02 12:00:00"), 1, 1, dataChange = true)),
+              ManualUpdate)
+
+            // Query using UTC formatted timestamp (different string, same logical value)
+            val utcTimestamp = "2000-01-01T12:00:00.000000Z"
+            val txn = log.startTransaction()
+            val utcAddFile = AddFile("tmp", Map("ts" -> utcTimestamp), 0, 0, dataChange = false)
+            val matchedFiles = txn.filterFiles(Seq(utcAddFile))
+
+            if (enableNormalization) {
+              assert(matchedFiles.map(_.path).toSet == Set("a"))
+            } else {
+              assert(matchedFiles.isEmpty)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (failOnError <- BOOLEAN_DOMAIN) {
+    test("filterFiles falls back to string comparison when partition parsing fails, " +
+      s"failOnError = $failOnError") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> failOnError.toString
+      ) {
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val log = DeltaLog.forTable(spark, tablePath)
+
+          log.startTransaction().commit(Seq(
+            Metadata(
+              schemaString = new StructType()
+                .add("part", IntegerType)
+                .add("value", IntegerType).json,
+              partitionColumns = Seq("part"))
+          ), ManualUpdate)
+
+          // Add existing file with an unparseable partition value.
+          val badValue = "not_a_number"
+          log.startTransaction().commit(
+            Seq(AddFile("a", Map("part" -> badValue), 1, 1, dataChange = true)),
+            ManualUpdate)
+
+          // New file also has the same unparseable value
+          val txn = log.startTransaction()
+          val newFile = AddFile("tmp", Map("part" -> badValue), 0, 0, dataChange = false)
+
+          if (failOnError) {
+            checkError(
+              intercept[DeltaRuntimeException] {
+                txn.filterFiles(Seq(newFile))
+              },
+              condition = "DELTA_PARTITION_COLUMN_CAST_FAILED",
+              sqlState = "22525",
+              parameters = Map(
+                "value" -> badValue,
+                "dataType" -> "IntegerType",
+                "columnName" -> "part")
+            )
+          } else {
+            // Falls back to raw string comparison — strings match, so file "a" is returned
+            val matched = txn.filterFiles(Seq(newFile))
+            assert(matched.map(_.path).toSet == Set("a"))
+          }
+        }
+      }
+    }
+  }
+
+  for (failOnError <- BOOLEAN_DOMAIN) {
+    test("filterFiles when existing files have unparseable partition values, " +
+      s"failOnError = $failOnError") {
+      withSQLConf(
+        DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES.key -> "true",
+        DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR.key -> failOnError.toString
+      ) {
+        withTempDir { tempDir =>
+          val tablePath = tempDir.getCanonicalPath
+          val log = DeltaLog.forTable(spark, tablePath)
+
+          log.startTransaction().commit(Seq(
+            Metadata(
+              schemaString = new StructType()
+                .add("part", IntegerType)
+                .add("value", IntegerType).json,
+              partitionColumns = Seq("part"))
+          ), ManualUpdate)
+
+          // Existing file has an unparseable partition value.
+          val badValue = "not_a_number"
+          log.startTransaction().commit(
+            Seq(AddFile("a", Map("part" -> badValue), 1, 1, dataChange = true)),
+            ManualUpdate)
+
+          // New file has a valid partition value. Only the UDF fails
+          val txn = log.startTransaction()
+          val newFile = AddFile("tmp", Map("part" -> "1"), 0, 0, dataChange = false)
+
+          if (failOnError) {
+            checkError(
+              intercept[DeltaRuntimeException] {
+                txn.filterFiles(Seq(newFile))
+              },
+              condition = "DELTA_PARTITION_COLUMN_CAST_FAILED",
+              sqlState = "22525",
+              parameters = Map(
+                "value" -> badValue,
+                "dataType" -> "IntegerType",
+                "columnName" -> "part")
+            )
+          } else {
+            // Falls back to raw string comparison — "1" != "not_a_number", so no match
+            val matched = txn.filterFiles(Seq(newFile))
+            assert(matched.isEmpty)
+          }
+        }
+      }
+    }
+  }
 
   test("can set partition columns in first commit") {
     withTempDir { tableDir =>

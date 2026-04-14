@@ -331,9 +331,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify that table information maintained at the uc server side are expected.
-    // TODO: Remove the block when delta supports the CTAS in the correct way. Currently CTAS
-    //  is missing AbstractDeltaCatalog.translateUCTableIdProperty
-    if (!withAsSelect || replaceTable) {
+    if (translatesDeprecatedUcTableIdOnManagedCreate() || !withAsSelect || replaceTable) {
       assertUCTableInfo(
           tableType,
           fullTableName,
