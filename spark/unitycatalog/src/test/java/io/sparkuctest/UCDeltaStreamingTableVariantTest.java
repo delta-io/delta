@@ -188,17 +188,6 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               /* incrementalSqls */ List.of(
                   "INSERT INTO %s VALUES (4, 'd', 'cat2'), (5, 'e', 'cat3')")),
 
-          // -- Create table with IDENTITY column, INSERT, then stream --
-          new TableVariant(
-              /* name */ "IdentityColumn",
-              /* schema */ "id BIGINT, value STRING",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* createTableSql */ "CREATE TABLE %s"
-                  + " (id BIGINT GENERATED ALWAYS AS IDENTITY, value STRING) USING DELTA %s",
-              /* setupSqls */ List.of("INSERT INTO %s (value) VALUES ('a'), ('b'), ('c')"),
-              /* incrementalSqls */ List.of("INSERT INTO %s (value) VALUES ('d'), ('e')")),
-
           // -- Create table, INSERT 3 separate commits, then stream --
           new TableVariant(
               /* name */ "MultipleInserts",
@@ -265,44 +254,6 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               /* incrementalSqls */ List.of(),
               /* streamReadOptions */ Map.of("ignoreChanges", "true")),
 
-          // -- Create table, INSERT, TRUNCATE, INSERT again, then stream with ignoreChanges --
-          new TableVariant(
-              /* name */ "AfterTruncate",
-              /* schema */ "id INT, value STRING",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* createTableSql */ null,
-              /* setupSqls */ List.of(
-                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
-                  "TRUNCATE TABLE %s", "INSERT INTO %s VALUES (4, 'd'), (5, 'e')"),
-              /* incrementalSqls */ List.of(),
-              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
-
-          // -- Create table, INSERT 3 small files, OPTIMIZE (compaction), then stream --
-          new TableVariant(
-              /* name */ "AfterOptimize",
-              /* schema */ "id INT, value STRING",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* setupSqls */ List.of(
-                  "INSERT INTO %s VALUES (1, 'a')",
-                  "INSERT INTO %s VALUES (2, 'b')",
-                  "INSERT INTO %s VALUES (3, 'c')",
-                  "OPTIMIZE %s"),
-              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd')")),
-
-          // -- Create table, INSERT, VACUUM, then stream --
-          new TableVariant(
-              /* name */ "AfterVacuum",
-              /* schema */ "id INT, value STRING",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* createTableSql */ null,
-              /* setupSqls */ List.of(
-                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", "VACUUM %s RETAIN 0 HOURS"),
-              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd')"),
-              /* streamReadOptions */ Collections.emptyMap()),
-
           // -- Create table, INSERT v1, INSERT v2, RESTORE to v1, then stream with ignoreChanges --
           new TableVariant(
               /* name */ "AfterRestore",
@@ -314,31 +265,17 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
                   "INSERT INTO %s VALUES (3, 'c')", "RESTORE %s TO VERSION AS OF 1"),
               /* incrementalSqls */ List.of(),
-              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true"))
 
-          // -- Create table, INSERT, ALTER TABLE ADD COLUMN, INSERT with new column, then stream --
-          new TableVariant(
-              /* name */ "AlterTableAddColumn",
-              /* schema */ "id INT, value STRING",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* createTableSql */ null,
-              /* setupSqls */ List.of(
-                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
-                  "ALTER TABLE %s ADD COLUMN extra STRING", "INSERT INTO %s VALUES (3, 'c', 'x')"),
-              /* incrementalSqls */ List.of(),
-              /* streamReadOptions */ Collections.emptyMap()),
-
-          // -- Create table, INSERT, ANALYZE TABLE, then stream --
-          new TableVariant(
-              /* name */ "AfterAnalyze",
-              /* schema */ "id INT, value STRING",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* setupSqls */ List.of(
-                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
-                  "ANALYZE TABLE %s COMPUTE STATISTICS"),
-              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd')")));
+          // NOTE: The following variants are not yet supported in UC OSS and are omitted:
+          // - IdentityColumn: UC doesn't support GENERATED ALWAYS AS IDENTITY
+          // - AfterTruncate: UC tables don't support TRUNCATE
+          // - AfterOptimize: OPTIMIZE blocked for catalog-managed tables
+          // - AfterVacuum: VACUUM blocked for catalog-managed tables
+          // - AlterTableAddColumn: ALTER TABLE not supported in UC yet
+          // - AfterAnalyze: ANALYZE TABLE not supported for v2 tables
+          // Add these back when UC adds support for the underlying operations.
+          );
 
   // ---------------------------------------------------------------------------
   // Test generation
