@@ -264,12 +264,15 @@ public class SparkScan
     ensurePlanned();
     final long plannedBytes = estimatedSizeInBytes;
 
-    // When catalog stats are available and CBO is enabled, combine table-level stats
-    // (for numRows/columnStats) with planned file stats (for sizeInBytes).
+    // When catalog stats with numRows are available and CBO is enabled, combine table-level
+    // stats (for numRows/columnStats) with planned file stats (for sizeInBytes).
     // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
     // conf.cboEnabled || conf.planStatsEnabled.
+    // Catalog stats are typically all-or-nothing; having sizeInBytes without numRows is rare
+    // and not well-exercised in practice. For that case we fall through to the file-only path
+    // (planned file sizes), which aligns with V1's better-tested no-catalog-stats code path.
     boolean useCatalogStats = sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
-    if (useCatalogStats && catalogStats.isPresent()) {
+    if (useCatalogStats && catalogStats.isPresent() && catalogStats.get().numRows().isPresent()) {
       final Statistics stats = catalogStats.get();
       return new Statistics() {
         @Override

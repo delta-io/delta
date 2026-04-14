@@ -99,6 +99,45 @@ object Action extends DeltaLogging {
     }
   }
 
+  /**
+   * Normalizes partition values to typed Literals. This method is serializable and does not
+   * require SparkSession, so it can be used inside UDFs for parallel processing.
+   *
+   * @param rawPartitionValues Map of partition column names to their string values.
+   * @param partitionSchema Schema defining the data types for each partition column.
+   * @param timeZoneId The Spark session time zone ID. This should ALWAYS be the session timezone
+   *                   to ensure consistent parsing between read and write paths.
+   * @param parseToTypedLiterals Whether to parse partition values to their actual types.
+   *                             When false, verbatim value from the log action is returned in a
+   *                             String Literal.
+   * @param failOnParsingError If true, throw the exception if parsing fails.
+   *                           If false, return the raw partition values as string Literals.
+   * @return Map of partition column names to their literal values.
+   */
+  def normalizePartitionValues(
+      rawPartitionValues: Map[String, String],
+      partitionSchema: StructType,
+      timeZoneId: String,
+      parseToTypedLiterals: Boolean,
+      failOnParsingError: Boolean): Map[String, Literal] = {
+    def parseToStringLiterals = rawPartitionValues.map { case (k, v) => (k, Literal(v)) }
+    if (parseToTypedLiterals) {
+      try {
+        PartitionUtils.parsePartitionValues(
+          rawPartitionValues, partitionSchema, timeZoneId, validatePartitionColumns = true)
+      } catch {
+        case NonFatal(e) =>
+          if (failOnParsingError) {
+            throw e
+          } else {
+            parseToStringLiterals
+          }
+      }
+    } else {
+      parseToStringLiterals
+    }
+  }
+
   /** All reader protocol version numbers supported by the system. */
   private[delta] lazy val supportedReaderVersionNumbers: Set[Int] = {
     val allVersions =
@@ -673,6 +712,68 @@ sealed trait FileAction extends Action {
   def getTag(tagName: String): Option[String] = Option(tags).flatMap(_.get(tagName))
 
 
+  /**
+   * Return partition values as literals, optionally parsed to their actual data types.
+   * When `parseToTypedLiterals` is true, partition values are parsed to their actual
+   * types for comparison purposes. When false, they are returned as string literals,
+   * using verbatim value written in the action.
+   *
+   * @param deltaLog The DeltaLog for logging events. May be null if unavailable.
+   * @param errorOpType Prefix for logging event opTypes.
+   * @param errorData Extra fields to include in logging events.
+   * @return Map of partition column names to literals.
+   */
+  private[delta] def normalizedPartitionValues(
+      spark: SparkSession,
+      partitionSchema: StructType,
+      parseToTypedLiterals: Boolean,
+      deltaLog: DeltaLog,
+      errorOpType: String,
+      errorData: Map[String, Any]): Map[String, Literal] = {
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+
+    try {
+      val partitionValueLiterals = Action.normalizePartitionValues(
+        partitionValues,
+        partitionSchema,
+        timeZone,
+        parseToTypedLiterals,
+        failOnParsingError = true)
+
+      if (parseToTypedLiterals) {
+        val stringNormalizedPartitionValues = partitionValueLiterals.map {
+          case (k, v) => (k, PartitionUtils.literalToNormalizedString(
+            v,
+            Some(timeZone),
+            useUtcNormalizedTimestamp = true))
+        }
+        if (stringNormalizedPartitionValues != partitionValues) {
+          Action.recordDeltaEvent(
+            deltaLog,
+            opType = errorOpType + ".unnormalizedValuesExist",
+            data = errorData
+          )
+        }
+      }
+      partitionValueLiterals
+    } catch {
+      case NonFatal(e) =>
+        val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
+        Action.recordDeltaEvent(
+          deltaLog,
+          opType = errorOpType + ".partitionValueParsingError" + opTypeSuffix,
+          data = errorData ++ Map(
+            "exceptionMessage" -> e.getMessage,
+            "timeZone" -> timeZone
+          )
+        )
+        if (spark.conf.get(DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR)) {
+          throw e
+        }
+        partitionValues.map { case (k, v) => (k, Literal(v)) }
+    }
+  }
+
   /** Returns the [[SparkPath]] for this file action. */
   def sparkPath: SparkPath = SparkPath.fromUrlString(path)
 
@@ -889,63 +990,19 @@ case class AddFile(
       spark: SparkSession,
       partitionSchema: StructType,
       deltaTxn: Option[OptimisticTransaction] = None): Map[String, Literal] = {
-
-    def partitionValuesAsStringLiterals: Map[String, Literal] = {
-      // Convert all partition values to string literals
-      partitionValues.map { case (k, v) => (k, Literal(v)) }
-    }
-
-    val normalizePartitionValuesOnRead =
-      spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ)
-    if (normalizePartitionValuesOnRead) {
-      val timeZone = spark.sessionState.conf.sessionLocalTimeZone
-
-      try {
-        val typedPartitionValueLiterals = PartitionUtils.parsePartitionValues(
-          partitionValues,
-          partitionSchema,
-          java.util.TimeZone.getDefault.getID,
-          validatePartitionColumns = true)
-
-        val stringNormalizedPartitionValues = typedPartitionValueLiterals.map {
-          case (k, v) => (k, PartitionUtils.literalToNormalizedString(
-            v,
-            Some(timeZone),
-            useUtcNormalizedTimestamp = true))
-        }
-
-        if (stringNormalizedPartitionValues != partitionValues) {
-          Action.recordDeltaEvent(
-            deltaTxn.map(_.deltaLog).orNull,
-            opType = "delta.normalizedPartitionValues.unnormalizedValuesExist",
-            data = Map(
-              "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-              "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-              "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull
-            )
-          )
-        }
-        typedPartitionValueLiterals
-      } catch {
-        case NonFatal(e) =>
-          val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
-          Action.recordDeltaEvent(
-            deltaTxn.map(_.deltaLog).orNull,
-            opType = "delta.normalizedPartitionValues.partitionValueParsingError" + opTypeSuffix,
-            data = Map(
-              "exceptionMessage" -> e.getMessage,
-              "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
-              "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
-              "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
-              "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L),
-              "timeZone" -> timeZone
-            )
-          )
-          partitionValuesAsStringLiterals
-      }
-    } else {
-        partitionValuesAsStringLiterals
-    }
+    normalizedPartitionValues(
+      spark,
+      partitionSchema,
+      parseToTypedLiterals =
+        spark.conf.get(DeltaSQLConf.DELTA_NORMALIZE_PARTITION_VALUES_ON_READ),
+      deltaLog = deltaTxn.map(_.deltaLog).orNull,
+      errorOpType = "delta.normalizedPartitionValues",
+      errorData = Map(
+        "readSnapshotMetadata" -> deltaTxn.map(_.snapshot.metadata).orNull,
+        "txnMetadata" -> deltaTxn.map(_.metadata).orNull,
+        "commitInfo" -> deltaTxn.map(_.getCommitInfo).orNull,
+        "readSnapshotVersion" -> deltaTxn.map(_.snapshot.version).getOrElse(-1L))
+    )
   }
 
   // Don't use lazy val because we want to save memory.

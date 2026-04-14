@@ -138,16 +138,8 @@ class DelayedCommitProtocol(
         .filter(partitionCol => partitionCol._2 == TimestampType)
 
     val dateFormatter = DateFormatter()
-    // if adjusting to UTC make sure to interpret timezones using Spark
-    // config, otherwise fallback to JVM timezone
-    val timezone = {
-      if (useUtcNormalizedTimestamps) {
-        DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone)
-      } else {
-        java.util.TimeZone.getDefault
-      }
-    }
 
+    val timezone = DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone)
     val timestampFormatter = TimestampFormatter(PartitionUtils.timestampPartitionPattern, timezone)
 
     /**
@@ -169,7 +161,7 @@ class DelayedCommitProtocol(
           Set.empty,
           userSpecifiedDataTypes = partitionColumnToDataType,
           validatePartitionColumns = false,
-          java.util.TimeZone.getDefault,
+          timezone,
           dateFormatter,
           timestampFormatter,
           useUtcNormalizedTimestamps)
