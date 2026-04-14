@@ -374,15 +374,26 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
   // Test execution
   // ---------------------------------------------------------------------------
 
+  /**
+   * Snapshot test: runs all setupSqls to populate the table, then starts a single streaming read
+   * with {@link Trigger#AvailableNow()} (processes all existing data and stops). Compares the
+   * streaming output to a batch {@code SELECT *} from the same table.
+   *
+   * <p>Only valid for append-only variants. For data-modifying variants (UPDATE, DELETE, etc.), the
+   * streaming output will contain duplicate rows from file rewrites — see class javadoc.
+   */
   private void runSnapshotTest(TableVariant variant, TableType tableType) throws Exception {
     withTable(
         variant,
         tableType,
         tableName -> {
+          // Step 1: Run all setup SQL to bring the table to the desired state.
           for (String setupSql : variant.setupSqls) {
             sql(setupSql, tableName);
           }
 
+          // Step 2: Start a streaming read into a memory sink. AvailableNow processes
+          // all existing Delta log entries and then terminates automatically.
           String queryName = "snap_" + UUID.randomUUID().toString().replace("-", "");
           DataStreamReader reader = spark().readStream().format("delta");
           variant.streamingReadOptions.forEach(reader::option);
@@ -397,19 +408,31 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               .start()
               .awaitTermination(STREAMING_TIMEOUT_MS);
 
+          // Step 3: Compare streaming output (memory sink) to batch read.
           assertStreamingEqualsBatch(queryName, tableName);
         });
   }
 
+  /**
+   * Incremental test: runs setupSqls to populate the table, starts a continuous streaming query,
+   * then feeds additional data round-by-round via incrementalSqls. After each round, calls {@link
+   * StreamingQuery#processAllAvailable()} and verifies the accumulated streaming output matches the
+   * current batch table state.
+   *
+   * <p>This tests that streaming correctly picks up new commits as they arrive, not just the
+   * initial snapshot.
+   */
   private void runIncrementalTest(TableVariant variant, TableType tableType) throws Exception {
     withTable(
         variant,
         tableType,
         tableName -> {
+          // Step 1: Run all setup SQL to bring the table to the initial state.
           for (String setupSql : variant.setupSqls) {
             sql(setupSql, tableName);
           }
 
+          // Step 2: Start a continuous streaming query (no trigger = runs until stopped).
           String queryName = "incr_" + UUID.randomUUID().toString().replace("-", "");
           DataStreamReader reader = spark().readStream().format("delta");
           variant.streamingReadOptions.forEach(reader::option);
@@ -423,9 +446,11 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   .option("checkpointLocation", checkpoint())
                   .start();
           try {
+            // Step 3: Process initial data and verify.
             query.processAllAvailable();
             assertStreamingEqualsBatch(queryName, tableName);
 
+            // Step 4: Feed incremental data round-by-round, verifying after each.
             for (String incrSql : variant.incrementalSqls) {
               sql(incrSql, tableName);
               query.processAllAvailable();
@@ -442,9 +467,17 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
   // ---------------------------------------------------------------------------
 
   /**
-   * Creates a table for the variant and table type, runs the test, and drops the table. Uses {@link
-   * #withNewTable} for standard DDL, or executes custom SQL for variants that need it (e.g.,
-   * CLUSTER BY).
+   * Creates a table for the given variant and table type, runs the test, then drops the table.
+   *
+   * <p>Two code paths:
+   *
+   * <ul>
+   *   <li><b>Default DDL</b> ({@code createTableSql == null}): delegates to {@link #withNewTable},
+   *       which builds {@code CREATE TABLE} from schema/partitionCols/tableProperties.
+   *   <li><b>Custom DDL</b> ({@code createTableSql != null}): executes the SQL directly. The SQL
+   *       format string has two {@code %s} placeholders: table name and a suffix for TBLPROPERTIES
+   *       + LOCATION (appended by this method based on table type).
+   * </ul>
    */
   private void withTable(TableVariant variant, TableType tableType, TestCode testCode)
       throws Exception {
@@ -455,7 +488,6 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
           tableType == TableType.MANAGED
               ? "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')"
               : "";
-      String location = "";
       if (tableType == TableType.EXTERNAL) {
         withTempDir(
             dir -> {
@@ -491,6 +523,14 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
   // Assertion helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Asserts that the streaming memory sink ({@code queryName}) contains the same rows as a batch
+   * {@code SELECT *} from the source table. Both sides are sorted lexicographically for
+   * order-independent comparison.
+   *
+   * <p>Only valid for append-only table variants. For data-modifying variants, streaming
+   * accumulates duplicate rows from file rewrites, so this assertion will fail — see class javadoc.
+   */
   private void assertStreamingEqualsBatch(String queryName, String tableName) {
     List<List<String>> streamingRows = sortedStringRows("SELECT * FROM " + queryName);
     List<List<String>> batchRows = sortedStringRows("SELECT * FROM " + tableName);
@@ -499,6 +539,11 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
         .isEqualTo(batchRows);
   }
 
+  /**
+   * Executes a SQL query and returns the result as a sorted list of string rows. Each row is a list
+   * of column values converted to strings (nulls become "null"). Rows are sorted lexicographically
+   * across all columns for deterministic comparison.
+   */
   private List<List<String>> sortedStringRows(String query) {
     Row[] rows = (Row[]) spark().sql(query).collect();
     return Arrays.stream(rows)
@@ -521,6 +566,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
         .collect(Collectors.toList());
   }
 
+  /** Returns a fresh checkpoint directory path. Each call creates a unique subdirectory. */
   private String checkpoint() throws IOException {
     Path ckDir = tempDir.resolve("ck-" + checkpointCount++);
     Files.createDirectory(ckDir);
