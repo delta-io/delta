@@ -44,7 +44,7 @@ import io.delta.sharing.spark.test.shims.SharingStreamingTestShims.{
   StreamMetadata
 }
 import org.apache.spark.sql.functions.{col, lit}
-import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest}
+import org.apache.spark.sql.streaming.{StreamingQuery, StreamingQueryException, StreamTest, Trigger}
 import org.apache.spark.sql.types.{
   DateType,
   IntegerType,
