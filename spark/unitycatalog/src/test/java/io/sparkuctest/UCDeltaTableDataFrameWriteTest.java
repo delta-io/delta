@@ -249,6 +249,61 @@ public class UCDeltaTableDataFrameWriteTest extends UCDeltaTableIntegrationBaseT
   }
 
   @Test
+  public void testSaveAsTableDynamicPartitionOverwritePreservesIdentityAndVersion()
+      throws Exception {
+    String tableName =
+        fullTableName(
+            "dpo_identity_test_" + java.util.UUID.randomUUID().toString().replace("-", ""));
+    try {
+      sql(
+          "CREATE TABLE %s (time TIMESTAMP, time_date_level DATE, time_hour_level INT, "
+              + "tenant STRING, eventMetaId INT) USING DELTA "
+              + "PARTITIONED BY (time_date_level, time_hour_level) "
+              + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+          tableName);
+      sql(
+          "INSERT INTO %s VALUES "
+              + "(TIMESTAMP'2025-10-15 10:00:00', DATE'2025-10-15', 10, 'tenant_1', 1), "
+              + "(TIMESTAMP'2025-10-15 11:00:00', DATE'2025-10-15', 11, 'tenant_2', 2), "
+              + "(TIMESTAMP'2025-10-15 12:00:00', DATE'2025-10-15', 12, 'tenant_3', 3)",
+          tableName);
+
+      String ucTableIdBeforeOverwrite = currentUcTableId(tableName);
+      long versionBeforeOverwrite = currentVersion(tableName);
+
+      spark()
+          .sql(
+              "SELECT "
+                  + "TIMESTAMP'2025-10-15 12:00:00' AS time, "
+                  + "DATE'2025-10-15' AS time_date_level, "
+                  + "12 AS time_hour_level, "
+                  + "'tenant_3_updated' AS tenant, "
+                  + "99 AS eventMetaId")
+          .write()
+          .mode("overwrite")
+          .option("partitionOverwriteMode", "dynamic")
+          .partitionBy("time_date_level", "time_hour_level")
+          .format("delta")
+          .saveAsTable(tableName);
+
+      assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeOverwrite);
+      assertThat(currentVersion(tableName)).isEqualTo(versionBeforeOverwrite + 1);
+      assertThat(
+              sql(
+                  "SELECT CAST(time AS STRING), CAST(time_date_level AS STRING), "
+                      + "CAST(time_hour_level AS STRING), tenant, CAST(eventMetaId AS STRING) "
+                      + "FROM %s ORDER BY time_hour_level",
+                  tableName))
+          .containsExactly(
+              row("2025-10-15 10:00:00", "2025-10-15", "10", "tenant_1", "1"),
+              row("2025-10-15 11:00:00", "2025-10-15", "11", "tenant_2", "2"),
+              row("2025-10-15 12:00:00", "2025-10-15", "12", "tenant_3_updated", "99"));
+    } finally {
+      sql("DROP TABLE IF EXISTS %s", tableName);
+    }
+  }
+
+  @Test
   public void testSaveByPathBlockedForManagedTable() throws Exception {
     withNewTable(
         "save_path_blocked_test",

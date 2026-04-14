@@ -42,6 +42,9 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
           + "'delta.feature.catalogManaged'='supported', "
           + "'delta.enableChangeDataFeed'='true')";
 
+  private static final String METADATA_CHANGE_ERROR =
+      "Metadata changes on Unity Catalog managed tables";
+
   private enum ReplaceOperation {
     REPLACE("REPLACE TABLE", false),
     REPLACE_AS_SELECT("REPLACE TABLE", true),
@@ -62,6 +65,8 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
 
   // TODO: Once external delta table RTAS is supported, use @TestAllTableTypes for these tests.
 
+  // Default features (catalogManaged, vacuumProtocolCheck, ICT) are always implicitly present on
+  // managed tables, so restating them in a REPLACE is always safe and should succeed.
   @Test
   public void testDefaultFeatureRestatementIsAllowedForManagedReplaceOperations() throws Exception {
     for (ReplaceOperation operation : ReplaceOperation.values()) {
@@ -87,6 +92,9 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     }
   }
 
+  // Non-default features (CDF, type widening) were explicitly enabled at create time, so REPLACE
+  // semantics requires them to be restated exactly — otherwise the replace could silently drop
+  // features the user enabled intentionally.
   @Test
   public void testExactNonDefaultFeatureMatchIsAllowedForManagedReplaceOperations()
       throws Exception {
@@ -115,6 +123,9 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
     }
   }
 
+  // The table was created with CDF + type widening enabled. The REPLACE statement omits all
+  // TBLPROPERTIES, so those non-default features are not restated. Replace semantics rejects this
+  // as a potential unintended feature downgrade.
   @Test
   public void testMissingNonDefaultFeatureRestatementIsRejectedForManagedReplaceOperations()
       throws Exception {
@@ -132,11 +143,14 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             assertRejectedReplacePreservesTable(
                 fullTableName,
                 buildStatement(
-                    operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"));
+                    operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"),
+                METADATA_CHANGE_ERROR);
           });
     }
   }
 
+  // Same as above, but only CDF is restated — type widening is omitted. Partial restatement is
+  // still rejected because the replaced table would lose the type widening feature.
   @Test
   public void testPartialNonDefaultFeatureRestatementIsRejectedForManagedReplaceOperations()
       throws Exception {
@@ -159,7 +173,8 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     "i INT, s STRING",
                     PARTIAL_NON_DEFAULT_RESTATEMENT,
                     null,
-                    "2 AS i, 'new' AS s"));
+                    "2 AS i, 'new' AS s"),
+                METADATA_CHANGE_ERROR);
           });
     }
   }
@@ -183,7 +198,8 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                     "i INT, s STRING",
                     DEFAULT_FEATURES_RESTATEMENT,
                     "new description",
-                    "2 AS i, 'new' AS s"));
+                    "2 AS i, 'new' AS s"),
+                METADATA_CHANGE_ERROR);
           });
     }
   }
@@ -211,7 +227,58 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
                         + "'delta.feature.inCommitTimestamp'='supported', "
                         + "'myapp.version'='2')",
                     null,
-                    "2 AS i, 'new' AS s"));
+                    "2 AS i, 'new' AS s"),
+                METADATA_CHANGE_ERROR);
+          });
+    }
+  }
+
+  // Schema change (adding a column) during REPLACE is rejected because the replaced table would
+  // have a different schema than the original, which is a metadata change.
+  @Test
+  public void testSchemaChangeIsRejectedForManagedReplaceOperations() throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("schema_change", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          TableType.MANAGED,
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertRejectedReplacePreservesTable(
+                fullTableName,
+                buildStatement(
+                    operation,
+                    fullTableName,
+                    "i INT, s STRING, extra INT",
+                    DEFAULT_FEATURES_RESTATEMENT,
+                    null,
+                    "2 AS i, 'new' AS s, 3 AS extra"),
+                METADATA_CHANGE_ERROR);
+          });
+    }
+  }
+
+  // Most common user case: REPLACE without specifying any TBLPROPERTIES clause. Delta auto-restates
+  // default features for managed tables, so the replace should succeed.
+  @Test
+  public void testBareReplaceWithNoPropertiesIsAllowedForManagedReplaceOperations()
+      throws Exception {
+    for (ReplaceOperation operation : ReplaceOperation.values()) {
+      String tableName = uniqueTableName("bare_replace", operation);
+      withNewTable(
+          tableName,
+          "i INT, s STRING",
+          TableType.MANAGED,
+          fullTableName -> {
+            sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
+
+            assertSuccessfulReplace(
+                operation,
+                fullTableName,
+                buildStatement(
+                    operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"));
           });
     }
   }
@@ -229,12 +296,12 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
         .containsExactly(row(operation.isAsSelect() ? "1" : "0"));
   }
 
-  private void assertRejectedReplacePreservesTable(String tableName, String statement)
-      throws Exception {
+  private void assertRejectedReplacePreservesTable(
+      String tableName, String statement, String expectedError) throws Exception {
     String ucTableIdBeforeReplace = currentUcTableId(tableName);
     long versionBeforeReplace = currentVersion(tableName);
 
-    assertThrowsWithCauseContaining("not supported", () -> sql(statement));
+    assertThrowsWithCauseContaining(expectedError, () -> sql(statement));
 
     assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
     assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace);
