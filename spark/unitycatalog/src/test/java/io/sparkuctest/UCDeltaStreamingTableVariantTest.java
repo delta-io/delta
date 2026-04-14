@@ -23,11 +23,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.spark.sql.Row;
+import org.apache.spark.sql.streaming.DataStreamReader;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.Trigger;
 import org.junit.jupiter.api.DynamicContainer;
@@ -64,17 +67,47 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     final String createTableSql;
     final List<String> setupSqls;
     final List<String> incrementalSqls;
+    final Map<String, String> streamingReadOptions;
 
-    /**
-     * @param name human-readable test name
-     * @param schema table schema DDL (e.g., "id INT, value STRING")
-     * @param partitionCols partition columns (null for none)
-     * @param tableProperties additional TBLPROPERTIES (null for none)
-     * @param createTableSql custom CREATE TABLE SQL format string with %s for table name and %s for
-     *     TBLPROPERTIES, or null to use the default DDL construction
-     * @param setupSqls SQL statements to run after table creation (%s = table name)
-     * @param incrementalSqls SQL per incremental round (%s = table name); empty = snapshot-only
-     */
+    TableVariant(
+        String name,
+        String schema,
+        String partitionCols,
+        String tableProperties,
+        String createTableSql,
+        List<String> setupSqls,
+        List<String> incrementalSqls,
+        Map<String, String> streamingReadOptions) {
+      this.name = name;
+      this.schema = schema;
+      this.partitionCols = partitionCols;
+      this.tableProperties = tableProperties;
+      this.createTableSql = createTableSql;
+      this.setupSqls = setupSqls;
+      this.incrementalSqls = incrementalSqls;
+      this.streamingReadOptions = streamingReadOptions;
+    }
+
+    /** No custom DDL, no streaming options. */
+    TableVariant(
+        String name,
+        String schema,
+        String partitionCols,
+        String tableProperties,
+        List<String> setupSqls,
+        List<String> incrementalSqls) {
+      this(
+          name,
+          schema,
+          partitionCols,
+          tableProperties,
+          null,
+          setupSqls,
+          incrementalSqls,
+          Collections.emptyMap());
+    }
+
+    /** Custom DDL, no streaming options. */
     TableVariant(
         String name,
         String schema,
@@ -83,30 +116,21 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
         String createTableSql,
         List<String> setupSqls,
         List<String> incrementalSqls) {
-      this.name = name;
-      this.schema = schema;
-      this.partitionCols = partitionCols;
-      this.tableProperties = tableProperties;
-      this.createTableSql = createTableSql;
-      this.setupSqls = setupSqls;
-      this.incrementalSqls = incrementalSqls;
-    }
-
-    /** Convenience constructor for variants that use default DDL (no custom CREATE TABLE). */
-    TableVariant(
-        String name,
-        String schema,
-        String partitionCols,
-        String tableProperties,
-        List<String> setupSqls,
-        List<String> incrementalSqls) {
-      this(name, schema, partitionCols, tableProperties, null, setupSqls, incrementalSqls);
+      this(
+          name,
+          schema,
+          partitionCols,
+          tableProperties,
+          createTableSql,
+          setupSqls,
+          incrementalSqls,
+          Collections.emptyMap());
     }
   }
 
   private static final List<TableVariant> TABLE_VARIANTS =
       List.of(
-          // --- Table creation variants ---
+          // ===== Table creation variants =====
           new TableVariant(
               "SimpleCreateTable",
               "id INT, value STRING",
@@ -114,16 +138,6 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               null,
               List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
               List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
-          new TableVariant(
-              "MultipleInserts",
-              "id INT, value STRING",
-              null,
-              null,
-              List.of(
-                  "INSERT INTO %s VALUES (1, 'a')",
-                  "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
-              List.of(
-                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
           new TableVariant(
               "PartitionedTable",
               "id INT, value STRING, part STRING",
@@ -136,11 +150,148 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               "id INT, value STRING, category STRING",
               null,
               null,
-              // Custom DDL needed for CLUSTER BY; %s is table name, %s is TBLPROPERTIES or empty
               "CREATE TABLE %s (id INT, value STRING, category STRING)"
                   + " USING DELTA CLUSTER BY (category) %s",
               List.of("INSERT INTO %s VALUES (1, 'a', 'cat1'), (2, 'b', 'cat2'), (3, 'c', 'cat1')"),
-              List.of("INSERT INTO %s VALUES (4, 'd', 'cat2'), (5, 'e', 'cat3')")));
+              List.of("INSERT INTO %s VALUES (4, 'd', 'cat2'), (5, 'e', 'cat3')")),
+          new TableVariant(
+              "IdentityColumn",
+              "id BIGINT, value STRING",
+              null,
+              null,
+              "CREATE TABLE %s (id BIGINT GENERATED ALWAYS AS IDENTITY, value STRING)"
+                  + " USING DELTA %s",
+              List.of("INSERT INTO %s (value) VALUES ('a'), ('b'), ('c')"),
+              List.of("INSERT INTO %s (value) VALUES ('d'), ('e')")),
+
+          // ===== Table states after INSERT variants =====
+          new TableVariant(
+              "MultipleInserts",
+              "id INT, value STRING",
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a')",
+                  "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
+              List.of(
+                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
+          new TableVariant(
+              "InsertOverwrite",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
+                  "INSERT OVERWRITE %s VALUES (3, 'c'), (4, 'd')"),
+              List.of(),
+              Map.of("ignoreChanges", "true")),
+
+          // ===== Table states after DML =====
+          new TableVariant(
+              "AfterUpdate",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+                  "UPDATE %s SET value = 'z' WHERE id = 1"),
+              List.of(),
+              Map.of("ignoreChanges", "true")),
+          new TableVariant(
+              "AfterDelete",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+                  "DELETE FROM %s WHERE id = 1"),
+              List.of(),
+              Map.of("ignoreDeletes", "true")),
+          new TableVariant(
+              "AfterMerge",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+                  "MERGE INTO %s t USING (SELECT 1 AS id, 'merged' AS value) s"
+                      + " ON t.id = s.id WHEN MATCHED THEN UPDATE SET value = s.value"
+                      + " WHEN NOT MATCHED THEN INSERT *"),
+              List.of(),
+              Map.of("ignoreChanges", "true")),
+          new TableVariant(
+              "AfterTruncate",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+                  "TRUNCATE TABLE %s", "INSERT INTO %s VALUES (4, 'd'), (5, 'e')"),
+              List.of(),
+              Map.of("ignoreChanges", "true")),
+
+          // ===== Table states after utility operations =====
+          new TableVariant(
+              "AfterOptimize",
+              "id INT, value STRING",
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a')",
+                  "INSERT INTO %s VALUES (2, 'b')",
+                  "INSERT INTO %s VALUES (3, 'c')",
+                  "OPTIMIZE %s"),
+              List.of("INSERT INTO %s VALUES (4, 'd')")),
+          new TableVariant(
+              "AfterVacuum",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", "VACUUM %s RETAIN 0 HOURS"),
+              List.of("INSERT INTO %s VALUES (4, 'd')"),
+              Collections.emptyMap()),
+          new TableVariant(
+              "AfterRestore",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
+                  "INSERT INTO %s VALUES (3, 'c')", "RESTORE %s TO VERSION AS OF 1"),
+              List.of(),
+              Map.of("ignoreChanges", "true")),
+
+          // ===== ALTER TABLE variants =====
+          new TableVariant(
+              "AlterTableAddColumn",
+              "id INT, value STRING",
+              null,
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b')",
+                  "ALTER TABLE %s ADD COLUMN extra STRING", "INSERT INTO %s VALUES (3, 'c', 'x')"),
+              List.of(),
+              Collections.emptyMap()),
+
+          // ===== ANALYZE =====
+          new TableVariant(
+              "AfterAnalyze",
+              "id INT, value STRING",
+              null,
+              null,
+              List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+                  "ANALYZE TABLE %s COMPUTE STATISTICS"),
+              List.of("INSERT INTO %s VALUES (4, 'd')")));
 
   // ---------------------------------------------------------------------------
   // Test generation
@@ -186,9 +337,9 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
           }
 
           String queryName = "snap_" + UUID.randomUUID().toString().replace("-", "");
-          spark()
-              .readStream()
-              .format("delta")
+          DataStreamReader reader = spark().readStream().format("delta");
+          variant.streamingReadOptions.forEach(reader::option);
+          reader
               .table(tableName)
               .writeStream()
               .format("memory")
@@ -213,10 +364,10 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
           }
 
           String queryName = "incr_" + UUID.randomUUID().toString().replace("-", "");
+          DataStreamReader reader = spark().readStream().format("delta");
+          variant.streamingReadOptions.forEach(reader::option);
           StreamingQuery query =
-              spark()
-                  .readStream()
-                  .format("delta")
+              reader
                   .table(tableName)
                   .writeStream()
                   .format("memory")
