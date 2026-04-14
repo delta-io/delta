@@ -32,77 +32,46 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
-class MergeIntoNotMatchedBySourceSQLInMemoryTableNameBasedSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
-  with MergeIntoSuiteInMemoryTestTableMixin
+class DeleteCDCTableWithDVsSQLNameBasedSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsNameBased
 
-class MergeIntoNotMatchedBySourceSQLNameBasedSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsNameBased
-
-class MergeIntoNotMatchedBySourceSQLPathBasedCDCOnDVsPredPushOffSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
+class DeleteCDCTableWithDVsSQLPathBasedCDCOnSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownDisabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
+  with DeleteCDCMixin
 
-class MergeIntoNotMatchedBySourceSQLPathBasedCDCOnDVsPredPushOnSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeIntoDVsMixin
-  with PredicatePushdownEnabled
-  with MergeCDCMixin
-  with MergeCDCWithDVsMixin
-
-class MergeIntoNotMatchedBySourceSQLPathBasedCDCOnSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
-  with DeltaDMLTestUtilsPathBased
-  with CDCEnabled
-  with MergeCDCMixin
-
-class MergeIntoNotMatchedBySourceSQLPathBasedColMapIdModeSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
+class DeleteCDCTableWithDVsSQLPathBasedColMapIdModeSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableIdMode
-  with MergeIntoSQLColumnMappingOverrides
 
-class MergeIntoNotMatchedBySourceSQLPathBasedColMapNameModeSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
+class DeleteCDCTableWithDVsSQLPathBasedColMapNameModeSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
   with DeltaColumnMappingEnableNameMode
-  with MergeIntoSQLColumnMappingOverrides
+  with DeleteSQLNameColumnMappingMixin
 
-class MergeIntoNotMatchedBySourceSQLPathBasedDVsPredPushOffSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
+class DeleteCDCTableWithDVsSQLPathBasedDVPredPushOffSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
+  with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownDisabled
 
-class MergeIntoNotMatchedBySourceSQLPathBasedDVsPredPushOnSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
+class DeleteCDCTableWithDVsSQLPathBasedDVPredPushOnSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
-  with MergeIntoDVsMixin
+  with DeleteSQLWithDeletionVectorsMixin
   with PredicatePushdownEnabled
 
-class MergeIntoNotMatchedBySourceSQLPathBasedSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoSQLMixin
+class DeleteCDCTableWithDVsSQLPathBasedSuite
+  extends DeleteCDCTableWithDVsTests
+  with DeleteSQLMixin
   with DeltaDMLTestUtilsPathBased
-
-class MergeIntoNotMatchedBySourceScalaSuite
-  extends MergeIntoNotMatchedBySourceSuite
-  with MergeIntoScalaMixin
