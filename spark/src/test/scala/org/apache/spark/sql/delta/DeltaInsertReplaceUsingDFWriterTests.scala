@@ -1162,9 +1162,6 @@ trait DeltaInsertReplaceUsingDFWriterTests
     }
   }
 
-  // Usage stats and logging
-
-
   test("source is materialized during replaceUsing") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath

@@ -459,7 +459,6 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
         }
       }
 
-
       InsertReplaceUsingMisalignedColumnsEventInfo.disallowMisalignedReplaceUsingCols(
         sparkSession.sessionState.conf.resolver,
         replaceUsingCols,

@@ -50,8 +50,6 @@ case class DeltaInsertReplaceOnOrUsingCommand(
 
   private val commandStats = InsertReplaceOnOrUsingStats()
 
-
-
   override def run(sparkSession: SparkSession): Seq[Row] = {
     withMaterializeRetryAndStats(sparkSession) { preparedWriteCmd =>
       val runResult = preparedWriteCmd.run(sparkSession)
@@ -117,8 +115,6 @@ case class DeltaInsertReplaceOnOrUsingCommand(
       sparkSession: SparkSession,
       materializedDf: DataFrame,
       insertReplaceCriteria: InsertReplaceCriteria): WriteIntoDelta = {
-
-
     /**
      * For REPLACE USING, an internal table alias is required to ensure certain attributes
      * resolve to the target table, not the query, when we construct the EXISTS condition.
@@ -178,20 +174,20 @@ case class DeltaInsertReplaceOnOrUsingCommand(
         s"Unexpected InsertReplaceCriteria: $other")
     }
 
-        prepareMergeSource(
-          spark = sparkSession,
-          source = originalQueryBeforeSchemaAdjustmentProjection,
-          condition = replaceOnOrUsingCond,
-          matchedClauses = Seq.empty,
-          notMatchedClauses = Seq.empty,
-          isInsertOnly = false)
+    prepareMergeSource(
+      spark = sparkSession,
+      source = originalQueryBeforeSchemaAdjustmentProjection,
+      condition = replaceOnOrUsingCond,
+      matchedClauses = Seq.empty,
+      notMatchedClauses = Seq.empty,
+      isInsertOnly = false)
 
-      // TODO: Despite the name, getMergeSource obtains the materialized source for
-      // INSERT REPLACE ON/USING operations. It will have a more appropriate name when we fully
-      // refactor the source materialization logic.
-      DataFrameUtils.ofRows(
-        sparkSession,
-        Project(schemaAdjustmentProjectionList, getMergeSource.df.queryExecution.analyzed))
+    // TODO: Despite the name, getMergeSource obtains the materialized source for
+    // INSERT REPLACE ON/USING operations. It will have a more appropriate name when we fully
+    // refactor the source materialization logic.
+    DataFrameUtils.ofRows(
+      sparkSession,
+      Project(schemaAdjustmentProjectionList, getMergeSource.df.queryExecution.analyzed))
   }
 
   private def checkShouldMaterializeSource(sparkSession: SparkSession): Boolean = {

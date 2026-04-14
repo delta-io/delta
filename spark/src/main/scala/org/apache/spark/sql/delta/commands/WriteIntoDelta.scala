@@ -251,6 +251,8 @@ case class WriteIntoDelta(
       deltaLog.createLogDirectoriesIfNotExists()
     }
 
+    assert(maybeAliasedReplaceWhereExprsOpt.isEmpty || replaceOnOrUsingExprOpt.isEmpty,
+      "replaceWhere, replaceOn or replaceUsing cannot be specified at the same time.")
     val atomicReplaceExprsOpt =
       replaceOnOrUsingExprOpt.orElse(maybeAliasedReplaceWhereExprsOpt)
 
@@ -285,7 +287,7 @@ case class WriteIntoDelta(
         (newFiles, addFiles, txn.filterFiles(strippedTargetAliasPredicates).map(_.remove))
       case (SaveMode.Overwrite, Some(conditions)) if txn.snapshot.version >= 0 =>
         assert(options.replaceWhere.isDefined || options.isReplaceOnOrUsingDefined,
-          "Either 'replaceWhere' or 'replaceOn' must be specified.")
+          "Either 'replaceWhere', 'replaceOn', or `replaceUsing` must be specified.")
         val constraints = if (options.replaceWhere.isDefined) {
           // Strip alias because check constraint is applied against unaliased table schema.
           extractConstraints(

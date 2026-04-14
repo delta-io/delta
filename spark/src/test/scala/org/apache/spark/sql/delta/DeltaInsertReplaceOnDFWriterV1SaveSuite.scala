@@ -50,5 +50,4 @@ class DeltaInsertReplaceOnDFWriterV1SaveSuite
     }
     writer.save(target)
   }
-
 }

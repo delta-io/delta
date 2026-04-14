@@ -97,7 +97,6 @@ class DeltaInsertReplaceUsingDFWriterV1SaveSuite
     }
   }
 
-
   test("save with replaceUsing: rejects Long source to Int target (no implicit narrowing)") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath
@@ -163,5 +162,4 @@ class DeltaInsertReplaceUsingDFWriterV1SaveSuite
       )
     }
   }
-
 }

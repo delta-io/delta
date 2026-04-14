@@ -58,6 +58,7 @@ trait DeltaWriteOptions
   val replaceOn: Option[String] = options.get(REPLACE_ON_OPTION)
 
   val replaceUsing: Option[String] = options.get(REPLACE_USING_OPTION)
+
   /** Parses the replaceUsing option into a list of distinct column names. */
   def parsedReplaceUsingColsList: Option[Seq[String]] = {
     replaceUsing.map { cols =>
@@ -75,7 +76,6 @@ trait DeltaWriteOptions
       parsed
     }
   }
-
 
   def isReplaceOnOrUsingDefined: Boolean =
     replaceOn.isDefined || replaceUsing.isDefined
@@ -310,7 +310,6 @@ object DeltaOptions extends DeltaLogging {
 
   /** Internal alias used by replaceUsing for column resolution. Not for external use. */
   private[delta] val REPLACE_USING_INTERNAL_TABLE_ALIAS = "__replace_using_table_alias__"
-
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
