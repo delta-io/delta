@@ -175,6 +175,27 @@ class DeltaInsertReplaceOnDFWriterV1InsertIntoSuite
     }
   }
 
+  test("insertInto: replaceOn with misaligned columns") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      Seq((1, "target"), (2, "target"), (3, "target"))
+        .toDF("id", "data")
+        .write.format("delta").save(path)
+
+      writeReplaceOnDF(
+        sourceDF = Seq((1, "source"), (4, "source"))
+          .toDF("data", "id"),
+        target = path,
+        replaceOnCond = "t.id >= 1",
+        targetAlias = Some("t"))
+
+      checkAnswer(
+        spark.read.format("delta").load(path).orderBy("id"),
+        Seq(
+          Row(1, "source"),
+          Row(4, "source")))
+    }
+  }
 
   test("insertInto: same column name with different types succeeds with implicit casting") {
     withTempDir { dir =>
@@ -195,5 +216,4 @@ class DeltaInsertReplaceOnDFWriterV1InsertIntoSuite
       )
     }
   }
-
 }
