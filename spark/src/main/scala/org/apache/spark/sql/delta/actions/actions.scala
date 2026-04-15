@@ -629,8 +629,13 @@ case class SetTransaction(
 case class DomainMetadata(
     domain: String,
     configuration: String,
-    removed: Boolean) extends Action {
+    removed: Boolean)
+  extends Action
+  with io.delta.storage.commit.actions.AbstractDomainMetadata {
   override def wrap: SingleAction = SingleAction(domainMetadata = this)
+  override def getDomain: String = domain
+  override def getConfiguration: String = configuration
+  override def isRemoved: Boolean = removed
 }
 
 /** Actions pertaining to the addition and removal of files. */

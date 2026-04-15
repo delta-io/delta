@@ -26,13 +26,11 @@ import io.delta.kernel.unitycatalog.UCCatalogManagedClient;
 import io.delta.kernel.unitycatalog.UCTableIdentifier;
 import io.delta.spark.internal.v2.snapshot.unitycatalog.UCTableInfo;
 import io.delta.spark.internal.v2.utils.SchemaUtils;
-import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.expressions.Transform;
-import org.apache.spark.sql.delta.coordinatedcommits.UCTokenBasedRestClientFactory$;
 import org.apache.spark.sql.types.StructType;
 
 /**
@@ -122,10 +120,10 @@ public final class CreateTableBuilder {
       String schemaName,
       String tableName,
       io.delta.kernel.types.StructType kernelSchema) {
-    UCClient ucClient =
-        UCTokenBasedRestClientFactory$.MODULE$.createUCClient(
-            ucTableInfo.getUcUri(), ucTableInfo.getAuthConfig());
-    return new UCCatalogManagedClient(ucClient)
+    io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient =
+        io.delta.spark.internal.v2.snapshot.unitycatalog.UCUtils.getSharedUCDeltaClient(
+            catalogName);
+    return new UCCatalogManagedClient(ucDeltaClient)
         .buildCreateTableTransaction(
             ucTableInfo.getTableId(),
             ucTableInfo.getTablePath(),

@@ -37,7 +37,9 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   private static final String CLUSTERING_KILL_SWITCH_ERROR =
       "Clustering column changes on Unity Catalog managed tables";
 
-  // Error produced by UCSingleCatalog.alterTable() for all ALTER TABLE variants.
+  // Error produced by UCSingleCatalog.alterTable() when ALTER TABLE is not yet supported.
+  private static final String ALTER_NOT_SUPPORTED_ERROR = "Altering a table is not supported yet";
+
   // Error produced by OSS Delta when REPLACE TABLE AS SELECT (RTAS) is attempted.
   // Triggered by CREATE OR REPLACE TABLE and DataFrame saveAsTable(overwrite+overwriteSchema)
   // when the target catalog does not implement StagingTableCatalog.
@@ -52,9 +54,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   }
 
   private static List<String> expectedAlterMetadataFailure() {
-    return supportsManagedReplaceViaUC()
-        ? List.of(ALTER_TABLE_ERROR, KILL_SWITCH_ERROR, CLUSTERING_KILL_SWITCH_ERROR)
-        : List.of(ALTER_TABLE_ERROR);
+    return List.of(KILL_SWITCH_ERROR, CLUSTERING_KILL_SWITCH_ERROR, ALTER_NOT_SUPPORTED_ERROR);
   }
 
   // ---------------------------------------------------------------------------
@@ -115,20 +115,15 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
 
-          // ALTER TABLE SET TBLPROPERTIES would change configuration.
-          assertThrowsWithCauseContainingAny(
-              expectedAlterMetadataFailure(),
-              () -> sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName));
+          // ALTER TABLE now works: UCSingleCatalog delegates to the DRC updateTable API
+          // for property changes, and returns loadTable for the result. Column/clustering
+          // changes go through Delta's transaction which commits via DRC.
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName);
+          sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName);
+          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
 
-          // ALTER TABLE ADD COLUMNS would change the schema.
-          assertThrowsWithCauseContainingAny(
-              expectedAlterMetadataFailure(),
-              () -> sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName));
-
-          // ALTER TABLE CLUSTER BY would change clustering columns.
-          assertThrowsWithCauseContainingAny(
-              expectedAlterMetadataFailure(),
-              () -> sql("ALTER TABLE %s CLUSTER BY (id)", tableName));
+          // Verify the table is still readable after alterations
+          check(tableName, List.of(List.of("1", "initial", "null")));
         });
   }
 
@@ -245,9 +240,6 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
               TableType.EXTERNAL,
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_val')", sourceTable);
-                assertThrowsWithCauseContaining(
-                    expectedManagedReplaceFailure(),
-                    () ->
                 spark()
                     .read()
                     .table(sourceTable)

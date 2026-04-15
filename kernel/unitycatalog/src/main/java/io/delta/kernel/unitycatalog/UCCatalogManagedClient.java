@@ -63,10 +63,16 @@ public class UCCatalogManagedClient {
   /** Key for identifying Unity Catalog table ID. */
   public static final String UC_TABLE_ID_KEY = UC_PROPERTY_NAMESPACE_PREFIX + "tableId";
 
-  protected final UCClient ucClient;
+  protected final io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient;
 
+  /** Legacy constructor -- wraps UCClient in UCDeltaClient. */
   public UCCatalogManagedClient(UCClient ucClient) {
-    this.ucClient = Objects.requireNonNull(ucClient, "ucClient is null");
+    this(io.delta.storage.commit.uccommitcoordinator.UCDeltaClient.fromLegacyClient(ucClient));
+  }
+
+  public UCCatalogManagedClient(
+      io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient) {
+    this.ucDeltaClient = Objects.requireNonNull(ucDeltaClient, "ucDeltaClient is null");
   }
 
   // TODO: [delta-io/delta#4817] loadSnapshot API that takes in a UC TableInfo object
@@ -164,7 +170,7 @@ public class UCCatalogManagedClient {
 
                       Snapshot snapshot =
                           snapshotBuilder
-                              .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+                              .withCommitter(createUCCommitter(ucDeltaClient, ucTableId, tablePath))
                               .withLogData(logData)
                               .withMaxCatalogVersion(maxUcTableVersion)
                               .build(engine);
@@ -210,7 +216,7 @@ public class UCCatalogManagedClient {
     Objects.requireNonNull(engineInfo, "engineInfo is null");
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
-        .withCommitter(createUCCommitter(ucClient, ucTableId, tablePath))
+        .withCommitter(createUCCommitter(ucDeltaClient, ucTableId, tablePath))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 
@@ -234,7 +240,7 @@ public class UCCatalogManagedClient {
 
     return TableManager.buildCreateTableTransaction(tablePath, schema, engineInfo)
         .withCommitter(
-            new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath, ucTableIdentifier))
+            new UCCatalogManagedCommitter(ucDeltaClient, ucTableId, tablePath, ucTableIdentifier))
         .withTableProperties(getRequiredTablePropertiesForCreate(ucTableId));
   }
 
@@ -365,8 +371,11 @@ public class UCCatalogManagedClient {
    * <p>This method allows subclasses to provide custom committer implementations for specialized
    * use cases.
    */
-  protected Committer createUCCommitter(UCClient ucClient, String ucTableId, String tablePath) {
-    return new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath);
+  protected Committer createUCCommitter(
+      io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient,
+      String ucTableId,
+      String tablePath) {
+    return new UCCatalogManagedCommitter(ucDeltaClient, ucTableId, tablePath, null);
   }
 
   ////////////////////
@@ -427,7 +436,7 @@ public class UCCatalogManagedClient {
             ucTableId,
             () -> {
               try {
-                return ucClient.getCommits(
+                return ucDeltaClient.getCommits(
                     ucTableId,
                     new Path(tablePath).toUri(),
                     Optional.empty() /* startVersion */,
@@ -542,7 +551,8 @@ public class UCCatalogManagedClient {
         ucTableId,
         () ->
             TableManager.loadSnapshot(tablePath)
-                .withCommitter(new UCCatalogManagedCommitter(ucClient, ucTableId, tablePath))
+                .withCommitter(
+                    new UCCatalogManagedCommitter(ucDeltaClient, ucTableId, tablePath, null))
                 .withLogData(logData)
                 .withMaxCatalogVersion(ucTableVersion)
                 .build(engine));

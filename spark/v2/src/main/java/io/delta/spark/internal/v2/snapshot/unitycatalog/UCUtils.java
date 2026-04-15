@@ -103,6 +103,28 @@ public final class UCUtils {
     return ucTableId;
   }
 
+  /**
+   * Get the shared UCDeltaClient from AbstractDeltaCatalog for the given catalog name. Traverses:
+   * CatalogManager -> UCSingleCatalog -> getDelegateCatalog() -> DeltaCatalog
+   * (UCDeltaClientProvider)
+   */
+  public static io.delta.storage.commit.uccommitcoordinator.UCDeltaClient getSharedUCDeltaClient(
+      String catalogName) {
+    SparkSession spark = SparkSession.active();
+    try {
+      Object catalog = spark.sessionState().catalogManager().catalog(catalogName);
+      Object inner = catalog.getClass().getMethod("getDelegateCatalog").invoke(catalog);
+      if (inner instanceof io.delta.storage.commit.uccommitcoordinator.UCDeltaClientProvider) {
+        return ((io.delta.storage.commit.uccommitcoordinator.UCDeltaClientProvider) inner)
+            .getUCDeltaClient();
+      }
+    } catch (Exception e) {
+      // Fall through
+    }
+    throw new IllegalStateException(
+        "No Unity Catalog with Delta REST Catalog support found for catalog: " + catalogName);
+  }
+
   private static String extractTablePath(CatalogTable catalogTable) {
     if (catalogTable.location() == null) {
       throw new IllegalArgumentException(

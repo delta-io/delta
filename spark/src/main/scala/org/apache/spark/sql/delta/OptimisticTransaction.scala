@@ -582,6 +582,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
     assert(newMetadata.isEmpty,
       "Cannot change the metadata more than once in a transaction.")
     updateMetadataInternal(proposedNewMetadata, ignoreDefaultProperties)
+    // Block metadata changes on UC-managed tables when using legacy API (DRC disabled).
+    // DRC propagates metadata natively; the legacy API does not.
+    if (!isCreatingNewTable &&
+        !spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED)) {
+      throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
+    }
   }
 
   /**
@@ -977,9 +983,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
-    throwIfUCManagedMetadataChanged(
-      snapshot.metadata,
-      context = "updateMetadataForNewTableInReplace")
+    if (!spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED)) {
+      throwIfUCManagedMetadataChanged(
+        snapshot.metadata,
+        context = "updateMetadataForNewTableInReplace")
+    }
   }
 
   /**
@@ -2005,13 +2013,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           newProtocol.toIterator
       allActions = allActions.map { action =>
         action match {
-          case dm: DomainMetadata if isClusteringChangedOnUCManagedTable(dm) =>
-            // Temporary: block clustering changes on UC-managed tables (commitLarge() path).
-            // commitLarge() bypasses prepareCommit(), so this guard is needed separately.
-            // The check is intentionally inside the lazy map: commitLarge streams actions to
-            // avoid materialising large sets, so an eager pre-scan is not practical. The
-            // exception is thrown before any data is written to the commit coordinator because
-            // the iterator is consumed first during serialisation.
+          case dm: DomainMetadata if isClusteringChangedOnUCManagedTable(dm)
+              && !spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED) =>
             throw DeltaErrors.operationNotSupportedException(
               "Clustering column changes on Unity Catalog managed tables")
           case a: AddFile =>
@@ -2064,12 +2067,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
       val updatedActions = new UpdatedActions(
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
+        val etag = deltaLog.latestDrcEtag
+          .map(java.util.Optional.of(_))
+          .getOrElse(java.util.Optional.empty[String]())
         effectiveTableCommitCoordinatorClient.commit(
           attemptVersion,
           jsonActions,
           updatedActions,
           catalogTable.map(_.identifier),
-          CatalogTrackedInfo.EMPTY
+          new CatalogTrackedInfo(
+            java.util.Optional.empty(), etag,
+            java.util.Optional.empty(), java.util.Optional.empty())
         )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
@@ -2784,12 +2792,17 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val updatedActions =
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
+      val etag = deltaLog.latestDrcEtag
+        .map(java.util.Optional.of(_))
+        .getOrElse(java.util.Optional.empty[String]())
       tableCommitCoordinatorClient.commit(
         attemptVersion,
         jsonActions,
         updatedActions,
         catalogTable.map(_.identifier),
-        CatalogTrackedInfo.EMPTY)
+        new CatalogTrackedInfo(
+          java.util.Optional.empty(), etag,
+          java.util.Optional.empty(), java.util.Optional.empty()))
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri

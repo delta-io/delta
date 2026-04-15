@@ -87,6 +87,8 @@ public class UCTokenBasedRestClient implements UCClient {
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
+  /** The shared ApiClient, accessible to subclasses for creating additional API clients. */
+  protected final ApiClient apiClient;
 
   // HTTP status codes for error handling
   private static final int HTTP_BAD_REQUEST = 400;
@@ -122,7 +124,19 @@ public class UCTokenBasedRestClient implements UCClient {
       }
     });
 
-    ApiClient apiClient = builder.build();
+    this.apiClient = builder.build();
+    this.deltaCommitsApi = new DeltaCommitsApi(this.apiClient);
+    this.metastoresApi = new MetastoresApi(this.apiClient);
+    this.tablesApi = new TablesApi(this.apiClient);
+  }
+
+  /**
+   * Constructs a UCTokenBasedRestClient from an existing ApiClient.
+   * Shares the same HTTP connection and auth as the provider.
+   */
+  public UCTokenBasedRestClient(ApiClient apiClient) {
+    Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.apiClient = apiClient;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
@@ -345,7 +359,7 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   // ===========================
-  // Exception Handling Methods
+  // Legacy UC API: finalizeCreate
   // ===========================
 
   @Override
@@ -445,4 +459,149 @@ public class UCTokenBasedRestClient implements UCClient {
             e);
     }
   }
+
+  /**
+   * Create table via legacy UC TablesApi. Used by UCDeltaClient.createTable
+   * when DRC is disabled.
+   */
+  protected void createTableLegacy(
+      String catalog, String schema, String table, String location,
+      io.delta.storage.commit.actions.AbstractMetadata metadata,
+      io.delta.storage.commit.actions.AbstractProtocol protocol,
+      boolean isManaged) throws CommitFailedException {
+    ensureOpen();
+    try {
+      io.unitycatalog.client.model.CreateTable req =
+          new io.unitycatalog.client.model.CreateTable();
+      req.setName(table);
+      req.setCatalogName(catalog);
+      req.setSchemaName(schema);
+      req.setTableType(isManaged
+          ? io.unitycatalog.client.model.TableType.MANAGED
+          : io.unitycatalog.client.model.TableType.EXTERNAL);
+      req.setDataSourceFormat(io.unitycatalog.client.model.DataSourceFormat.DELTA);
+      req.setStorageLocation(location);
+      // Parse schema JSON into ColumnInfo list for the legacy API
+      req.setColumns(columnsFromSchemaString(metadata.getSchemaString()));
+      java.util.HashMap<String, String> props = metadata.getConfiguration() != null
+          ? new java.util.HashMap<>(metadata.getConfiguration())
+          : new java.util.HashMap<>();
+      props.put("delta.minReaderVersion",
+          String.valueOf(protocol.getMinReaderVersion()));
+      props.put("delta.minWriterVersion",
+          String.valueOf(protocol.getMinWriterVersion()));
+      if (protocol.getReaderFeatures() != null) {
+        for (String f : protocol.getReaderFeatures()) {
+          props.put("delta.feature." + f, "supported");
+        }
+      }
+      if (protocol.getWriterFeatures() != null) {
+        for (String f : protocol.getWriterFeatures()) {
+          props.put("delta.feature." + f, "supported");
+        }
+      }
+      req.setProperties(props);
+      if (metadata.getDescription() != null) {
+        req.setComment(metadata.getDescription());
+      }
+      new io.unitycatalog.client.api.TablesApi(apiClient).createTable(req);
+    } catch (io.unitycatalog.client.ApiException e) {
+      throw new CommitFailedException(true, false,
+          "Failed to create table via legacy API: " + e.getResponseBody(), e);
+    }
+  }
+
+  /**
+   * Parses a Delta schema JSON string into a list of legacy UC ColumnInfo objects.
+   * Extracts top-level field names, types (as DDL typeText), and nullability.
+   */
+  private static java.util.List<io.unitycatalog.client.model.ColumnInfo>
+      columnsFromSchemaString(String schemaString) {
+    java.util.List<io.unitycatalog.client.model.ColumnInfo> columns = new java.util.ArrayList<>();
+    if (schemaString == null || schemaString.isEmpty()) return columns;
+    try {
+      com.fasterxml.jackson.databind.ObjectMapper mapper =
+          new com.fasterxml.jackson.databind.ObjectMapper();
+      com.fasterxml.jackson.databind.JsonNode root = mapper.readTree(schemaString);
+      com.fasterxml.jackson.databind.JsonNode fields = root.get("fields");
+      if (fields == null || !fields.isArray()) return columns;
+      for (int i = 0; i < fields.size(); i++) {
+        com.fasterxml.jackson.databind.JsonNode field = fields.get(i);
+        io.unitycatalog.client.model.ColumnInfo col =
+            new io.unitycatalog.client.model.ColumnInfo();
+        col.setName(field.get("name").asText());
+        col.setTypeText(deltaTypeToText(field.get("type")));
+        col.setNullable(field.has("nullable") && field.get("nullable").asBoolean(true));
+        col.setPosition(i);
+        columns.add(col);
+      }
+    } catch (Exception e) {
+      // If parsing fails, return empty -- table created without columns
+    }
+    return columns;
+  }
+
+  /**
+   * Converts a Delta type JSON node to a DDL type string.
+   * Primitive: "long" -> "long". Complex: {"type":"array","elementType":"string",...} -> "array<string>".
+   */
+  private static String deltaTypeToText(com.fasterxml.jackson.databind.JsonNode typeNode) {
+    if (typeNode.isTextual()) {
+      return typeNode.asText();
+    }
+    String type = typeNode.get("type").asText();
+    switch (type) {
+      case "array":
+        return "array<" + deltaTypeToText(typeNode.get("elementType")) + ">";
+      case "map":
+        return "map<" + deltaTypeToText(typeNode.get("keyType")) + ","
+            + deltaTypeToText(typeNode.get("valueType")) + ">";
+      case "struct": {
+        com.fasterxml.jackson.databind.JsonNode fields = typeNode.get("fields");
+        StringBuilder sb = new StringBuilder("struct<");
+        for (int i = 0; i < fields.size(); i++) {
+          if (i > 0) sb.append(",");
+          com.fasterxml.jackson.databind.JsonNode f = fields.get(i);
+          sb.append(f.get("name").asText()).append(":")
+            .append(deltaTypeToText(f.get("type")));
+        }
+        sb.append(">");
+        return sb.toString();
+      }
+      default:
+        return type;
+    }
+  }
+
+  /**
+   * Vend temporary storage credentials for a table via the legacy UC API.
+   * Returns Hadoop-style properties (e.g. fs.s3a.access.key). Returns empty
+   * map if credential vending fails or no credentials are available.
+   */
+  protected java.util.Map<String, String> vendCredentials(String tableId) {
+    try {
+      io.unitycatalog.client.api.TemporaryCredentialsApi credApi =
+          new io.unitycatalog.client.api.TemporaryCredentialsApi(apiClient);
+      io.unitycatalog.client.model.GenerateTemporaryTableCredential req =
+          new io.unitycatalog.client.model.GenerateTemporaryTableCredential()
+              .tableId(tableId)
+              .operation(io.unitycatalog.client.model.TableOperation.READ_WRITE);
+      io.unitycatalog.client.model.TemporaryCredentials creds =
+          credApi.generateTemporaryTableCredentials(req);
+      if (creds != null && creds.getAwsTempCredentials() != null) {
+        io.unitycatalog.client.model.AwsCredentials aws = creds.getAwsTempCredentials();
+        java.util.Map<String, String> props = new java.util.LinkedHashMap<>();
+        props.put("fs.s3a.access.key", aws.getAccessKeyId());
+        props.put("fs.s3a.secret.key", aws.getSecretAccessKey());
+        props.put("fs.s3a.session.token", aws.getSessionToken());
+        props.put("fs.s3a.aws.credentials.provider",
+            "org.apache.hadoop.fs.s3a.TemporaryAWSCredentialsProvider");
+        return props;
+      }
+      return java.util.Collections.emptyMap();
+    } catch (Exception e) {
+      return java.util.Collections.emptyMap();
+    }
+  }
 }
+
