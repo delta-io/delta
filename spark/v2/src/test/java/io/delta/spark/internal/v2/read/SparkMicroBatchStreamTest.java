@@ -633,23 +633,46 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
               "Index mismatch at index %d: dsv1=%d, dsv2=%d",
               i, deltaFile.index(), kernelFile.getIndex()));
 
-      // Sentinel files have null AddFile and null RemoveFile.
-      String deltaPath = deltaFile.add() != null ? deltaFile.add().path() : null;
-      String kernelPath = null;
+      // Compare file paths across all action types: AddFile, RemoveFile, and explicit CDC.
+      // DSv1 holds add/remove/cdc as separate fields; DSv2 wraps them in CDCDataFile.
+      String dsv1AddPath = deltaFile.add() != null ? deltaFile.add().path() : null;
+      String dsv2AddPath = null;
       if (kernelFile.getAddFile() != null) {
-        kernelPath = kernelFile.getAddFile().getPath();
+        dsv2AddPath = kernelFile.getAddFile().getPath();
       } else if (kernelFile.getCDCDataFile() != null
           && kernelFile.getCDCDataFile().getAddFile() != null) {
-        kernelPath = kernelFile.getCDCDataFile().getAddFile().getPath();
+        dsv2AddPath = kernelFile.getCDCDataFile().getAddFile().getPath();
       }
+      assertEquals(
+          dsv1AddPath,
+          dsv2AddPath,
+          String.format(
+              "AddFile path mismatch at index %d: dsv1=%s, dsv2=%s", i, dsv1AddPath, dsv2AddPath));
 
-      if (deltaPath != null || kernelPath != null) {
-        assertEquals(
-            deltaPath,
-            kernelPath,
-            String.format(
-                "AddFile path mismatch at index %d: dsv1=%s, dsv2=%s", i, deltaPath, kernelPath));
+      String dsv1RemovePath = deltaFile.remove() != null ? deltaFile.remove().path() : null;
+      String dsv2RemovePath = null;
+      if (kernelFile.getCDCDataFile() != null
+          && kernelFile.getCDCDataFile().getRemoveFile() != null) {
+        dsv2RemovePath = kernelFile.getCDCDataFile().getRemoveFile().getPath();
       }
+      assertEquals(
+          dsv1RemovePath,
+          dsv2RemovePath,
+          String.format(
+              "RemoveFile path mismatch at index %d: dsv1=%s, dsv2=%s",
+              i, dsv1RemovePath, dsv2RemovePath));
+
+      // Explicit CDC: DSv1 has cdc.path(), DSv2 doesn't store the path yet (added in cdf5).
+      // For now, verify both sides agree on whether an explicit CDC file is present.
+      boolean dsv1HasCDC = deltaFile.cdc() != null;
+      boolean dsv2HasCDC =
+          kernelFile.getCDCDataFile() != null && kernelFile.getCDCDataFile().isAddCDCFile();
+      assertEquals(
+          dsv1HasCDC,
+          dsv2HasCDC,
+          String.format(
+              "Explicit CDC presence mismatch at index %d: dsv1=%s, dsv2=%s",
+              i, dsv1HasCDC, dsv2HasCDC));
     }
   }
 
