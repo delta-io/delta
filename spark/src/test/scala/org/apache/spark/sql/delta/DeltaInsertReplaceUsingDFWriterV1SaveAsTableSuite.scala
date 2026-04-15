@@ -87,13 +87,18 @@ class DeltaInsertReplaceUsingDFWriterV1SaveAsTableSuite
   }
 
   test("saveAsTable: replaceUsing on non-existent table errors") {
-    intercept[DeltaAnalysisException] {
-      Seq((1, "data1"), (2, "data2")).toDF("id", "value")
-        .write.format("delta")
-        .mode("overwrite")
-        .option("replaceUsing", "id")
-        .saveAsTable("new_table")
-    }
+    checkError(
+      exception = intercept[DeltaAnalysisException] {
+        Seq((1, "data1"), (2, "data2")).toDF("id", "value")
+          .write.format("delta")
+          .mode("overwrite")
+          .option("replaceUsing", "id")
+          .saveAsTable("new_table")
+      },
+      condition = "DELTA_PATH_DOES_NOT_EXIST",
+      parameters = Map("path" -> ".*"),
+      matchPVals = true
+    )
   }
 
   test("saveAsTable: replaceUsing with schema evolution") {
