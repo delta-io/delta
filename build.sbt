@@ -1088,6 +1088,11 @@ lazy val storage = (project in file("storage"))
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
     TestParallelization.settings
+  ).settings(
+    Compile / unmanagedSourceDirectories += {
+      val shimDir = if (sys.props.getOrElse("deltaRestCatalog", "false").toBoolean) "drc" else "no-drc"
+      (baseDirectory.value / "src" / "main" / "java-shims" / shimDir)
+    }
   ).configureUnidoc()
 
 lazy val storageS3DynamoDB = (project in file("storage-s3-dynamodb"))

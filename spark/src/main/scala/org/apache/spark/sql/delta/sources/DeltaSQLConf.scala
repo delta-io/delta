@@ -842,6 +842,15 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .checkValue(_ > 0, "threadPoolSize must be positive")
       .createWithDefault(20)
 
+  val DELTA_REST_CATALOG_ENABLED =
+    buildConf("unityCatalog.deltaRestCatalog.enabled")
+      .doc("When enabled, Delta Spark uses the Delta REST Catalog API " +
+        "for catalog operations (loadTable, createTable) and commit " +
+        "coordination instead of the legacy UC API. Requires a UC server " +
+        "that supports the /delta/v1/ endpoints.")
+      .booleanConf
+      .createWithDefault(false)
+
   val COORDINATED_COMMITS_GET_COMMITS_THREAD_POOL_SIZE =
     buildStaticConf("coordinatedCommits.getCommits.threadPoolSize")
       .internal()

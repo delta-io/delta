@@ -25,6 +25,7 @@ import org.apache.spark.sql.delta.commands.{
   CreateDeltaTableLike,
   TableCreationModes
 }
+import org.apache.spark.sql.delta.Snapshot
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.scalatest.exceptions.TestFailedException
 
@@ -380,7 +381,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
             snapshot,
             query = None,
             didNotChangeMetadata = true,
-            createTableFunc = Some((_: CatalogTable) => {
+            createTableFunc = Some((_: CatalogTable, _: Snapshot) => {
               createCallbackCalls += 1
             }))
         }

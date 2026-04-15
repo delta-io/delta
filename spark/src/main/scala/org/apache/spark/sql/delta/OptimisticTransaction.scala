@@ -591,7 +591,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
     // a temporary kill switch - once Delta supports propagating metadata updates to UC,
     // this check will be removed entirely.
-    if (!isCreatingNewTable) {
+    if (!isCreatingNewTable && !isDeltaRestCatalogEnabled) {
       throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
     }
   }
@@ -638,6 +638,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
             .contains(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
       }
   }
+
+  /** True when the Delta REST Catalog API is enabled for this session. */
+  private lazy val isDeltaRestCatalogEnabled: Boolean =
+    spark.conf.get(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED)
 
   /**
    * Returns true if committing [[dm]] would change the clustering columns on a UC-managed
@@ -989,9 +993,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
-    throwIfUCManagedMetadataChanged(
-      snapshot.metadata,
-      context = "updateMetadataForNewTableInReplace")
+    if (!isDeltaRestCatalogEnabled) {
+      throwIfUCManagedMetadataChanged(
+        snapshot.metadata,
+        context = "updateMetadataForNewTableInReplace")
+    }
   }
 
   /**
@@ -2067,7 +2073,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
           newProtocol.toIterator
       allActions = allActions.map { action =>
         action match {
-          case dm: DomainMetadata if isClusteringChangedOnUCManagedTable(dm) =>
+          case dm: DomainMetadata
+            if !isDeltaRestCatalogEnabled && isClusteringChangedOnUCManagedTable(dm) =>
             // Temporary: block clustering changes on UC-managed tables (commitLarge() path).
             // commitLarge() bypasses prepareCommit(), so this guard is needed separately.
             // The check is intentionally inside the lazy map: commitLarge streams actions to
