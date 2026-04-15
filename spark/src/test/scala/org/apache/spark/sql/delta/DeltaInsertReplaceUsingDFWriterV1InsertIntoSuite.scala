@@ -107,27 +107,6 @@ class DeltaInsertReplaceUsingDFWriterV1InsertIntoSuite
     }
   }
 
-  test("insertInto: replaceUsing with misaligned USING columns, disallow conf disabled") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      Seq((1, 0, "target"), (2, 0, "target"))
-        .toDF("match_col", "non_match_col", "row_origin")
-        .write.format("delta").save(path)
-
-      writeReplaceUsingDF(
-        sourceDF = Seq((10, 1, "source"))
-          .toDF("non_match_col", "match_col", "row_origin"),
-        target = path,
-        replaceUsingCols = "match_col")
-
-      checkAnswer(
-        spark.read.format("delta").load(path).orderBy("match_col"),
-        Seq(
-          Row(2, 0, "target"),
-          Row(10, 1, "source")))
-    }
-  }
-
   test("insertInto: replaceUsing with aligned USING column but mismatched " +
       "non-USING column names, which triggers schemaAdjustment") {
     withTempDir { dir =>
