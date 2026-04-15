@@ -169,23 +169,23 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               /* incrementalSqls */ List.of(
                   "INSERT INTO %s VALUES (5, true, null), (6, null, 60)")),
 
-          // -- Regression: VARIANT columns trigger ClassCastException on MANAGED tables --
+          // -- Regression: complex types (ARRAY/MAP/STRUCT) exercise getChild() path --
           // Before fix: ColumnVectorWithFilter.getChild() unconditionally casts dataType()
-          // to StructType to compute the number of children. For non-struct types like
-          // VARIANT, ARRAY, and MAP, this cast fails with ClassCastException. The fix
-          // guards with an instanceof check and passes through to the delegate directly.
+          // to StructType. For non-struct types like ARRAY and MAP, this cast fails with
+          // ClassCastException. The fix guards with an instanceof check and passes through
+          // to the delegate directly.
           new TableVariant(
-              /* name */ "VariantType",
-              /* schema */ "id INT, data VARIANT",
+              /* name */ "ComplexTypes",
+              /* schema */ "id INT, arr ARRAY<INT>, m MAP<STRING,INT>,"
+                  + " s STRUCT<a:INT,b:STRING>",
               /* partitionCols */ null,
               /* tableProperties */ null,
-              /* createTableSql */ null,
               /* setupSqls */ List.of(
-                  "INSERT INTO %s SELECT 1, parse_json('{\"key\": \"value\"}')"
-                      + " UNION ALL SELECT 2, parse_json('[1,2,3]')"),
+                  "INSERT INTO %s VALUES"
+                      + " (1, array(1,2), map('k',1), named_struct('a',1,'b','x')),"
+                      + " (2, array(3), map('k1',2,'k2',3), named_struct('a',2,'b','y'))"),
               /* incrementalSqls */ List.of(
-                  "INSERT INTO %s SELECT 3, parse_json('{\"nested\": {\"a\": 1}}')"),
-              /* streamReadOptions */ Collections.emptyMap()));
+                  "INSERT INTO %s VALUES" + " (3, array(), map(), named_struct('a',3,'b','z'))")));
 
   @TestFactory
   Stream<DynamicContainer> streamingTableVariants() {
@@ -333,11 +333,29 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     }
   }
 
-  /** Asserts streaming memory sink has same rows as batch SELECT * (both sorted by first col). */
+  /**
+   * Asserts streaming memory sink has same rows as batch SELECT *. Sorts both result sets in Java
+   * by all columns to avoid non-determinism when the first column has duplicate values (e.g.
+   * NULLs).
+   */
   private void assertStreamingEqualsBatch(String queryName, String tableName) {
-    List<List<String>> streaming = sql("SELECT * FROM %s ORDER BY 1", queryName);
-    List<List<String>> batch = sql("SELECT * FROM %s ORDER BY 1", tableName);
+    List<List<String>> streaming = sorted(sql("SELECT * FROM %s", queryName));
+    List<List<String>> batch = sorted(sql("SELECT * FROM %s", tableName));
     assertThat(streaming).as("Streaming should match batch for %s", tableName).isEqualTo(batch);
+  }
+
+  /** Returns a copy of the rows sorted lexicographically by all columns. */
+  private static List<List<String>> sorted(List<List<String>> rows) {
+    List<List<String>> copy = new ArrayList<>(rows);
+    copy.sort(
+        (a, b) -> {
+          for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            int c = String.valueOf(a.get(i)).compareTo(String.valueOf(b.get(i)));
+            if (c != 0) return c;
+          }
+          return Integer.compare(a.size(), b.size());
+        });
+    return copy;
   }
 
   /**
