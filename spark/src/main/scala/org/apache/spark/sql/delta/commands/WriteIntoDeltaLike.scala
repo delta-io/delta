@@ -41,6 +41,7 @@ import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.catalyst.analysis.UnresolvedAttribute
+import org.apache.spark.sql.errors.QueryCompilationErrors.toSQLId
 import org.apache.spark.sql.catalyst.expressions.{Alias, And, EqualTo, Exists, Expression, Literal}
 import org.apache.spark.sql.catalyst.plans.logical.{Filter, LogicalPlan, Project}
 import org.apache.spark.sql.execution.metric.SQLMetric
@@ -448,7 +449,7 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
             colName = replaceUsingAttr.name,
             relationType = "table",
             suggestion = tableRelation.schema.fieldNames.sorted
-              .map(DeltaErrors.toSQLId).mkString(", "))
+              .map(toSQLId).mkString(", "))
         }
 
         if (!isAttrExistsInQuery) {
@@ -456,7 +457,7 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
             colName = replaceUsingAttr.name,
             relationType = "query",
             suggestion = originalQueryBeforeSchemaAdjustmentProjection
-              .schema.fieldNames.sorted.map(DeltaErrors.toSQLId).mkString(", "))
+              .schema.fieldNames.sorted.map(toSQLId).mkString(", "))
         }
       }
 
