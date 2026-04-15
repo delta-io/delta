@@ -201,6 +201,26 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
+  public void testColumnarSupportModeWithMetadataColumnPruned() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    StructType prunedSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("_metadata", new StructType())
+            .add("date", DataTypes.StringType)
+            .add("city", DataTypes.StringType)
+            .add("part", DataTypes.IntegerType);
+    builder.pruneColumns(prunedSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(
+        Scan.ColumnarSupportMode.UNSUPPORTED,
+        scan.columnarSupportMode(),
+        "columnarSupportMode should return UNSUPPORTED when _metadata is requested");
+  }
+
+  @Test
   public void testColumnarSupportModeWithDeletionVectors(@TempDir File tempDir) throws Exception {
     // For a DV-enabled table with a batch-compatible schema, columnarSupportMode should still
     // return SUPPORTED because the DV internal column (__delta_internal_is_row_deleted, ByteType)

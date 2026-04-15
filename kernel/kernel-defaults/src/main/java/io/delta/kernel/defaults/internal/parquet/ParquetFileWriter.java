@@ -371,6 +371,10 @@ public class ParquetFileWriter {
       throws IOException {
     ParquetRowDataBuilder rowDataBuilder = new ParquetRowDataBuilder(outputFile, writeSupport);
 
+    // TODO: Read the compression codec from the Delta table property
+    // (delta.parquet.compression.codec) via TransactionState and use it here. The table property
+    // should take precedence over the engine-level Hadoop config. See TableConfig
+    // .PARQUET_COMPRESSION_CODEC.
     fileIO
         .getConf(COMPRESSION)
         .ifPresent(
