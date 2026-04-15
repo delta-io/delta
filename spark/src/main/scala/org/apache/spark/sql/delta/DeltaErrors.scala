@@ -3992,6 +3992,42 @@ trait DeltaErrorsBase
       errorClass = "DELTA_CANNOT_RESOLVE_SOURCE_COLUMN",
       messageParameters = Array(s"${UnresolvedAttribute(columnPath).name}"))
   }
+
+  def insertReplaceOnAmbiguousColumnsInCond(columnNames: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INSERT_REPLACE_ON_AMBIGUOUS_COLUMNS_IN_CONDITION",
+      messageParameters = Array(columnNames.map(toSQLId).mkString(", ")))
+  }
+
+  def insertReplaceOnUnresolvedColumnsInCond(columnNames: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_INSERT_REPLACE_ON_UNRESOLVED_COLUMNS_IN_CONDITION",
+      messageParameters = Array(columnNames.map(toSQLId).mkString(", ")))
+  }
+
+  def unresolvedInsertReplaceUsingColumnsError(
+      colName: String, relationType: String, suggestion: String): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "UNRESOLVED_INSERT_REPLACE_USING_COLUMN",
+      messageParameters = Array(toSQLId(colName), relationType, suggestion))
+  }
+
+  def disallowInsertReplaceUsingWithMisalignedColumns(
+      misalignedReplaceUsingCols: Seq[String]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS",
+      messageParameters = Array(misalignedReplaceUsingCols.map(toSQLId).mkString(", ")))
+  }
+
+  def replaceOnOrUsingConstraintViolationException(
+      replaceExpression: String,
+      invariantViolation: InvariantViolationException): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_REPLACE_ON_OR_USING_TABLE_CONSTRAINT_VIOLATION",
+      messageParameters =
+        Array(replaceExpression, invariantViolation.getMessage),
+      cause = Some(invariantViolation))
+  }
 }
 
 object DeltaErrors extends DeltaErrorsBase

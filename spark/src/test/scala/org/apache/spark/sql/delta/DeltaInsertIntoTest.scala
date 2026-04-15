@@ -247,6 +247,30 @@ trait DeltaInsertIntoTest
     }
   }
 
+  /** df.write.mode("overwrite").option("replaceOn", ...).save() */
+  object DFv1SaveReplaceOn extends Insert {
+    val name: String = "DFv1 save() - REPLACE ON"
+    val mode: SaveMode = SaveMode.Overwrite
+    val byName: Boolean = true
+    val isSQL: Boolean = false
+    def runInsert(
+        columns: Seq[String],
+        whereCol: String,
+        whereValue: Int,
+        withSchemaEvolution: Boolean): Unit = {
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
+        val deltaLog = DeltaLog.forTable(spark, TableIdentifier("target"))
+        spark.read.table("source").write.mode(mode)
+          .option("replaceOn", s"t.$whereCol = $whereValue")
+          .option("targetAlias", "t")
+          .option("mergeSchema", withSchemaEvolution.toString)
+          .format("delta")
+          .save(deltaLog.dataPath.toString)
+      }
+    }
+  }
+
   /** df.write.mode(mode).option("partitionOverwriteMode", "dynamic").insertInto() */
   object DFv1InsertIntoDynamicPartitionOverwrite extends Insert {
     val name: String = s"DFv1 insertInto() - dynamic partition overwrite"
@@ -351,6 +375,7 @@ trait DeltaInsertIntoTest
         SQLInsertOverwritePartitionByPosition,
         SQLInsertOverwritePartitionColList,
         DFv1InsertIntoDynamicPartitionOverwrite,
+        DFv1SaveReplaceOn,
         DFv2Append,
         DFv2Overwrite,
         DFv2OverwritePartition,

@@ -89,6 +89,11 @@ public class CDCDataFile {
   }
 
   @Nullable
+  public RemoveFile getRemoveFile() {
+    return removeFile;
+  }
+
+  @Nullable
   public String getChangeType() {
     return changeType;
   }
@@ -104,6 +109,17 @@ public class CDCDataFile {
   /** Returns true if this is an explicit CDC file (from AddCDCFile action). */
   public boolean isAddCDCFile() {
     return isAddCDCFile;
+  }
+
+  /** Returns true if the underlying file action has a deletion vector. */
+  public boolean hasDeletionVector() {
+    if (addFile != null) {
+      return addFile.getDeletionVector().isPresent();
+    }
+    if (removeFile != null) {
+      return removeFile.getDeletionVector().isPresent();
+    }
+    return false;
   }
 
   @Override
