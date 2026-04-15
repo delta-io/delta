@@ -36,6 +36,7 @@ import org.apache.spark.sql.delta.commands.DeletionVectorUtils
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraints, Invariants}
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CoordinatedCommitsUtils, TableCommitCoordinatorClient, UCCommitCoordinatorBuilder}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.files._
 import org.apache.spark.sql.delta.hooks.{CheckpointHook, ChecksumHook, GenerateSymlinkManifest, HudiConverterHook, IcebergConverterHook, PostCommitHook, UpdateCatalogFactory}
 import org.apache.spark.sql.delta.hooks.metrics.UpdateMetricsHook
@@ -47,7 +48,8 @@ import org.apache.spark.sql.delta.redirect.{RedirectFeature, TableRedirectConfig
 import org.apache.spark.sql.delta.schema.{SchemaMergingUtils, SchemaUtils}
 import org.apache.spark.sql.delta.sources.{DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats._
-import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, TransactionHelper}
+import org.apache.spark.sql.delta.stats.FileSizeHistogramUtils
+import org.apache.spark.sql.delta.util.{DeltaCommitFileProvider, JsonUtils, PartitionUtils, TransactionHelper}
 import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
@@ -1026,7 +1028,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
   protected def assertMetadata(metadata: Metadata): Unit = {
     assert(!CharVarcharUtils.hasCharVarchar(metadata.schema),
       "The schema in Delta log should not contain char/varchar type.")
-    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "in the metadata update")
+    SchemaMergingUtils.checkColumnNameDuplication(metadata.schema, "METADATA_UPDATE")
     if (metadata.columnMappingMode == NoMapping) {
       SchemaUtils.checkSchemaFieldNames(metadata.dataSchema, metadata.columnMappingMode)
       val partitionColCheckIsFatal =
@@ -1231,23 +1233,73 @@ trait OptimisticTransactionImpl extends TransactionHelper
   }
 
   /**
-   * Returns files within the given partitions.
-   *
-   * `partitions` is a set of the `partitionValues` stored in [[AddFile]]s. This means they refer to
-   * the physical column names, and values are stored as strings.
-   * */
-  def filterFiles(partitions: Set[Map[String, String]]): Seq[AddFile] = {
+   * Returns files within the partitions of the given [[AddFile]]s.
+   */
+  def filterFiles(newFiles: Seq[AddFile]): Seq[AddFile] = {
     import org.apache.spark.sql.functions.col
     val df = snapshot.allFiles.toDF()
-    val isFileInTouchedPartitions =
-      DeltaUDF.booleanFromMap(partitions.contains)(col("partitionValues"))
-    val filteredFiles = df
-      .filter(isFileInTouchedPartitions)
-      .withColumn("stats", DataSkippingReader.nullStringLiteral)
-      .as[AddFile]
-      .collect()
+    val parseToTypedLiterals =
+      spark.conf.get(DeltaSQLConf.DELTA_DYNAMIC_PARTITION_OVERWRITE_PARSE_PARTITION_VALUES)
+    val timeZone = spark.sessionState.conf.sessionLocalTimeZone
+
+    val (filteredFiles, filterPredicate) = try {
+      // Always fail on error. We log and throw it again or fall back depending on the config.
+      val newFilesNormalizedPartitionValues = newFiles.map(f =>
+        Action.normalizePartitionValues(
+          f.partitionValues,
+          metadata.physicalPartitionSchema,
+          timeZone,
+          parseToTypedLiterals,
+          failOnParsingError = true)
+      ).toSet
+
+      val existingFilesPartitionSchema = snapshot.metadata.physicalPartitionSchema
+      val pred = DeltaUDF.booleanFromMap { filePartValues =>
+        newFilesNormalizedPartitionValues.contains(Action.normalizePartitionValues(
+          filePartValues,
+          existingFilesPartitionSchema,
+          timeZone,
+          parseToTypedLiterals,
+          failOnParsingError = true))
+      }(col("partitionValues"))
+      val files = df.filter(pred)
+          .withColumn("stats", DataSkippingReader.nullStringLiteral)
+          .as[AddFile]
+          .collect()
+      (files, pred)
+    } catch {
+      case NonFatal(e) =>
+        val opTypeSuffix = PartitionUtils.classifyPartitionValueParsingError(e)
+        recordDeltaEvent(
+          deltaLog,
+          opType = "delta.dynamicPartitionOverwrite.partitionValueParsingError" + opTypeSuffix,
+          data = getErrorData(e) ++ Map(
+            "readSnapshotMetadata" -> snapshot.metadata,
+            "txnMetadata" -> metadata,
+            "commitInfo" -> commitInfo,
+            "readSnapshotVersion" -> snapshot.version,
+            "timeZone" -> timeZone
+          )
+        )
+        if (spark.conf.get(DeltaSQLConf.DELTA_FAIL_ON_PARTITION_VALUE_PARSING_ERROR)) {
+          e match {
+            // UDF exceptions get wrapped in SparkException. Unwrap to throw the root cause.
+            case se: SparkException => throw Option(se.getCause).getOrElse(se)
+            case _ => throw e
+          }
+        }
+        // Partition value parsing failed, fall back to raw string comparison.
+        val rawPartitions = newFiles.map(_.partitionValues).toSet
+        val pred = DeltaUDF.booleanFromMap(rawPartitions.contains)(col("partitionValues"))
+        val files = df.filter(pred)
+            .withColumn("stats", DataSkippingReader.nullStringLiteral)
+            .as[AddFile]
+            .collect()
+        (files, pred)
+    }
+
     trackReadPredicates(
-      Seq(isFileInTouchedPartitions.expr), partitionOnly = true, shouldRewriteFilter = false)
+      Seq(filterPredicate.expr), partitionOnly = true, shouldRewriteFilter = false)
     filteredFiles
   }
 
@@ -2075,7 +2127,12 @@ trait OptimisticTransactionImpl extends TransactionHelper
         commitInfo, metadata, protocol, snapshot.metadata, snapshot.protocol)
       val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
         effectiveTableCommitCoordinatorClient.commit(
-          attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+          attemptVersion,
+          jsonActions,
+          updatedActions,
+          catalogTable.map(_.identifier),
+          CatalogTrackedInfo.EMPTY
+        )
       }
       // TODO(coordinated-commits): Use the right timestamp method on top of CommitInfo once ICT is
       //  merged.
@@ -2111,6 +2168,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
         // We manually triggered a checkpoint in `updateAndCheckpoint` above.
         computedNeedsCheckpoint = true,
         isolationLevel = Serializable,
+        // commitLarge always triggers state reconstruction, so it is safe to
+        // access postCommitSnapshot.fileSizeHistogram here as opposed to the other
+        // commit code path.
+        fileSizeHistogramOpt = postCommitSnapshot.fileSizeHistogram,
         commitInfoOpt = Some(commitInfo),
         commitSizeBytes = commitSizeBytes
       )
@@ -2667,6 +2728,9 @@ trait OptimisticTransactionImpl extends TransactionHelper
       postCommitSnapshot = postCommitSnapshot,
       computedNeedsCheckpoint = needsCheckpoint,
       isolationLevel = isolationLevel,
+      // We don't use postCommitSnapshot.fileSizeHistogram here
+      // because it can trigger full state reconstruction.
+      fileSizeHistogramOpt = postCommitSnapshot.checksumOpt.flatMap(_.histogramOpt),
       commitInfoOpt = currentTransactionInfo.commitInfo,
       commitSizeBytes = commitSizeBytes
     )
@@ -2783,7 +2847,11 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo.getUpdatedActions(snapshot.metadata, snapshot.protocol)
     val commitResponse = TransactionExecutionObserver.withObserver(executionObserver) {
       tableCommitCoordinatorClient.commit(
-        attemptVersion, jsonActions, updatedActions, catalogTable.map(_.identifier))
+        attemptVersion,
+        jsonActions,
+        updatedActions,
+        catalogTable.map(_.identifier),
+        CatalogTrackedInfo.EMPTY)
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
@@ -2819,6 +2887,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
       operationName = currentTransactionInfo.op.name,
       txnIdOpt = Some(currentTransactionInfo.txnId),
       previousVersionState = scala.Left(snapshot),
+      mustIncludeFileSizeHistogram =
+        spark.conf.get(DeltaSQLConf.DELTA_FILE_SIZE_HISTOGRAM_ENABLED),
       includeAddFilesInCrc = Snapshot.shouldIncludeAddFilesInCrc(spark, snapshot, metadata)
     ).toOption
   }

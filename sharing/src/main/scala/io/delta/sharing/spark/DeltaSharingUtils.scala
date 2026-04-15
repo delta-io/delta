@@ -47,7 +47,8 @@ object DeltaSharingUtils extends Logging {
       TypeWideningTableFeature.name,
       VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name,
-      VariantShreddingPreviewTableFeature.name
+      VariantShreddingPreviewTableFeature.name,
+      VariantShreddingTableFeature.name
     )
 
   val SUPPORTED_READER_FEATURES: Seq[String] =
@@ -59,7 +60,8 @@ object DeltaSharingUtils extends Logging {
       TypeWideningTableFeature.name,
       VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name,
-      VariantShreddingPreviewTableFeature.name
+      VariantShreddingPreviewTableFeature.name,
+      VariantShreddingTableFeature.name
     )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.

@@ -321,13 +321,13 @@ object SuiteGeneratorConfig {
       ),
       testConfigs = List(
         TestConfig(
-          "DeleteScalaTests" :: Tests.DELETE_BASE,
+          "DeleteScalaTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SCALA)
           )
         ),
         TestConfig(
-          "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
+          "DeleteCDCTests" :: "DeleteCDCTableWithDVsTests" :: "DeleteSQLTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SQL, Dims.NAME_BASED),
             List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),
