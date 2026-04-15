@@ -372,7 +372,176 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               /* tableProperties */ null,
               /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1, 'hello, world'), (2, 'it''s'), (3, '')"),
-              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, '   '), (5, 'line1')")));
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, '   '), (5, 'line1')")),
+
+          // -- Create table with column mapping mode=name, partitioned, then stream --
+          // Column mapping changes physical column names in Parquet (e.g., col-abc123 instead of
+          // id). The DSv2 streaming reader must resolve physical->logical names via
+          // ProtocolMetadataAdapterV2. Never tested in UC before; partitions stress partition
+          // column name resolution in PartitionUtils.getPartitionRow.
+          new TableVariant(
+              /* name */ "ColumnMappingName",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ "'delta.columnMapping.mode'='name'",
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd', 'y'), (5, 'e', 'z')")),
+
+          // -- Create table with BOOLEAN columns and interleaved NULLs, then stream --
+          // BUG: MANAGED tables fail with NPE in OnHeapColumnVector — same root cause as
+          // NullsInColumns (this.nulls byte array uninitialized) but through the BOOLEAN
+          // bit-packing path. Confirms the vectorized reader null bug affects multiple types.
+          // EXTERNAL tables pass. Both SNAPSHOT and INCREMENTAL modes affected.
+          new TableVariant(
+              /* name */ "BooleanNulls",
+              /* schema */ "id INT, flag BOOLEAN, val INT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, true, 10), (2, null, 20), (3, false, null), (4, null, null)"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES (5, true, null), (6, null, 60)")),
+
+          // -- Create partitioned table with NULL values in the partition column, then stream --
+          // Partition NULLs create __HIVE_DEFAULT_PARTITION__ directory entries. The streaming
+          // reader's partition value resolution (PartitionUtils.getPartitionRow) must handle
+          // NULL partition values correctly for both EXTERNAL and MANAGED tables.
+          new TableVariant(
+              /* name */ "NullPartitionValues",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, 'a', 'x'), (2, 'b', null), (3, 'c', 'x'), (4, 'd', null)"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (5, 'e', 'y'), (6, 'f', null)")),
+
+          // -- Create table with deletion vectors enabled, INSERT, DELETE, then stream --
+          // MANAGED tables have DVs by default; this explicitly enables DVs on EXTERNAL too.
+          // DELETE with DVs keeps the original file + a DV bitmap (vs copy-on-write which
+          // removes old file and adds new). Tests the DV streaming read path in
+          // DeltaParquetFileFormatV2 via deletion vector row filtering.
+          new TableVariant(
+              /* name */ "DeletionVectorsDelete",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ "'delta.enableDeletionVectors'='true'",
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')", "DELETE FROM %s WHERE id = 2"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")),
+
+          // -- Create table via CTAS (CREATE TABLE AS SELECT), then stream --
+          // CTAS uses a different write path than CREATE + INSERT: table metadata is derived
+          // from the SELECT schema rather than explicit DDL. Tests whether streaming reads
+          // work correctly when the table was created via CTAS.
+          new TableVariant(
+              /* name */ "CTAS",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ "CREATE TABLE %s USING DELTA %s"
+                  + " AS SELECT * FROM VALUES (1, 'a'), (2, 'b'), (3, 'c') AS t(id, value)",
+              /* setupSqls */ List.of(),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')"),
+              /* streamReadOptions */ Collections.emptyMap()),
+
+          // -- Create table with two partition columns of different types, then stream --
+          // Multiple partition columns exercise per-column partition value injection in
+          // PartitionUtils.getPartitionRow. Tests correct handling of mixed-type partition
+          // keys across EXTERNAL and MANAGED tables.
+          new TableVariant(
+              /* name */ "MultiPartitionColumns",
+              /* schema */ "id INT, value STRING, part1 STRING, part2 INT",
+              /* partitionCols */ "part1, part2",
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, 'a', 'x', 100), (2, 'b', 'y', 200), (3, 'c', 'x', 200)"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES (4, 'd', 'y', 100), (5, 'e', 'z', 300)")),
+
+          // -- Create partitioned table with special characters in partition values, then stream --
+          // Partition values with spaces, '=', '#' are URL-encoded in file paths (e.g.,
+          // part=hello%20world/). The streaming reader must correctly decode: addFile.getPath()
+          // -> new Path(tablePath, path) -> SparkPath.fromUrlString(). Any double-encoding
+          // or decode mismatch causes FileNotFoundException or corrupt data.
+          new TableVariant(
+              /* name */ "SpecialCharsInPartitionValue",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, 'a', 'hello world'), (2, 'b', 'a=b'), (3, 'c', 'x#y')"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES (4, 'd', 'hello world'), (5, 'e', 'p(q)')")),
+
+          // -- Create partitioned table with empty string partition value, then stream --
+          // Empty string '' is a valid partition value distinct from NULL. The Delta log stores
+          // it as "" in the partitionValues map. The streaming reader's partition value
+          // pipeline (PartitionUtils.getPartitionRow -> castPartValueToDesiredType) must not
+          // conflate '' with NULL. Complements NullPartitionValues.
+          new TableVariant(
+              /* name */ "EmptyStringPartitionValue",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'a', ''), (2, 'b', 'x'), (3, 'c', '')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd', ''), (5, 'e', 'y')")),
+
+          // -- Create table with column mapping mode=id (not name), then stream --
+          // mode=id uses Parquet field IDs for column resolution instead of physical names.
+          // The existing ColumnMappingName variant tests mode=name; mode=id is entirely
+          // untested and exercises a fundamentally different Parquet column matching strategy
+          // via parquet.field.id metadata.
+          new TableVariant(
+              /* name */ "ColumnMappingId",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ "'delta.columnMapping.mode'='id'",
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd', 'y'), (5, 'e', 'z')")),
+
+          // -- Create partitioned table with DVs enabled, INSERT, DELETE, then stream --
+          // DV column index computation in DeletionVectorSchemaContext interacts with
+          // partition columns in the row layout. The DV column is appended after data columns
+          // but before partition columns — if the index is wrong, valid rows get filtered or
+          // deleted rows leak through.
+          new TableVariant(
+              /* name */ "DeletionVectorsPartitioned",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ "'delta.enableDeletionVectors'='true'",
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a','x'), (2,'b','x'), (3,'c','y'), (4,'d','y')",
+                  "DELETE FROM %s WHERE id = 2"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")),
+
+          // -- Column mapping + DVs + partitions combined, then stream --
+          // Tests interaction of 3 features: column mapping renames physical column names,
+          // DV appends __delta_internal_is_row_deleted, and partitions inject partition values.
+          // If CM rename accidentally touches the DV column (which has no physical name
+          // metadata), schema misalignment occurs.
+          new TableVariant(
+              /* name */ "PartitionedColumnMappingNameDV",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ "'delta.columnMapping.mode'='name',"
+                  + " 'delta.enableDeletionVectors'='true'",
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a','x'), (2,'b','y'), (3,'c','x'), (4,'d','y')",
+                  "DELETE FROM %s WHERE id = 2"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")));
 
   // NOTE: The following variants are not yet supported in UC OSS and are omitted:
   // - IdentityColumn, GeneratedColumns, DefaultColumns: UC doesn't support these DDL features
@@ -580,5 +749,149 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     Path ckDir = tempDir.resolve("ck-" + checkpointCount++);
     Files.createDirectory(ckDir);
     return ckDir.toString();
+  }
+
+  // ---- Lifecycle tests (not TableVariant-based) ----
+
+  /**
+   * Tests that a stream correctly handles RESTORE after checkpoint. Scenario: stream processes
+   * versions 1+2, checkpoints. Then RESTORE reverts to version 1 (creating version 3). The resumed
+   * stream must handle the RESTORE commit (which has RemoveFile + AddFile with dataChange=true)
+   * without crashing. New data inserted after RESTORE should also be picked up.
+   */
+  @TestAllTableTypes
+  public void testRestorePastCheckpoint(TableType tableType) throws Exception {
+    withNewTable(
+        "restore_ck_src",
+        "id INT, value STRING",
+        tableType,
+        srcName ->
+            withNewTable(
+                "restore_ck_sink",
+                "id INT, value STRING",
+                tableType,
+                sinkName -> {
+                  // Phase 1: Two inserts, then stream everything to Delta sink.
+                  sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", srcName);
+                  sql("INSERT INTO %s VALUES (4, 'd'), (5, 'e')", srcName);
+
+                  String ck = checkpoint();
+                  spark()
+                      .readStream()
+                      .format("delta")
+                      .option("ignoreChanges", "true")
+                      .table(srcName)
+                      .writeStream()
+                      .format("delta")
+                      .outputMode("append")
+                      .trigger(Trigger.AvailableNow())
+                      .option("checkpointLocation", ck)
+                      .toTable(sinkName)
+                      .awaitTermination(STREAMING_TIMEOUT_MS);
+                  check(
+                      sinkName,
+                      List.of(
+                          row("1", "a"),
+                          row("2", "b"),
+                          row("3", "c"),
+                          row("4", "d"),
+                          row("5", "e")));
+
+                  // Phase 2: RESTORE source to version 1 (first INSERT only), then add data.
+                  sql("RESTORE %s TO VERSION AS OF 1", srcName);
+                  sql("INSERT INTO %s VALUES (6, 'f')", srcName);
+
+                  // Phase 3: Resume stream from same checkpoint. Processes RESTORE commit
+                  // (version 3) and new INSERT (version 4). With ignoreChanges, the stream
+                  // should handle the RESTORE's RemoveFile + AddFile without crashing.
+                  spark()
+                      .readStream()
+                      .format("delta")
+                      .option("ignoreChanges", "true")
+                      .table(srcName)
+                      .writeStream()
+                      .format("delta")
+                      .outputMode("append")
+                      .trigger(Trigger.AvailableNow())
+                      .option("checkpointLocation", ck)
+                      .toTable(sinkName)
+                      .awaitTermination(STREAMING_TIMEOUT_MS);
+
+                  // The stream must complete without error. The new INSERT (6,'f') must
+                  // appear in the sink. RESTORE may also re-add already-seen rows.
+                  List<List<String>> sinkData = sql("SELECT * FROM %s", sinkName);
+                  assertThat(sinkData)
+                      .as("Sink after RESTORE should contain the new INSERT")
+                      .anySatisfy(row -> assertThat(row).contains("6"));
+                }));
+  }
+
+  /**
+   * Tests that two concurrent streaming queries reading the same table with different checkpoints
+   * both get consistent, complete views of the data.
+   */
+  @TestAllTableTypes
+  public void testConcurrentStreams(TableType tableType) throws Exception {
+    withNewTable(
+        "concurrent_stream_test",
+        "id INT, value STRING",
+        tableType,
+        fullName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", fullName);
+
+          String ck1 = checkpoint();
+          String ck2 = checkpoint();
+          String qn1 =
+              "concurrent1_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+          String qn2 =
+              "concurrent2_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+          // Start two concurrent continuous streams.
+          StreamingQuery q1 =
+              spark()
+                  .readStream()
+                  .format("delta")
+                  .table(fullName)
+                  .writeStream()
+                  .format("memory")
+                  .queryName(qn1)
+                  .outputMode("append")
+                  .option("checkpointLocation", ck1)
+                  .start();
+          StreamingQuery q2 =
+              spark()
+                  .readStream()
+                  .format("delta")
+                  .table(fullName)
+                  .writeStream()
+                  .format("memory")
+                  .queryName(qn2)
+                  .outputMode("append")
+                  .option("checkpointLocation", ck2)
+                  .start();
+          try {
+            q1.processAllAvailable();
+            q2.processAllAvailable();
+
+            // Both should see the same initial data.
+            List<List<String>> r1 = sorted(sql("SELECT * FROM %s", qn1));
+            List<List<String>> r2 = sorted(sql("SELECT * FROM %s", qn2));
+            assertThat(r1).as("Stream 1 initial data").isEqualTo(r2);
+            assertThat(r1).hasSize(3);
+
+            // Insert more data — both should pick it up.
+            sql("INSERT INTO %s VALUES (4, 'd'), (5, 'e')", fullName);
+            q1.processAllAvailable();
+            q2.processAllAvailable();
+
+            r1 = sorted(sql("SELECT * FROM %s", qn1));
+            r2 = sorted(sql("SELECT * FROM %s", qn2));
+            assertThat(r1).as("Stream 1 after INSERT").isEqualTo(r2);
+            assertThat(r1).hasSize(5);
+          } finally {
+            q1.stop();
+            q2.stop();
+          }
+        });
   }
 }
