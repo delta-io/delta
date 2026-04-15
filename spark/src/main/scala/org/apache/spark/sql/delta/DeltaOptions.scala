@@ -50,9 +50,32 @@ trait DeltaWriteOptions
 
   import DeltaOptions._
 
+  def isInsertAtomicReplaceOp: Boolean = isReplaceOnOrUsingDefined || replaceWhere.isDefined
+
+  def isInsertPartialOverwriteOp: Boolean =
+    isInsertAtomicReplaceOp || isDynamicPartitionOverwriteMode
+
   val replaceOn: Option[String] = options.get(REPLACE_ON_OPTION)
 
   val replaceUsing: Option[String] = options.get(REPLACE_USING_OPTION)
+
+  /** Parses the replaceUsing option into a list of distinct column names. */
+  def parsedReplaceUsingColsList: Option[Seq[String]] = {
+    replaceUsing.map { cols =>
+      // limit = -1 preserves trailing empty strings so we can detect trailing commas.
+      // scalastyle:off
+      val parsed =
+        cols.split(/* separator = */ ",", /* limit = */ -1).map(_.trim).toSeq.distinct
+      // scalastyle:on
+      if (parsed.exists(_.isEmpty)) {
+        throw DeltaErrors.illegalDeltaOptionException(
+          name = REPLACE_USING_OPTION,
+          input = cols,
+          explain = "must not contain empty column names")
+      }
+      parsed
+    }
+  }
 
   def isReplaceOnOrUsingDefined: Boolean =
     replaceOn.isDefined || replaceUsing.isDefined
@@ -284,6 +307,9 @@ object DeltaOptions extends DeltaLogging {
    * e.g., .option("targetAlias", "t").option("replaceOn", "t.id = s.id").
    */
   val TARGET_ALIAS_OPTION = "targetAlias"
+
+  /** Internal alias used by replaceUsing for column resolution. Not for external use. */
+  private[delta] val REPLACE_USING_INTERNAL_TABLE_ALIAS = "__replace_using_table_alias__"
 
   /** An option to overwrite only the data that matches predicates over partition columns. */
   val REPLACE_WHERE_OPTION = "replaceWhere"
