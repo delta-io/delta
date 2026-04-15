@@ -447,7 +447,8 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
           throw DeltaErrors.unresolvedInsertReplaceUsingColumnsError(
             colName = replaceUsingAttr.name,
             relationType = "table",
-            suggestion = tableRelation.schema.fieldNames.sorted.mkString(", "))
+            suggestion = tableRelation.schema.fieldNames.sorted
+              .map(n => s"`$n`").mkString(", "))
         }
 
         if (!isAttrExistsInQuery) {
@@ -455,7 +456,7 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
             colName = replaceUsingAttr.name,
             relationType = "query",
             suggestion = originalQueryBeforeSchemaAdjustmentProjection
-              .schema.fieldNames.sorted.mkString(", "))
+              .schema.fieldNames.sorted.map(n => s"`$n`").mkString(", "))
         }
       }
 

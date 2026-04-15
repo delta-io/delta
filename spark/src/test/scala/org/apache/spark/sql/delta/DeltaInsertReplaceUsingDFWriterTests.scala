@@ -1484,7 +1484,7 @@ trait DeltaInsertReplaceUsingDFWriterTests
         parameters = Map(
           "colName" -> "`t`.`id`",
           "relationType" -> "table",
-          "suggestion" -> "id, value")
+          "suggestion" -> "`id`, `value`")
       )
     }
   }
