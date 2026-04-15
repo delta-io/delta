@@ -4007,22 +4007,16 @@ trait DeltaErrorsBase
 
   def unresolvedInsertReplaceUsingColumnsError(
       colName: String, relationType: String, suggestion: String): Throwable = {
-    new AnalysisException(
+    new DeltaAnalysisException(
       errorClass = "UNRESOLVED_INSERT_REPLACE_USING_COLUMN",
-      messageParameters = Map(
-        "colName" -> toSQLId(colName),
-        "relationType" -> relationType,
-        "suggestion" -> suggestion)
-    )
+      messageParameters = Array(toSQLId(colName), relationType, suggestion))
   }
 
   def disallowInsertReplaceUsingWithMisalignedColumns(
       misalignedReplaceUsingCols: Seq[String]): Throwable = {
-    new AnalysisException(
+    new DeltaAnalysisException(
       errorClass = "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS",
-      messageParameters = Map(
-        "misalignedReplaceUsingCols" -> misalignedReplaceUsingCols.map(toSQLId).mkString(", "))
-    )
+      messageParameters = Array(misalignedReplaceUsingCols.map(toSQLId).mkString(", ")))
   }
 
   def replaceOnOrUsingConstraintViolationException(
