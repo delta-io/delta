@@ -148,7 +148,7 @@ class DeltaInsertReplaceOnDFWriterV1InsertIntoSuite
           .insertInto("nonexistent_table")
       },
       condition = "TABLE_OR_VIEW_NOT_FOUND",
-      parameters = Map("relationName" -> "`nonexistent_table`")
+      parameters = Map("relationName" -> "`default`.`nonexistent_table`")
     )
   }
 
