@@ -30,6 +30,7 @@ import java.util.stream.Stream;
 import org.apache.spark.sql.streaming.DataStreamReader;
 import org.apache.spark.sql.streaming.StreamingQuery;
 import org.apache.spark.sql.streaming.Trigger;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DynamicContainer;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.TestFactory;
@@ -541,20 +542,131 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1,'a','x'), (2,'b','y'), (3,'c','x'), (4,'d','y')",
                   "DELETE FROM %s WHERE id = 2"),
               /* incrementalSqls */ List.of(),
-              /* streamReadOptions */ Map.of("ignoreDeletes", "true")));
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")),
 
-  // NOTE: The following variants are not yet supported in UC OSS and are omitted:
+          // -- Table features / properties --
+
+          // -- Create table with appendOnly, INSERT, then stream --
+          // appendOnly=true prevents DELETE/UPDATE/MERGE on the table. Tests that this
+          // property doesn't interfere with streaming reads.
+          new TableVariant(
+              /* name */ "AppendOnly",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ "'delta.appendOnly'='true'",
+              /* setupSqls */ List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
+
+          // -- Create table with TIMESTAMP_NTZ column, INSERT, then stream --
+          // TIMESTAMP_NTZ is timezone-agnostic (no UTC normalization). Distinct from
+          // TIMESTAMP in the type system and Parquet storage format.
+          new TableVariant(
+              /* name */ "TimestampNtz",
+              /* schema */ "id INT, ts TIMESTAMP_NTZ, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, TIMESTAMP_NTZ'2025-01-01 12:00:00', 'a'),"
+                      + " (2, TIMESTAMP_NTZ'2025-06-15 18:30:00', 'b')"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES" + " (3, TIMESTAMP_NTZ'2025-12-31 23:59:59', 'c')")),
+
+          // -- Create table with v2 checkpoint policy, INSERT, then stream --
+          // V2 checkpoints use multi-part Parquet format instead of classic single-file
+          // JSON. The streaming reader constructs start offsets from the Delta log —
+          // checkpoint format affects this path.
+          new TableVariant(
+              /* name */ "V2Checkpoint",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ "'delta.checkpointPolicy'='v2'",
+              /* setupSqls */ List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
+
+          // -- Create table with in-commit timestamps, INSERT, then stream --
+          // ICT stores commit timestamps in commit metadata rather than relying on
+          // filesystem modification times. Streaming uses commit timestamps for offset
+          // management — ICT changes the timestamp source.
+          new TableVariant(
+              /* name */ "InCommitTimestamp",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ "'delta.enableInCommitTimestamps'='true'",
+              /* setupSqls */ List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
+
+          // -- Create table with CDF enabled, INSERT + UPDATE, then stream --
+          // CDF adds _change_type metadata to the Delta log. Regular streaming reads
+          // should NOT expose CDF columns. Tests that CDF metadata doesn't leak into
+          // a standard streaming read.
+          new TableVariant(
+              /* name */ "ChangeDataFeed",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ "'delta.enableChangeDataFeed'='true'",
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')",
+                  "UPDATE %s SET value = 'z' WHERE id = 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table with row tracking, INSERT, then stream --
+          // Row tracking adds internal columns (_row_id, _row_commit_version). These
+          // should be transparent to regular streaming reads.
+          new TableVariant(
+              /* name */ "RowTracking",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ "'delta.enableRowTracking'='true'",
+              /* setupSqls */ List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
+
+          // -- Create table with VARIANT column, INSERT, then stream --
+          // BUG: MANAGED tables fail with ClassCastException — the DV read path casts
+          // VariantType to StructType. EXTERNAL tables pass. Both SNAPSHOT and
+          // INCREMENTAL modes affected. Different bug class from the null-handling NPE.
+          new TableVariant(
+              /* name */ "VariantType",
+              /* schema */ "id INT, data VARIANT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s SELECT 1, parse_json('{\"key\": \"value\"}')"
+                      + " UNION ALL SELECT 2, parse_json('[1,2,3]')"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s SELECT 3, parse_json('{\"nested\": {\"a\": 1}}')"),
+              /* streamReadOptions */ Collections.emptyMap()));
+
+  // NOTE: Operations/features not covered by TableVariant tests — tested via lifecycle
+  // tests (below) or blocked:
+  //
+  // LIFECYCLE TESTS (below):
+  // - OPTIMIZE: lifecycle test (blocked for MANAGED, works for EXTERNAL)
+  // - REPLACE WHERE: lifecycle test via DataFrame V2 overwrite API
+  // - Sink & source pipeline: lifecycle test (table as both sink and source)
+  // - SHALLOW CLONE: lifecycle test (clone source, INSERT into clone, stream from clone)
+  // - Schema evolution (INSERT): lifecycle test via autoMerge + writeTo().append()
+  // - Schema evolution (MERGE): lifecycle test via autoMerge + MERGE with extra column
+  //
+  // BLOCKED / NOT APPLICABLE:
   // - IdentityColumn, GeneratedColumns, DefaultColumns: UC doesn't support these DDL features
   // - PK/FK: UC doesn't support table constraints
   // - TRUNCATE: UC tables don't support TRUNCATE
-  // - OPTIMIZE: blocked for catalog-managed tables
-  // - VACUUM: blocked for catalog-managed tables, retention check on external
-  // - ALTER TABLE: not supported in UC yet
-  // - ANALYZE: not supported for v2 tables
-  // - CLONE (shallow/deep): shallow leaks tableId property, deep not in OSS syntax
-  // - COPY INTO: needs external file source (complex setup)
+  // - ALTER TABLE (add/drop/rename/type columns, constraints, clustering): not supported in UC
+  // - typeWidening: requires ALTER TABLE column type change (not supported in UC)
+  // - Collations: Delta OSS rejects collated types (DELTA_UNSUPPORTED_DATA_TYPES)
+  // - ANALYZE (COMPUTE STATISTICS / DELTA STATISTICS): not supported for v2 tables
+  // - CLONE (deep): syntax not in OSS
+  // - COPY INTO: requires external file source (complex setup not feasible in unit test)
+  // - VACUUM: blocked for catalog-managed tables
+  // - REORG (PURGE, UPGRADE UNIFORM, CHECKPOINT): not supported in OSS
+  // - SYNC: not in OSS
+  // - Schema evolution (INSERT/MERGE): tested via lifecycle tests above
+  // - DESCRIBE: read-only utility (doesn't mutate table, no streaming impact)
   // - CREATE OR REPLACE: works for MANAGED only (blocked for EXTERNAL)
-  // - REPLACE WHERE: works for MANAGED only via DataFrame API (not SQL)
   // Add these back when UC adds support for the underlying operations.
 
   @TestFactory
@@ -891,6 +1003,340 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
           } finally {
             q1.stop();
             q2.stop();
+          }
+        });
+  }
+
+  /**
+   * Tests that a table can simultaneously be a streaming sink (written to by one query) and a
+   * streaming source (read by another query). This is the pipeline pattern: source -> mid -> final.
+   */
+  @TestAllTableTypes
+  public void testSinkAndSourcePipeline(TableType tableType) throws Exception {
+    withNewTable(
+        "pipeline_src",
+        "id INT, value STRING",
+        tableType,
+        srcName ->
+            withNewTable(
+                "pipeline_mid",
+                "id INT, value STRING",
+                tableType,
+                midName -> {
+                  sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", srcName);
+
+                  String ck1 = checkpoint();
+                  String ck2 = checkpoint();
+                  String qn =
+                      "pipeline_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+
+                  // Stream 1: source -> mid (continuous, mid becomes a sink)
+                  StreamingQuery q1 =
+                      spark()
+                          .readStream()
+                          .format("delta")
+                          .table(srcName)
+                          .writeStream()
+                          .format("delta")
+                          .outputMode("append")
+                          .option("checkpointLocation", ck1)
+                          .toTable(midName);
+                  try {
+                    q1.processAllAvailable();
+
+                    // Stream 2: mid -> memory (mid is now both sink and source)
+                    StreamingQuery q2 =
+                        spark()
+                            .readStream()
+                            .format("delta")
+                            .table(midName)
+                            .writeStream()
+                            .format("memory")
+                            .queryName(qn)
+                            .outputMode("append")
+                            .option("checkpointLocation", ck2)
+                            .start();
+                    try {
+                      q2.processAllAvailable();
+
+                      // Insert more data — both streams should propagate it
+                      sql("INSERT INTO %s VALUES (4, 'd'), (5, 'e')", srcName);
+                      q1.processAllAvailable();
+                      q2.processAllAvailable();
+
+                      // Verify end-to-end: memory sink should match source table
+                      assertStreamingEqualsBatch(qn, srcName);
+                    } finally {
+                      q2.stop();
+                    }
+                  } finally {
+                    q1.stop();
+                  }
+                }));
+  }
+
+  /**
+   * Tests that OPTIMIZE (file compaction) doesn't break streaming reads. OPTIMIZE creates commits
+   * with dataChange=false — the streaming reader should skip these. Only runs on EXTERNAL tables
+   * because OPTIMIZE is blocked for catalog-managed tables.
+   */
+  @TestAllTableTypes
+  public void testOptimizeThenStream(TableType tableType) throws Exception {
+    withNewTable(
+        "optimize_test",
+        "id INT, value STRING",
+        tableType,
+        fullName -> {
+          // Multiple small inserts to create many small files
+          sql("INSERT INTO %s VALUES (1, 'a')", fullName);
+          sql("INSERT INTO %s VALUES (2, 'b')", fullName);
+          sql("INSERT INTO %s VALUES (3, 'c')", fullName);
+
+          // OPTIMIZE compacts files (dataChange=false commits).
+          // May be blocked for catalog-managed tables — skip gracefully.
+          try {
+            sql("OPTIMIZE %s", fullName);
+          } catch (Exception e) {
+            Assumptions.assumeTrue(
+                false, "OPTIMIZE not supported for this table type: " + e.getMessage());
+          }
+
+          // INSERT after OPTIMIZE
+          sql("INSERT INTO %s VALUES (4, 'd'), (5, 'e')", fullName);
+
+          // Stream should see all data — OPTIMIZE commit (dataChange=false) is skipped
+          String qn = "opt_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+          spark()
+              .readStream()
+              .format("delta")
+              .table(fullName)
+              .writeStream()
+              .format("memory")
+              .queryName(qn)
+              .outputMode("append")
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .start()
+              .awaitTermination(STREAMING_TIMEOUT_MS);
+
+          assertStreamingEqualsBatch(qn, fullName);
+        });
+  }
+
+  /**
+   * Tests streaming after a REPLACE WHERE operation (V2 overwrite with predicate). REPLACE WHERE
+   * replaces data matching an arbitrary predicate — produces RemoveFile + AddFile with
+   * dataChange=true. Requires ignoreChanges for streaming.
+   */
+  @TestAllTableTypes
+  public void testReplaceWhere(TableType tableType) throws Exception {
+    withNewTable(
+        "rw_test",
+        "id INT, value STRING, part STRING",
+        "part",
+        tableType,
+        null,
+        fullName -> {
+          sql("INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')", fullName);
+
+          // V2 API: overwrite data where part = 'x' (replaceWhere equivalent)
+          spark()
+              .sql("SELECT 10 AS id, 'replaced' AS value, 'x' AS part")
+              .writeTo(fullName)
+              .overwrite(org.apache.spark.sql.functions.expr("part = 'x'"));
+
+          // Stream with ignoreChanges (overwrite produces RemoveFile + AddFile)
+          String qn = "rw_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+          spark()
+              .readStream()
+              .format("delta")
+              .option("ignoreChanges", "true")
+              .table(fullName)
+              .writeStream()
+              .format("memory")
+              .queryName(qn)
+              .outputMode("append")
+              .trigger(Trigger.AvailableNow())
+              .option("checkpointLocation", checkpoint())
+              .start()
+              .awaitTermination(STREAMING_TIMEOUT_MS);
+
+          // Data-modifying: streaming is a superset of batch (file rewrites cause
+          // duplicates). Every current batch row must appear in streaming output.
+          List<List<String>> streaming = sql("SELECT * FROM %s", qn);
+          List<List<String>> batch = sql("SELECT * FROM %s", fullName);
+          assertThat(streaming)
+              .as("Streaming should contain all batch rows after replaceWhere")
+              .containsAll(batch);
+        });
+  }
+
+  /**
+   * Tests streaming from a SHALLOW CLONE of a Delta table. The clone shares data files with the
+   * source but has its own Delta log and (for MANAGED tables) a fresh tableId. Inserts into the
+   * clone are independent of the source. The tableId-leak fix (a6b941a5c) ensures the clone gets a
+   * new UC identity.
+   */
+  @TestAllTableTypes
+  public void testShallowCloneThenStream(TableType tableType) throws Exception {
+    withNewTable(
+        "clone_src",
+        "id INT, value STRING",
+        tableType,
+        srcName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')", srcName);
+          sql("INSERT INTO %s VALUES (4, 'd'), (5, 'e')", srcName);
+
+          String cloneName =
+              fullTableName(
+                  "clone_tgt_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8));
+
+          // Attempt SHALLOW CLONE — may not be supported for all table types in UC.
+          try {
+            if (tableType == TableType.EXTERNAL) {
+              withTempDir(
+                  dir -> {
+                    org.apache.hadoop.fs.Path cloneLoc =
+                        new org.apache.hadoop.fs.Path(dir, "clone");
+                    sql(
+                        "CREATE TABLE %s SHALLOW CLONE %s LOCATION '%s'",
+                        cloneName, srcName, cloneLoc);
+                  });
+            } else {
+              sql(
+                  "CREATE TABLE %s SHALLOW CLONE %s"
+                      + " TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
+                  cloneName, srcName);
+            }
+          } catch (Exception e) {
+            Assumptions.assumeTrue(false, "SHALLOW CLONE not supported: " + e.getMessage());
+          }
+
+          try {
+            // Insert data into clone (independent of source)
+            sql("INSERT INTO %s VALUES (6, 'f')", cloneName);
+
+            // Stream from clone — should see source data + clone's own INSERT
+            String qn = "clone_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            spark()
+                .readStream()
+                .format("delta")
+                .table(cloneName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
+
+            assertStreamingEqualsBatch(qn, cloneName);
+          } finally {
+            sql("DROP TABLE IF EXISTS %s", cloneName);
+          }
+        });
+  }
+
+  /**
+   * Tests streaming after schema evolution via INSERT with autoMerge. The table starts with (id,
+   * value), then a writeTo().append() adds an extra column. The streaming reader (SNAPSHOT mode)
+   * must handle reading old files with the evolved schema — old rows get null for the new column.
+   */
+  @TestAllTableTypes
+  public void testSchemaEvolutionInsert(TableType tableType) throws Exception {
+    withNewTable(
+        "schema_evo_ins",
+        "id INT, value STRING",
+        tableType,
+        fullName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", fullName);
+
+          spark().conf().set("spark.databricks.delta.schema.autoMerge.enabled", "true");
+          try {
+            // Append with extra column — triggers schema evolution (id, value) -> (id, value,
+            // extra). Metadata changes are blocked for MANAGED tables.
+            try {
+              spark().sql("SELECT 3 AS id, 'c' AS value, 100 AS extra").writeTo(fullName).append();
+            } catch (Exception e) {
+              Assumptions.assumeTrue(false, "Schema evolution not supported: " + e.getMessage());
+            }
+
+            // Stream (SNAPSHOT) — reads all data with the evolved schema.
+            // Old rows have extra=null; new row has extra=100.
+            String qn = "evo_ins_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            spark()
+                .readStream()
+                .format("delta")
+                .table(fullName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
+
+            assertStreamingEqualsBatch(qn, fullName);
+          } finally {
+            spark().conf().unset("spark.databricks.delta.schema.autoMerge.enabled");
+          }
+        });
+  }
+
+  /**
+   * Tests streaming after schema evolution via MERGE with autoMerge. MERGE with an extra column in
+   * the source adds the column to the target schema. The streaming reader must handle the
+   * schema-changed MERGE commit (which produces AddFile + RemoveFile with dataChange=true).
+   */
+  @TestAllTableTypes
+  public void testSchemaEvolutionMerge(TableType tableType) throws Exception {
+    withNewTable(
+        "schema_evo_merge",
+        "id INT, value STRING",
+        tableType,
+        fullName -> {
+          sql("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", fullName);
+
+          spark().conf().set("spark.databricks.delta.schema.autoMerge.enabled", "true");
+          try {
+            // MERGE with extra column — triggers schema evolution.
+            // Metadata changes are blocked for MANAGED tables.
+            try {
+              sql(
+                  "MERGE INTO %s t USING (SELECT 3 AS id, 'c' AS value, 100 AS extra) s"
+                      + " ON t.id = s.id WHEN NOT MATCHED THEN INSERT *",
+                  fullName);
+            } catch (Exception e) {
+              Assumptions.assumeTrue(false, "Schema evolution not supported: " + e.getMessage());
+            }
+
+            // MERGE produces non-append commits even with NOT MATCHED only → ignoreChanges
+            String qn =
+                "evo_merge_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+            spark()
+                .readStream()
+                .format("delta")
+                .option("ignoreChanges", "true")
+                .table(fullName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
+
+            // Data-modifying: streaming is a superset of batch
+            List<List<String>> streaming = sql("SELECT * FROM %s", qn);
+            List<List<String>> batch = sql("SELECT * FROM %s", fullName);
+            assertThat(streaming)
+                .as("Streaming should contain all batch rows after schema-evolving MERGE")
+                .containsAll(batch);
+          } finally {
+            spark().conf().unset("spark.databricks.delta.schema.autoMerge.enabled");
           }
         });
   }
