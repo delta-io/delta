@@ -48,7 +48,8 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
   private enum ReplaceOperation {
     REPLACE("REPLACE TABLE", false),
     REPLACE_AS_SELECT("REPLACE TABLE", true),
-    CREATE_OR_REPLACE("CREATE OR REPLACE TABLE", false);
+    CREATE_OR_REPLACE("CREATE OR REPLACE TABLE", false),
+    CREATE_OR_REPLACE_AS_SELECT("CREATE OR REPLACE TABLE", true);
 
     private final String sqlPrefix;
     private final boolean asSelect;
@@ -141,6 +142,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
             assertRejectedReplacePreservesTable(
+                operation,
                 fullTableName,
                 buildStatement(
                     operation, fullTableName, "i INT, s STRING", "", null, "2 AS i, 'new' AS s"),
@@ -166,6 +168,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
             assertRejectedReplacePreservesTable(
+                operation,
                 fullTableName,
                 buildStatement(
                     operation,
@@ -191,6 +194,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
             assertRejectedReplacePreservesTable(
+                operation,
                 fullTableName,
                 buildStatement(
                     operation,
@@ -216,6 +220,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
             assertRejectedReplacePreservesTable(
+                operation,
                 fullTableName,
                 buildStatement(
                     operation,
@@ -247,6 +252,7 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
             sql("INSERT INTO %s VALUES (1, 'old')", fullTableName);
 
             assertRejectedReplacePreservesTable(
+                operation,
                 fullTableName,
                 buildStatement(
                     operation,
@@ -290,22 +296,34 @@ public class UCDeltaManagedReplaceSemanticsTest extends UCDeltaTableIntegrationB
 
     sql(statement);
 
-    assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
-    assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace + 1);
+    assertThat(currentUcTableId(tableName))
+        .as("ucTableId after %s on %s", operation, tableName)
+        .isEqualTo(ucTableIdBeforeReplace);
+    assertThat(currentVersion(tableName))
+        .as("version after %s on %s", operation, tableName)
+        .isEqualTo(versionBeforeReplace + 1);
     assertThat(sql("SELECT COUNT(*) FROM %s", tableName))
+        .as("row count after %s on %s", operation, tableName)
         .containsExactly(row(operation.isAsSelect() ? "1" : "0"));
   }
 
   private void assertRejectedReplacePreservesTable(
-      String tableName, String statement, String expectedError) throws Exception {
+      ReplaceOperation operation, String tableName, String statement, String expectedError)
+      throws Exception {
     String ucTableIdBeforeReplace = currentUcTableId(tableName);
     long versionBeforeReplace = currentVersion(tableName);
 
     assertThrowsWithCauseContaining(expectedError, () -> sql(statement));
 
-    assertThat(currentUcTableId(tableName)).isEqualTo(ucTableIdBeforeReplace);
-    assertThat(currentVersion(tableName)).isEqualTo(versionBeforeReplace);
-    assertThat(sql("SELECT COUNT(*) FROM %s", tableName)).containsExactly(row("1"));
+    assertThat(currentUcTableId(tableName))
+        .as("ucTableId after rejected %s on %s", operation, tableName)
+        .isEqualTo(ucTableIdBeforeReplace);
+    assertThat(currentVersion(tableName))
+        .as("version after rejected %s on %s", operation, tableName)
+        .isEqualTo(versionBeforeReplace);
+    assertThat(sql("SELECT COUNT(*) FROM %s", tableName))
+        .as("row count after rejected %s on %s", operation, tableName)
+        .containsExactly(row("1"));
   }
 
   private String uniqueTableName(String prefix, ReplaceOperation operation) {
