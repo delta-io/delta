@@ -90,5 +90,4 @@ class DeltaInsertReplaceOnDFWriterV1SaveAsTableSuite
           Row(4, "new")))
     }
   }
-
 }
