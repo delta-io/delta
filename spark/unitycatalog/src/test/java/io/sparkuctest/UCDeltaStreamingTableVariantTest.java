@@ -137,7 +137,130 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a')",
                   "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
               /* incrementalSqls */ List.of(
-                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")));
+                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
+
+          // -- Create table with CLUSTER BY, INSERT, then stream --
+          new TableVariant(
+              /* name */ "ClusteredTable",
+              /* schema */ "id INT, value STRING, category STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ "CREATE TABLE %s (id INT, value STRING, category STRING)"
+                  + " USING DELTA CLUSTER BY (category) %s",
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a','cat1'), (2,'b','cat2'), (3,'c','cat1')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4,'d','cat2'), (5,'e','cat3')"),
+              /* streamReadOptions */ Collections.emptyMap()),
+
+          // -- Create table with various data types, INSERT, then stream --
+          new TableVariant(
+              /* name */ "VariousDataTypes",
+              /* schema */ "id INT, b BOOLEAN, d DOUBLE, dec DECIMAL(10,2),"
+                  + " dt DATE, ts TIMESTAMP, s STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, true, 1.5, 10.25, DATE'2025-01-01', TIMESTAMP'2025-01-01 12:00:00', 'hello'),"
+                      + " (2, false, 2.7, 20.50, DATE'2025-06-15', TIMESTAMP'2025-06-15 18:30:00', 'world')"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (3, true, 3.14, 30.00, DATE'2025-12-31', TIMESTAMP'2025-12-31 23:59:59', 'end')")),
+
+          // -- Create table, INSERT, INSERT OVERWRITE, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "InsertOverwrite",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b')",
+                  "INSERT OVERWRITE %s VALUES (3,'c'), (4,'d')"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, UPDATE one row, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "AfterUpdate",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')",
+                  "UPDATE %s SET value = 'z' WHERE id = 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, DELETE one row, then stream with ignoreDeletes --
+          new TableVariant(
+              /* name */ "AfterDelete",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')", "DELETE FROM %s WHERE id = 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true")),
+
+          // -- Create table, INSERT, MERGE (update + insert), then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "AfterMerge",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')",
+                  "MERGE INTO %s t USING (SELECT 1 AS id, 'merged' AS value) s"
+                      + " ON t.id = s.id WHEN MATCHED THEN UPDATE SET value = s.value"
+                      + " WHEN NOT MATCHED THEN INSERT *"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT v1, INSERT v2, RESTORE to v1, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "AfterRestore",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b')",
+                  "INSERT INTO %s VALUES (3,'c')", "RESTORE %s TO VERSION AS OF 1"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table, INSERT, DPO on partitioned table, then stream with ignoreChanges --
+          new TableVariant(
+              /* name */ "DynamicPartitionOverwrite",
+              /* schema */ "id INT, value STRING, part STRING",
+              /* partitionCols */ "part",
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a','x'), (2,'b','y')",
+                  "SET spark.sql.sources.partitionOverwriteMode=dynamic",
+                  "INSERT OVERWRITE %s VALUES (10,'z','x')",
+                  "SET spark.sql.sources.partitionOverwriteMode=static"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")));
+
+  // NOTE: The following variants are not yet supported in UC OSS and are omitted:
+  // - IdentityColumn, GeneratedColumns, DefaultColumns: UC doesn't support these DDL features
+  // - PK/FK: UC doesn't support table constraints
+  // - TRUNCATE: UC tables don't support TRUNCATE
+  // - OPTIMIZE: blocked for catalog-managed tables
+  // - VACUUM: blocked for catalog-managed tables, retention check on external
+  // - ALTER TABLE: not supported in UC yet
+  // - ANALYZE: not supported for v2 tables
+  // - CLONE (shallow/deep): shallow leaks tableId property, deep not in OSS syntax
+  // - COPY INTO: needs external file source (complex setup)
+  // - CREATE OR REPLACE: works for MANAGED only (blocked for EXTERNAL)
+  // - REPLACE WHERE: works for MANAGED only via DataFrame API (not SQL)
+  // Add these back when UC adds support for the underlying operations.
 
   @TestFactory
   Stream<DynamicContainer> streamingTableVariants() {
