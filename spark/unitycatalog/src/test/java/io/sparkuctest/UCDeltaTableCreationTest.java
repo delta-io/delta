@@ -331,18 +331,16 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     }
 
     // Verify that table information maintained at the uc server side are expected.
-    if (translatesDeprecatedUcTableIdOnManagedCreate() || !withAsSelect || replaceTable) {
-      assertUCTableInfo(
-          tableType,
-          fullTableName,
-          List.of("i", "s"),
-          Map.of("Foo", "Bar"),
-          comment,
-          options.getExternalTableLocation(),
-          withCluster,
-          options.getClusterColumn(),
-          options.getPartitionColumn());
-    }
+    assertUCTableInfo(
+        tableType,
+        fullTableName,
+        List.of("i", "s"),
+        Map.of("Foo", "Bar"),
+        comment,
+        options.getExternalTableLocation(),
+        withCluster,
+        options.getClusterColumn(),
+        options.getPartitionColumn());
   }
 
   @Test
