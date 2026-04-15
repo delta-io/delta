@@ -269,8 +269,8 @@ trait DeltaInsertReplaceUsingDFWriterTests
       val result = spark.read.format("delta").load(path).orderBy("value")
       // NULL rows are not matched by = comparison, so target_null stays
       checkAnswer(result,
-        Seq(Row(null, "source_null"), Row(null, "target_null"),
-            Row(1, "source"), Row(2, "target")))
+        Seq(Row(1, "source"), Row(null, "source_null"),
+            Row(2, "target"), Row(null, "target_null")))
 
       val deltaLog = DeltaLog.forTable(spark, path)
       val version = deltaLog.update().version
@@ -1135,28 +1135,26 @@ trait DeltaInsertReplaceUsingDFWriterTests
     }
   }
 
-  test("replaceUsing should fail when NOT NULL constraint is violated") {
+  test("replaceUsing should fail when CHECK constraint is violated") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath
-      Seq((1, "a"), (2, "b")).toDF("id", "value")
+      Seq((1, 10), (2, 20)).toDF("id", "value")
         .write.format("delta").save(path)
-
-      sql(s"ALTER TABLE delta.`$path` CHANGE COLUMN id SET NOT NULL")
+      sql(s"ALTER TABLE delta.`$path` ADD CONSTRAINT positive_value CHECK (value > 0)")
 
       checkError(
         exception = intercept[AnalysisException] {
           writeReplaceUsingDF(
-            sourceDF = Seq((null, "source"))
-              .toDF("id", "value")
-              .selectExpr("CAST(id AS INT)", "value"),
+            sourceDF = Seq((1, -5)).toDF("id", "value"),
             target = path,
             replaceUsingCols = "id")
         },
         condition = "DELTA_REPLACE_ON_OR_USING_TABLE_CONSTRAINT_VIOLATION",
+        sqlState = Some("44000"),
         parameters = Map(
           "replaceExpression" -> ".*",
           "invariantViolationMessage" ->
-            "(?s).*DELTA_NOT_NULL_CONSTRAINT_VIOLATED.*"),
+            "(?s)\\[DELTA_VIOLATE_CONSTRAINT_WITH_VALUES\\] .*"),
         matchPVals = true
       )
     }
