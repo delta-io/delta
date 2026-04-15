@@ -59,6 +59,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     final List<String> setupSqls;
     final List<String> incrementalSqls;
     final Map<String, String> streamingReadOptions;
+    final Map<String, String> sparkConfOverrides;
 
     /** Append-only variant using default DDL. */
     TableVariant(
@@ -89,6 +90,29 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
         List<String> setupSqls,
         List<String> incrementalSqls,
         Map<String, String> streamingReadOptions) {
+      this(
+          name,
+          schema,
+          partitionCols,
+          tableProperties,
+          createTableSql,
+          setupSqls,
+          incrementalSqls,
+          streamingReadOptions,
+          Collections.emptyMap());
+    }
+
+    /** Full constructor with Spark config overrides (reset via unset after each test). */
+    TableVariant(
+        String name,
+        String schema,
+        String partitionCols,
+        String tableProperties,
+        String createTableSql,
+        List<String> setupSqls,
+        List<String> incrementalSqls,
+        Map<String, String> streamingReadOptions,
+        Map<String, String> sparkConfOverrides) {
       this.name = name;
       this.schema = schema;
       this.partitionCols = partitionCols;
@@ -97,6 +121,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
       this.setupSqls = setupSqls;
       this.incrementalSqls = incrementalSqls;
       this.streamingReadOptions = streamingReadOptions;
+      this.sparkConfOverrides = sparkConfOverrides;
     }
 
     boolean isAppendOnly() {
@@ -242,11 +267,112 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               /* createTableSql */ null,
               /* setupSqls */ List.of(
                   "INSERT INTO %s VALUES (1,'a','x'), (2,'b','y')",
-                  "SET spark.sql.sources.partitionOverwriteMode=dynamic",
-                  "INSERT OVERWRITE %s VALUES (10,'z','x')",
-                  "SET spark.sql.sources.partitionOverwriteMode=static"),
+                  "INSERT OVERWRITE %s VALUES (10,'z','x')"),
               /* incrementalSqls */ List.of(),
-              /* streamReadOptions */ Map.of("ignoreChanges", "true")));
+              /* streamReadOptions */ Map.of("ignoreChanges", "true"),
+              /* sparkConfOverrides */ Map.of(
+                  "spark.sql.sources.partitionOverwriteMode", "dynamic")),
+
+          // -- Create table, INSERT with duplicate first-column values, then stream --
+          new TableVariant(
+              /* name */ "DuplicateFirstColumnValues",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (1,'b'), (1,'c'), (2,'x'), (2,'y')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (1,'d'), (3,'z')")),
+
+          // -- Create table, INSERT with NULLs in various columns including first, then stream --
+          // BUG: MANAGED tables fail with NPE in OnHeapColumnVector.putNotNulls —
+          // the vectorized Parquet reader's "this.nulls" byte array is uninitialized
+          // when streaming from catalog-managed tables containing NULL values.
+          // EXTERNAL tables pass. Both SNAPSHOT and INCREMENTAL modes affected.
+          new TableVariant(
+              /* name */ "NullsInColumns",
+              /* schema */ "id INT, value STRING, opt_int INT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, null, null), (2, 'b', null), (null, null, null)"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (3, 'c', 3), (null, 'x', 1)")),
+
+          // -- Create table with ARRAY, MAP, STRUCT columns, INSERT, then stream --
+          // BUG: MANAGED tables fail with NPE in SparkMicroBatchStream when processing
+          // complex types (ARRAY/MAP/STRUCT) in INCREMENTAL mode. SNAPSHOT mode and
+          // EXTERNAL tables pass.
+          new TableVariant(
+              /* name */ "ComplexTypes",
+              /* schema */ "id INT, arr ARRAY<INT>, m MAP<STRING,INT>,"
+                  + " s STRUCT<a:INT,b:STRING>",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, array(1,2), map('k',1), named_struct('a',1,'b','x')),"
+                      + " (2, array(3), map('k1',2,'k2',3), named_struct('a',2,'b','y'))"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES" + " (3, array(), map(), named_struct('a',3,'b','z'))")),
+
+          // -- Create empty table (0 rows), then stream --
+          new TableVariant(
+              /* name */ "EmptyTable",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (1, 'first'), (2, 'second')")),
+
+          // -- Create table, INSERT, DELETE ALL rows, INSERT again, then stream --
+          new TableVariant(
+              /* name */ "DeleteAllThenInsert",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b')",
+                  "DELETE FROM %s WHERE true", "INSERT INTO %s VALUES (3,'c')"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreDeletes", "true", "ignoreChanges", "true")),
+
+          // -- Create table, INSERT, MERGE with all 3 clauses (update+delete+insert), stream --
+          new TableVariant(
+              /* name */ "MergeAllBranches",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a'), (2,'b'), (3,'c')",
+                  "MERGE INTO %s t USING (SELECT 1 AS id, 'updated' AS value"
+                      + " UNION ALL SELECT 2, 'del'"
+                      + " UNION ALL SELECT 4, 'new') s ON t.id = s.id"
+                      + " WHEN MATCHED AND s.value = 'del' THEN DELETE"
+                      + " WHEN MATCHED THEN UPDATE SET value = s.value"
+                      + " WHEN NOT MATCHED THEN INSERT *"),
+              /* incrementalSqls */ List.of(),
+              /* streamReadOptions */ Map.of("ignoreChanges", "true")),
+
+          // -- Create table partitioned by INT column (not STRING), INSERT, then stream --
+          new TableVariant(
+              /* name */ "IntPartitionColumn",
+              /* schema */ "id INT, value STRING, part INT",
+              /* partitionCols */ "part",
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1,'a',100), (2,'b',200), (3,'c',100)"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4,'d',200), (5,'e',300)")),
+
+          // -- Create table with special characters and edge-case strings, then stream --
+          new TableVariant(
+              /* name */ "SpecialCharStrings",
+              /* schema */ "id INT, value STRING",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, 'hello, world'), (2, 'it''s'), (3, '')"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, '   '), (5, 'line1')")));
 
   // NOTE: The following variants are not yet supported in UC OSS and are omitted:
   // - IdentityColumn, GeneratedColumns, DefaultColumns: UC doesn't support these DDL features
@@ -296,35 +422,41 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
         v,
         tableType,
         fullName -> {
-          // 1. Run all setup SQL to bring the table to the desired state.
-          for (String s : v.setupSqls) sql(s, fullName);
+          v.sparkConfOverrides.forEach((k, val) -> spark().conf().set(k, val));
+          try {
+            // 1. Run all setup SQL to bring the table to the desired state.
+            for (String s : v.setupSqls) sql(s, fullName);
 
-          // 2. Stream with AvailableNow: processes all Delta log entries, then stops.
-          String qn = "snap_" + UUID.randomUUID().toString().replace("-", "");
-          DataStreamReader reader = spark().readStream().format("delta");
-          v.streamingReadOptions.forEach(reader::option);
-          reader
-              .table(fullName)
-              .writeStream()
-              .format("memory")
-              .queryName(qn)
-              .outputMode("append")
-              .trigger(Trigger.AvailableNow())
-              .option("checkpointLocation", checkpoint())
-              .start()
-              .awaitTermination(STREAMING_TIMEOUT_MS);
+            // 2. Stream with AvailableNow: processes all Delta log entries, then stops.
+            String qn = "snap_" + UUID.randomUUID().toString().replace("-", "");
+            DataStreamReader reader = spark().readStream().format("delta");
+            v.streamingReadOptions.forEach(reader::option);
+            reader
+                .table(fullName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
 
-          // 3. Verify output.
-          if (v.isAppendOnly()) {
-            assertStreamingEqualsBatch(qn, fullName);
-          } else {
-            // Data-modifying: streaming output has duplicates from file rewrites (see class
-            // javadoc). Just verify the stream produced rows without error.
-            // Streaming is a superset of batch (extra rows from file rewrites). Every
-            // current batch row must appear in the streaming output.
-            List<List<String>> streaming = sql("SELECT * FROM %s ORDER BY 1", qn);
-            List<List<String>> batch = sql("SELECT * FROM %s ORDER BY 1", fullName);
-            assertThat(streaming).as("Streaming should contain all batch rows").containsAll(batch);
+            // 3. Verify output.
+            if (v.isAppendOnly()) {
+              assertStreamingEqualsBatch(qn, fullName);
+            } else {
+              // Data-modifying: streaming output has duplicates from file rewrites (see class
+              // javadoc). Streaming is a superset of batch — every current batch row must
+              // appear in the streaming output.
+              List<List<String>> streaming = sql("SELECT * FROM %s", qn);
+              List<List<String>> batch = sql("SELECT * FROM %s", fullName);
+              assertThat(streaming)
+                  .as("Streaming should contain all batch rows")
+                  .containsAll(batch);
+            }
+          } finally {
+            v.sparkConfOverrides.keySet().forEach(k -> spark().conf().unset(k));
           }
         });
   }
@@ -340,35 +472,40 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
         v,
         tableType,
         fullName -> {
-          // 1. Run all setup SQL to bring the table to the initial state.
-          for (String s : v.setupSqls) sql(s, fullName);
-
-          // 2. Start a continuous streaming query (no trigger = runs until stopped).
-          String qn = "incr_" + UUID.randomUUID().toString().replace("-", "");
-          DataStreamReader reader = spark().readStream().format("delta");
-          v.streamingReadOptions.forEach(reader::option);
-          StreamingQuery query =
-              reader
-                  .table(fullName)
-                  .writeStream()
-                  .format("memory")
-                  .queryName(qn)
-                  .outputMode("append")
-                  .option("checkpointLocation", checkpoint())
-                  .start();
+          v.sparkConfOverrides.forEach((k, val) -> spark().conf().set(k, val));
           try {
-            // 3. Process initial data and verify.
-            query.processAllAvailable();
-            assertStreamingEqualsBatch(qn, fullName);
+            // 1. Run all setup SQL to bring the table to the initial state.
+            for (String s : v.setupSqls) sql(s, fullName);
 
-            // 4. Feed incremental data round-by-round, verifying after each.
-            for (String incrSql : v.incrementalSqls) {
-              sql(incrSql, fullName);
+            // 2. Start a continuous streaming query (no trigger = runs until stopped).
+            String qn = "incr_" + UUID.randomUUID().toString().replace("-", "");
+            DataStreamReader reader = spark().readStream().format("delta");
+            v.streamingReadOptions.forEach(reader::option);
+            StreamingQuery query =
+                reader
+                    .table(fullName)
+                    .writeStream()
+                    .format("memory")
+                    .queryName(qn)
+                    .outputMode("append")
+                    .option("checkpointLocation", checkpoint())
+                    .start();
+            try {
+              // 3. Process initial data and verify.
               query.processAllAvailable();
               assertStreamingEqualsBatch(qn, fullName);
+
+              // 4. Feed incremental data round-by-round, verifying after each.
+              for (String incrSql : v.incrementalSqls) {
+                sql(incrSql, fullName);
+                query.processAllAvailable();
+                assertStreamingEqualsBatch(qn, fullName);
+              }
+            } finally {
+              query.stop();
             }
           } finally {
-            query.stop();
+            v.sparkConfOverrides.keySet().forEach(k -> spark().conf().unset(k));
           }
         });
   }
@@ -412,11 +549,28 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     }
   }
 
-  /** Asserts streaming memory sink has same rows as batch SELECT * (both sorted by first col). */
+  /**
+   * Asserts streaming memory sink has same rows as batch SELECT *. Sorts both result sets in Java
+   * by all columns to avoid non-determinism when the first column has duplicate values.
+   */
   private void assertStreamingEqualsBatch(String queryName, String tableName) {
-    List<List<String>> streaming = sql("SELECT * FROM %s ORDER BY 1", queryName);
-    List<List<String>> batch = sql("SELECT * FROM %s ORDER BY 1", tableName);
+    List<List<String>> streaming = sorted(sql("SELECT * FROM %s", queryName));
+    List<List<String>> batch = sorted(sql("SELECT * FROM %s", tableName));
     assertThat(streaming).as("Streaming should match batch for %s", tableName).isEqualTo(batch);
+  }
+
+  /** Returns a copy of the rows sorted lexicographically by all columns. */
+  private static List<List<String>> sorted(List<List<String>> rows) {
+    List<List<String>> copy = new ArrayList<>(rows);
+    copy.sort(
+        (a, b) -> {
+          for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            int c = String.valueOf(a.get(i)).compareTo(String.valueOf(b.get(i)));
+            if (c != 0) return c;
+          }
+          return Integer.compare(a.size(), b.size());
+        });
+    return copy;
   }
 
   /**
