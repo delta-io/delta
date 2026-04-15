@@ -29,8 +29,6 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
@@ -52,12 +50,12 @@ import org.slf4j.LoggerFactory;
  * A commit coordinator client that uses unity-catalog as the commit coordinator.
  */
 public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
-  // Fields for Delta REST API access
-  private final String baseUri;
-  private final io.unitycatalog.client.auth.TokenProvider tokenProvider;
+  /** The single UC client for all commit operations (DRC or legacy). */
+  private final UCDeltaClient ucDeltaClient;
+
 
   public UCCommitCoordinatorClient(Map<String, String> conf, UCClient ucClient) {
-    this(conf, ucClient, null, null);
+    this(conf, UCDeltaClient.fromLegacyClient(ucClient));
   }
 
   public UCCommitCoordinatorClient(
@@ -65,17 +63,28 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       UCClient ucClient,
       String baseUri,
       io.unitycatalog.client.auth.TokenProvider tokenProvider) {
+    this(conf, UCDeltaClient.fromLegacyClient(ucClient));
+  }
+
+  public UCCommitCoordinatorClient(
+      Map<String, String> conf,
+      UCClient ucClient,
+      String baseUri,
+      io.unitycatalog.client.auth.TokenProvider tokenProvider,
+      UCDeltaClient ucDeltaClient) {
+    this(conf, ucDeltaClient);
+  }
+
+  public UCCommitCoordinatorClient(Map<String, String> conf, UCDeltaClient client) {
     this.conf = conf;
-    this.ucClient = ucClient;
-    this.baseUri = baseUri;
-    this.tokenProvider = tokenProvider;
+    this.ucClient = client; // UCDeltaClient extends UCClient
+    this.ucDeltaClient = client;
   }
 
   /**
    * Logger for UCCommitCoordinatorClient class operations and diagnostics.
    */
   private static final Logger LOG = LoggerFactory.getLogger(UCCommitCoordinatorClient.class);
-  private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
   // UC Protocol Version Control Constants
   /** Supported version for read operations in the Unity Catalog protocol. */
@@ -103,8 +112,6 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   final static public String UC_TABLE_ID_KEY = "io.unitycatalog.tableId";
   // Previously this key was ucTableId. It was later renamed.
   final static public String UC_TABLE_ID_KEY_OLD = "ucTableId";
-  /** Spark DSv2 managed-location marker. This is connector-managed metadata, not a Delta property. */
-  private static final String PROP_IS_MANAGED_LOCATION = "is_managed_location";
 
   /**
    * Key for identifying Unity Catalog metastore ID in
@@ -468,7 +475,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
-        boolean shouldPassMetadata = shouldUseDeltaRestApi(tableDesc) || SHOULD_PASS_METADATA_TO_UC;
+        boolean metadataChanged =
+            updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
+        boolean protocolChanged =
+            updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
+        // Pack old metadata/protocol into CatalogTrackedInfo for DRC diffing
+        CatalogTrackedInfo drcTrackedInfo = new CatalogTrackedInfo(
+            catalogTrackedInfo.deltaUniformIceberg(),
+            catalogTrackedInfo.etag(),
+            metadataChanged
+                ? Optional.of(updatedActions.getOldMetadata()) : Optional.empty(),
+            protocolChanged
+                ? Optional.of(updatedActions.getOldProtocol()) : Optional.empty());
         commitToUC(
           tableDesc,
           logPath,
@@ -476,14 +494,12 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
-          catalogTrackedInfo,
+          drcTrackedInfo,
           disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !shouldPassMetadata ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
+          metadataChanged
+              ? Optional.of(updatedActions.getNewMetadata()) : Optional.empty(),
+          protocolChanged
+              ? Optional.of(updatedActions.getNewProtocol()) : Optional.empty()
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -686,8 +702,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
-      CatalogTrackedInfo.EMPTY
-      , true /* disown */,
+      CatalogTrackedInfo.EMPTY,
+      true /* disown */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* newProtocol */
     );
@@ -729,292 +745,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       commitTimestamp.orElseThrow(() -> new IllegalArgumentException(
         "Commit timestamp should be specified when commitFile is present"))
     ));
-    // Use Delta REST API if available and table identifier is present
-    if (shouldUseDeltaRestApi(tableDesc)) {
-      String[] tablePath = extractTablePathForDeltaRest(tableDesc);
-      LOG.info("Using Delta REST API for commit to {}.{}.{}",
-        tablePath[0], tablePath[1], tablePath[2]);
-      commitViaDeltaRestApi(
-        tablePath[0], tablePath[1], tablePath[2],
-        commit, lastKnownBackfilledVersion, newMetadata, newProtocol
-      );
-    } else {
-      // Fall back to old UC API
-      LOG.info("Using legacy UC API for commit");
-      ucClient.commit(
-        extractUCTableId(tableDesc),
-        CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
-        commit,
-        lastKnownBackfilledVersion,
-        disown,
-        newMetadata,
-        newProtocol,
-        catalogTrackedInfo.deltaUniformIceberg()
-      );
-    }
+    // DRC needs old metadata/protocol for diffing and etag for concurrency.
+    // All DRC data flows through CatalogTrackedInfo.
+    ucDeltaClient.commit(
+      tableDesc, logPath,
+      commit, lastKnownBackfilledVersion, disown,
+      catalogTrackedInfo.oldMetadata(), newMetadata,
+      catalogTrackedInfo.oldProtocol(), newProtocol,
+      catalogTrackedInfo.deltaUniformIceberg(),
+      catalogTrackedInfo.etag()
+    );
   }
 
-  /**
-   * Commits via Delta REST Catalog API.
-   */
-  private void commitViaDeltaRestApi(
-      String catalog,
-      String schema,
-      String table,
-      Optional<Commit> commit,
-      Optional<Long> lastKnownBackfilledVersion,
-      Optional<AbstractMetadata> newMetadata,
-      Optional<AbstractProtocol> newProtocol
-  ) throws IOException, CommitFailedException {
-    try {
-      io.unitycatalog.client.deltarest.ApiClient apiClient =
-          new io.unitycatalog.client.deltarest.ApiClient();
-      apiClient.updateBaseUri(baseUri + "/api/2.1/unity-catalog/delta/v1");
-      apiClient.setRequestInterceptor(builder -> {
-        if (tokenProvider != null) {
-          builder.header("Authorization", "Bearer " + tokenProvider.accessToken());
-        }
-      });
-
-      io.unitycatalog.client.deltarest.api.TablesApi tablesApi =
-          new io.unitycatalog.client.deltarest.api.TablesApi(apiClient);
-
-      io.unitycatalog.client.deltarest.model.LoadTableResponse currentTable =
-          tablesApi.loadTable(catalog, schema, table, false);
-      io.unitycatalog.client.deltarest.model.TableMetadata currentMetadata =
-          currentTable.getMetadata();
-
-      // Build UpdateTableRequest with updates
-      io.unitycatalog.client.deltarest.model.UpdateTableRequest updateRequest =
-          new io.unitycatalog.client.deltarest.model.UpdateTableRequest();
-      List<io.unitycatalog.client.deltarest.model.TableRequirement> requirements =
-          new ArrayList<>();
-      if (currentMetadata.getTableUuid() != null) {
-        io.unitycatalog.client.deltarest.model.AssertTableUUID assertTableUUID =
-            new io.unitycatalog.client.deltarest.model.AssertTableUUID();
-        assertTableUUID.setType(
-            io.unitycatalog.client.deltarest.model.AssertTableUUID.TypeEnum.ASSERT_TABLE_UUID);
-        assertTableUUID.setUuid(currentMetadata.getTableUuid());
-        requirements.add(new io.unitycatalog.client.deltarest.model.TableRequirement(assertTableUUID));
-      }
-      if (currentMetadata.getEtag() != null) {
-        io.unitycatalog.client.deltarest.model.AssertEtag assertEtag =
-            new io.unitycatalog.client.deltarest.model.AssertEtag();
-        assertEtag.setType(io.unitycatalog.client.deltarest.model.AssertEtag.TypeEnum.ASSERT_ETAG);
-        assertEtag.setEtag(currentMetadata.getEtag());
-        requirements.add(new io.unitycatalog.client.deltarest.model.TableRequirement(assertEtag));
-      }
-      updateRequest.setRequirements(requirements);
-      List<io.unitycatalog.client.deltarest.model.TableUpdate> updates = new ArrayList<>();
-
-      if (newMetadata.isPresent()) {
-        addMetadataUpdates(updates, currentMetadata, newMetadata.get());
-      }
-      if (newProtocol.isPresent()) {
-        addProtocolUpdate(updates, currentMetadata, newProtocol.get());
-      }
-
-      // Add commit update if present
-      if (commit.isPresent()) {
-        Commit c = commit.get();
-        io.unitycatalog.client.deltarest.model.DeltaCommit deltaCommit =
-            new io.unitycatalog.client.deltarest.model.DeltaCommit();
-        deltaCommit.setVersion(c.getVersion());
-        deltaCommit.setTimestamp(c.getCommitTimestamp());
-        deltaCommit.setFileName(c.getFileStatus().getPath().getName());
-        deltaCommit.setFileSize(c.getFileStatus().getLen());
-        deltaCommit.setFileModificationTimestamp(c.getFileStatus().getModificationTime());
-
-        io.unitycatalog.client.deltarest.model.AddCommitUpdate addCommit =
-            new io.unitycatalog.client.deltarest.model.AddCommitUpdate();
-        addCommit.setAction(
-            io.unitycatalog.client.deltarest.model.AddCommitUpdate.ActionEnum.ADD_COMMIT);
-        addCommit.setCommit(deltaCommit);
-        updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(addCommit));
-      }
-
-      // Add backfill version update if present
-      if (lastKnownBackfilledVersion.isPresent()) {
-        io.unitycatalog.client.deltarest.model.SetLatestBackfilledVersionUpdate backfillUpdate =
-            new io.unitycatalog.client.deltarest.model.SetLatestBackfilledVersionUpdate();
-        backfillUpdate.setAction(
-            io.unitycatalog.client.deltarest.model.SetLatestBackfilledVersionUpdate
-                .ActionEnum.SET_LATEST_BACKFILLED_VERSION);
-        backfillUpdate.setLatestPublishedVersion(lastKnownBackfilledVersion.get());
-        updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(backfillUpdate));
-      }
-
-      updateRequest.setUpdates(updates);
-      tablesApi.updateTable(catalog, schema, table, updateRequest);
-
-    } catch (io.unitycatalog.client.deltarest.ApiException e) {
-      if (e.getCode() == 409) {
-        throw new CommitFailedException(
-          true /* retryable */,
-          true /* conflict */,
-          "Commit conflict: " + e.getResponseBody(),
-          e);
-      } else if (e.getCode() >= 400 && e.getCode() < 500) {
-        throw new CommitFailedException(
-          false /* retryable */,
-          false /* conflict */,
-          "Bad request: " + e.getResponseBody(),
-          e);
-      } else {
-        throw new CommitFailedException(
-          true /* retryable */,
-          false /* conflict */,
-          "Commit failed with HTTP " + e.getCode() + ": " + e.getResponseBody(),
-          e);
-      }
-    }
-  }
-
-  private void addMetadataUpdates(
-      List<io.unitycatalog.client.deltarest.model.TableUpdate> updates,
-      io.unitycatalog.client.deltarest.model.TableMetadata currentMetadata,
-      AbstractMetadata newMetadata) throws IOException {
-    if (!Objects.equals(currentMetadata.getComment(), newMetadata.getDescription()) &&
-        newMetadata.getDescription() != null) {
-      io.unitycatalog.client.deltarest.model.SetTableCommentUpdate commentUpdate =
-          new io.unitycatalog.client.deltarest.model.SetTableCommentUpdate();
-      commentUpdate.setAction(
-          io.unitycatalog.client.deltarest.model.SetTableCommentUpdate.ActionEnum.SET_TABLE_COMMENT);
-      commentUpdate.setComment(newMetadata.getDescription());
-      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(commentUpdate));
-    }
-
-    List<String> newPartitionColumns =
-        newMetadata.getPartitionColumns() == null ?
-            Collections.emptyList() :
-            new ArrayList<>(newMetadata.getPartitionColumns());
-    List<String> currentPartitionColumns =
-        currentMetadata.getPartitionColumns() == null ?
-            Collections.emptyList() :
-            currentMetadata.getPartitionColumns();
-    if (!currentPartitionColumns.equals(newPartitionColumns)) {
-      io.unitycatalog.client.deltarest.model.SetPartitionColumnsUpdate partitionUpdate =
-          new io.unitycatalog.client.deltarest.model.SetPartitionColumnsUpdate();
-      partitionUpdate.setAction(
-          io.unitycatalog.client.deltarest.model.SetPartitionColumnsUpdate.ActionEnum
-              .SET_PARTITION_COLUMNS);
-      partitionUpdate.setPartitionColumns(newPartitionColumns);
-      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(partitionUpdate));
-    }
-
-    List<io.unitycatalog.client.deltarest.model.DeltaColumn> newColumns =
-        toDeltaColumns(newMetadata.getSchemaString());
-    List<io.unitycatalog.client.deltarest.model.DeltaColumn> currentColumns =
-        currentMetadata.getColumns() == null ?
-            Collections.emptyList() :
-            currentMetadata.getColumns();
-    if (!currentColumns.equals(newColumns)) {
-      io.unitycatalog.client.deltarest.model.SetColumnsUpdate columnsUpdate =
-          new io.unitycatalog.client.deltarest.model.SetColumnsUpdate();
-      columnsUpdate.setAction(
-          io.unitycatalog.client.deltarest.model.SetColumnsUpdate.ActionEnum.SET_COLUMNS);
-      columnsUpdate.setColumns(newColumns);
-      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(columnsUpdate));
-    }
-
-    Map<String, String> currentProperties =
-        currentMetadata.getProperties() == null ?
-            Collections.emptyMap() :
-            currentMetadata.getProperties();
-    Map<String, String> desiredProperties =
-        newMetadata.getConfiguration() == null ?
-            Collections.emptyMap() :
-            newMetadata.getConfiguration();
-    Map<String, String> changedProperties = new LinkedHashMap<>();
-    for (Map.Entry<String, String> entry : desiredProperties.entrySet()) {
-      if (shouldSkipCatalogPropertyUpdate(entry.getKey())) {
-        continue;
-      }
-      if (!Objects.equals(currentProperties.get(entry.getKey()), entry.getValue())) {
-        changedProperties.put(entry.getKey(), entry.getValue());
-      }
-    }
-    if (!changedProperties.isEmpty()) {
-      io.unitycatalog.client.deltarest.model.SetPropertiesUpdate propertiesUpdate =
-          new io.unitycatalog.client.deltarest.model.SetPropertiesUpdate();
-      propertiesUpdate.setAction(
-          io.unitycatalog.client.deltarest.model.SetPropertiesUpdate.ActionEnum.SET_PROPERTIES);
-      propertiesUpdate.setUpdates(changedProperties);
-      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(propertiesUpdate));
-    }
-  }
-
-  private boolean shouldSkipCatalogPropertyUpdate(String propertyKey) {
-    return PROP_IS_MANAGED_LOCATION.equals(propertyKey);
-  }
-
-  private void addProtocolUpdate(
-      List<io.unitycatalog.client.deltarest.model.TableUpdate> updates,
-      io.unitycatalog.client.deltarest.model.TableMetadata currentMetadata,
-      AbstractProtocol newProtocol) {
-    io.unitycatalog.client.deltarest.model.DeltaProtocol desiredProtocol =
-        toDeltaProtocol(newProtocol);
-    if (!desiredProtocol.equals(currentMetadata.getProtocol())) {
-      io.unitycatalog.client.deltarest.model.SetProtocolUpdate protocolUpdate =
-          new io.unitycatalog.client.deltarest.model.SetProtocolUpdate();
-      protocolUpdate.setAction(
-          io.unitycatalog.client.deltarest.model.SetProtocolUpdate.ActionEnum.SET_PROTOCOL);
-      protocolUpdate.setProtocol(desiredProtocol);
-      updates.add(new io.unitycatalog.client.deltarest.model.TableUpdate(protocolUpdate));
-    }
-  }
-
-  private io.unitycatalog.client.deltarest.model.DeltaProtocol toDeltaProtocol(
-      AbstractProtocol protocol) {
-    io.unitycatalog.client.deltarest.model.DeltaProtocol deltaProtocol =
-        new io.unitycatalog.client.deltarest.model.DeltaProtocol();
-    deltaProtocol.setMinReaderVersion(protocol.getMinReaderVersion());
-    deltaProtocol.setMinWriterVersion(protocol.getMinWriterVersion());
-    if (protocol.getReaderFeatures() != null && !protocol.getReaderFeatures().isEmpty()) {
-      List<String> readerFeatures = new ArrayList<>(protocol.getReaderFeatures());
-      Collections.sort(readerFeatures);
-      deltaProtocol.setReaderFeatures(readerFeatures);
-    }
-    if (protocol.getWriterFeatures() != null && !protocol.getWriterFeatures().isEmpty()) {
-      List<String> writerFeatures = new ArrayList<>(protocol.getWriterFeatures());
-      Collections.sort(writerFeatures);
-      deltaProtocol.setWriterFeatures(writerFeatures);
-    }
-    return deltaProtocol;
-  }
-
-  private List<io.unitycatalog.client.deltarest.model.DeltaColumn> toDeltaColumns(
-      String schemaString) throws IOException {
-    if (schemaString == null || schemaString.isEmpty()) {
-      return Collections.emptyList();
-    }
-    JsonNode schemaNode = JSON_MAPPER.readTree(schemaString);
-    JsonNode fieldsNode = schemaNode.get("fields");
-    if (fieldsNode == null || !fieldsNode.isArray()) {
-      throw new IOException("Invalid Delta schema JSON: missing top-level fields array");
-    }
-
-    List<io.unitycatalog.client.deltarest.model.DeltaColumn> columns = new ArrayList<>();
-    for (JsonNode fieldNode : fieldsNode) {
-      io.unitycatalog.client.deltarest.model.DeltaColumn column =
-          new io.unitycatalog.client.deltarest.model.DeltaColumn();
-      column.setName(fieldNode.get("name").asText());
-      JsonNode typeNode = fieldNode.get("type");
-      if (typeNode != null && !typeNode.isNull()) {
-        column.setType(JSON_MAPPER.convertValue(typeNode, Object.class));
-      }
-      JsonNode nullableNode = fieldNode.get("nullable");
-      column.setNullable(nullableNode == null || nullableNode.asBoolean());
-      JsonNode metadataNode = fieldNode.get("metadata");
-      Map<String, Object> metadata =
-          metadataNode == null || metadataNode.isNull() ?
-              new LinkedHashMap<>() :
-              JSON_MAPPER.convertValue(metadataNode, LinkedHashMap.class);
-      column.setMetadata(metadata);
-      columns.add(column);
-    }
-    return columns;
-  }
 
   /**
    * Detects whether the current commit is a downgrade (disown) commit by checking
@@ -1117,7 +859,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         .stream()
         .sorted(Comparator.comparingLong(Commit::getVersion))
         .collect(Collectors.toList());
-    return new GetCommitsResponse(sortedCommits, resp.getLatestTableVersion());
+    return new GetCommitsResponse(
+        sortedCommits, resp.getLatestTableVersion(), resp.getEtag());
   }
 
   protected GetCommitsResponse getCommitsFromUCImpl(
@@ -1125,95 +868,21 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> startVersion,
       Optional<Long> endVersion) {
     try {
-      // Use Delta REST API if available
-      if (shouldUseDeltaRestApi(tableDesc)) {
-        String[] tablePath = extractTablePathForDeltaRest(tableDesc);
-        LOG.info("Using Delta REST API for getCommits from {}.{}.{}",
-          tablePath[0], tablePath[1], tablePath[2]);
-        return getCommitsViaDeltaRestApi(
-          tablePath[0], tablePath[1], tablePath[2],
-          startVersion, endVersion
-        );
-      } else {
-        LOG.info("Using legacy UC API for getCommits");
-        return ucClient.getCommits(
-          extractUCTableId(tableDesc),
-          CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
-          startVersion,
-          endVersion);
-      }
-    } catch (IOException | UCCommitCoordinatorException e) {
+      // Use loadTable to get full table state (commits + etag) in one RPC.
+      String[] tp = extractTablePathForDeltaRest(tableDesc);
+      String ucTableId = extractUCTableId(tableDesc);
+      java.net.URI tableUri = io.delta.storage.commit.CoordinatedCommitsUtils
+          .getTablePath(tableDesc.getLogPath()).toUri();
+      UCDeltaClient.LoadTableResponse response = ucDeltaClient.loadTable(
+          tp != null ? tp[0] : null, tp != null ? tp[1] : null,
+          tp != null ? tp[2] : null,
+          ucTableId, tableUri, startVersion, endVersion);
+      return response.getCommitsResponse();
+    } catch (IOException e) {
       throw new RuntimeException(e);
     }
   }
 
-  /**
-   * Gets commits via Delta REST Catalog API.
-   */
-  private GetCommitsResponse getCommitsViaDeltaRestApi(
-      String catalog,
-      String schema,
-      String table,
-      Optional<Long> startVersion,
-      Optional<Long> endVersion
-  ) throws IOException {
-    try {
-      io.unitycatalog.client.deltarest.ApiClient apiClient =
-          new io.unitycatalog.client.deltarest.ApiClient();
-      apiClient.updateBaseUri(baseUri + "/api/2.1/unity-catalog/delta/v1");
-      apiClient.setRequestInterceptor(builder -> {
-        if (tokenProvider != null) {
-          builder.header("Authorization", "Bearer " + tokenProvider.accessToken());
-        }
-      });
-
-      io.unitycatalog.client.deltarest.api.TablesApi tablesApi =
-          new io.unitycatalog.client.deltarest.api.TablesApi(apiClient);
-
-      // Load table to get commits
-      io.unitycatalog.client.deltarest.model.LoadTableResponse response =
-          tablesApi.loadTable(catalog, schema, table, false);
-
-      // Extract commits from response
-      List<io.unitycatalog.client.deltarest.model.DeltaCommit> deltaCommits =
-          response.getCommits();
-      if (deltaCommits == null) {
-        deltaCommits = new ArrayList<>();
-      }
-
-      // Filter by version range
-      long start = startVersion.orElse(0L);
-      long end = endVersion.orElse(Long.MAX_VALUE);
-
-      // We need the table path to construct Commit objects
-      String tableLoc = response.getMetadata().getLocation();
-      Path tablePathObj = new Path(tableLoc);
-      Path commitDir = CoordinatedCommitsUtils.commitDirPath(
-        CoordinatedCommitsUtils.logDirPath(tablePathObj));
-
-      List<Commit> commits = deltaCommits.stream()
-        .filter(dc -> dc.getVersion() >= start && dc.getVersion() <= end)
-        .map(dc -> {
-          Path commitFile = new Path(commitDir, dc.getFileName());
-          FileStatus fileStatus = new FileStatus(
-            dc.getFileSize(),
-            false /* isdir */,
-            0 /* block_replication */,
-            0 /* blocksize */,
-            dc.getFileModificationTimestamp(),
-            commitFile);
-          return new Commit(dc.getVersion(), fileStatus, dc.getTimestamp());
-        })
-        .collect(Collectors.toList());
-
-      Long latestTableVersion = response.getLatestTableVersion();
-      return new GetCommitsResponse(
-          commits, latestTableVersion != null ? latestTableVersion : -1L);
-
-    } catch (io.unitycatalog.client.deltarest.ApiException e) {
-      throw new IOException("Failed to get commits: " + e.getResponseBody(), e);
-    }
-  }
 
   @Override
   public void backfillToVersion(
@@ -1362,26 +1031,17 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
   /**
    * Extracts catalog, schema, and table name from TableDescriptor for Delta REST API calls.
+   * Kept for runtime sync compatibility -- commit path now goes through UCDeltaClient.
    */
-  private String[] extractTablePathForDeltaRest(TableDescriptor tableDesc) {
+  protected String[] extractTablePathForDeltaRest(TableDescriptor tableDesc) {
     if (!tableDesc.getTableIdentifier().isPresent()) {
       return null;
     }
     io.delta.storage.commit.TableIdentifier tableId = tableDesc.getTableIdentifier().get();
     String[] namespace = tableId.getNamespace();
     if (namespace.length != 2) {
-      LOG.warn("TableIdentifier namespace has {} elements, expected 2 for Delta REST API: {}",
-        namespace.length, java.util.Arrays.toString(namespace));
       return null;
     }
     return new String[]{namespace[0], namespace[1], tableId.getName()};
-  }
-
-  /**
-   * Check if we should use Delta REST API based on available information.
-   */
-  private boolean shouldUseDeltaRestApi(TableDescriptor tableDesc) {
-    return baseUri != null && tokenProvider != null &&
-           extractTablePathForDeltaRest(tableDesc) != null;
   }
 }

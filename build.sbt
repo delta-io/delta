@@ -320,6 +320,16 @@ lazy val sparkV1 = (project in file("spark"))
     skipReleaseSettings, // Internal module - not published to Maven
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
+    // Conditional DRC shim for spark module (bridges CatalogPlugin to UCDeltaClient).
+    Compile / unmanagedSourceDirectories += {
+      val shimDir = if (sys.props.getOrElse("deltaRestCatalog", "false").toBoolean) {
+        "scala-shims/drc"
+      } else {
+        "scala-shims/no-drc"
+      }
+      baseDirectory.value / "src" / "main" / shimDir
+    },
+
     // Export as JAR instead of classes directory. This prevents dependent projects
     // (e.g., connectServer) from seeing multiple 'classes' directories with the same
     // name in their classpath, which would cause FileAlreadyExistsException.
@@ -637,13 +647,6 @@ lazy val spark = (project in file("spark-unified"))
       "org.apache.spark" %% "spark-sql" % sparkVersion.value % "test" classifier "tests",
       "org.apache.spark" %% "spark-hive" % sparkVersion.value % "test" classifier "tests",
       "org.mockito" % "mockito-inline" % "4.11.0" % "test",
-      "io.unitycatalog" % "unitycatalog-deltarest-client" % unityCatalogVersion % "test" excludeAll(
-        ExclusionRule(organization = "org.openapitools"),
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
-        ExclusionRule(organization = "com.fasterxml.jackson.module"),
-        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
-        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
-      ),
     ),
 
     Test / testOptions += Tests.Argument("-oDF"),
@@ -730,7 +733,7 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = "0.5.0-SNAPSHOT"
+val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.1")
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
@@ -1070,6 +1073,15 @@ lazy val storage = (project in file("storage"))
     commonSettings,
     exportJars := true,
     javaOnlyReleaseSettings,
+    // Conditional DRC shim for storage module
+    Compile / unmanagedSourceDirectories += {
+      val shimDir = if (sys.props.getOrElse("deltaRestCatalog", "false").toBoolean) {
+        "java-shims/drc"
+      } else {
+        "java-shims/no-drc"
+      }
+      baseDirectory.value / "src" / "main" / shimDir
+    },
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.
@@ -1079,13 +1091,6 @@ lazy val storage = (project in file("storage"))
       // is not compatible with 3.3.2.
       "org.apache.hadoop" % "hadoop-aws" % hadoopVersion % "provided",
       "io.unitycatalog" % "unitycatalog-client" % unityCatalogVersion excludeAll(
-        ExclusionRule(organization = "org.openapitools"),
-        ExclusionRule(organization = "com.fasterxml.jackson.core"),
-        ExclusionRule(organization = "com.fasterxml.jackson.module"),
-        ExclusionRule(organization = "com.fasterxml.jackson.datatype"),
-        ExclusionRule(organization = "com.fasterxml.jackson.dataformat")
-      ),
-      "io.unitycatalog" % "unitycatalog-deltarest-client" % unityCatalogVersion excludeAll(
         ExclusionRule(organization = "org.openapitools"),
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),

@@ -27,6 +27,7 @@ import scala.collection.mutable
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
+import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
@@ -78,15 +79,26 @@ class DeltaCatalogV1 extends AbstractDeltaCatalog
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
+  with io.delta.storage.commit.uccommitcoordinator.UCDeltaClientProvider
   with DeltaLogging {
 
 
   val spark = SparkSession.active
 
   private lazy val isUnityCatalog: Boolean = {
-    val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
-    delegateField.setAccessible(true)
-    delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
+    delegate.getClass.getCanonicalName.startsWith("io.unitycatalog.")
+  }
+
+  override def getUCDeltaClient(): UCDeltaClient = deltaCatalogClient.ucDeltaClient
+
+  /**
+   * The single UC client for Delta catalog operations. Handles DRC vs legacy internally.
+   */
+  private lazy val deltaCatalogClient: DeltaCatalogClient = {
+    DeltaCatalogClient(
+      delegate,
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_REST_CATALOG_ENABLED),
+      name())
   }
 
   /**
@@ -251,9 +263,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
-        v1Table => {
-          val t = V1Table(v1Table)
-          super.createTable(ident, t.columns(), t.partitioning, t.properties)
+        (v1Table, postCommitSnapshot) => {
+          deltaCatalogClient.createTable(ident, v1Table, postCommitSnapshot)
         }
       }).run(spark)
 
@@ -263,7 +274,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
     try {
-      val table = super.loadTable(ident)
+      val table = deltaCatalogClient.loadTable(ident)
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt

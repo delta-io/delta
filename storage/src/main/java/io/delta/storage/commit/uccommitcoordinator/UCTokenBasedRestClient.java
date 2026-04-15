@@ -87,6 +87,8 @@ public class UCTokenBasedRestClient implements UCClient {
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
+  /** The shared ApiClient, accessible to subclasses for creating additional API clients. */
+  protected final ApiClient apiClient;
 
   // HTTP status codes for error handling
   private static final int HTTP_BAD_REQUEST = 400;
@@ -122,7 +124,19 @@ public class UCTokenBasedRestClient implements UCClient {
       }
     });
 
-    ApiClient apiClient = builder.build();
+    this.apiClient = builder.build();
+    this.deltaCommitsApi = new DeltaCommitsApi(this.apiClient);
+    this.metastoresApi = new MetastoresApi(this.apiClient);
+    this.tablesApi = new TablesApi(this.apiClient);
+  }
+
+  /**
+   * Constructs a UCTokenBasedRestClient from an existing ApiClient.
+   * Shares the same HTTP connection and auth as the provider.
+   */
+  public UCTokenBasedRestClient(ApiClient apiClient) {
+    Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.apiClient = apiClient;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
@@ -345,7 +359,7 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   // ===========================
-  // Exception Handling Methods
+  // Legacy UC API: finalizeCreate
   // ===========================
 
   @Override
@@ -443,6 +457,55 @@ public class UCTokenBasedRestClient implements UCClient {
             false /* conflict */,
             "Unexpected commit failure (HTTP " + statusCode + "): " + responseBody,
             e);
+    }
+  }
+
+  /**
+   * Create table via legacy UC TablesApi. Used by UCDeltaClient.createTable
+   * when DRC is disabled.
+   */
+  protected void createTableLegacy(
+      String catalog, String schema, String table, String location,
+      io.delta.storage.commit.actions.AbstractMetadata metadata,
+      io.delta.storage.commit.actions.AbstractProtocol protocol,
+      boolean isManaged) throws CommitFailedException {
+    ensureOpen();
+    try {
+      io.unitycatalog.client.model.CreateTable req =
+          new io.unitycatalog.client.model.CreateTable();
+      req.setName(table);
+      req.setCatalogName(catalog);
+      req.setSchemaName(schema);
+      req.setTableType(isManaged
+          ? io.unitycatalog.client.model.TableType.MANAGED
+          : io.unitycatalog.client.model.TableType.EXTERNAL);
+      req.setDataSourceFormat(io.unitycatalog.client.model.DataSourceFormat.DELTA);
+      req.setStorageLocation(location);
+      java.util.HashMap<String, String> props = metadata.getConfiguration() != null
+          ? new java.util.HashMap<>(metadata.getConfiguration())
+          : new java.util.HashMap<>();
+      props.put("delta.minReaderVersion",
+          String.valueOf(protocol.getMinReaderVersion()));
+      props.put("delta.minWriterVersion",
+          String.valueOf(protocol.getMinWriterVersion()));
+      if (protocol.getReaderFeatures() != null) {
+        for (String f : protocol.getReaderFeatures()) {
+          props.put("delta.feature." + f, "supported");
+        }
+      }
+      if (protocol.getWriterFeatures() != null) {
+        for (String f : protocol.getWriterFeatures()) {
+          props.put("delta.feature." + f, "supported");
+        }
+      }
+      req.setProperties(props);
+      if (metadata.getDescription() != null) {
+        req.setComment(metadata.getDescription());
+      }
+      new io.unitycatalog.client.api.TablesApi(apiClient).createTable(req);
+    } catch (io.unitycatalog.client.ApiException e) {
+      throw new CommitFailedException(true, false,
+          "Failed to create table via legacy API: " + e.getResponseBody(), e);
     }
   }
 }

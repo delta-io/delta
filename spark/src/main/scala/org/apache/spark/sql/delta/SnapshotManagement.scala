@@ -65,6 +65,9 @@ case class CapturedSnapshot(snapshot: Snapshot, updateTimestamp: Long)
 trait SnapshotManagement { self: DeltaLog =>
   import SnapshotManagement.verifyDeltaVersions
 
+  /** Latest etag from DRC loadTable, refreshed by every getCommits call. */
+  @volatile private[delta] var latestDrcEtag: Option[String] = None
+
   @volatile private[delta] var asyncUpdateTask: Future[Unit] = _
 
   /** Use ReentrantLock to allow us to call `lockInterruptibly` */
@@ -220,7 +223,9 @@ trait SnapshotManagement { self: DeltaLog =>
       }
     }
     val unbackfilledCommitsResponse = try {
-      unbackfilledCommitsResponseFuture.get()
+      val resp = unbackfilledCommitsResponseFuture.get()
+      Option(resp.getEtag).foreach(e => latestDrcEtag = Some(e))
+      resp
     } catch {
       case e: java.util.concurrent.ExecutionException =>
         throw new CommitCoordinatorGetCommitsFailedException(e.getCause)
