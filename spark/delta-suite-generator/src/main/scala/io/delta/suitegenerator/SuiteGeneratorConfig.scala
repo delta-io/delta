@@ -148,6 +148,8 @@ object SuiteGeneratorConfig {
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
+    val V2_IN_MEMORY_TABLE_MERGE =
+      DimensionMixin("MergeIntoSuiteInMemoryTestTable", alias = Some("InMemoryTable"))
   }
 
   private object Tests {
@@ -225,6 +227,10 @@ object SuiteGeneratorConfig {
           List(
             List(Dims.MERGE_SCALA)
           )
+        ),
+        TestConfig(
+          List("MergeIntoNotMatchedBySourceSuite"),
+          List(List(Dims.MERGE_SQL, Dims.V2_IN_MEMORY_TABLE_MERGE, Dims.NAME_BASED))
         ),
         TestConfig(
           "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
