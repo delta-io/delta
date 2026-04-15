@@ -137,7 +137,55 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a')",
                   "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
               /* incrementalSqls */ List.of(
-                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")));
+                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
+
+          // -- Regression: NULL values in columns trigger NPE on MANAGED tables --
+          // Before fix: ColumnVectorWithFilter.closeIfFreeable() inherited the default
+          // ColumnVector implementation which calls close() -> delegate.close() ->
+          // releaseMemory() -> sets nulls=null. When the Parquet reader reuses the vector
+          // for the next batch, putNotNulls() dereferences the null array -> NPE.
+          // Only MANAGED tables are affected because they enable deletion vectors by default,
+          // which is the only code path wrapping columns in ColumnVectorWithFilter.
+          new TableVariant(
+              /* name */ "NullsInColumns",
+              /* schema */ "id INT, value STRING, opt_int INT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, null, null), (2, 'b', null), (null, null, null)"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (3, 'c', 3), (null, 'x', 1)")),
+
+          // -- Regression: BOOLEAN columns with NULLs trigger NPE through bit-packing path --
+          // Same root cause as NullsInColumns but exercises the BOOLEAN-specific code path
+          // in OnHeapColumnVector where null flags interact with bit-packing.
+          new TableVariant(
+              /* name */ "BooleanNulls",
+              /* schema */ "id INT, flag BOOLEAN, val INT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, true, 10), (2, null, 20), (3, false, null), (4, null, null)"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES (5, true, null), (6, null, 60)")),
+
+          // -- Regression: VARIANT columns trigger ClassCastException on MANAGED tables --
+          // Before fix: ColumnVectorWithFilter.getChild() unconditionally casts dataType()
+          // to StructType to compute the number of children. For non-struct types like
+          // VARIANT, ARRAY, and MAP, this cast fails with ClassCastException. The fix
+          // guards with an instanceof check and passes through to the delegate directly.
+          new TableVariant(
+              /* name */ "VariantType",
+              /* schema */ "id INT, data VARIANT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* createTableSql */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s SELECT 1, parse_json('{\"key\": \"value\"}')"
+                      + " UNION ALL SELECT 2, parse_json('[1,2,3]')"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s SELECT 3, parse_json('{\"nested\": {\"a\": 1}}')"),
+              /* streamReadOptions */ Collections.emptyMap()));
 
   @TestFactory
   Stream<DynamicContainer> streamingTableVariants() {

@@ -46,6 +46,19 @@ public class ColumnVectorWithFilter extends ColumnVector {
     delegate.close();
   }
 
+  /**
+   * No-op: this is a non-owning view over the delegate vector. The delegate is owned by the Parquet
+   * reader and must not be closed by this wrapper. The default {@link
+   * ColumnVector#closeIfFreeable()} calls {@code close()} which releases the delegate's internal
+   * buffers (e.g. the {@code nulls} byte array in {@code OnHeapColumnVector}). When the Parquet
+   * reader reuses the vector for the next batch, the released buffers cause NPEs in {@code
+   * putNotNulls}.
+   */
+  @Override
+  public void closeIfFreeable() {
+    // intentional no-op
+  }
+
   @Override
   public boolean hasNull() {
     return delegate.hasNull();
@@ -133,10 +146,12 @@ public class ColumnVectorWithFilter extends ColumnVector {
    */
   @Override
   public ColumnVector getChild(int ordinal) {
+    if (!(dataType() instanceof StructType)) {
+      return delegate.getChild(ordinal);
+    }
     if (children == null) {
       synchronized (this) {
         if (children == null) {
-          // Eagerly create all children to avoid race condition on children[ordinal] access
           StructType structType = (StructType) dataType();
           ColumnVectorWithFilter[] newChildren =
               new ColumnVectorWithFilter[structType.fields().length];
