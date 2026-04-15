@@ -47,12 +47,15 @@ public class ColumnVectorWithFilter extends ColumnVector {
   }
 
   /**
-   * No-op: this is a non-owning view over the delegate vector. The delegate is owned by the Parquet
-   * reader and must not be closed by this wrapper. The default {@link
-   * ColumnVector#closeIfFreeable()} calls {@code close()} which releases the delegate's internal
-   * buffers (e.g. the {@code nulls} byte array in {@code OnHeapColumnVector}). When the Parquet
-   * reader reuses the vector for the next batch, the released buffers cause NPEs in {@code
-   * putNotNulls}.
+   * Intentionally does nothing. Do NOT remove this override.
+   *
+   * <p>This wrapper does not own the delegate column vector — the Parquet reader does, and it
+   * reuses the same vector across batches. Without this override, the inherited {@link
+   * ColumnVector#closeIfFreeable()} calls {@code close()}, which frees the delegate's internal
+   * memory (e.g. the {@code nulls} byte array inside {@code OnHeapColumnVector}). On the next batch
+   * the Parquet reader writes into the freed array and crashes with an NPE in {@code putNotNulls}.
+   *
+   * <p>TL;DR: we don't own the memory, so we must not free it.
    */
   @Override
   public void closeIfFreeable() {
