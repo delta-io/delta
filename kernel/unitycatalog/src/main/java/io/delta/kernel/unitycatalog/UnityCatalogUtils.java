@@ -44,6 +44,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.*;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 public class UnityCatalogUtils {
@@ -99,36 +100,15 @@ public class UnityCatalogUtils {
         final ColumnarBatch batch = batches.next();
 
         if (protocol == null) {
-          final ColumnVector protocolVector = batch.getColumnVector(0);
-          for (int i = 0; i < protocolVector.getSize(); i++) {
-            Protocol p = Protocol.fromColumnVector(protocolVector, i);
-            if (p != null) {
-              protocol = p;
-              break;
-            }
-          }
+          protocol = findFirstAction(batch.getColumnVector(0), Protocol::fromColumnVector);
         }
 
         if (metadata == null) {
-          final ColumnVector metadataVector = batch.getColumnVector(1);
-          for (int i = 0; i < metadataVector.getSize(); i++) {
-            Metadata m = Metadata.fromColumnVector(metadataVector, i);
-            if (m != null) {
-              metadata = m;
-              break;
-            }
-          }
+          metadata = findFirstAction(batch.getColumnVector(1), Metadata::fromColumnVector);
         }
 
         if (commitInfo == null) {
-          final ColumnVector commitInfoVector = batch.getColumnVector(2);
-          for (int i = 0; i < commitInfoVector.getSize(); i++) {
-            CommitInfo ci = CommitInfo.fromColumnVector(commitInfoVector, i);
-            if (ci != null) {
-              commitInfo = ci;
-              break;
-            }
-          }
+          commitInfo = findFirstAction(batch.getColumnVector(2), CommitInfo::fromColumnVector);
         }
 
         final ColumnVector domainMetadataVector = batch.getColumnVector(3);
@@ -149,6 +129,21 @@ public class UnityCatalogUtils {
         Optional.ofNullable(metadata),
         Optional.ofNullable(commitInfo),
         domainMetadatas);
+  }
+
+  /**
+   * Scans a column vector in the batch and returns the first non-null action found, or null if none
+   * exists.
+   */
+  private static <T> T findFirstAction(
+      ColumnVector vector, BiFunction<ColumnVector, Integer, T> extractor) {
+    for (int i = 0; i < vector.getSize(); i++) {
+      T value = extractor.apply(vector, i);
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
   }
 
   /**
