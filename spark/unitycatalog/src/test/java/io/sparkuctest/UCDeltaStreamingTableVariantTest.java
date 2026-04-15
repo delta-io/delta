@@ -320,7 +320,11 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
           } else {
             // Data-modifying: streaming output has duplicates from file rewrites (see class
             // javadoc). Just verify the stream produced rows without error.
-            assertThat(sql("SELECT * FROM %s", qn)).as("Stream should produce rows").isNotEmpty();
+            // Streaming is a superset of batch (extra rows from file rewrites). Every
+            // current batch row must appear in the streaming output.
+            List<List<String>> streaming = sql("SELECT * FROM %s ORDER BY 1", qn);
+            List<List<String>> batch = sql("SELECT * FROM %s ORDER BY 1", fullName);
+            assertThat(streaming).as("Streaming should contain all batch rows").containsAll(batch);
           }
         });
   }
