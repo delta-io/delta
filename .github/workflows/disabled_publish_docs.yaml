@@ -90,7 +90,7 @@ jobs:
           package_json_file: docs/package.json
 
       - name: Install Node.js dependencies
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
         working-directory: docs
 
       - name: Download API docs artifacts
@@ -111,7 +111,7 @@ jobs:
         run: python3 docs/generate_docs.py
 
       - name: Install Netlify CLI
-        run: pnpm i -g netlify-cli
+        run: pnpm i -g netlify-cli@23.15.1 # 2026-02-04, pre-attack baseline
 
       - name: Publish site to Netlify
         run: netlify deploy --dir=docs/dist --prod
