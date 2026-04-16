@@ -3211,6 +3211,31 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       }
     }
   }
+
+  test("reading from partitioned table succeeds during restart") {
+    // Regression test: partition columns declared in the middle of the schema (e.g.,
+    // (id, part, col3) with `part` as the partition column) must not trip the V2 restart
+    // schema check. DDL-only (no data): the restart validation runs without needing any
+    // files to be read. Data writes would trip a separate V2 partition-column read NPE
+    // (OnHeapColumnVector.getLong), tracked out-of-band.
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+
+      def startStream(): StreamingQuery = loadStreamWithOptions(tablePath, Map.empty)
+        .writeStream
+        .format("noop")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+
+      val q = startStream()
+      try { q.processAllAvailable() } finally { q.stop() }
+
+      val q2 = startStream()
+      try { q2.processAllAvailable() } finally { q2.stop() }
+    }
+  }
 }
 
 /**
