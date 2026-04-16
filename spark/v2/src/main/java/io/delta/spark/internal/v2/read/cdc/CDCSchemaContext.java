@@ -20,6 +20,7 @@ import org.apache.spark.sql.delta.commands.cdc.CDCReader;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import scala.collection.immutable.Seq;
 
 /**
  * Holds the augmented read schema and column indices for the three CDC columns ({@code
@@ -40,13 +41,17 @@ public class CDCSchemaContext implements Serializable {
 
   private static final StructField[] CDC_FIELDS =
       new StructField[] {
-        DataTypes.createStructField(CDC_TYPE_COLUMN, DataTypes.StringType, true),
-        DataTypes.createStructField(CDC_COMMIT_VERSION, DataTypes.LongType, true),
-        DataTypes.createStructField(CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, true)
+        DataTypes.createStructField(CDC_TYPE_COLUMN, DataTypes.StringType, /* nullable= */ true),
+        DataTypes.createStructField(CDC_COMMIT_VERSION, DataTypes.LongType, /* nullable= */ true),
+        DataTypes.createStructField(
+            CDC_COMMIT_TIMESTAMP, DataTypes.TimestampType, /* nullable= */ true)
       };
 
   /** Read data schema augmented with CDC columns (for Parquet reader). */
   private final StructType readDataSchemaWithCDC;
+
+  /** Output schema for non-CDC columns: {@code readDataSchema + partition}. */
+  private final StructType dataAndPartitionSchema;
 
   /** Index of _change_type in the internal row [readDataSchema, CDC, partition]. */
   private final int changeTypeInternalIndex;
@@ -58,62 +63,42 @@ public class CDCSchemaContext implements Serializable {
   private final int commitTimestampInternalIndex;
 
   /**
-   * Mapping from output ordinal to internal batch ordinal. Output order is [tableSchema, CDC].
-   * Internal batch order is [readDataSchema, CDC(3), partitionSchema]. For each output column, this
-   * array gives the internal batch index to read from. CDC output ordinals map to -1 (handled by
-   * constants).
+   * Mapping from output ordinal to internal batch ordinal. Output order is {@code [readDataSchema,
+   * partition, CDC]}. Internal batch order is {@code [readDataSchema, CDC, partition]}. CDC output
+   * ordinals map to {@code -1} (replaced by per-file constants in {@link CDCReadFunction}).
    */
   private final int[] outputToInternalMapping;
 
-  /** Number of table columns (non-CDC) in the output. */
-  private final int tableColCount;
-
   /**
-   * @param readDataSchema the data schema without CDC/partition columns (from column pruning)
+   * @param readDataSchema the (possibly pruned) data schema requested by Spark, without CDC or
+   *     partition columns
    * @param partitionSchema the partition schema
-   * @param tableSchema the full table schema in original column order (data + partition
-   *     interleaved)
    */
-  public CDCSchemaContext(
-      StructType readDataSchema, StructType partitionSchema, StructType tableSchema) {
+  public CDCSchemaContext(StructType readDataSchema, StructType partitionSchema) {
     this.readDataSchemaWithCDC = appendCDCColumns(readDataSchema);
     int dataColCount = readDataSchema.fields().length;
+    int partColCount = partitionSchema.fields().length;
+    int cdcColCount = CDC_FIELDS.length;
     this.changeTypeInternalIndex = dataColCount;
     this.commitVersionInternalIndex = dataColCount + 1;
     this.commitTimestampInternalIndex = dataColCount + 2;
-    this.tableColCount = tableSchema.fields().length;
+    this.dataAndPartitionSchema =
+        readDataSchema.merge(partitionSchema, /* handleDuplicateColumns= */ false);
 
-    // Build mapping: output ordinal (table.schema() order) → internal batch ordinal.
-    // Internal batch layout: [readDataSchema(0..d-1), CDC(d, d+1, d+2), partition(d+3..d+3+p-1)]
-    // Output layout: [tableSchema columns in original order, CDC(3)]
-    //
-    // For each tableSchema column, find it in either readDataSchema or partitionSchema to get
-    // its internal index.
-    java.util.Map<String, Integer> dataColIndex = new java.util.HashMap<>();
-    for (int i = 0; i < readDataSchema.fields().length; i++) {
-      dataColIndex.put(readDataSchema.fields()[i].name(), i);
-    }
-    java.util.Map<String, Integer> partColIndex = new java.util.HashMap<>();
-    for (int i = 0; i < partitionSchema.fields().length; i++) {
-      partColIndex.put(partitionSchema.fields()[i].name(), dataColCount + 3 + i);
-    }
-
-    int totalOutputCols = tableColCount + CDC_FIELDS.length;
+    // Output layout:   [readDataSchema(0..d-1), partition(d..d+p-1), CDC(d+p..d+p+2)]
+    // Internal layout: [readDataSchema(0..d-1), CDC(d..d+2), partition(d+3..d+3+p-1)]
+    int totalOutputCols = dataColCount + partColCount + cdcColCount;
     this.outputToInternalMapping = new int[totalOutputCols];
-    for (int i = 0; i < tableColCount; i++) {
-      String colName = tableSchema.fields()[i].name();
-      if (dataColIndex.containsKey(colName)) {
-        outputToInternalMapping[i] = dataColIndex.get(colName);
-      } else if (partColIndex.containsKey(colName)) {
-        outputToInternalMapping[i] = partColIndex.get(colName);
-      } else {
-        throw new IllegalStateException(
-            "Column '" + colName + "' not found in readDataSchema or partitionSchema");
-      }
+    for (int i = 0; i < dataColCount; i++) {
+      outputToInternalMapping[i] = i;
     }
-    // CDC output ordinals → -1 (handled by constants)
-    for (int i = 0; i < CDC_FIELDS.length; i++) {
-      outputToInternalMapping[tableColCount + i] = -1;
+    for (int i = 0; i < partColCount; i++) {
+      outputToInternalMapping[dataColCount + i] = dataColCount + cdcColCount + i;
+    }
+    // CDC output ordinals are replaced with per-file constants by CDCReadFunction; use -1 as a
+    // sentinel.
+    for (int i = 0; i < cdcColCount; i++) {
+      outputToInternalMapping[dataColCount + partColCount + i] = -1;
     }
   }
 
@@ -159,8 +144,21 @@ public class CDCSchemaContext implements Serializable {
     return outputToInternalMapping.clone();
   }
 
-  /** Returns the number of table columns (non-CDC) in the output. */
-  public int getTableColCount() {
-    return tableColCount;
+  /** Returns the number of non-CDC output columns (data + partition). */
+  public int getDataAndPartitionColCount() {
+    return dataAndPartitionSchema.fields().length;
+  }
+
+  /** Returns the data + partition output schema. */
+  public StructType getDataAndPartitionSchema() {
+    return dataAndPartitionSchema;
+  }
+
+  /** Returns ordinals mapping data + partition output positions to internal batch positions. */
+  public Seq<Object> getDataAndPartitionOrdinals() {
+    int len = dataAndPartitionSchema.fields().length;
+    int[] ordinals = new int[len];
+    System.arraycopy(outputToInternalMapping, 0, ordinals, 0, len);
+    return scala.Predef.wrapIntArray(ordinals).toList();
   }
 }

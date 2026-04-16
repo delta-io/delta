@@ -527,7 +527,8 @@ public class SparkMicroBatchStream
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf);
+        sqlConf,
+        /* isCDCRead */ options.readChangeFeed());
   }
 
   ///////////////

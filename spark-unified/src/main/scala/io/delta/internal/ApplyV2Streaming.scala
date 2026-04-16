@@ -20,7 +20,9 @@ import scala.jdk.CollectionConverters._
 import scala.jdk.OptionConverters._
 
 import io.delta.spark.internal.v2.catalog.SparkTable
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 import io.delta.spark.internal.v2.utils.ScalaUtils
+import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaV2Mode
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
@@ -31,6 +33,7 @@ import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.connector.catalog.Identifier
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
+import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 /**
@@ -41,6 +44,8 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap
  * a StreamingRelationV2 (with DeltaTableV2) back to a StreamingRelation because
  * DeltaTableV2 doesn't advertise STREAMING_READ capability. We convert it back to
  * StreamingRelationV2 with SparkTable (from sparkV2) which does support streaming.
+ *
+ * Additionally, augments StreamingRelationV2 output with CDC columns when readChangeFeed=true.
  *
  * See [[DeltaV2Mode]] for configuration behavior.
  *
@@ -71,7 +76,17 @@ class ApplyV2Streaming(
     deltaV2Mode.isStreamingReadsEnabled(s.dataSource.catalogTable.toJava)
   }
 
+  /**
+   * Build the CDC-augmented schema: table.schema() + CDC columns.
+   */
+  private def cdcAugmentedSchema(table: SparkTable): StructType = {
+    var schema = table.schema()
+    for (field <- CDCSchemaContext.cdcFields()) { schema = schema.add(field) }
+    schema
+  }
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
+    // Case 1: Rewrite V1 StreamingRelation to StreamingRelationV2 with SparkTable
     case s: StreamingRelation if shouldApplyV2Streaming(s) =>
       // catalogTable is guaranteed to be defined because shouldApplyV2Streaming checks it
       // via isDeltaStreamingRelation.
@@ -88,6 +103,15 @@ class ApplyV2Streaming(
       val catalog = catalogTable.identifier.catalog.map(
         session.sessionState.catalogManager.catalog)
 
+      val opts = s.dataSource.options
+      val isCDC = opts.getOrElse(DeltaOptions.CDC_READ_OPTION, "false").toBoolean ||
+        opts.getOrElse(DeltaOptions.CDC_READ_OPTION_LEGACY, "false").toBoolean
+      val outputSchema = if (isCDC) {
+        cdcAugmentedSchema(table)
+      } else {
+        table.schema
+      }
+
 
       StreamingRelationV2(
         // We rebuild this from the resolved V2 table, so there is no V1 source to carry through.
@@ -97,7 +121,7 @@ class ApplyV2Streaming(
         sourceName = DeltaSourceUtils.NAME,
         table = table,
         extraOptions = new CaseInsensitiveStringMap(s.dataSource.options.asJava),
-        output = toAttributes(table.schema),
+        output = toAttributes(outputSchema),
         catalog = catalog,
         identifier = Some(ident),
         // Keep this None to force the V2 path; we don't want to fall back to V1 here.
