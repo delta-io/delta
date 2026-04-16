@@ -23,8 +23,8 @@ import org.apache.spark.sql.delta.skipping.clustering.temp.ClusterBySpec
 import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOptions
-import org.apache.spark.sql.delta.InsertAtomicReplaceExecutionObserver
 import org.apache.spark.sql.delta.DeltaTableUtils
+import org.apache.spark.sql.delta.InsertAtomicReplaceExecutionObserver
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.sql.delta.actions.Action
