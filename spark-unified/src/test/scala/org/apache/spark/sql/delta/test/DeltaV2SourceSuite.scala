@@ -53,6 +53,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "new commits arrive after stream initialization - with explicit startingVersion",
     "SC-11561: can consume new data without update",
     "Delta sources don't write offsets with null json",
+    "reading from partitioned table succeeds during restart",
 
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
