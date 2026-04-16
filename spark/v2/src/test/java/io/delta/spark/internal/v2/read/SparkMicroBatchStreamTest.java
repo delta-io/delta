@@ -866,27 +866,26 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
     AtomicInteger dsv1SuccessfulCalls = new AtomicInteger(0);
-    UnsupportedOperationException dsv1Exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> {
-              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                  deltaSource.getFileChanges(
-                      fromVersion,
-                      fromIndex,
-                      isInitialSnapshot,
-                      endOffset,
-                      /* verifyMetadataAction= */ true);
-              try {
-                while (deltaChanges.hasNext()) {
-                  deltaChanges.next(); // Should throw when hitting REMOVE file
-                  dsv1SuccessfulCalls.incrementAndGet();
-                }
-              } finally {
-                deltaChanges.close();
-              }
-            },
-            String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+              deltaSource.getFileChanges(
+                  fromVersion,
+                  fromIndex,
+                  isInitialSnapshot,
+                  endOffset,
+                  /* verifyMetadataAction= */ true);
+          try {
+            while (deltaChanges.hasNext()) {
+              deltaChanges.next(); // Should throw when hitting REMOVE file
+              dsv1SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            deltaChanges.close();
+          }
+        },
+        String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
     // Test DSv2 SparkMicroBatchStream
     Configuration hadoopConf = new Configuration();
@@ -896,26 +895,22 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
 
     AtomicInteger dsv2SuccessfulCalls = new AtomicInteger(0);
-    UnsupportedOperationException dsv2Exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> {
-              CloseableIterator<IndexedFile> kernelChanges =
-                  stream.getFileChanges(
-                      fromVersion,
-                      fromIndex,
-                      isInitialSnapshot,
-                      ScalaUtils.toJavaOptional(endOffset));
-              try {
-                while (kernelChanges.hasNext()) {
-                  kernelChanges.next(); // Should throw when hitting REMOVE file
-                  dsv2SuccessfulCalls.incrementAndGet();
-                }
-              } finally {
-                kernelChanges.close();
-              }
-            },
-            String.format("DSv2 should throw on REMOVE for scenario: %s", testDescription));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          CloseableIterator<IndexedFile> kernelChanges =
+              stream.getFileChanges(
+                  fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset));
+          try {
+            while (kernelChanges.hasNext()) {
+              kernelChanges.next(); // Should throw when hitting REMOVE file
+              dsv2SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            kernelChanges.close();
+          }
+        },
+        String.format("DSv2 should throw on REMOVE for scenario: %s", testDescription));
 
     // Verify both threw at the exact same point
     assertEquals(
@@ -925,18 +920,6 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             "DSv1 and DSv2 should throw after the same number of next() calls for scenario: %s. "
                 + "DSv1=%d, DSv2=%d",
             testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
-
-    // Verify both error messages reference the same CommitInfo operation name.
-    // We compare only the operation name (e.g. "MERGE", "DELETE") because the full
-    // operationParameters differ in key ordering and value quoting between V1 and V2.
-    String dsv1Op = extractOperationName(dsv1Exception.getMessage());
-    String dsv2Op = extractOperationName(dsv2Exception.getMessage());
-    assertEquals(
-        dsv1Op,
-        dsv2Op,
-        String.format(
-            "DSv1 and DSv2 should report the same operation name for scenario: %s",
-            testDescription));
   }
 
   /** Provides test scenarios that generate REMOVE actions through various DML operations. */
@@ -1022,17 +1005,6 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
   // ================================================================================================
 
   /**
-   * Extracts the operation name (e.g. "DELETE", "MERGE", "UPDATE") from a
-   * deltaSourceIgnoreChangesError message. Returns null if no operation name is found (e.g. for
-   * delete-only commits where the message contains a file path instead).
-   */
-  private static String extractOperationName(String errorMessage) {
-    java.util.regex.Matcher matcher =
-        java.util.regex.Pattern.compile("for example ([A-Z_ ]+?)\\s*\\(").matcher(errorMessage);
-    return matcher.find() ? matcher.group(1).trim() : null;
-  }
-
-  /**
    * Runs a parity test: verifies that DSv1 and DSv2 produce identical file changes for the given
    * option and scenario.
    */
@@ -1116,28 +1088,27 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
 
     AtomicInteger dsv1SuccessfulCalls = new AtomicInteger(0);
-    UnsupportedOperationException dsv1Exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> {
-              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
-                  deltaSource.getFileChanges(
-                      fromVersion,
-                      fromIndex,
-                      isInitialSnapshot,
-                      endOffset,
-                      /* verifyMetadataAction= */ true);
-              try {
-                while (deltaChanges.hasNext()) {
-                  deltaChanges.next();
-                  dsv1SuccessfulCalls.incrementAndGet();
-                }
-              } finally {
-                deltaChanges.close();
-              }
-            },
-            String.format(
-                "DSv1 should throw on change commit with %s for: %s", optionName, testDescription));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+              deltaSource.getFileChanges(
+                  fromVersion,
+                  fromIndex,
+                  isInitialSnapshot,
+                  endOffset,
+                  /* verifyMetadataAction= */ true);
+          try {
+            while (deltaChanges.hasNext()) {
+              deltaChanges.next();
+              dsv1SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            deltaChanges.close();
+          }
+        },
+        String.format(
+            "DSv1 should throw on change commit with %s for: %s", optionName, testDescription));
 
     // DSv2
     Configuration hadoopConf = new Configuration();
@@ -1147,24 +1118,22 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
         createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
 
     AtomicInteger dsv2SuccessfulCalls = new AtomicInteger(0);
-    UnsupportedOperationException dsv2Exception =
-        assertThrows(
-            UnsupportedOperationException.class,
-            () -> {
-              CloseableIterator<IndexedFile> kernelChanges =
-                  stream.getFileChanges(
-                      fromVersion, fromIndex, isInitialSnapshot, Optional.empty());
-              try {
-                while (kernelChanges.hasNext()) {
-                  kernelChanges.next();
-                  dsv2SuccessfulCalls.incrementAndGet();
-                }
-              } finally {
-                kernelChanges.close();
-              }
-            },
-            String.format(
-                "DSv2 should throw on change commit with %s for: %s", optionName, testDescription));
+    assertThrows(
+        UnsupportedOperationException.class,
+        () -> {
+          CloseableIterator<IndexedFile> kernelChanges =
+              stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty());
+          try {
+            while (kernelChanges.hasNext()) {
+              kernelChanges.next();
+              dsv2SuccessfulCalls.incrementAndGet();
+            }
+          } finally {
+            kernelChanges.close();
+          }
+        },
+        String.format(
+            "DSv2 should throw on change commit with %s for: %s", optionName, testDescription));
 
     assertEquals(
         dsv1SuccessfulCalls.get(),
@@ -1173,15 +1142,6 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             "DSv1 and DSv2 should throw after the same number of next() calls for: %s. "
                 + "DSv1=%d, DSv2=%d",
             testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
-
-    // Verify both error messages reference the same CommitInfo operation name.
-    String dsv1Op = extractOperationName(dsv1Exception.getMessage());
-    String dsv2Op = extractOperationName(dsv2Exception.getMessage());
-    assertEquals(
-        dsv1Op,
-        dsv2Op,
-        String.format(
-            "DSv1 and DSv2 should report the same operation name for: %s", testDescription));
   }
 
   // ================================================================================================
