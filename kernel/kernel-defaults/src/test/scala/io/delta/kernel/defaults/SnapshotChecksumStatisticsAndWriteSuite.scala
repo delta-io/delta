@@ -15,19 +15,30 @@
  */
 package io.delta.kernel.defaults
 
-import io.delta.kernel.{Operation, TableManager}
+import java.util.Optional
+
+import scala.jdk.CollectionConverters._
+
+import io.delta.kernel.{Operation, Table, TableManager, Transaction}
 import io.delta.kernel.Snapshot.ChecksumWriteMode
-import io.delta.kernel.defaults.utils.TestUtils
+import io.delta.kernel.data.Row
+import io.delta.kernel.defaults.utils.WriteUtils
 import io.delta.kernel.engine.Engine
-import io.delta.kernel.types.IntegerType.INTEGER
-import io.delta.kernel.types.StructType
-import io.delta.kernel.utils.CloseableIterable.emptyIterable
+import io.delta.kernel.expressions.Literal
+import io.delta.kernel.hook.PostCommitHook.PostCommitHookType
+import io.delta.kernel.internal.InternalScanFileUtils
+import io.delta.kernel.internal.actions.{CommitInfo, RemoveFile, SingleAction}
+import io.delta.kernel.internal.checksum.ChecksumReader
+import io.delta.kernel.internal.data.GenericRow
+import io.delta.kernel.internal.util.FileNames
+import io.delta.kernel.internal.util.Utils.{singletonCloseableIterator, toCloseableIterator}
+import io.delta.kernel.utils.CloseableIterable
+import io.delta.kernel.utils.CloseableIterable.{emptyIterable, inMemoryIterable}
+import io.delta.kernel.utils.FileStatus
 
 import org.scalatest.funsuite.AnyFunSuite
 
-class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils {
-
-  val testSchema = new StructType().add("id", INTEGER)
+class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with WriteUtils {
 
   private def assertCrcExistsAtLatest(engine: Engine, tablePath: String): Unit = {
     val latestSnapshot = TableManager.loadSnapshot(tablePath).build(engine)
@@ -280,6 +291,175 @@ class SnapshotChecksumStatisticsAndWriteSuite extends AnyFunSuite with TestUtils
       // This simulates a concurrent write scenario where another writer already wrote the CRC
       assert(postCommitSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.SIMPLE)
       postCommitSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE) // should be a no-op
+    }
+  }
+
+  //////////////////////////
+  // getTableStats tests  //
+  //////////////////////////
+
+  /**
+   * Creates a table with versions 0-14, CRC files at 0-14, and a checkpoint at version 10.
+   * Versions 1-10 append data, versions 11-12 remove files, versions 13-14 append again.
+   * Passes (path, engine, expectedNumFiles, expectedTableSizeBytes) at version 14 to the test
+   * function.
+   */
+  private def withTableWithCrcAndCheckpoint(
+      f: (String, Engine, Long, Long) => Unit): Unit = {
+    withTempDirAndEngine { (path, engine) =>
+      val txn0 = TableManager.buildCreateTableTransaction(
+        path,
+        testSchema,
+        "x").build(engine)
+      val result0 = txn0.commit(engine, emptyIterable())
+      result0.getPostCommitSnapshot.get().writeChecksum(engine, ChecksumWriteMode.SIMPLE)
+
+      var postCommitSnapshot = result0.getPostCommitSnapshot.get()
+
+      def stageAppendActions(txn: Transaction): CloseableIterable[Row] = {
+        val data = generateData(testSchema, Seq.empty, Map.empty, 10, 1)
+        getAppendActions(txn, Seq((Map.empty[String, Literal], data)))
+      }
+
+      def commitAndAdvance(dataActions: CloseableIterable[Row]): Unit = {
+        val txn = postCommitSnapshot
+          .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
+        val result = txn.commit(engine, dataActions)
+        postCommitSnapshot = result.getPostCommitSnapshot.get()
+        postCommitSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
+        result.getPostCommitHooks.forEach { hook =>
+          if (hook.getType == PostCommitHookType.CHECKPOINT) {
+            hook.threadSafeInvoke(engine)
+          }
+        }
+      }
+
+      // Versions 1-10: append data (1 file each)
+      for (_ <- 1 to 10) {
+        val txn = postCommitSnapshot
+          .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
+        commitAndAdvance(stageAppendActions(txn))
+      }
+
+      // Versions 11-12: remove one file each
+      for (_ <- 11 to 12) {
+        val scanFileRows = collectScanFileRows(postCommitSnapshot.getScanBuilder.build())
+        val fileStatus = InternalScanFileUtils.getAddFileStatus(scanFileRows.head)
+        val removePath = InternalScanFileUtils.getFilePath(scanFileRows.head)
+        val removeRow = new GenericRow(
+          RemoveFile.FULL_SCHEMA,
+          Map[Integer, Object](
+            Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> removePath,
+            Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) ->
+              Long.box(System.currentTimeMillis()),
+            Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) ->
+              Boolean.box(true),
+            Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("size")) ->
+              Long.box(fileStatus.getSize)).asJava)
+        commitAndAdvance(inMemoryIterable(
+          singletonCloseableIterator(SingleAction.createRemoveFileSingleAction(removeRow))))
+      }
+
+      // Versions 13-14: append data again
+      for (_ <- 13 to 14) {
+        val txn = postCommitSnapshot
+          .buildUpdateTableTransaction("x", Operation.WRITE).build(engine)
+        commitAndAdvance(stageAppendActions(txn))
+      }
+
+      val logPath = new io.delta.kernel.internal.fs.Path(path + "/_delta_log")
+      val crcInfo = ChecksumReader.tryReadChecksumFile(
+        engine,
+        FileStatus.of(FileNames.checksumFile(logPath, 14).toString)).get()
+      f(path, engine, crcInfo.getNumFiles, crcInfo.getTableSizeBytes)
+    }
+  }
+
+  test("No CRC in log segment => getTableStats empty, load cost empty") {
+    withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
+      deleteChecksumFileForTable(path, (10 to 14))
+      val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
+      val stats = snapshot.getStatistics
+      assert(!stats.getTableStats(engine).isPresent)
+      assert(!stats.getIncrementalChecksumLoadCost.isPresent)
+    }
+  }
+
+  test("CRC exists at current version => getTableStats present, load cost 0") {
+    withTableWithCrcAndCheckpoint { (path, engine, expectedNumFiles, expectedTableSize) =>
+      val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
+      val stats = snapshot.getStatistics
+      val tableStats = stats.getTableStats(engine)
+      assert(tableStats.isPresent)
+      assert(tableStats.get().getNumFiles === expectedNumFiles)
+      assert(tableStats.get().getTableSizeBytes === expectedTableSize)
+      assert(stats.getIncrementalChecksumLoadCost === java.util.Optional.of(0))
+    }
+  }
+
+  test("CRC between checkpoint and current, success => getTableStats present, load cost N") {
+    withTableWithCrcAndCheckpoint { (path, engine, expectedNumFiles, expectedTableSize) =>
+      deleteChecksumFileForTable(path, (12 to 14))
+      val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 14)
+      val stats = snapshot.getStatistics
+      val tableStats = stats.getTableStats(engine)
+      assert(tableStats.isPresent)
+      assert(tableStats.get().getNumFiles === expectedNumFiles)
+      assert(tableStats.get().getTableSizeBytes === expectedTableSize)
+      // CRC at v11, snapshot at v14 => cost = 14 - 11 = 3
+      assert(stats.getIncrementalChecksumLoadCost === java.util.Optional.of(3))
+    }
+  }
+
+  test("getTableStats: CRC between checkpoint and current, " +
+    "remove action without size => empty") {
+    withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
+      val snapshot14 = TableManager.loadSnapshot(path).build(engine)
+      val scanFileRows = collectScanFileRows(snapshot14.getScanBuilder.build())
+      val removePath = InternalScanFileUtils.getFilePath(scanFileRows.head)
+
+      // Write delta log directly - Kernel's commit API validates remove size,
+      // but we need a remove without size to test incremental checksum fallback
+      val commitInfoRow = new GenericRow(
+        CommitInfo.FULL_SCHEMA,
+        Map[Integer, Object](
+          Integer.valueOf(CommitInfo.FULL_SCHEMA.indexOf("timestamp")) ->
+            Long.box(System.currentTimeMillis()),
+          Integer.valueOf(CommitInfo.FULL_SCHEMA.indexOf("operation")) -> "WRITE").asJava)
+      val removeRow = new GenericRow(
+        RemoveFile.FULL_SCHEMA,
+        Map[Integer, Object](
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("path")) -> removePath,
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("deletionTimestamp")) ->
+            Long.box(System.currentTimeMillis()),
+          Integer.valueOf(RemoveFile.FULL_SCHEMA.indexOf("dataChange")) ->
+            Boolean.box(true)).asJava)
+      val logPath = new io.delta.kernel.internal.fs.Path(path + "/_delta_log")
+      engine.getJsonHandler.writeJsonFileAtomically(
+        FileNames.deltaFile(logPath, 15),
+        toCloseableIterator(
+          Iterator(
+            SingleAction.createCommitInfoSingleAction(commitInfoRow),
+            SingleAction.createRemoveFileSingleAction(removeRow)).asJava),
+        false)
+
+      deleteChecksumFileForTable(path, Seq(15))
+      val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 15)
+      assert(!snapshot.getStatistics.getTableStats(engine).isPresent)
+    }
+  }
+
+  test("getTableStats: CRC between checkpoint and current, " +
+    "unsupported operation => empty") {
+    withTableWithCrcAndCheckpoint { (path, engine, _, _) =>
+      val snapshot14 = TableManager.loadSnapshot(path).build(engine)
+      val txn = snapshot14
+        .buildUpdateTableTransaction("x", Operation.MANUAL_UPDATE).build(engine)
+      txn.commit(engine, emptyIterable())
+
+      deleteChecksumFileForTable(path, Seq(15))
+      val snapshot = Table.forPath(engine, path).getSnapshotAsOfVersion(engine, 15)
+      assert(!snapshot.getStatistics.getTableStats(engine).isPresent)
     }
   }
 }
