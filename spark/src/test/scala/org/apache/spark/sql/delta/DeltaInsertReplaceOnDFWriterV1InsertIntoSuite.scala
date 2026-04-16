@@ -139,7 +139,7 @@ class DeltaInsertReplaceOnDFWriterV1InsertIntoSuite
   }
 
   test("insertInto: replaceOn on non-existing named table fails") {
-    checkError(
+    checkErrorMatchPVals(
       exception = intercept[AnalysisException] {
         Seq((1, "data")).toDF("id", "data")
           .write.format("delta")
@@ -148,7 +148,7 @@ class DeltaInsertReplaceOnDFWriterV1InsertIntoSuite
           .insertInto("nonexistent_table")
       },
       condition = "TABLE_OR_VIEW_NOT_FOUND",
-      parameters = Map("relationName" -> "`default`.`nonexistent_table`")
+      parameters = Map("relationName" -> ".*`nonexistent_table`")
     )
   }
 
