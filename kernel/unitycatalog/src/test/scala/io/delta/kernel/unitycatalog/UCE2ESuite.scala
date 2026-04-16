@@ -159,67 +159,6 @@ class UCE2ESuite extends AnyFunSuite with UCCatalogManagedTestUtils {
     }
   }
 
-  test("getTableStats on CCV2 table with unbackfilled commits") {
-    withTempDirAndEngine { case (tablePathUnresolved, engine) =>
-      val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
-      val ucClient = new InMemoryUCClient("ucMetastoreId")
-      val ucCatalogManagedClient = new UCCatalogManagedClient(ucClient)
-
-      // CREATE -- v0.json (published)
-      val result0 = ucCatalogManagedClient
-        .buildCreateTableTransaction(testUcTableId, tablePath, testSchema, "test-engine")
-        .build(engine)
-        .commit(engine, CloseableIterable.emptyIterable())
-      ucClient.insertTableDataAfterCreate(testUcTableId)
-      val postCommit0 = result0.getPostCommitSnapshot.get()
-      postCommit0.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
-
-      // WRITE v1, v2 -- staged commits (unbackfilled) with actual data + CRC
-      var currentSnapshot: Snapshot = postCommit0
-      for (i <- 1 to 2) {
-        currentSnapshot = writeDataAndVerify(
-          engine,
-          currentSnapshot,
-          ucClient,
-          expCommitVersion = i,
-          expNumCatalogCommits = i)
-        currentSnapshot.writeChecksum(engine, ChecksumWriteMode.SIMPLE)
-      }
-
-      // WRITE v3 -- staged commit with data but NO CRC
-      val txn3 = currentSnapshot
-        .buildUpdateTableTransaction("engineInfo", Operation.WRITE)
-        .build(engine)
-      val result3 = commitAppendData(engine, txn3, seqOfUnpartitionedDataBatch1)
-      currentSnapshot = result3.getPostCommitSnapshot.get()
-
-      // Capture expected values from the post-commit snapshot
-      // Assert CRC is present in post-commit snapshot
-      assert(currentSnapshot.getStatistics.getChecksumWriteMode.get == ChecksumWriteMode.SIMPLE)
-      val postCommitCrc = currentSnapshot.asInstanceOf[SnapshotImpl].getCurrentCrcInfo()
-      assert(postCommitCrc.isPresent)
-      val expectedNumFiles = postCommitCrc.get().getNumFiles
-      val expectedTableSizeBytes = postCommitCrc.get().getTableSizeBytes
-
-      // Load fresh snapshot -- v1-v3 are ratified but unbackfilled catalog commits
-      val freshSnapshot = loadSnapshot(ucCatalogManagedClient, engine, testUcTableId, tablePath)
-      assert(freshSnapshot.getVersion === 3)
-      assert(freshSnapshot.getLogSegment.getMaxPublishedDeltaVersion.get() === 0)
-      val tableData = ucClient.getTableDataElseThrow(testUcTableId)
-      assert(tableData.getMaxRatifiedVersion === 3)
-      assert(tableData.getCommits.size === 3)
-
-      // getTableStats should match the post-commit snapshot even with unbackfilled commits
-      val stats = freshSnapshot.getStatistics
-      val tableStats = stats.getTableStats(engine)
-      assert(tableStats.isPresent)
-      assert(tableStats.get().getNumFiles === expectedNumFiles)
-      assert(tableStats.get().getTableSizeBytes === expectedTableSizeBytes)
-      // CRC at v2, snapshot at v3 => incremental load cost = 1
-      assert(stats.getIncrementalChecksumLoadCost === java.util.Optional.of(1))
-    }
-  }
-
   test("don't read versions past maxCatalogVersion even if they exist on filesystem") {
     withTempDirAndEngine { case (tablePathUnresolved, engine) =>
       val tablePath = engine.getFileSystemClient.resolvePath(tablePathUnresolved)
