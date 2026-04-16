@@ -247,14 +247,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         df,
         catalogTbl,
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
-      if (deltaOptions.isReplaceOnOrUsingDefined &&
-          CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(
-            deltaOptions, operation.mode)) {
+      if (deltaOptions.isReplaceOnOrUsingDefined) {
         DeltaInsertReplaceOnOrUsingCommand.createCmdForSaveAndSaveAsTable(
           deltaTable = DeltaTableV2(
             spark = spark,
             path = writeCmd.deltaLog.dataPath,
-            catalogTable = catalogTbl),
+            catalogTable = Some(tableDesc)),
           data = df,
           writeCmd = writeCmd,
           apiOrigin = InsertReplaceOnOrUsingAPIOrigin.DFv1SaveAsTable)
