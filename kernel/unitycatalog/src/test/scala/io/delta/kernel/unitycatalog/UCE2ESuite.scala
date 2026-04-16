@@ -25,6 +25,7 @@ import io.delta.kernel.Operation
 import io.delta.kernel.Snapshot
 import io.delta.kernel.Snapshot.ChecksumWriteMode
 import io.delta.kernel.engine.Engine
+import io.delta.kernel.internal.SnapshotImpl
 import io.delta.kernel.internal.util.FileNames
 import io.delta.kernel.utils.CloseableIterable
 import io.delta.storage.commit.{Commit, GetCommitsResponse}
