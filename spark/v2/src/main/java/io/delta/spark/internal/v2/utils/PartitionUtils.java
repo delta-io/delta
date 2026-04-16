@@ -199,6 +199,60 @@ public class PartitionUtils {
         otherConstantMetadataColumnValues);
   }
 
+  /**
+   * Build a PartitionedFile from a CDCDataFile with CDC constants in
+   * otherConstantMetadataColumnValues for the {@link CDCReadFunction} to null-coalesce.
+   */
+  public static PartitionedFile buildCDCPartitionedFile(
+      io.delta.spark.internal.v2.read.CDCDataFile cdcFile,
+      long commitVersion,
+      StructType partitionSchema,
+      String tablePath,
+      ZoneId zoneId) {
+    Map<String, Object> metadata = new HashMap<>();
+    metadata.put(CDCSchemaContext.CDC_COMMIT_VERSION, commitVersion);
+    metadata.put(CDCSchemaContext.CDC_COMMIT_TIMESTAMP, cdcFile.getCommitTimestamp() * 1000L);
+    if (!cdcFile.isAddCDCFile()) {
+      metadata.put(CDCSchemaContext.CDC_TYPE_COLUMN, cdcFile.getChangeType());
+    }
+    Optional<DeletionVectorDescriptor> dvOpt = getCDCFileDvDescriptor(cdcFile);
+    addDvMetadata(metadata, dvOpt);
+
+    MapValue partitionValues = cdcFile.getPartitionValues();
+    InternalRow partitionRow;
+    if (partitionValues != null && partitionSchema.fields().length > 0) {
+      partitionRow = getPartitionRow(partitionValues, partitionSchema, zoneId);
+    } else {
+      partitionRow =
+          InternalRow.fromSeq(
+              CollectionConverters.asScala(
+                      Arrays.asList(new Object[partitionSchema.fields().length]).iterator())
+                  .toSeq());
+    }
+    scala.collection.immutable.Map<String, Object> scalaMetadata =
+        scala.collection.immutable.Map$.MODULE$.from(CollectionConverters.asScala(metadata));
+    return new PartitionedFile(
+        partitionRow,
+        SparkPath.fromUrlString(new Path(tablePath, cdcFile.getPath()).toString()),
+        0L,
+        cdcFile.getFileSize(),
+        new String[0],
+        0L,
+        cdcFile.getFileSize(),
+        scalaMetadata);
+  }
+
+  private static Optional<DeletionVectorDescriptor> getCDCFileDvDescriptor(
+      io.delta.spark.internal.v2.read.CDCDataFile cdcFile) {
+    if (cdcFile.getAddFile() != null) {
+      return cdcFile.getAddFile().getDeletionVector();
+    }
+    if (cdcFile.getRemoveFile() != null) {
+      return cdcFile.getRemoveFile().getDeletionVector();
+    }
+    return Optional.empty();
+  }
+
   /** Create a PartitionReaderFactory for non-CDC reads. */
   public static PartitionReaderFactory createDeltaParquetReaderFactory(
       Snapshot snapshot,
