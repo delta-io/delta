@@ -221,6 +221,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       )
 
     val writer = sourceQuery.map { df =>
+      val catalogTbl = Some(tableDesc)
       // For safety, only extract the file system options here, to create deltaLog.
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
@@ -236,7 +237,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           throw DeltaErrors.operationNotSupportedException("replaceUsing")
         }
       }
-      val catalogTbl = Some(tableDesc)
       val writeCmd = WriteIntoDelta(
         DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
           new Path(loc), fileSystemOptions),
