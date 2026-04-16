@@ -145,7 +145,8 @@ public class PartitionUtilsTest extends DeltaV2TestBase {
             filters,
             options,
             hadoopConf,
-            sqlConf);
+            sqlConf,
+            /* isCDCRead= */ false);
 
     assertNotNull(factory, "PartitionReaderFactory should not be null");
   }

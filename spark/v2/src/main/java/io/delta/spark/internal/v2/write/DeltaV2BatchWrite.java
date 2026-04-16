@@ -121,9 +121,14 @@ class DeltaV2BatchWrite implements Write, BatchWrite {
     } catch (IOException e) {
       throw new UncheckedIOException("Failed to create Hadoop job for Parquet write", e);
     }
+    // TODO: support write-time CDF on batch writes.
     DeltaParquetFileFormatV2 format =
         PartitionUtils.createDeltaParquetFileFormat(
-            initialSnapshot, tablePath, /* optimizationsEnabled */ true, Option.empty());
+            initialSnapshot,
+            tablePath,
+            /* optimizationsEnabled */ true,
+            /* useMetadataRowIndex */ Option.empty(),
+            /* isCDCRead */ false);
     org.apache.spark.sql.execution.datasources.DataSourceUtils.checkFieldNames(format, dataSchema);
     Map<String, String> options = writeInfo.options().asCaseSensitiveMap();
     scala.collection.immutable.Map<String, String> scalaOpts =

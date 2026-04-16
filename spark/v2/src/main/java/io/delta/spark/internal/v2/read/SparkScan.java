@@ -26,6 +26,7 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
@@ -103,6 +104,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
+  private final boolean isCDCRead;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
@@ -143,6 +145,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
+    this.isCDCRead =
+        Boolean.parseBoolean(options.getOrDefault(DeltaOptions.CDC_READ_OPTION(), "false"))
+            || Boolean.parseBoolean(
+                options.getOrDefault(DeltaOptions.CDC_READ_OPTION_LEGACY(), "false"));
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
@@ -150,15 +156,20 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   }
 
   /**
-   * Read schema for the scan, which is the projection of data columns followed by partition
-   * columns.
+   * Read schema for the scan: data columns followed by partition columns, with the three CDC
+   * columns appended for CDC reads.
    */
   @Override
   public StructType readSchema() {
+    int cdcCount = isCDCRead ? CDCSchemaContext.cdcFields().length : 0;
     final List<StructField> fields =
-        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
+        new ArrayList<>(
+            readDataSchema.fields().length + partitionSchema.fields().length + cdcCount);
     Collections.addAll(fields, readDataSchema.fields());
     Collections.addAll(fields, partitionSchema.fields());
+    if (isCDCRead) {
+      Collections.addAll(fields, CDCSchemaContext.cdcFields());
+    }
     return new StructType(fields.toArray(new StructField[0]));
   }
 
@@ -187,15 +198,21 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       return Scan.ColumnarSupportMode.UNSUPPORTED;
     }
 
-    // When the table supports deletion vectors, the reader factory augments the read schema
-    // with internal columns via DeletionVectorSchemaContext. Reuse the same class here so the
-    // batch-read check stays consistent — if DeletionVectorSchemaContext adds new fields in
-    // the future, this code path picks them up automatically.
-    StructType schemaForBatchCheck =
-        PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)
-            ? new DeletionVectorSchemaContext(readDataSchema, partitionSchema)
-                .getSchemaWithDvColumn()
-            : readDataSchema;
+    // When CDC reads are enabled or the table supports deletion vectors, the reader factory
+    // augments the read schema with internal columns via CDCSchemaContext /
+    // DeletionVectorSchemaContext. Reuse the same classes here, in the same order as the
+    // factory, so the batch-read check stays consistent — if either context adds new fields
+    // in the future, this code path picks them up automatically.
+    StructType schemaForBatchCheck = readDataSchema;
+    if (isCDCRead) {
+      schemaForBatchCheck =
+          new CDCSchemaContext(schemaForBatchCheck, partitionSchema).getReadDataSchemaWithCDC();
+    }
+    if (PartitionUtils.tableSupportsDeletionVectors(initialSnapshot)) {
+      schemaForBatchCheck =
+          new DeletionVectorSchemaContext(schemaForBatchCheck, partitionSchema)
+              .getSchemaWithDvColumn();
+    }
 
     return ParquetUtils.isBatchReadSupportedForSchema(sqlConf, schemaForBatchCheck)
         ? Scan.ColumnarSupportMode.SUPPORTED
@@ -204,6 +221,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public Batch toBatch() {
+    if (isCDCRead) {
+      throw new UnsupportedOperationException(
+          "Batch reads with CDC (readChangeFeed / readChangeData) are not supported in the V2 "
+              + "connector. Either remove the CDC read option or use a streaming read.");
+    }
     ensurePlanned();
     return new SparkBatch(
         initialSnapshot,
