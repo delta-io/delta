@@ -26,10 +26,12 @@ import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.internal.actions.AddFile;
 import io.delta.kernel.internal.data.ScanStateRow;
 import io.delta.kernel.utils.CloseableIterator;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
+import io.delta.spark.internal.v2.utils.SchemaUtils;
 import java.io.IOException;
 import java.time.ZoneId;
 import java.util.*;
@@ -110,6 +112,7 @@ public class SparkScan
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
+  private final boolean isCDCRead;
   private final CaseInsensitiveStringMap options;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
   private final SQLConf sqlConf;
@@ -150,6 +153,10 @@ public class SparkScan
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
+    this.isCDCRead =
+        Boolean.parseBoolean(options.getOrDefault(DeltaOptions.CDC_READ_OPTION(), "false"))
+            || Boolean.parseBoolean(
+                options.getOrDefault(DeltaOptions.CDC_READ_OPTION_LEGACY(), "false"));
     this.scalaOptions = ScalaUtils.toScalaMap(options);
     this.hadoopConf = SparkSession.active().sessionState().newHadoopConfWithOptions(scalaOptions);
     this.sqlConf = SQLConf.get();
@@ -162,6 +169,19 @@ public class SparkScan
    */
   @Override
   public StructType readSchema() {
+    if (isCDCRead) {
+      // For CDC reads, use table schema order + CDC columns to match DSv1's
+      // CDCReader.cdcReadSchema() and ApplyV2Streaming.cdcAugmentedSchema().
+      // The internal batch from buildReaderWithPartitionValues uses [readDataSchema, CDC,
+      // partition] order, but CDCReadFunction reorders to match this schema.
+      StructType tableSchema =
+          SchemaUtils.convertKernelSchemaToSparkSchema(initialSnapshot.getSchema());
+      final List<StructField> fields =
+          new ArrayList<>(tableSchema.fields().length + CDCSchemaContext.cdcFields().length);
+      Collections.addAll(fields, tableSchema.fields());
+      Collections.addAll(fields, CDCSchemaContext.cdcFields());
+      return new StructType(fields.toArray(new StructField[0]));
+    }
     final List<StructField> fields =
         new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
     Collections.addAll(fields, readDataSchema.fields());

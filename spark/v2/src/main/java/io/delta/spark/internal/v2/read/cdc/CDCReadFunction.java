@@ -19,6 +19,9 @@ import io.delta.spark.internal.v2.utils.CloseableIterator;
 import java.io.Serializable;
 import javax.annotation.Nullable;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.ProjectingInternalRow;
+import org.apache.spark.sql.catalyst.expressions.GenericInternalRow;
+import org.apache.spark.sql.catalyst.expressions.JoinedRow;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.execution.vectorized.ConstantColumnVector;
 import org.apache.spark.sql.types.DataTypes;
@@ -31,24 +34,21 @@ import scala.collection.immutable.Map;
 import scala.runtime.AbstractFunction1;
 
 /**
- * Wraps a Parquet reader function to null-coalesce CDC columns with per-file constants.
+ * Decorates a Parquet reader to inject CDC metadata columns ({@code _change_type}, {@code
+ * _commit_version}, {@code _commit_timestamp}) from per-file constants. For explicit CDC files
+ * (AddCDCFile), {@code _change_type} is preserved from the Parquet data.
  *
- * <p>The Parquet reader includes CDC columns ({@code _change_type}, {@code _commit_version}, {@code
- * _commit_timestamp}) in its read schema. For files that don't contain these columns (inferred CDC
- * from AddFile/RemoveFile), Parquet fills them with null via schema evolution. This decorator
- * replaces those nulls with per-file constants from {@link
- * PartitionedFile#otherConstantMetadataColumnValues()}.
- *
- * <p>For explicit CDC files (AddCDCFile), {@code _change_type} comes from Parquet data and is
- * preserved; only {@code _commit_version} and {@code _commit_timestamp} are injected.
- *
- * <p>Follows the same decorator pattern as {@link
- * io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction}.
+ * @see io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction
  */
 public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator<InternalRow>>
     implements Serializable {
 
   private static final long serialVersionUID = 1L;
+
+  // Indices within the 3-element CDC row: [_change_type, _commit_version, _commit_timestamp]
+  private static final int CHANGE_TYPE_IDX = 0;
+  private static final int COMMIT_VERSION_IDX = 1;
+  private static final int COMMIT_TIMESTAMP_IDX = 2;
 
   private final Function1<PartitionedFile, Iterator<InternalRow>> baseReadFunc;
   private final CDCSchemaContext cdcSchemaContext;
@@ -67,6 +67,7 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
   public Iterator<InternalRow> apply(PartitionedFile file) {
     // Extract CDC constants from PartitionedFile metadata
     Map<String, Object> constants = file.otherConstantMetadataColumnValues();
+    // Null for explicit CDC (AddCDCFile) — _change_type comes from the Parquet data per-row.
     @Nullable
     String changeType =
         constants.contains(CDCSchemaContext.CDC_TYPE_COLUMN)
@@ -82,29 +83,36 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
     }
   }
 
-  /** Row-based: wrap each InternalRow to reorder and null-coalesce CDC columns. */
+  /** Row-based: project table columns, inject CDC constants, join into output order. */
   private Iterator<InternalRow> applyRow(
       PartitionedFile file,
       @Nullable String changeType,
       long commitVersion,
       long commitTimestampMicros) {
-    int[] outputToInternal = cdcSchemaContext.getOutputToInternalMapping();
-    int tableColCount = cdcSchemaContext.getTableColCount();
     int changeTypeInternalIdx = cdcSchemaContext.getChangeTypeInternalIndex();
     UTF8String changeTypeUtf8 = changeType != null ? UTF8String.fromString(changeType) : null;
 
+    // Reusable objects — allocated once per file, not per row.
+    ProjectingInternalRow dataProjection =
+        ProjectingInternalRow.apply(
+            /* schema= */ cdcSchemaContext.getTableSchema(),
+            /* ordinals= */ cdcSchemaContext.getTableColumnOrdinals());
+    GenericInternalRow cdcRow = new GenericInternalRow(3);
+    cdcRow.setLong(COMMIT_VERSION_IDX, commitVersion);
+    cdcRow.setLong(COMMIT_TIMESTAMP_IDX, commitTimestampMicros);
+    JoinedRow joined = new JoinedRow();
+
     return CloseableIterator.wrap(baseReadFunc.apply(file))
         .mapCloseable(
-            row ->
-                (InternalRow)
-                    new CDCCoalesceRow(
-                        row,
-                        outputToInternal,
-                        tableColCount,
-                        changeTypeInternalIdx,
-                        changeTypeUtf8,
-                        commitVersion,
-                        commitTimestampMicros));
+            row -> {
+              dataProjection.project(row);
+              cdcRow.update(
+                  CHANGE_TYPE_IDX,
+                  changeTypeUtf8 != null
+                      ? changeTypeUtf8
+                      : row.getUTF8String(changeTypeInternalIdx));
+              return (InternalRow) joined.apply(dataProjection, cdcRow);
+            });
   }
 
   /** Vectorized: reorder and replace CDC ColumnVectors in each batch. */
@@ -159,14 +167,19 @@ public class CDCReadFunction extends AbstractFunction1<PartitionedFile, Iterator
     for (int outIdx = 0; outIdx < tableColCount; outIdx++) {
       columns[outIdx] = batch.column(outputToInternal[outIdx]);
     }
-    // CDC columns: constants (or original _change_type for explicit CDC)
+    // CDC columns: constants (or original _change_type for explicit CDC).
+    // The replaced CDC ColumnVectors from the original batch (null-filled by schema evolution)
+    // are not explicitly closed here — their lifecycle is managed by the base Spark vectorized
+    // reader that owns the original batch.
+    int cdcStart = tableColCount;
     if (changeType != null) {
-      columns[tableColCount] = createConstantStringVector(changeType, numRows);
+      columns[cdcStart + CHANGE_TYPE_IDX] = createConstantStringVector(changeType, numRows);
     } else {
-      columns[tableColCount] = batch.column(changeTypeInternalIdx);
+      columns[cdcStart + CHANGE_TYPE_IDX] = batch.column(changeTypeInternalIdx);
     }
-    columns[tableColCount + 1] = createConstantLongVector(commitVersion, numRows);
-    columns[tableColCount + 2] = createConstantTimestampVector(commitTimestampMicros, numRows);
+    columns[cdcStart + COMMIT_VERSION_IDX] = createConstantLongVector(commitVersion, numRows);
+    columns[cdcStart + COMMIT_TIMESTAMP_IDX] =
+        createConstantTimestampVector(commitTimestampMicros, numRows);
 
     return new ColumnarBatch(columns, numRows);
   }
