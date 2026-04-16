@@ -16,7 +16,7 @@
 
 package io.delta.sql
 
-import io.delta.internal.ApplyV2Streaming
+import io.delta.internal.{ApplyV2ReadOptions, ApplyV2Streaming}
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
@@ -82,6 +82,13 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     // handled separately via the nested NoOpRule class below (kept for MiMa).
     extensions.injectResolutionRule { session =>
       new ApplyV2Streaming(session)
+    }
+
+    // Plumb read options into V2 StreamingRelationV2's SparkTable when those options change a
+    // property the table derives from them (today: CDC; future: schema evolution). Runs after
+    // ApplyV2Streaming so it sees both V1-converted and catalog-loaded relations.
+    extensions.injectResolutionRule { _ =>
+      new ApplyV2ReadOptions
     }
   }
 
