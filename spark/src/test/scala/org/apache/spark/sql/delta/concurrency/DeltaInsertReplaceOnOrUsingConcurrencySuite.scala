@@ -25,7 +25,6 @@ import org.apache.spark.sql.Row
 class DeltaInsertReplaceOnOrUsingMaterializationWithoutParallelConcurrencySuite
   extends DeltaInsertReplaceOnOrUsingConcurrencyTestUtils {
 
-
   import InsertReplaceOnOrUsingAPIOrigin._
 
   // In non-parallel mode, delete is always before insert.
