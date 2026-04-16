@@ -1820,7 +1820,7 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
     }
   }
 
-  testQuietly("deltaSourceIgnoreChangesError contains removeFile, version, tablePath") {
+  testQuietly("deltaSourceIgnoreChangesError contains changeInfo, version, tablePath") {
     withTempDirs { (inputDir, outputDir, checkpointDir) =>
       Seq(1, 2, 3).toDF("x").write.format("delta").save(inputDir.toString)
       val df = loadStreamWithOptions(inputDir.toString, Map.empty)
