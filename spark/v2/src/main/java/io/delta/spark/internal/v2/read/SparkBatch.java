@@ -88,6 +88,7 @@ public class SparkBatch implements Batch {
 
   @Override
   public PartitionReaderFactory createReaderFactory() {
+    // TODO: support write-time CDF on batch reads.
     return PartitionUtils.createDeltaParquetReaderFactory(
         snapshot,
         dataSchema,
@@ -96,7 +97,8 @@ public class SparkBatch implements Batch {
         dataFilters,
         scalaOptions,
         hadoopConf,
-        sqlConf);
+        sqlConf,
+        /* isCDCRead */ false);
   }
 
   @Override

@@ -20,6 +20,7 @@ import static java.util.Objects.requireNonNull;
 import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.And;
 import io.delta.kernel.expressions.Predicate;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import io.delta.spark.internal.v2.snapshot.DeltaSnapshotManager;
 import io.delta.spark.internal.v2.utils.ExpressionUtils;
 import java.util.*;
@@ -99,10 +100,16 @@ public class SparkScanBuilder
   @Override
   public void pruneColumns(StructType requiredSchema) {
     requireNonNull(requiredSchema, "requiredSchema is null");
+    // CDC columns are injected later by CDCReadFunction, so strip them here.
     this.requiredDataSchema =
         new StructType(
             Arrays.stream(requiredSchema.fields())
-                .filter(f -> !partitionColumnSet.contains(f.name().toLowerCase(Locale.ROOT)))
+                .filter(
+                    f -> {
+                      String name = f.name().toLowerCase(Locale.ROOT);
+                      return !partitionColumnSet.contains(name)
+                          && !CDCSchemaContext.isCDCColumn(name);
+                    })
                 .toArray(StructField[]::new));
   }
 

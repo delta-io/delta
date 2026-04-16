@@ -24,6 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.delta.spark.internal.v2.DeltaV2TestBase;
+import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -515,5 +516,48 @@ public class SparkTableTest extends DeltaV2TestBase {
         };
 
     assertNotNull(table.newWriteBuilder(writeInfo), "newWriteBuilder should return non-null");
+  }
+
+  @Test
+  public void testSchemaWithReadChangeFeedIncludesCDCColumns(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_cdc_on (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_cdc_on");
+    Map<String, String> options = Collections.singletonMap("readChangeFeed", "true");
+    SparkTable table = new SparkTable(identifier, path, options);
+
+    StructType schema = table.schema();
+    List<String> names = Arrays.asList(schema.fieldNames());
+    assertTrue(names.contains("id"), "physical column missing: " + names);
+    assertTrue(names.contains(CDCSchemaContext.CDC_TYPE_COLUMN), "missing _change_type: " + names);
+    assertTrue(
+        names.contains(CDCSchemaContext.CDC_COMMIT_VERSION), "missing _commit_version: " + names);
+    assertTrue(
+        names.contains(CDCSchemaContext.CDC_COMMIT_TIMESTAMP),
+        "missing _commit_timestamp: " + names);
+
+    // Spark Table contract: columns() must agree with schema().
+    List<String> columnNames =
+        Arrays.stream(table.columns())
+            .map(Column::name)
+            .collect(java.util.stream.Collectors.toList());
+    assertEquals(names, columnNames, "columns() must agree with schema()");
+  }
+
+  @Test
+  public void testSchemaWithoutReadChangeFeedExcludesCDCColumns(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_cdc_off (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_cdc_off");
+    SparkTable table = new SparkTable(identifier, path, Collections.emptyMap());
+
+    StructType schema = table.schema();
+    List<String> names = Arrays.asList(schema.fieldNames());
+    assertFalse(names.contains(CDCSchemaContext.CDC_TYPE_COLUMN), "unexpected _change_type");
+    assertFalse(names.contains(CDCSchemaContext.CDC_COMMIT_VERSION), "unexpected _commit_version");
+    assertFalse(
+        names.contains(CDCSchemaContext.CDC_COMMIT_TIMESTAMP), "unexpected _commit_timestamp");
   }
 }

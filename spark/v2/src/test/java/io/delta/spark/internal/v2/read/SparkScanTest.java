@@ -744,6 +744,159 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   // ================================================================================================
+  // Tests for CDC readSchema
+  // ================================================================================================
+
+  @Test
+  public void testReadSchema_cdcRead_returnsTableSchemaWithCDCColumns() {
+    // When readChangeFeed=true and no pruning is pushed, readSchema() returns
+    // readDataSchema + partitionSchema + CDC columns. Without pruneColumns, readDataSchema
+    // equals the full data schema, so all table columns appear.
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    StructType schema = scan.readSchema();
+
+    // Table schema: name STRING, cnt INT, date STRING, city STRING, part INT (logical order)
+    // CDC columns: _change_type STRING, _commit_version LONG, _commit_timestamp TIMESTAMP
+    assertTrue(schema.fieldIndex("name") >= 0);
+    assertTrue(schema.fieldIndex("cnt") >= 0);
+    assertTrue(schema.fieldIndex("date") >= 0);
+    assertTrue(schema.fieldIndex("city") >= 0);
+    assertTrue(schema.fieldIndex("part") >= 0);
+    assertTrue(schema.fieldIndex("_change_type") >= 0);
+    assertTrue(schema.fieldIndex("_commit_version") >= 0);
+    assertTrue(schema.fieldIndex("_commit_timestamp") >= 0);
+    assertEquals(8, schema.fields().length);
+
+    // CDC columns should be at the end, after table columns
+    assertEquals("_change_type", schema.fields()[5].name());
+    assertEquals("_commit_version", schema.fields()[6].name());
+    assertEquals("_commit_timestamp", schema.fields()[7].name());
+  }
+
+  @Test
+  public void testReadSchema_nonCdcRead_returnsDataAndPartitionSchema() {
+    // Without readChangeFeed, readSchema() returns readDataSchema + partitionSchema.
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+
+    StructType schema = scan.readSchema();
+
+    // Should have data columns + partition columns, no CDC columns
+    assertTrue(schema.fieldIndex("name") >= 0);
+    assertTrue(schema.fieldIndex("cnt") >= 0);
+    assertTrue(schema.fieldIndex("date") >= 0);
+    assertTrue(schema.fieldIndex("city") >= 0);
+    assertTrue(schema.fieldIndex("part") >= 0);
+    assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_change_type"));
+    assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_commit_version"));
+  }
+
+  @Test
+  public void testPruneColumns_cdcRead_filtersCDCColumns() {
+    // pruneColumns should filter out partition and CDC columns from the data schema, since
+    // partition columns are read separately and CDC columns are injected by CDCReadFunction.
+    // The remaining data columns are honored — pruning a data column ("cnt") shrinks the
+    // underlying parquet read.
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    StructType requiredSchema =
+        new StructType()
+            .add("name", DataTypes.StringType)
+            .add("_change_type", DataTypes.StringType)
+            .add("_commit_version", DataTypes.LongType)
+            .add("_commit_timestamp", DataTypes.TimestampType)
+            .add("date", DataTypes.StringType);
+    builder.pruneColumns(requiredSchema);
+
+    SparkScan scan = (SparkScan) builder.build();
+
+    // readDataSchema reflects pruning: only "name" remains (cnt dropped, partition + CDC filtered)
+    StructType readDataSchema = scan.getReadDataSchema();
+    assertEquals(1, readDataSchema.fields().length);
+    assertEquals("name", readDataSchema.fields()[0].name());
+
+    // readSchema = readDataSchema + partition + CDC
+    StructType readSchema = scan.readSchema();
+    assertTrue(readSchema.fieldIndex("name") >= 0);
+    assertTrue(readSchema.fieldIndex("date") >= 0);
+    assertTrue(readSchema.fieldIndex("_change_type") >= 0);
+    assertTrue(readSchema.fieldIndex("_commit_version") >= 0);
+    assertTrue(readSchema.fieldIndex("_commit_timestamp") >= 0);
+    // Pruned column "cnt" should not appear.
+    assertThrows(IllegalArgumentException.class, () -> readSchema.fieldIndex("cnt"));
+  }
+
+  @Test
+  public void testCdcRead_toBatchRejectsCDCOptions() {
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    // Sanity: scan still advertises the CDC schema (this is needed for the streaming path).
+    StructType advertised = scan.readSchema();
+    assertEquals(8, advertised.fields().length, "scan should advertise 5 base + 3 CDC columns");
+    assertTrue(advertised.fieldIndex("_change_type") >= 0);
+
+    UnsupportedOperationException e =
+        assertThrows(UnsupportedOperationException.class, scan::toBatch);
+    assertTrue(
+        e.getMessage().contains("CDC"),
+        "exception message should mention CDC; was: " + e.getMessage());
+  }
+
+  @Test
+  public void testCdcRead_toBatchRejectsLegacyCDCOption() {
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeData", "true");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(cdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(8, scan.readSchema().fields().length);
+    UnsupportedOperationException e =
+        assertThrows(UnsupportedOperationException.class, scan::toBatch);
+    assertTrue(e.getMessage().contains("CDC"));
+  }
+
+  @Test
+  public void testCdcRead_invalidBooleanThrowsOnConstruction() {
+    Map<String, String> cdcOptions = new HashMap<>();
+    cdcOptions.put("readChangeFeed", "yes");
+    CaseInsensitiveStringMap cdcOptionsMap = new CaseInsensitiveStringMap(cdcOptions);
+
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> ((SparkScanBuilder) table.newScanBuilder(cdcOptionsMap)).build());
+  }
+
+  @Test
+  public void testCdcRead_falseDoesNotAdvertiseCDCColumns() {
+    Map<String, String> nonCdcOptions = new HashMap<>();
+    nonCdcOptions.put("readChangeFeed", "false");
+    CaseInsensitiveStringMap nonCdcOptionsMap = new CaseInsensitiveStringMap(nonCdcOptions);
+
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(nonCdcOptionsMap);
+    SparkScan scan = (SparkScan) builder.build();
+
+    StructType schema = scan.readSchema();
+    assertThrows(IllegalArgumentException.class, () -> schema.fieldIndex("_change_type"));
+    assertNotNull(scan.toBatch());
+  }
+
+  // ================================================================================================
   // Tests for equals and hashCode
   // ================================================================================================
 
