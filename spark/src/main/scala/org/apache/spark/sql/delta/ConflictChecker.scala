@@ -67,8 +67,8 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation,
-    val convertedIcebergMetadata: Option[UniformMetadata] = None
+    val op: DeltaOperations.Operation
+    , val convertedIcebergMetadata: Option[UniformMetadata] = None
  ) {
 
   /**
