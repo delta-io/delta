@@ -52,7 +52,6 @@ object InsertAtomicReplaceExecutionObserver
 
 /** Default observer does nothing. */
 object NoOpInsertAtomicReplaceExecutionObserver extends InsertAtomicReplaceExecutionObserver {
-
   override def delete[T](f: => T): T = f
 
   override def insert[T](f: => T): T = f
