@@ -7,6 +7,11 @@ name: "Publish Docs [DISABLED]"
 on:
   workflow_dispatch: # manual-only, auto triggers removed
 
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build_api_docs:
     if: false # SECURITY: disabled - supply chain attack mitigation
