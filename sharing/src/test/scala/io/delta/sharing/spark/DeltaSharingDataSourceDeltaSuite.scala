@@ -21,11 +21,12 @@ package io.delta.sharing.spark
 
 import scala.concurrent.duration._
 
-import org.apache.spark.sql.delta.{DeltaConfigs, VariantShreddingPreviewTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
+import org.apache.spark.sql.delta.{DeltaConfigs, DeltaLog, VariantShreddingPreviewTableFeature, VariantShreddingTableFeature, VariantTypePreviewTableFeature, VariantTypeTableFeature}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 import org.apache.spark.sql.{DataFrame, QueryTest, Row}
+import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.DateTimeUtils
 import org.apache.spark.sql.delta.sharing.DeltaSharingTestSparkUtils
 import org.apache.spark.sql.functions.col
@@ -119,11 +120,6 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   def assertLimit(tableName: String, expectedLimit: Seq[Long]): Unit = {
     assert(expectedLimit ==
       TestClientForDeltaFormatSharing.limits.filter(_._1.contains(tableName)).map(_._2))
-  }
-
-  def assertRequestedFormat(tableName: String, expectedFormat: Seq[String]): Unit = {
-    assert(expectedFormat ==
-      TestClientForDeltaFormatSharing.requestedFormat.filter(_._1.contains(tableName)).map(_._2))
   }
 
   def assertJsonPredicateHints(tableName: String, expectedHints: Seq[String]): Unit = {
@@ -1506,22 +1502,27 @@ trait DeltaSharingDataSourceDeltaSuiteBase
   Seq(
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
-    VariantShreddingPreviewTableFeature
+    VariantShreddingPreviewTableFeature,
+    VariantShreddingTableFeature
   ).foreach { feature =>
     test(s"basic variant test - table feature: $feature") {
       withTempDir { tempDir =>
+        val shreddingConfs = Map(
+          "spark.sql.variant.writeShredding.enabled" -> "true",
+          "spark.sql.variant.allowReadingShredded" -> "true",
+          "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
+        )
         val extraConfs = feature match {
-          case VariantShreddingPreviewTableFeature => Map(
-            "spark.sql.variant.writeShredding.enabled" -> "true",
-            "spark.sql.variant.allowReadingShredded" -> "true",
-            "spark.sql.variant.forceShreddingSchemaForTest" -> "a long"
-          )
-          case _ => Map.empty
+          case VariantShreddingPreviewTableFeature => shreddingConfs
+          case VariantShreddingTableFeature => shreddingConfs +
+            (DeltaSQLConf.FORCE_USE_PREVIEW_SHREDDING_FEATURE.key -> "false")
+          case _ => Map.empty[String, String]
         }
         withSQLConf(extraConfs.toSeq: _*) {
           val deltaTableName = s"variant_table_${feature.name.replaceAll("-", "_")}"
           withTable(deltaTableName) {
-            if (feature == VariantShreddingPreviewTableFeature) {
+            if (feature == VariantShreddingPreviewTableFeature ||
+                feature == VariantShreddingTableFeature) {
               spark.sql(s"CREATE TABLE $deltaTableName(v variant) USING DELTA " +
                 s"TBLPROPERTIES('${DeltaConfigs.ENABLE_VARIANT_SHREDDING.key}' = 'true')")
             } else {
@@ -1535,6 +1536,12 @@ trait DeltaSharingDataSourceDeltaSuiteBase
               .format("delta")
               .mode("append")
               .insertInto(deltaTableName)
+
+            val (_, snapshot) =
+              DeltaLog.forTableWithSnapshot(spark, TableIdentifier(deltaTableName))
+            assert(snapshot.protocol.readerAndWriterFeatures.contains(feature),
+              s"Expected table feature ${feature.name} not found in " +
+                s"protocol: ${snapshot.protocol}")
 
             val sharedTableName = s"shared_table_variant_${feature.name.replaceAll("-", "_")}"
             prepareMockedClientAndFileSystemResult(deltaTableName, sharedTableName)
@@ -1697,6 +1704,53 @@ trait DeltaSharingDataSourceDeltaSuiteBase
             )
             checkAnswer(df, expected)
           }
+        }
+      }
+    }
+  }
+  test("callerOrg option is passed to DeltaSharingRestClient") {
+    withTempDirs { (inputDir, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_caller_org"
+      withTable(deltaTableName) {
+        createSimpleTable(deltaTableName, enableCdf = false)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "one")""")
+
+        val sharedTableName = "shared_table_caller_org"
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName)
+        DeltaSharingUtils.overrideSingleBlock[Long](
+          blockId = TestClientForDeltaFormatSharing.getBlockId(
+            sharedTableName, "getTableVersion"),
+          value = 1
+        )
+
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val profileFile = prepareProfileFile(inputDir)
+          val tablePath =
+            s"${profileFile.getCanonicalPath}#share1.default.$sharedTableName"
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .option(DeltaSharingOptions.CALLER_ORG_OPTION, "test-org")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "test-org",
+            "callerOrg should be passed through to the client"
+          )
+
+          TestClientForDeltaFormatSharing.lastCallerOrg = ""
+          spark.read
+            .format("deltaSharing")
+            .option("responseFormat", "delta")
+            .load(tablePath)
+            .collect()
+          assert(
+            TestClientForDeltaFormatSharing.lastCallerOrg == "",
+            "callerOrg should be empty when not set"
+          )
         }
       }
     }

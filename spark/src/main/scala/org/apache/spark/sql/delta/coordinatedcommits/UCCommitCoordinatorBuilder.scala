@@ -43,6 +43,9 @@ import org.apache.spark.sql.SparkSession
 object UCCommitCoordinatorBuilder
     extends CatalogOwnedCommitCoordinatorBuilder with DeltaLogging {
 
+  /** The coordinator name used in table metadata to identify UC-managed tables. */
+  final val COORDINATOR_NAME: String = "unity-catalog"
+
   /** Prefix for Spark SQL catalog configurations. */
   final private val SPARK_SQL_CATALOG_PREFIX = "spark.sql.catalog."
 
@@ -64,7 +67,7 @@ object UCCommitCoordinatorBuilder
   // Use a var instead of val for ease of testing by injecting different UCClientFactory.
   private[delta] var ucClientFactory: UCClientFactory = UCTokenBasedRestClientFactory
 
-  override def getName: String = "unity-catalog"
+  override def getName: String = COORDINATOR_NAME
 
   override def build(spark: SparkSession, conf: Map[String, String]): CommitCoordinatorClient = {
     val metastoreId = conf.getOrElse(
@@ -289,22 +292,50 @@ trait UCClientFactory {
 
 object UCTokenBasedRestClientFactory extends UCClientFactory {
   override def createUCClient(uri: String, authConfig: Map[String, String]): UCClient = {
+    createUCClientWithVersions(uri, authConfig, defaultAppVersions)
+  }
+
+  /**
+   * Creates a UC client with the given application versions for telemetry.
+   * The provided `appVersions` map is used as-is; callers are responsible for
+   * including all desired version entries.
+   */
+  def createUCClientWithVersions(
+      uri: String,
+      authConfig: Map[String, String],
+      appVersions: Map[String, String]): UCClient = {
     // Create TokenProvider from the authentication configuration map
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    val appVersions = Map(
+    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {
+    Map(
       "Delta" -> io.delta.VERSION,
       "Spark" -> org.apache.spark.SPARK_VERSION,
       "Scala" -> scala.util.Properties.versionNumberString,
       "Java" -> System.getProperty("java.version")
     )
-    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+  }
+
+  /** Returns the default app versions as a mutable Java map for easy extension. */
+  def defaultAppVersionsAsJava: java.util.Map[String, String] = {
+    new java.util.HashMap(defaultAppVersions.asJava)
   }
 
   /** Java-friendly overload that accepts a java.util.Map */
   def createUCClient(uri: String, authConfig: java.util.Map[String, String]): UCClient = {
     createUCClient(uri, authConfig.asScala.toMap)
+  }
+
+  /** Java-friendly overload that accepts application versions for telemetry. */
+  def createUCClientWithVersions(
+      uri: String,
+      authConfig: java.util.Map[String, String],
+      appVersions: java.util.Map[String, String]): UCClient = {
+    createUCClientWithVersions(uri, authConfig.asScala.toMap, appVersions.asScala.toMap)
   }
 }
 

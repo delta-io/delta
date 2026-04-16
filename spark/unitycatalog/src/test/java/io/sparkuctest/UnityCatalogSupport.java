@@ -20,6 +20,7 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
+import io.unitycatalog.client.VersionUtils;
 import io.unitycatalog.client.api.CatalogsApi;
 import io.unitycatalog.client.api.SchemasApi;
 import io.unitycatalog.client.auth.TokenProvider;
@@ -31,6 +32,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.Properties;
 import org.apache.commons.io.FileUtils;
 import org.apache.log4j.Logger;
@@ -336,5 +338,20 @@ public abstract class UnityCatalogSupport {
   /** Recursively deletes a directory and all its contents. */
   private void deleteRecursively(File file) {
     FileUtils.deleteQuietly(file);
+  }
+
+  /** Returns Unity Catalog Spark version, like [0, 4, 0]. */
+  protected static int[] getUnityCatalogSparkVersion() {
+    String version = Preconditions.checkNotNull(VersionUtils.VERSION);
+    String[] parts = version.split("[.\\-]", 4);
+    int major = Integer.parseInt(parts[0]);
+    int minor = Integer.parseInt(parts[1]);
+    int patch = Integer.parseInt(parts[2]);
+    return new int[] {major, minor, patch};
+  }
+
+  /** Returns whether the Unity Catalog Spark version is at least {@code major.minor.patch}. */
+  protected static boolean isUnityCatalogSparkAtLeast(int major, int minor, int patch) {
+    return Arrays.compare(getUnityCatalogSparkVersion(), new int[] {major, minor, patch}) >= 0;
   }
 }

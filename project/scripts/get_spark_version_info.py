@@ -116,12 +116,16 @@ def main():
             spark_version, field = args.get_field
             
             # Find the version entry by matching:
+            # - "default" matches isDefault=true
             # - "master" matches isMaster=true
             # - short version like "4.0" matches shortVersion
             # - full version like "4.0.1" matches fullVersion
             version_entry = None
             for v in versions:
-                if spark_version == "master" and v.get("isMaster", False):
+                if spark_version == "default" and v.get("isDefault", False):
+                    version_entry = v
+                    break
+                elif spark_version == "master" and v.get("isMaster", False):
                     version_entry = v
                     break
                 elif spark_version == v["shortVersion"] or spark_version == v["fullVersion"]:

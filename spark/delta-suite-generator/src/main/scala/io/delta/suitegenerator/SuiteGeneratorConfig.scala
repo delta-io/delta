@@ -148,12 +148,8 @@ object SuiteGeneratorConfig {
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
-    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE = DimensionWithMultipleValues(
-      "StructEvolutionPreserveNullSource",
-      List("Disabled", "Enabled"), alias = Some("PreserveNullSource"))
-    val STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR = DimensionWithMultipleValues(
-      "StructEvolutionPreserveNullSourceUpdateStar",
-      List("Disabled", "Enabled"), alias = Some("PreserveNullSourceUpdateStar"))
+    val V2_IN_MEMORY_TABLE_MERGE =
+      DimensionMixin("MergeIntoSuiteInMemoryTestTable", alias = Some("InMemoryTable"))
   }
 
   private object Tests {
@@ -233,6 +229,10 @@ object SuiteGeneratorConfig {
           )
         ),
         TestConfig(
+          List("MergeIntoNotMatchedBySourceSuite"),
+          List(List(Dims.MERGE_SQL, Dims.V2_IN_MEMORY_TABLE_MERGE, Dims.NAME_BASED))
+        ),
+        TestConfig(
           "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
           List(Dims.MERGE_SQL).prependToAll(
             List(Dims.NAME_BASED),
@@ -269,9 +269,7 @@ object SuiteGeneratorConfig {
             "MergeIntoStructEvolutionNullnessMultiClauseTests" :: Nil,
           List(
             List(
-              Dims.MERGE_SQL, Dims.NAME_BASED, Dims.COLUMN_MAPPING.asOptional,
-              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE,
-              Dims.STRUCT_EVOLUTION_PRESERVE_NULL_SOURCE_UPDATE_STAR
+              Dims.MERGE_SQL, Dims.NAME_BASED
             )
           )
         )
@@ -329,13 +327,13 @@ object SuiteGeneratorConfig {
       ),
       testConfigs = List(
         TestConfig(
-          "DeleteScalaTests" :: Tests.DELETE_BASE,
+          "DeleteScalaTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SCALA)
           )
         ),
         TestConfig(
-          "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
+          "DeleteCDCTests" :: "DeleteCDCTableWithDVsTests" :: "DeleteSQLTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SQL, Dims.NAME_BASED),
             List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),

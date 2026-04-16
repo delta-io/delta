@@ -25,6 +25,7 @@ import scala.concurrent.duration._
 
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.actions.{Action, CommitInfo, Metadata, Protocol}
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo
 import org.apache.spark.sql.delta.storage.{LogStore, LogStoreProvider}
 import org.apache.spark.sql.delta.test.{DeltaSQLCommandTest, DeltaSQLTestUtils}
 import org.apache.spark.sql.delta.test.DeltaTestImplicits._
@@ -171,7 +172,8 @@ trait CommitCoordinatorClientImplSuiteBase extends QueryTest
       version,
       Iterator(commitInfo.json),
       updatedActions,
-      tableIdentifier).getCommit
+      tableIdentifier,
+      CatalogTrackedInfo.EMPTY).getCommit
   }
 
   protected def assertBackfilled(

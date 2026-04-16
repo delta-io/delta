@@ -107,83 +107,7 @@ class IcebergConverter
   override def enqueueSnapshotForConversion(
       snapshotToConvert: Snapshot,
       txn: CommittedTransaction): Unit = {
-    if (!UniversalFormat.icebergEnabled(snapshotToConvert.metadata)) {
-      return
-    }
-    val log = snapshotToConvert.deltaLog
-    // Replace any previously queued snapshot
-    val previouslyQueued = standbyConversion.getAndSet((snapshotToConvert, txn))
-    asyncThreadLock.synchronized {
-      if (!asyncConverterThreadActive) {
-        val threadName = IcebergConverterHook.ASYNC_ICEBERG_CONVERTER_THREAD_NAME +
-          s" [id=${snapshotToConvert.metadata.id}]"
-        val asyncConverterThread: Thread = new Thread(threadName) {
-          setDaemon(true)
-
-          override def run(): Unit =
-              try {
-                var snapshotAndTxn = getNextSnapshot
-                  while (snapshotAndTxn != null) {
-                    val snapshotVal = snapshotAndTxn._1
-                    val prevTxn = snapshotAndTxn._2
-                    try {
-                      logInfo(log"Converting Delta table [path=" +
-                        log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
-                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.unsafeVolatileTableId)}, " +
-                        log"version=${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] " +
-                        log"into Iceberg")
-                      convertSnapshot(snapshotVal, prevTxn)
-                    } catch {
-                      case NonFatal(e) =>
-                        logWarning(log"Error when writing Iceberg metadata asynchronously", e)
-                        recordDeltaEvent(
-                          log,
-                          "delta.iceberg.conversion.async.error",
-                          data = Map(
-                            "exception" -> ExceptionUtils.getMessage(e),
-                            "stackTrace" -> ExceptionUtils.getStackTrace(e)
-                          )
-                        )
-                    }
-                    currentConversion.set(null)
-                    // Pick next snapshot to convert if there's a new one
-                    snapshotAndTxn = getNextSnapshot
-                  }
-              } finally {
-                // shuttingdown thread
-                asyncThreadLock.synchronized {
-                  asyncConverterThreadActive = false
-                }
-              }
-
-          // Get a snapshot to convert from the icebergQueue. Sets the queue to null after.
-          private def getNextSnapshot: (Snapshot, CommittedTransaction) =
-            asyncThreadLock.synchronized {
-              val potentialSnapshotAndTxn = standbyConversion.get()
-              currentConversion.set(potentialSnapshotAndTxn)
-              standbyConversion.compareAndSet(potentialSnapshotAndTxn, null)
-              if (potentialSnapshotAndTxn == null) {
-                asyncConverterThreadActive = false
-              }
-              potentialSnapshotAndTxn
-            }
-        }
-        asyncConverterThread.start()
-        asyncConverterThreadActive = true
-      }
-    }
-
-    // If there already was a snapshot waiting to be converted, log that snapshot info.
-    if (previouslyQueued != null) {
-//      previouslyQueued._1.uncache()
-      recordDeltaEvent(
-        snapshotToConvert.deltaLog,
-        "delta.iceberg.conversion.async.backlog",
-        data = Map(
-          "newVersion" -> snapshotToConvert.version,
-          "replacedVersion" -> previouslyQueued._1.version)
-      )
-    }
+    throw new IllegalStateException("enqueueSnapshotForConversion is no longer supported")
   }
 
   /**
@@ -194,24 +118,7 @@ class IcebergConverter
    */
   override def convertSnapshot(
       snapshotToConvert: Snapshot, catalogTable: CatalogTable): Option[(Long, Long)] = {
-    try {
-      convertSnapshotWithRetry(snapshotToConvert, None, catalogTable)
-    } catch {
-      case NonFatal(e) =>
-        logError(log"Error when converting to Iceberg metadata", e)
-        val (opType, baseTags) =
-            ("delta.iceberg.conversion.error", Map.empty[String, String])
-
-        recordDeltaEvent(
-          snapshotToConvert.deltaLog,
-          opType,
-          data = baseTags ++ Map(
-            "exception" -> ExceptionUtils.getMessage(e),
-            "stackTrace" -> ExceptionUtils.getStackTrace(e)
-          )
-        )
-        throw e
-    }
+    throw new IllegalStateException("convertSnapshot is no longer supported")
   }
 
   /**
@@ -224,64 +131,9 @@ class IcebergConverter
    */
   override def convertSnapshot(
       snapshotToConvert: Snapshot, txn: CommittedTransaction): Option[(Long, Long)] = {
-    try {
-      txn.catalogTable match {
-        case Some(table) => convertSnapshotWithRetry(snapshotToConvert, Some(txn), table)
-        case _ =>
-          val msg = s"CatalogTable for table ${snapshotToConvert.deltaLog.unsafeVolatileTableId} " +
-            s"is empty in txn. Skip iceberg conversion."
-          throw DeltaErrors.universalFormatConversionFailedException(
-            snapshotToConvert.version, "iceberg", msg)
-      }
-    } catch {
-      case NonFatal(e) =>
-        logError(log"Error when converting to Iceberg metadata", e)
-        recordDeltaEvent(
-          txn.deltaLog,
-          "delta.iceberg.conversion.error",
-          data = Map(
-            "exception" -> ExceptionUtils.getMessage(e),
-            "stackTrace" -> ExceptionUtils.getStackTrace(e)
-          )
-        )
-        throw e
-    }
+    throw new IllegalStateException("convertSnapshot is no longer supported")
   }
 
-  /**
-   *  Convert the specified snapshot into Iceberg with retry
-   */
-  private def convertSnapshotWithRetry(
-      snapshotToConvert: Snapshot,
-      txnOpt: Option[CommittedTransaction],
-      catalogTable: CatalogTable,
-      maxRetry: Int =
-        spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_UNIFORM_ICEBERG_RETRY_TIMES)
-  ): Option[(Long, Long)] = {
-    var retryAttempt = 0
-    while (retryAttempt < maxRetry) {
-      try {
-        return convertSnapshot(snapshotToConvert, txnOpt, catalogTable)
-      } catch {
-        case e: CommitFailedException if retryAttempt < maxRetry =>
-          retryAttempt += 1
-          val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, catalogTable)
-          val lastDeltaVersionConverted = IcebergConverter
-            .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
-          val lastConvertedDeltaTimestamp = IcebergConverter
-            .getLastConvertedDeltaTimestamp(lastConvertedIcebergTable)
-          // Do not retry if the current or higher Delta version is already converted
-          (lastDeltaVersionConverted, lastConvertedDeltaTimestamp) match {
-            case (Some(version), Some(timestamp)) if version >= snapshotToConvert.version =>
-              return Some(version, timestamp)
-            case _ =>
-              logWarning(s"CommitFailedException when converting to Iceberg metadata;" +
-                s" retry count $retryAttempt", e)
-          }
-      }
-    }
-    throw new IllegalStateException("should not happen")
-  }
 
   // Used for tracking last converted Iceberg metadata information
   // It would be used for incremental conversion for all Iceberg conversion modes
@@ -307,6 +159,8 @@ class IcebergConverter
     // Validation on parameters
     def validate(): Unit = {
       conversionMode match {
+        case UNIFORM_CC_MODE =>
+          assert(additionalDeltaActionsToCommit.nonEmpty)
         case _ =>
           assert(additionalDeltaActionsToCommit.isEmpty)
       }
@@ -322,57 +176,50 @@ class IcebergConverter
   }
 
   /**
-   * Convert the specified snapshot into Iceberg.
-   * NOTE: 1. This operation is blocking. Call [[enqueueSnapshotForConversion]] to run the
-   *          operation asynchronously.
-   *       2. This is the main entrance. All other with similar names are wrappers.
-   * @param snapshotToConvert the snapshot that needs to be converted to Iceberg
-   * @param txnOpt the OptimisticTransaction that created snapshotToConvert.
-   *            Used as a hint to avoid recomputing old metadata.
+   * Convert the specified txnInfo into Iceberg
+   * This is for the case where Iceberg conversion is needed when
+   *  a txn doesn't commit yet (for example, for atomic Delta UniForm)
+   * NOTE: 1. This operation is blocking
+   * @param txnInfo the txnInfo with the txn that needs to be converted to Iceberg
+   * @param deltaLog the associated deltaLog
+   * @param deltaAttemptVersion the attempt delta version txn targets at
    * @param catalogTable the catalogTable this conversion targets
-   * @return Converted Delta version and commit timestamp
+   * @return (Iceberg metadata path, last converted Delta version)
    */
-  private def convertSnapshot(
-      snapshotToConvert: Snapshot,
-      txnOpt: Option[CommittedTransaction],
-      catalogTable: CatalogTable): Option[(Long, Long)] =
-      recordFrameProfile("Delta", "IcebergConverter.convertSnapshot") {
-        logInfo(s"convertSnapshot for table ${Option(catalogTable).map(_.identifier)} with " +
-          s"target delta version ${snapshotToConvert.version}")
-        val cleanedCatalogTable =
-          cleanCatalogTableIfEnablingUniform(catalogTable, snapshotToConvert, txnOpt)
-        val lastConvertedIcebergTable = loadIcebergTable(snapshotToConvert, cleanedCatalogTable)
-        val lastConvertedIcebergSnapshotId =
-          lastConvertedIcebergTable.flatMap(it => Option(it.currentSnapshot())).map(_.snapshotId())
-        val lastDeltaVersionConverted = IcebergConverter
-          .getLastConvertedDeltaVersion(lastConvertedIcebergTable)
-        // Conversion is up-to-date
-        if (lastDeltaVersionConverted.contains(snapshotToConvert.version)) {
-          return None
-        }
-        UniversalFormat.enforceSupportInCatalog(
-          cleanedCatalogTable, snapshotToConvert.metadata
-        ) match {
-          case Some(updatedTable) => spark.sessionState.catalog.alterTable(updatedTable)
-          case _ =>
-        }
-        convertSnapshotInternal(
-          snapshotToConvert,
-          readSnapshotOpt = txnOpt.map(_.readSnapshot),
-          lastConvertedInfo = LastConvertedIcebergInfo(
-            lastConvertedIcebergTable,
-            lastConvertedIcebergSnapshotId,
-            lastDeltaVersionConverted,
-            baseMetadataLocationOpt = None
-          ),
-          conversionContext = new ConversionContext(
-            conversionMode = UNIFORM_POST_COMMIT_MODE,
-            additionalDeltaActionsToCommit = None,
-            opType = "delta.iceberg.conversion.convertSnapshot"
-          ),
-          cleanedCatalogTable
-        )
-        Some(snapshotToConvert.version, snapshotToConvert.timestamp)
+  def convertUncommitedTxn(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      deltaLog: DeltaLog,
+      catalogTable: CatalogTable): (String, Option[Long]) =
+    recordFrameProfile("Delta", "IcebergConverter.convertUncommitedTxn") {
+      val refreshedTable = refreshCatalogTableIfNeeded(txnInfo, deltaAttemptVersion, catalogTable)
+      val snapshotToConvert = getSnapshotForUncommitedTxn(
+        deltaLog, txnInfo, deltaAttemptVersion, catalogTable
+      )
+
+      val icebergTxn = convertSnapshotInternal(
+        snapshotToConvert,
+        readSnapshotOpt = Some(txnInfo.readSnapshot),
+        lastConvertedInfo = LastConvertedIcebergInfo(
+          None, None, None, None
+        ),
+        conversionContext = new ConversionContext(
+          conversionMode = UNIFORM_CC_MODE,
+          additionalDeltaActionsToCommit = Some(txnInfo.finalActionsToCommit),
+          opType = "delta.iceberg.conversion.convertUncommitedTxn"
+        ),
+        refreshedTable
+      )
+
+      val (newMetadataPath, _) = icebergTxn.getConvertedIcebergMetadata
+      (newMetadataPath, None)
+    }
+
+  private def refreshCatalogTableIfNeeded(
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      catalogTable: CatalogTable): CatalogTable = {
+    catalogTable
   }
 
   /**
@@ -381,7 +228,7 @@ class IcebergConverter
    *    Convert Iceberg Metadata for a complete snapshot. Used for conversion
    *    after delta commits and in create table
    */
-  private def convertSnapshotInternal(
+  protected def convertSnapshotInternal(
       snapshotToConvert: Snapshot,
       readSnapshotOpt: Option[Snapshot],
       lastConvertedInfo: LastConvertedIcebergInfo,
@@ -522,7 +369,6 @@ class IcebergConverter
       icebergTxn.commit()
       logInfo(s"icebergTxn committed for table ${Option(catalogTable).map(_.identifier)} " +
         s"with converted delta version ${snapshotToConvert.version}")
-      validateIcebergCommit(snapshotToConvert, catalogTable)
 
       recordDeltaEvent(
         snapshotToConvert.deltaLog,
@@ -537,6 +383,23 @@ class IcebergConverter
 
       icebergTxn
     }
+
+  private def getSnapshotForUncommitedTxn(
+      deltaLog: DeltaLog,
+      txnInfo: CurrentTransactionInfo,
+      deltaAttemptVersion: Long,
+      catalogTable: CatalogTable): Snapshot = {
+
+    new DummySnapshotWithAllFilesSupport(
+      deltaLog.logPath,
+      deltaLog,
+      txnInfo.metadata,
+      deltaAttemptVersion,
+      Some(txnInfo.protocol),
+      txnInfo,
+      catalogTable
+    )
+  }
 
   /**
    * Helper function to execute and commit Iceberg snapshot expiry
@@ -823,5 +686,45 @@ class IcebergConverter
         }
       }
     }
+  }
+}
+
+/**
+ * The dummy snapshot that could compute allFiles using state-reconstruction and log reply
+ * This is used for Delta UniForm only
+ */
+class DummySnapshotWithAllFilesSupport(
+    override val logPath: Path,
+    override val deltaLog: DeltaLog,
+    override val metadata: Metadata,
+    override val version: Long = -1,
+    val protocolOpt: Option[Protocol] = None,
+    val txnInfo: CurrentTransactionInfo,
+    val catalogTable: CatalogTable)
+  extends DummySnapshot(
+    logPath,
+    deltaLog,
+    metadata,
+    protocolOpt
+  ) {
+  override def allFiles: Dataset[AddFile] = {
+    SparkSession.getActiveSession.map { spark =>
+      import org.apache.spark.sql.delta.implicits._
+      val replay = new InMemoryLogReplay(None, None)
+      val baseVersion = version - 1
+      if (baseVersion < 0) { // No prior commit exists
+        replay.append(0, txnInfo.finalActionsToCommit.iterator)
+      } else { // construct allFiles from baseSnapshot
+        val baseSnapshot = baseVersion match {
+          case txnInfo.readSnapshot.version => txnInfo.readSnapshot
+          case _ => deltaLog.getSnapshotAt(baseVersion, catalogTableOpt = Some(catalogTable))
+        }
+        val existingFiles = baseSnapshot.allFiles.collect().toIterator
+        replay.append(0, existingFiles)
+        replay.append(1, txnInfo.finalActionsToCommit.iterator)
+      }
+      val allFiles: Seq[AddFile] = replay.allFiles
+      spark.createDataset(allFiles)
+    }.getOrElse(super.allFiles)
   }
 }

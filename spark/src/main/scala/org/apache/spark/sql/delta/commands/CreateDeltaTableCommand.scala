@@ -208,6 +208,13 @@ case class CreateDeltaTableCommand(
           // to once again go through analysis
           val data = DataFrameUtils.ofRows(sparkSession, query)
           val options = new DeltaOptions(table.storage.properties, sparkSession.sessionState.conf)
+          if (options.isReplaceOnOrUsingDefined) {
+            if (options.replaceOn.isDefined) {
+              throw DeltaErrors.operationNotSupportedException("replaceOn")
+            } else {
+              throw DeltaErrors.operationNotSupportedException("replaceUsing")
+            }
+          }
           val deltaWriter = WriteIntoDelta(
             deltaLog = deltaLog,
             mode = mode,
@@ -257,10 +264,6 @@ case class CreateDeltaTableCommand(
       createTableFunc)
 
 
-    if (UniversalFormat.icebergEnabled(postCommitSnapshot.metadata) &&
-        !txnUsedForCommit.containsPostCommitHook(IcebergConverterHook)) {
-      deltaLog.icebergConverter.convertSnapshot(postCommitSnapshot, tableWithLocation)
-    }
 
     if (UniversalFormat.hudiEnabled(postCommitSnapshot.metadata) &&
         !txnUsedForCommit.containsPostCommitHook(HudiConverterHook)) {
@@ -336,7 +339,9 @@ case class CreateDeltaTableCommand(
       }
       val op = getOperation(txn.metadata, isManagedTable, Some(options),
         clusterBy = ClusteredTableUtils.getLogicalClusteringColumnNames(
-          txn, taggedCommitData.actions)
+          txn, taggedCommitData.actions),
+        // Only recording "true" to reduce noise in DESCRIBE HISTORY when it doesn't apply.
+        isV1SaveAsTableOverwrite = if (isV1WriterSaveAsTableOverwrite) Some(true) else None
       )
       (taggedCommitData, op)
     }
@@ -682,13 +687,21 @@ case class CreateDeltaTableCommand(
       metadata: Metadata,
       isManagedTable: Boolean,
       options: Option[DeltaOptions],
-      clusterBy: Option[Seq[String]]
+      clusterBy: Option[Seq[String]],
+      isV1SaveAsTableOverwrite: Option[Boolean] = None
   ): DeltaOperations.Operation = operation match {
     // This is legacy saveAsTable behavior in Databricks Runtime
     case TableCreationModes.Create if existingTableOpt.isDefined &&
       query.isDefined && options.nonEmpty =>
-      DeltaOperations.Write(mode, Option(table.partitionColumnNames), options.get.replaceWhere,
-        options.flatMap(_.userMetadata)
+      DeltaOperations.Write(
+        mode = mode,
+        partitionBy = Option(table.partitionColumnNames),
+        predicate = options.get.replaceWhere,
+        userMetadata = options.flatMap(_.userMetadata),
+        isDynamicPartitionOverwrite = options.flatMap(
+          o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
+        canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
       )
 
     // DataSourceV2 table creation
@@ -713,7 +726,8 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        isV1SaveAsTableOverwrite = isV1SaveAsTableOverwrite
       )
 
     // Legacy saveAsTable with Overwrite mode
@@ -742,7 +756,8 @@ case class CreateDeltaTableCommand(
         isDynamicPartitionOverwrite = options.flatMap(
           o => if (Try(o.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None),
         canOverwriteSchema = options.flatMap(o => if (o.canOverwriteSchema) Some(true) else None),
-        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None)
+        canMergeSchema = options.flatMap(o => if (o.canMergeSchema) Some(true) else None),
+        isV1SaveAsTableOverwrite = isV1SaveAsTableOverwrite
       )
   }
 
@@ -768,6 +783,12 @@ case class CreateDeltaTableCommand(
     if (isReplace && dontOverwriteSchema) {
       throw DeltaErrors.illegalUsageException(DeltaOptions.OVERWRITE_SCHEMA_OPTION, "replacing")
     }
+    // `replaceUsing`/`replaceOn` can only replace parts of the table, so combining them with
+    // commands that can overwrite schema could corrupt the table: the non-replaced rows would
+    // still have the old schema while newly written rows would have the new schema.
+    if (options.isReplaceOnOrUsingDefined) {
+      throw DeltaErrors.dfv2CreateReplaceIncompatibleReplaceOnOrUsingError()
+    }
     if (txn.readVersion > -1L && isReplace && !dontOverwriteSchema) {
       // When a table already exists, and we're using the DataFrameWriterV2 API to replace
       // or createOrReplace a table, we blindly overwrite the metadata.
@@ -778,6 +799,11 @@ case class CreateDeltaTableCommand(
         newMetadata.configuration,
         txn.snapshot)
       newMetadata = newMetadata.copy(configuration = updatedConfig)
+      if (allowCatalogManaged && txn.snapshot.isCatalogOwned) {
+        // Preserve the existing Delta metadata id across REPLACE. This is distinct from the
+        // Unity Catalog table id stored in `io.unitycatalog.tableId`.
+        newMetadata = newMetadata.copy(id = txn.snapshot.metadata.id)
+      }
       txn.updateMetadataForNewTableInReplace(newMetadata)
     }
   }
@@ -794,7 +820,7 @@ case class CreateDeltaTableCommand(
       deltaLog: DeltaLog,
       tableWithLocation: CatalogTable,
       snapshotOpt: Option[Snapshot] = None): OptimisticTransaction = {
-    val txn = deltaLog.startTransaction(None, snapshotOpt)
+    val txn = deltaLog.startTransaction(existingTableOpt, snapshotOpt)
     validatePrerequisitesForClusteredTable(txn.snapshot.protocol, txn.deltaLog)
 
     // During CREATE (not REPLACE/overwrites), we synchronously run conversion
