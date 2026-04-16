@@ -246,8 +246,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
         df,
-        // If schema is augmented (for bucketed table), use the new schema in `WriteIntoDelta`
-        // to update metadata.
         Some(tableDesc),
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
       if (deltaOptions.isReplaceOnOrUsingDefined) {
