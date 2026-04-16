@@ -65,42 +65,6 @@ trait ExecutionObserverTestMixin {
       fn: T => Unit): Array[Row] =
     ExecutionObserverContext.runWithObservers(observerContext1)(fn)
 
-  /**
-   * Runs two observers, giving access to their corresponding controllers used to enforce execution
-   * ordering. Returns the result of the instrumented operations.
-   */
-  def runWithObservers[T <: ExecutionController, U <: ExecutionController](
-      observerContext1: ExecutionObserverContext[T],
-      observerContext2: ExecutionObserverContext[U])(
-      fn: (T, U) => Unit): (Array[Row], Array[Row]) =
-    ExecutionObserverContext.runWithObservers(observerContext1, observerContext2)(fn)
-
-  /**
-   * Runs three observers, giving access to their corresponding controllers used to enforce
-   * execution ordering. Returns the result of the instrumented operations.
-   */
-  def runWithObservers[
-    T <: ExecutionController,
-    U <: ExecutionController,
-    V <: ExecutionController](
-      observerContext1: ExecutionObserverContext[T],
-      observerContext2: ExecutionObserverContext[U],
-      observerContext3: ExecutionObserverContext[V])(
-      fn: (T, U, V) => Unit): (Array[Row], Array[Row], Array[Row]) =
-    ExecutionObserverContext.runWithObservers(
-      observerContext1,
-      observerContext2,
-      observerContext3)(fn)
-
-  /**
-   * Runs a list of observers sharing the same type, giving access to their corresponding
-   * controllers used to enforce execution ordering. Returns the result of the instrumented
-   * operations.
-   */
-  def runWithObservers[T <: ExecutionController](
-      observerContexts: Seq[ExecutionObserverContext[T]])(
-      fn: Seq[T] => Unit): Seq[Array[Row]] =
-    ExecutionObserverContext.runWithObservers(observerContexts)(fn)
 }
 
 /**
@@ -133,9 +97,6 @@ object ExecutionObserverContext {
    * the given phase ordering function. This is intended as the only way for tests to get access to
    * the execution controllers that they need to control execution ordering so that we have a single
    * place to manage the futures and executors lifecycle.
-   *
-   * Multiple variants of `runWithObservers` are provided for convenience, accepting resp. 1, 2, 3
-   * observer contexts of different types and a list of observer contexts sharing the same type.
    */
   private[delta] def runWithObservers[T <: ExecutionController](
       observer1: ExecutionObserverContext[T])(
@@ -145,45 +106,6 @@ object ExecutionObserverContext {
     waitForCompletion(observer1)
   } finally {
     shutdownExecutor(observer1.executor)
-  }
-
-  private[delta] def runWithObservers[T <: ExecutionController, U <: ExecutionController](
-      observer1: ExecutionObserverContext[T],
-      observer2: ExecutionObserverContext[U])(
-      fn: (T, U) => Unit): (Array[Row], Array[Row]) = try {
-    // Run the observer ordering function.
-    fn(observer1.controller, observer2.controller)
-    (waitForCompletion(observer1), waitForCompletion(observer2))
-  } finally {
-    shutdownExecutor(observer1.executor)
-    shutdownExecutor(observer2.executor)
-  }
-
-  private[delta] def runWithObservers[
-    T <: ExecutionController,
-    U <: ExecutionController,
-    V <: ExecutionController](
-      observer1: ExecutionObserverContext[T],
-      observer2: ExecutionObserverContext[U],
-      observer3: ExecutionObserverContext[V])(
-      fn: (T, U, V) => Unit): (Array[Row], Array[Row], Array[Row]) = try {
-      // Run the observer ordering function.
-      fn(observer1.controller, observer2.controller, observer3.controller)
-    (waitForCompletion(observer1), waitForCompletion(observer2), waitForCompletion(observer3))
-  } finally {
-    shutdownExecutor(observer1.executor)
-    shutdownExecutor(observer2.executor)
-    shutdownExecutor(observer3.executor)
-  }
-
-   private[delta] def runWithObservers[T <: ExecutionController](
-      observers: Seq[ExecutionObserverContext[T]])(
-      fn: Seq[T] => Unit): Seq[Array[Row]] = try {
-    // Run the observer ordering function.
-    fn(observers.map(_.controller))
-    observers.map(waitForCompletion)
-  } finally {
-    observers.map(_.executor).foreach(shutdownExecutor)
   }
 
   /**
