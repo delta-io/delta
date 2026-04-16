@@ -122,7 +122,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // ========== Error handling tests ==========
     "streaming query should fail when table is deleted and recreated with new id",
     "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "deltaSourceIgnoreChangesError contains changeInfo, version, tablePath",
+    "deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
     // ========== Misc tests ==========
