@@ -44,7 +44,6 @@ private[delta] case class PhaseLockingInsertAtomicReplaceExecutionObserver(
   override def insert[T](f: => T): T = phases.insert.execute(f)
 
   override def commit[T](f: => T): T = phases.commit.execute(f)
-
 }
 
 /**
