@@ -729,6 +729,61 @@ class DeltaDataFrameWriterV2Suite
     }
 
   }
+
+  test("Append: writeTo with replaceUsing option just appends") {
+    withSQLConf(
+        DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
+      spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+
+      spark.table("source").writeTo("table_name").append()
+
+      checkAnswer(
+        spark.table("table_name"),
+        Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
+
+      Seq((2L, "updated"), (4L, "new")).toDF("id", "data")
+        .writeTo("table_name")
+        .option("replaceUsing", "id")
+        .append()
+
+      checkAnswer(
+        spark.table("table_name").orderBy("id", "data"),
+        Seq(
+          Row(1L, "a"),
+          Row(2L, "b"),
+          Row(2L, "updated"),
+          Row(3L, "c"),
+          Row(4L, "new")))
+    }
+  }
+
+  test("Append: writeTo with replaceOn and targetAlias option just appends") {
+    withSQLConf(
+        DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true") {
+      spark.sql("CREATE TABLE table_name (id bigint, data string) USING delta")
+
+      spark.table("source").writeTo("table_name").append()
+
+      checkAnswer(
+        spark.table("table_name"),
+        Seq(Row(1L, "a"), Row(2L, "b"), Row(3L, "c")))
+
+      Seq((2L, "updated"), (4L, "new")).toDF("id", "data")
+        .writeTo("table_name")
+        .option("replaceOn", "t.id = s.id")
+        .option("targetAlias", "t")
+        .append()
+
+      checkAnswer(
+        spark.table("table_name").orderBy("id", "data"),
+        Seq(
+          Row(1L, "a"),
+          Row(2L, "b"),
+          Row(2L, "updated"),
+          Row(3L, "c"),
+          Row(4L, "new")))
+    }
+  }
 }
 
 trait DeltaDataFrameWriterV2ColumnMappingSuiteBase extends DeltaColumnMappingSelectedTestMixin {

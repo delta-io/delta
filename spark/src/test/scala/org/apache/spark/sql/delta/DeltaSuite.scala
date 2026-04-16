@@ -3424,49 +3424,63 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
 
   for (insertReplaceCriteriaType <- Seq("replaceOn", "replaceUsing")) {
     test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 save API") {
-      withTempDir { tempDir =>
-        checkError(
-          intercept[DeltaAnalysisException] {
-            spark.range(100).select("id").write.format("delta")
-              .mode("overwrite")
-              .option(insertReplaceCriteriaType, "true")
-              .save(tempDir.toString)
-          },
-          condition = "DELTA_OPERATION_NOT_ALLOWED",
-          sqlState = "0AKDC",
-          parameters = Map("operation" -> insertReplaceCriteriaType))
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTempDir { tempDir =>
+          checkError(
+            intercept[DeltaAnalysisException] {
+              spark.range(100).select("id").write.format("delta")
+                .mode("overwrite")
+                // For replaceOn: 'true' is a matching condition.
+                // For replaceUsing: 'true' is a matching column.
+                .option(insertReplaceCriteriaType, "true")
+                .save(tempDir.toString)
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType))
+        }
       }
     }
 
     test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 insertInto") {
-      withTable("target") {
-        sql("CREATE TABLE target (id bigint, data string) USING delta")
-        val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
-        checkError(
-          intercept[DeltaAnalysisException] {
-            df.write.format("delta")
-              .mode("overwrite")
-              .option(insertReplaceCriteriaType, "true")
-              .insertInto("target")
-          },
-          condition = "DELTA_OPERATION_NOT_ALLOWED",
-          sqlState = "0AKDC",
-          parameters = Map("operation" -> insertReplaceCriteriaType))
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTable("target") {
+          sql("CREATE TABLE target (id bigint, data string) USING delta")
+          val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+          checkError(
+            intercept[DeltaAnalysisException] {
+              df.write.format("delta")
+                .mode("overwrite")
+                .option(insertReplaceCriteriaType, "true")
+                .insertInto("target")
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType))
+        }
       }
     }
 
     test(s"$insertReplaceCriteriaType option is not yet supported via saveAsTable") {
-      withTable("target") {
-        checkError(
-          intercept[DeltaAnalysisException] {
-            spark.range(10).write.format("delta")
-              .option(insertReplaceCriteriaType, "true")
-              .saveAsTable("target")
-          },
-          condition = "DELTA_OPERATION_NOT_ALLOWED",
-          sqlState = "0AKDC",
-          parameters = Map("operation" -> insertReplaceCriteriaType)
-        )
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTable("target") {
+          checkError(
+            intercept[DeltaAnalysisException] {
+              spark.range(10).write.format("delta")
+                .option(insertReplaceCriteriaType, "true")
+                .saveAsTable("target")
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType)
+          )
+        }
       }
     }
   }
