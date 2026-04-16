@@ -271,7 +271,6 @@ class DeltaAnalysis(session: SparkSession)
 
     // Handling df.insertInto() with `replaceOn`/`replaceUsing`.
     //
-    //
     // Here, we match with OverwriteDelta because insertInto() with mode("overwrite")
     // creates [[OverwriteByExpression]] in DataFrameWriter.
     case o @ OverwriteDelta(r, d) if !o.isByName && o.origin.sqlText.isEmpty &&
@@ -1152,11 +1151,6 @@ class DeltaAnalysis(session: SparkSession)
     existingSchemaOutput.map(_.name) != schema.map(_.name) ||
       !SchemaUtils.isReadCompatible(schema.asNullable, existingSchemaOutput.toStructType,
         typeWideningMode = getTypeWideningMode(deltaTable, writeOptions))
-  }
-  private def hasReplaceOnOrUsingOption(writeOptions: Map[String, String]): Boolean = {
-    val caseInsensitiveWriteOptions = CaseInsensitiveMap(writeOptions)
-    caseInsensitiveWriteOptions.contains(DeltaOptions.REPLACE_ON_OPTION) ||
-      caseInsensitiveWriteOptions.contains(DeltaOptions.REPLACE_USING_OPTION)
   }
 
   private def hasReplaceOnOrUsingOption(writeOptions: Map[String, String]): Boolean = {
