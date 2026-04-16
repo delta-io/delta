@@ -2,9 +2,9 @@ name: "Delta Kernel"
 
 on:
   push:
-    branches: [ds-11122025]
+    branches: [branch-ds-11122025]
   pull_request:
-    branches: [ds-11122025]
+    branches: [branch-ds-11122025]
 
 # Cancel previous runs when new commits are pushed
 concurrency:
