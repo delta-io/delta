@@ -258,7 +258,7 @@ case class WriteIntoDelta(
 
     val (newFiles, addFiles, deletedFiles) = (mode, atomicReplaceExprsOpt) match {
       case (SaveMode.Overwrite, Some(parsedPredicatesMaybeAliased))
-          if !replaceWhereOnDataColsEnabled && !options.isReplaceOnOrUsingDefined =>
+          if options.replaceWhere.isDefined && !replaceWhereOnDataColsEnabled =>
         // fall back to match on partition cols only when replaceArbitrary is disabled.
         val newFiles = txn.writeFiles(data, Some(options))
         val addFiles = newFiles.collect { case a: AddFile => a }
