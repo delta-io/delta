@@ -105,6 +105,7 @@ public class IcebergWriterCompatV3MetadataValidatorAndUpdater
                   ICEBERG_WRITER_COMPAT_V3,
                   DELETION_VECTORS_RW_FEATURE,
                   VARIANT_RW_FEATURE,
+                  VARIANT_SHREDDING_RW_FEATURE,
                   VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
                   VARIANT_RW_PREVIEW_FEATURE,
                   // Also allow writerV1 features for backward compatibility.
