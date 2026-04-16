@@ -237,7 +237,8 @@ class Snapshot(
    * Use [[stateReconstruction]] to create a representation of the actions in this table.
    * Cache the resultant output.
    */
-  private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
+  private lazy val cachedState =
+    recordFrameProfile("Delta", "snapshot.cachedState") {
     stateReconstructionTriggered = true
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
   }
@@ -368,7 +369,8 @@ class Snapshot(
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
-  def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
+  def stateDS: Dataset[SingleAction] =
+    recordFrameProfile("Delta", "stateDS") {
     cachedState.getDS
   }
 
