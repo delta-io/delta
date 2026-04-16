@@ -28,10 +28,11 @@ import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.catalog.CatalogTable
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTableType}
 import org.apache.spark.sql.catalyst.streaming.StreamingRelationV2
+import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.Relocated.StreamingRelation
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
+import org.apache.spark.sql.delta.sources.{DeltaSQLConf, DeltaSourceUtils}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 import org.apache.spark.sql.execution.datasources.DataSource
@@ -61,6 +62,13 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
   private def createDeltaTable(path: String): Unit = {
     spark.range(1).selectExpr("id").write.format("delta").save(path)
+  }
+
+  /** Creates a Delta table with columns (id, date, name) partitioned by the middle column. */
+  private def createPartitionedDeltaTable(path: String): Unit = {
+    spark.range(1)
+      .selectExpr("cast(id as int) as id", "'2024-01-01' as date", "'foo' as name")
+      .write.format("delta").partitionBy("date").save(path)
   }
 
   private def createCatalogTable(locationUri: URI, ucManaged: Boolean): CatalogTable = {
@@ -198,4 +206,101 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
     }
   }
 
+  test("Case 2: StreamingRelationV2 with readChangeFeed=true gets CDC columns augmented") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val ident = Identifier.of(
+        catalogTable.identifier.database.toArray,
+        catalogTable.identifier.table)
+      val cdcOpts = new JHashMap[String, String]()
+      cdcOpts.put(DeltaOptions.CDC_READ_OPTION, "true")
+      val table = new SparkTable(ident, catalogTable, cdcOpts)
+      val extraOptions = new CaseInsensitiveStringMap(cdcOpts)
+
+      // Build a StreamingRelationV2 WITHOUT CDC columns (simulating RelationResolution)
+      val plan = StreamingRelationV2(
+        source = None,
+        sourceName = DeltaSourceUtils.NAME,
+        table = table,
+        extraOptions = extraOptions,
+        output = toAttributes(table.schema()),
+        catalog = None,
+        identifier = Some(ident),
+        v1Relation = None)
+      assert(!plan.output.exists(a => cdcColumnNames.contains(a.name)))
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        val result = applyRule(plan)
+        val outputNames = result.output.map(_.name).toSet
+        assert(cdcColumnNames.subsetOf(outputNames),
+          s"Output should contain CDC columns after augmentation. Got: ${outputNames}")
+      }
+    }
+  }
+
+  test("Case 2: partitioned table preserves column order with partition col in the middle") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createPartitionedDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val ident = Identifier.of(
+        catalogTable.identifier.database.toArray,
+        catalogTable.identifier.table)
+      val cdcOpts = new JHashMap[String, String]()
+      cdcOpts.put(DeltaOptions.CDC_READ_OPTION, "true")
+      val table = new SparkTable(ident, catalogTable, cdcOpts)
+      val extraOptions = new CaseInsensitiveStringMap(cdcOpts)
+
+      val plan = StreamingRelationV2(
+        source = None,
+        sourceName = DeltaSourceUtils.NAME,
+        table = table,
+        extraOptions = extraOptions,
+        output = toAttributes(table.schema()),
+        catalog = None,
+        identifier = Some(ident),
+        v1Relation = None)
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        val result = applyRule(plan)
+        val outputNames = result.output.map(_.name)
+        val expected = Seq(
+          "id", "date", "name",
+          CDCReader.CDC_TYPE_COLUMN_NAME,
+          CDCReader.CDC_COMMIT_VERSION,
+          CDCReader.CDC_COMMIT_TIMESTAMP)
+        assert(outputNames == expected,
+          s"Expected original column order + CDC, got: $outputNames")
+      }
+    }
+  }
+
+  test("Case 2: StreamingRelationV2 without readChangeFeed is unchanged") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      createDeltaTable(path)
+      val catalogTable = createCatalogTable(dir.toURI, ucManaged = false)
+      val ident = Identifier.of(
+        catalogTable.identifier.database.toArray,
+        catalogTable.identifier.table)
+      val table = new SparkTable(ident, catalogTable, new JHashMap[String, String]())
+
+      val plan = StreamingRelationV2(
+        source = None,
+        sourceName = DeltaSourceUtils.NAME,
+        table = table,
+        extraOptions = CaseInsensitiveStringMap.empty,
+        output = toAttributes(table.schema()),
+        catalog = None,
+        identifier = Some(ident),
+        v1Relation = None)
+
+      withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "STRICT") {
+        val result = applyRule(plan)
+        assert(result eq plan, "Plan should be returned unchanged")
+      }
+    }
+  }
 }

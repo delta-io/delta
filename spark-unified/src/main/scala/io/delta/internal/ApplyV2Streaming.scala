@@ -24,6 +24,7 @@ import io.delta.spark.internal.v2.read.cdc.CDCSchemaContext
 import io.delta.spark.internal.v2.utils.ScalaUtils
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaV2Mode
+import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 import org.apache.spark.sql.SparkSession
@@ -85,6 +86,11 @@ class ApplyV2Streaming(
     schema
   }
 
+  private def isCDCRead(options: CaseInsensitiveStringMap): Boolean = {
+    "true".equalsIgnoreCase(options.getOrDefault(DeltaOptions.CDC_READ_OPTION, "false")) ||
+      "true".equalsIgnoreCase(options.getOrDefault(DeltaOptions.CDC_READ_OPTION_LEGACY, "false"))
+  }
+
   override def apply(plan: LogicalPlan): LogicalPlan = plan.resolveOperators {
     // Case 1: Rewrite V1 StreamingRelation to StreamingRelationV2 with SparkTable
     case s: StreamingRelation if shouldApplyV2Streaming(s) =>
@@ -126,5 +132,16 @@ class ApplyV2Streaming(
         identifier = Some(ident),
         // Keep this None to force the V2 path; we don't want to fall back to V1 here.
         v1Relation = None)
+
+    // Case 2: Augment StreamingRelationV2 output with CDC columns for .table() path.
+    case r: StreamingRelationV2
+      if r.table.isInstanceOf[SparkTable] && isCDCRead(r.extraOptions) =>
+      val hasCDCColumns = r.output.exists(_.name == CDCReader.CDC_TYPE_COLUMN_NAME)
+      if (hasCDCColumns) {
+        r
+      } else {
+        val augmentedSchema = cdcAugmentedSchema(r.table.asInstanceOf[SparkTable])
+        r.copy(output = toAttributes(augmentedSchema))
+      }
   }
 }

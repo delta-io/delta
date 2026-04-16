@@ -71,7 +71,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
               DeltaOptions.EXCLUDE_REGEX_OPTION(),
-              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION()));
+              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION(),
+              DeltaOptions.CDC_READ_OPTION(),
+              DeltaOptions.CDC_READ_OPTION_LEGACY()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
@@ -83,8 +85,6 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.CDC_READ_OPTION().toLowerCase(),
-                  DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),
                   DeltaOptions.CDC_END_TIMESTAMP().toLowerCase(),
                   DeltaOptions.SCHEMA_TRACKING_LOCATION().toLowerCase(),
