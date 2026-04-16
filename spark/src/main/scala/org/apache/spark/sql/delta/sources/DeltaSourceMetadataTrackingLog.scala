@@ -124,6 +124,28 @@ object PersistedMetadata {
       Some(protocol.json)
     )
   }
+
+  /**
+   * Factory method that accepts raw schema JSON strings and a configuration map, without depending
+   * on V1 action types ([[Metadata]], [[Protocol]]). This enables construction from the V2
+   * connector which uses Kernel types.
+   */
+  def fromRaw(
+      tableId: String,
+      deltaCommitVersion: Long,
+      dataSchemaJson: String,
+      partitionSchemaJson: String,
+      sourceMetadataPath: String,
+      tableConfigurations: Map[String, String],
+      protocolJson: String): PersistedMetadata = {
+    PersistedMetadata(
+      tableId, deltaCommitVersion,
+      dataSchemaJson, partitionSchemaJson,
+      sourceMetadataPath,
+      Some(tableConfigurations),
+      Some(protocolJson)
+    )
+  }
 }
 
 /**
@@ -132,7 +154,8 @@ object PersistedMetadata {
  * This schema log is NOT meant to be shared across different Delta streaming source instances.
  *
  * @param rootMetadataLocation Metadata log location
- * @param sourceSnapshot Delta source snapshot for the Delta streaming source
+ * @param tableId The table ID used to validate persisted metadata matches the source table
+ * @param tableDataPath The data path of the Delta table, used in error messages
  * @param sourceMetadataPathOpt The source metadata path that is used during streaming execution.
  * @param initMetadataLogEagerly If true, initialize metadata log as early as possible, otherwise,
  *                             initialize only when detecting non-additive schema change.
@@ -140,7 +163,8 @@ object PersistedMetadata {
 class DeltaSourceMetadataTrackingLog private(
     sparkSession: SparkSession,
     rootMetadataLocation: String,
-    sourceSnapshot: SnapshotDescriptor,
+    tableId: String,
+    tableDataPath: String,
     sourceMetadataPathOpt: Option[String] = None,
     val initMetadataLogEagerly: Boolean = true) {
 
@@ -160,7 +184,11 @@ class DeltaSourceMetadataTrackingLog private(
       sparkSession, rootMetadataLocation, schemaSerializer)
 
   // Validate schema at log init
-  trackingLog.getCurrentTrackedSchema.foreach(_.validateAgainstSnapshot(sourceSnapshot))
+  trackingLog.getCurrentTrackedSchema.foreach { persisted =>
+    if (persisted.tableId != tableId) {
+      throw DeltaErrors.incompatibleSchemaLogDeltaTable(persisted.tableId, tableId)
+    }
+  }
 
   /**
    * Get the global latest metadata for this metadata location.
@@ -222,7 +250,7 @@ class DeltaSourceMetadataTrackingLog private(
     } catch {
       case FailedToEvolveSchema =>
         throw DeltaErrors.sourcesWithConflictingSchemaTrackingLocation(
-          rootMetadataLocation, sourceSnapshot.deltaLog.dataPath.toString)
+          rootMetadataLocation, tableDataPath)
     }
   }
 }
@@ -256,21 +284,24 @@ object DeltaSourceMetadataTrackingLog extends Logging {
       initMetadataLogEagerly: Boolean = true): DeltaSourceMetadataTrackingLog = {
     val options = new CaseInsensitiveStringMap(parameters.asJava)
     val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
+    val tableId = sourceSnapshot.deltaLog.unsafeVolatileTableId
+    val tableDataPath = sourceSnapshot.deltaLog.dataPath.toString
     val metadataTrackingLocation = fullMetadataTrackingLocation(
-      rootMetadataLocation, sourceSnapshot.deltaLog.unsafeVolatileTableId, sourceTrackingId)
+      rootMetadataLocation, tableId, sourceTrackingId)
     val log = new DeltaSourceMetadataTrackingLog(
       sparkSession,
       metadataTrackingLocation,
-      sourceSnapshot,
+      tableId,
+      tableDataPath,
       sourceMetadataPathOpt,
       initMetadataLogEagerly
     )
 
     // During initialize schema log, validate against:
     // 1. table snapshot to check for partition and tahoe id mismatch
+    //    (already done in constructor via tableId check)
     // 2. source metadata path to ensure we are not using the wrong schema log for the source
     log.getCurrentTrackedMetadata.foreach { schema =>
-      schema.validateAgainstSnapshot(sourceSnapshot)
       if (sparkSession.sessionState.conf.getConf(
           DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED)) {
         sourceMetadataPathOpt.foreach { metadataPath =>
@@ -309,6 +340,62 @@ object DeltaSourceMetadataTrackingLog extends Logging {
     (log.getPreviousTrackedMetadata, log.getCurrentTrackedMetadata, sourceMetadataPathOpt) match {
       case (Some(prev), Some(curr), Some(metadataPath)) =>
         DeltaSourceMetadataEvolutionSupport
+          .validateIfSchemaChangeCanBeUnblocked(
+            sparkSession, parameters, metadataPath, curr, prev)
+      case _ =>
+    }
+
+    log
+  }
+
+  /**
+   * Create a schema log instance without depending on V1 types ([[SnapshotDescriptor]],
+   * [[DeltaLog]]). This factory is used by the V2 streaming source (SparkMicroBatchStream).
+   *
+   * Note: This does NOT support consecutive schema change merging (which requires DeltaLog access).
+   * V2 will need to handle that separately if needed.
+   */
+  def createForV2(
+      sparkSession: SparkSession,
+      rootMetadataLocation: String,
+      tableId: String,
+      tableDataPath: String,
+      parameters: Map[String, String],
+      sourceMetadataPathOpt: Option[String] = None,
+      initMetadataLogEagerly: Boolean = true): DeltaSourceMetadataTrackingLog = {
+    val options = new CaseInsensitiveStringMap(parameters.asJava)
+    val sourceTrackingId = Option(options.get(DeltaOptions.STREAMING_SOURCE_TRACKING_ID))
+    val metadataTrackingLocation = fullMetadataTrackingLocation(
+      rootMetadataLocation, tableId, sourceTrackingId)
+    val log = new DeltaSourceMetadataTrackingLog(
+      sparkSession,
+      metadataTrackingLocation,
+      tableId,
+      tableDataPath,
+      sourceMetadataPathOpt,
+      initMetadataLogEagerly
+    )
+
+    // Validate source metadata path consistency
+    log.getCurrentTrackedMetadata.foreach { schema =>
+      if (sparkSession.sessionState.conf.getConf(
+          DeltaSQLConf.DELTA_STREAMING_SCHEMA_TRACKING_METADATA_PATH_CHECK_ENABLED)) {
+        sourceMetadataPathOpt.foreach { metadataPath =>
+          require(metadataPath == schema.sourceMetadataPath,
+            s"The Delta source metadata path used for execution '${metadataPath}' is different " +
+              s"from the one persisted for previous processing '${schema.sourceMetadataPath}'. " +
+              s"Please check if the schema location has been reused across different streaming " +
+              s"sources. Pick a new `${DeltaOptions.SCHEMA_TRACKING_LOCATION}` or use " +
+              s"`${DeltaOptions.STREAMING_SOURCE_TRACKING_ID}` to " +
+              s"distinguish between streaming sources.")
+        }
+      }
+    }
+
+    // Validate schema change can be unblocked during execution phase
+    (log.getPreviousTrackedMetadata, log.getCurrentTrackedMetadata, sourceMetadataPathOpt) match {
+      case (Some(prev), Some(curr), Some(metadataPath)) =>
+        SchemaEvolutionUtils
           .validateIfSchemaChangeCanBeUnblocked(
             sparkSession, parameters, metadataPath, curr, prev)
       case _ =>

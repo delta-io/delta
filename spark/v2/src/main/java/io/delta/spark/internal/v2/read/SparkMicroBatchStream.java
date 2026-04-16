@@ -70,9 +70,12 @@ import org.apache.spark.sql.delta.TypeWidening;
 import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
+import org.apache.spark.sql.delta.sources.DeltaSourceMetadataTrackingLog;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
+import org.apache.spark.sql.delta.sources.PersistedMetadata;
+import org.apache.spark.sql.delta.sources.SchemaEvolutionUtils;
 import org.apache.spark.sql.execution.datasources.FilePartition;
 import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
@@ -124,6 +127,7 @@ public class SparkMicroBatchStream
   private final Optional<Regex> excludeRegex;
   private final SparkSession spark;
   private final String tablePath;
+  private final String checkpointLocation;
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
@@ -131,6 +135,19 @@ public class SparkMicroBatchStream
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final scala.collection.immutable.Map<String, String> scalaOptions;
+
+  /**
+   * Optional metadata tracking log for schema evolution support. When present, the stream can
+   * detect non-additive schema changes (rename, drop, type widening), persist the evolved schema,
+   * and safely restart with the new schema.
+   */
+  private final Optional<DeltaSourceMetadataTrackingLog> metadataTrackingLog;
+
+  /**
+   * The persisted metadata at source init time, if schema tracking is enabled and the log already
+   * contains entries.
+   */
+  private final Optional<PersistedMetadata> persistedMetadataAtSourceInit;
 
   /**
    * Tracks whether this is the first batch for this stream (no checkpointed offset).
@@ -194,6 +211,7 @@ public class SparkMicroBatchStream
       SparkSession spark,
       DeltaOptions options,
       String tablePath,
+      String checkpointLocation,
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
@@ -225,11 +243,26 @@ public class SparkMicroBatchStream
 
     this.snapshotAtSourceInit = (SnapshotImpl) snapshotAtSourceInit;
     this.tableId = this.snapshotAtSourceInit.getMetadata().getId();
-    // TODO(#5319): schema tracking for non-additive schema changes
+    this.checkpointLocation =
+        Objects.requireNonNull(checkpointLocation, "checkpointLocation is null");
+
+    // Initialize schema tracking log if schemaTrackingLocation is provided
+    this.metadataTrackingLog = initializeMetadataTrackingLog();
+
+    // Use persisted schema from tracking log if available, otherwise use snapshot schema
+    this.persistedMetadataAtSourceInit =
+        metadataTrackingLog.flatMap(
+            log -> ScalaUtils.toJavaOptional(log.getCurrentTrackedMetadata()));
+
     this.readSchemaAtSourceInit =
-        Objects.requireNonNull(
-            SchemaUtils.convertKernelSchemaToSparkSchema(snapshotAtSourceInit.getSchema()),
-            "readSchemaAtSourceInit is null");
+        persistedMetadataAtSourceInit
+            .map(persisted -> persisted.dataSchema())
+            .orElseGet(
+                () ->
+                    Objects.requireNonNull(
+                        SchemaUtils.convertKernelSchemaToSparkSchema(
+                            snapshotAtSourceInit.getSchema()),
+                        "readSchemaAtSourceInit is null"));
     this.shouldValidateOffsets =
         Objects.requireNonNull(
             (Boolean)
@@ -256,6 +289,59 @@ public class SparkMicroBatchStream
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
     validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+  }
+
+  /**
+   * Initialize the metadata tracking log if schema tracking is enabled and a schemaTrackingLocation
+   * option is provided.
+   */
+  private Optional<DeltaSourceMetadataTrackingLog> initializeMetadataTrackingLog() {
+    boolean schemaTrackingEnabled =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.DELTA_STREAMING_ENABLE_SCHEMA_TRACKING());
+    if (!schemaTrackingEnabled) {
+      return Optional.empty();
+    }
+
+    // Extract schema tracking location from options, falling back to the alias.
+    // Mirrors V1's DeltaDataSource.extractSchemaTrackingLocationConfig behavior.
+    Optional<String> schemaTrackingLocation =
+        ScalaUtils.toJavaOptional(options.schemaTrackingLocation());
+    if (!schemaTrackingLocation.isPresent()) {
+      schemaTrackingLocation =
+          ScalaUtils.toJavaOptional(
+              scalaOptions.get(DeltaOptions.SCHEMA_TRACKING_LOCATION_ALIAS()));
+    }
+    if (!schemaTrackingLocation.isPresent()) {
+      return Optional.empty();
+    }
+
+    try {
+      DeltaSourceMetadataTrackingLog log =
+          DeltaSourceMetadataTrackingLog.createForV2(
+              spark,
+              schemaTrackingLocation.get(),
+              tableId,
+              tablePath,
+              scalaOptions,
+              Option.empty(), // sourceMetadataPathOpt: set during execution phase
+              /* initMetadataLogEagerly= */ true);
+      return Optional.of(log);
+    } catch (Exception e) {
+      logger.warn("Failed to initialize metadata tracking log", e);
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * Whether schema tracking is active - i.e., a schema tracking log exists with persisted metadata.
+   */
+  private boolean trackingMetadataChange() {
+    return !schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()
+        && persistedMetadataAtSourceInit.isPresent();
   }
 
   @Override
@@ -396,7 +482,13 @@ public class SparkMicroBatchStream
       DeltaSourceOffset previousOffset,
       Optional<DeltaSource.AdmissionLimits> limits,
       boolean isFirstBatch) {
-    // TODO(#5319): Special handling for schema tracking.
+
+    // Handle pending schema change barrier offsets
+    Optional<DeltaSourceOffset> pendingSchemaChange =
+        getNextOffsetIfPendingSchemaChange(previousOffset);
+    if (pendingSchemaChange.isPresent()) {
+      return pendingSchemaChange;
+    }
 
     CloseableIterator<IndexedFile> changes =
         getFileChangesWithRateLimit(
@@ -511,7 +603,51 @@ public class SparkMicroBatchStream
 
   @Override
   public void commit(Offset end) {
-    // TODO(#5319): update metadata tracking log.
+    if (!trackingMetadataChange() || !metadataTrackingLog.isPresent()) {
+      return;
+    }
+
+    DeltaSourceOffset offset = DeltaSourceOffset.apply(tableId, end);
+    if (offset.index() == DeltaSourceOffset.METADATA_CHANGE_INDEX()
+        || offset.index() == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX()) {
+      // Collect metadata at this version and persist to schema tracking log
+      Optional<Metadata> changedMetadata = collectMetadataAtVersion(offset.reservoirVersion());
+      if (changedMetadata.isPresent()
+          && hasMetadataChangeComparedToStreamMetadata(changedMetadata.get())) {
+        Metadata metadata = changedMetadata.get();
+        StructType fullSparkSchema =
+            SchemaUtils.convertKernelSchemaToSparkSchema(metadata.getSchema());
+        // Extract partition schema by selecting partition columns from the full schema
+        List<String> partCols = VectorUtils.toJavaList(metadata.getPartitionColumns());
+        StructType partSchema = new StructType();
+        for (String col : partCols) {
+          if (fullSparkSchema.getFieldIndex(col).isDefined()) {
+            partSchema =
+                partSchema.add(
+                    fullSparkSchema.apply((int) fullSparkSchema.getFieldIndex(col).get()));
+          }
+        }
+        // Convert Kernel config map to Scala immutable map
+        scala.collection.immutable.Map<String, String> scalaConfig =
+            ScalaUtils.toScalaMap(metadata.getConfiguration());
+        PersistedMetadata schemaToPersist =
+            PersistedMetadata.fromRaw(
+                tableId,
+                offset.reservoirVersion(),
+                fullSparkSchema.json(),
+                partSchema.json(),
+                checkpointLocation,
+                scalaConfig,
+                "{}");
+        metadataTrackingLog.get().writeNewMetadata(schemaToPersist, false);
+        // Fail the stream to trigger restart with the evolved schema
+        throw (RuntimeException)
+            DeltaErrors.streamingMetadataEvolutionException(
+                schemaToPersist.dataSchema(),
+                schemaToPersist.tableConfigurations().get(),
+                schemaToPersist.protocol().get());
+      }
+    }
   }
 
   @Override
@@ -704,7 +840,8 @@ public class SparkMicroBatchStream
       changes = changes.takeWhile(admissionLimits::admit);
     }
 
-    // TODO(#5318): Stop at schema change barriers
+    // Stop at schema change barriers — don't process data past a schema change
+    changes = stopAtSchemaChangeBarrier(changes);
     return changes;
   }
 
@@ -965,7 +1102,9 @@ public class SparkMicroBatchStream
       // commit, downstream would produce incorrect results.
       //
       // TODO(#5318): consider caching the commit actions to avoid reading the same commit twice.
-      // TODO(#5319): don't verify metadata action when schema tracking is enabled
+      // When schema tracking is enabled, skip per-commit metadata validation during the first
+      // pass — schema changes will be handled via barrier offsets instead.
+      boolean verifyMetadata = !trackingMetadataChange();
       boolean shouldSkipCommit =
           validateCommitAndDecideSkipping(
               commit,
@@ -973,20 +1112,41 @@ public class SparkMicroBatchStream
               startVersion,
               snapshotAtSourceInit.getPath(),
               endOffsetOpt,
-              /* verifyMetadataAction= */ true);
+              /* verifyMetadataAction= */ verifyMetadata);
 
       // Second pass: Build a lazy iterator of IndexedFiles.
       //
-      //   BEGIN (BASE_INDEX) + actual file actions + END (END_INDEX)
+      //   BEGIN (BASE_INDEX) + [METADATA_CHANGE if detected] + actual file actions + END
       //
       // These sentinel IndexedFiles have null file actions and are used for proper offset
       // tracking:
       //   - BASE_INDEX: marks "before any files in this version", allowing the offset to
       //                 reference the start of a version.
+      //   - METADATA_CHANGE_INDEX: marks a schema change barrier (when schema tracking is on)
       //   - END_INDEX:  marks end of version, triggers version advancement in
       //                 buildOffsetFromIndexedFile to skip re-reading completed versions.
       //
       // See DeltaSource.addBeginAndEndIndexOffsetsForVersion for the Scala equivalent.
+
+      // Check if this commit contains a metadata change that differs from the stream's schema
+      CloseableIterator<IndexedFile> metadataChangeBarrier;
+      if (trackingMetadataChange()) {
+        Optional<Metadata> metadataAtVersion = collectMetadataAtVersion(version);
+        if (metadataAtVersion.isPresent()
+            && hasMetadataChangeComparedToStreamMetadata(metadataAtVersion.get())
+            && !persistedMetadataAtSourceInit
+                .map(p -> p.deltaCommitVersion() >= version)
+                .orElse(false)) {
+          metadataChangeBarrier =
+              Utils.singletonCloseableIterator(
+                  IndexedFile.sentinel(version, DeltaSourceOffset.METADATA_CHANGE_INDEX()));
+        } else {
+          metadataChangeBarrier = Utils.toCloseableIterator(Collections.emptyIterator());
+        }
+      } else {
+        metadataChangeBarrier = Utils.toCloseableIterator(Collections.emptyIterator());
+      }
+
       CloseableIterator<IndexedFile> fileActions =
           shouldSkipCommit
               ? Utils.toCloseableIterator(Collections.emptyIterator())
@@ -994,6 +1154,7 @@ public class SparkMicroBatchStream
       CloseableIterator<IndexedFile> inner =
           Utils.singletonCloseableIterator(
                   IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()))
+              .combine(metadataChangeBarrier)
               .combine(fileActions)
               .combine(
                   Utils.singletonCloseableIterator(
@@ -1253,11 +1414,14 @@ public class SparkMicroBatchStream
     }
   }
 
-  // TODO(#5319): schema tracking for non-additive schema changes
-  // TODO(#5319): Extract the entire non-additive schema check into a static utility and share it
-  // with v1 by refactoring DeltaColumnMapping.hasNoColumnMappingSchemaChanges so it can be reused
-  // by both v1 and v2.
-  // Non-additive schema changes include rename column, drop column and change column type
+  /**
+   * Check for non-additive schema changes (rename, drop, type widening) between two metadata
+   * versions. When schema tracking is active, non-additive changes are handled via schema change
+   * barriers rather than immediately blocking the stream. When schema tracking is NOT active,
+   * non-additive changes throw an error to block the stream.
+   *
+   * <p>Uses {@link SchemaEvolutionUtils} for shared validation logic with V1.
+   */
   private void checkNonAdditiveSchemaChanges(
       Metadata oldMetadata,
       Metadata newMetadata,
@@ -1273,9 +1437,6 @@ public class SparkMicroBatchStream
     if (schemaReadOptions.typeWideningEnabled()
         && schemaReadOptions.enableSchemaTrackingForTypeWidening()
         && TypeWidening.containsWideningTypeChanges(sparkOldSchema, sparkNewSchema)) {
-      // If schema tracking is enabled for type widening, we will detect widening type changes and
-      // block the stream until the user sets `allowSourceColumnTypeChange` - similar to handling
-      // DROP/RENAME for column mapping.
       shouldTrackSchema = true;
     } else if (schemaReadOptions.allowUnsafeStreamingReadOnColumnMappingSchemaChanges()) {
       shouldTrackSchema = false;
@@ -1295,8 +1456,6 @@ public class SparkMicroBatchStream
                 oldPartitionColumns,
                 /* isBothColumnMappingEnabled */ true);
       } else if (oldMode == NONE && newMode != NONE) {
-        // TODO(#5319): We should disallow user to upgrade column mapping mode for now since we
-        // don't support schema tracking
         shouldTrackSchema = true;
       } else {
         // Prohibit reading across a downgrade.
@@ -1305,6 +1464,11 @@ public class SparkMicroBatchStream
     }
 
     if (shouldTrackSchema) {
+      if (trackingMetadataChange()) {
+        // Schema tracking is active — the schema change will be handled via barrier offsets
+        // in processCommitToIndexedFiles. Don't block the stream here.
+        return;
+      }
       throw (RuntimeException)
           DeltaErrors.blockStreamingReadsWithIncompatibleNonAdditiveSchemaChanges(
               spark,
@@ -1312,6 +1476,96 @@ public class SparkMicroBatchStream
               sparkNewSchema,
               !validatedDuringStreamStart,
               /* isV2DataSource= */ true);
+    }
+  }
+
+  ///////////////////////////
+  // Schema tracking helpers
+  ///////////////////////////
+
+  /**
+   * If the previous offset is a schema change barrier, return the appropriate next offset. This
+   * implements the two-offset barrier strategy:
+   *
+   * <ol>
+   *   <li>METADATA_CHANGE_INDEX -> POST_METADATA_CHANGE_INDEX (second barrier)
+   *   <li>POST_METADATA_CHANGE_INDEX -> same offset (block until commit evolves schema)
+   * </ol>
+   */
+  private Optional<DeltaSourceOffset> getNextOffsetIfPendingSchemaChange(
+      DeltaSourceOffset previousOffset) {
+    if (!trackingMetadataChange()) {
+      return Optional.empty();
+    }
+
+    if (previousOffset.index() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+      return Optional.of(
+          previousOffset.copy(
+              previousOffset.reservoirId(),
+              previousOffset.reservoirVersion(),
+              DeltaSourceOffset.POST_METADATA_CHANGE_INDEX(),
+              previousOffset.isInitialSnapshot()));
+    }
+
+    if (previousOffset.index() == DeltaSourceOffset.POST_METADATA_CHANGE_INDEX()) {
+      // Check if the schema change at this version is still pending (hasn't been committed yet)
+      Optional<Metadata> metadata = collectMetadataAtVersion(previousOffset.reservoirVersion());
+      if (metadata.isPresent() && hasMetadataChangeComparedToStreamMetadata(metadata.get())) {
+        // Block — schema hasn't been evolved yet
+        return Optional.of(previousOffset);
+      }
+    }
+
+    return Optional.empty();
+  }
+
+  /**
+   * Stop the file action iterator at a schema change barrier (inclusively). This mirrors V1's
+   * {@code stopIndexedFileIteratorAtSchemaChangeBarrier}.
+   */
+  private CloseableIterator<IndexedFile> stopAtSchemaChangeBarrier(
+      CloseableIterator<IndexedFile> iter) {
+    if (!trackingMetadataChange()) {
+      return iter;
+    }
+    // Take everything up to and including the first schema change barrier
+    boolean[] seenBarrier = {false};
+    return iter.filter(
+        file -> {
+          if (seenBarrier[0]) {
+            return false;
+          }
+          if (file.getIndex() == DeltaSourceOffset.METADATA_CHANGE_INDEX()) {
+            seenBarrier[0] = true;
+          }
+          return true;
+        });
+  }
+
+  /**
+   * Check if the given metadata represents a schema change compared to the current stream metadata.
+   * This compares against the persisted metadata (or snapshot schema) that the stream is currently
+   * reading with.
+   */
+  private boolean hasMetadataChangeComparedToStreamMetadata(Metadata newMetadata) {
+    StructType newSchema = SchemaUtils.convertKernelSchemaToSparkSchema(newMetadata.getSchema());
+    return !newSchema.equals(readSchemaAtSourceInit);
+  }
+
+  /** Collect a metadata action at a specific version, if one exists. */
+  private Optional<Metadata> collectMetadataAtVersion(long version) {
+    try {
+      Map<Long, Metadata> metadataActions =
+          StreamingHelper.collectMetadataActionsFromRangeUnsafe(
+              version,
+              Optional.of(version),
+              snapshotManager,
+              engine,
+              snapshotAtSourceInit.getPath());
+      return Optional.ofNullable(metadataActions.get(version));
+    } catch (Exception e) {
+      logger.warn("Failed to collect metadata at version {}", version, e);
+      return Optional.empty();
     }
   }
 
@@ -1339,7 +1593,9 @@ public class SparkMicroBatchStream
    */
   private void checkReadIncompatibleSchemaChangeOnStreamStartOnce(
       long batchStartVersion, Long batchEndVersion) {
-    // TODO(#5319): skip if enable schema tracking log
+    // When schema tracking is active, schema changes are handled via barrier offsets
+    // during normal offset generation, so skip this one-time startup check.
+    if (trackingMetadataChange()) return;
 
     if (hasCheckedReadIncompatibleSchemaChangesOnStreamStart) return;
 

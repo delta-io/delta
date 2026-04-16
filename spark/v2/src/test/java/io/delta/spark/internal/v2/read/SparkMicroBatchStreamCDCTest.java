@@ -859,6 +859,7 @@ public class SparkMicroBatchStreamCDCTest extends DeltaV2TestBase {
         spark,
         options,
         /* tablePath= */ "",
+        /* checkpointLocation= */ "",
         /* dataSchema= */ tableSchema,
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ new StructType(),
