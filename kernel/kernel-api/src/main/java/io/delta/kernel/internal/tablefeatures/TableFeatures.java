@@ -205,7 +205,7 @@ public class TableFeatures {
     }
   }
 
-  static final TableFeature GEOSPATIAL_RW_FEATURE = new GeoSpatialTableFeature();
+  public static final TableFeature GEOSPATIAL_RW_FEATURE = new GeoSpatialTableFeature();
 
   private static class GeoSpatialTableFeature extends TableFeature.ReaderWriterFeature
       implements FeatureAutoEnabledByMetadata {
