@@ -815,7 +815,7 @@ trait DeltaInsertReplaceUsingDFWriterTests
     withTempDir { dir =>
       val path = dir.getAbsolutePath + "/new_table"
       checkError(
-        exception = intercept[DeltaAnalysisException] {
+        exception = intercept[AnalysisException] {
           writeReplaceUsingDF(
             sourceDF = Seq((1, "a"), (2, "b"), (3, "c"))
               .toDF("id", "value"),
