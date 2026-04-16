@@ -16,6 +16,9 @@
 package io.delta.kernel.types;
 
 import io.delta.kernel.annotation.Evolving;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 
@@ -35,7 +38,8 @@ public final class GeographyType extends DataType {
   public static final String DEFAULT_ALGORITHM = "spherical";
 
   public static final Set<String> VALID_ALGORITHMS =
-      Set.of("spherical", "vincenty", "thomas", "andoyer", "karney");
+      Collections.unmodifiableSet(
+          new HashSet<>(Arrays.asList("spherical", "vincenty", "thomas", "andoyer", "karney")));
 
   private final String srid;
   private final String algorithm;
@@ -103,11 +107,6 @@ public final class GeographyType extends DataType {
    */
   public String getAlgorithm() {
     return algorithm;
-  }
-
-  @Override
-  public boolean isNested() {
-    return false;
   }
 
   /**
