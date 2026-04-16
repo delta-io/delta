@@ -64,7 +64,6 @@ trait ExecutionObserverTestMixin {
       observerContext1: ExecutionObserverContext[T])(
       fn: T => Unit): Array[Row] =
     ExecutionObserverContext.runWithObservers(observerContext1)(fn)
-
 }
 
 /**
