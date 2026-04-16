@@ -1,9 +1,9 @@
 name: "Kernel Unity Catalog"
 on:
   push:
-    branches: [ds-11122025]
+    branches: [branch-ds-11122025]
   pull_request:
-    branches: [ds-11122025]
+    branches: [branch-ds-11122025]
 jobs:
   test:
     name: "Kernel Unity Catalog Tests"
