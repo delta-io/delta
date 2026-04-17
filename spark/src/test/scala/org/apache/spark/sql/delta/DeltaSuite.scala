@@ -660,7 +660,7 @@ class DeltaSuite extends QueryTest
           Seq(1, 2, 3, 4).toDF("value")
             .withColumn("is_odd", $"value" % 2 =!= 0)
             .write
-            .format("tahoe")
+            .format("delta")
             .partitionBy("is_odd")
             .save(dir.toString)
 
@@ -677,7 +677,7 @@ class DeltaSuite extends QueryTest
                 Seq(5).toDF("value")
                   .withColumn("is_odd", $"value" % 2 =!= 0)
                   .write
-                  .format("tahoe")
+                  .format("delta")
                   .mode("overwrite")
                   .option(DeltaOptions.REPLACE_WHERE_OPTION,
                     s"EXISTS (SELECT 1 FROM $viewName WHERE value = srcValue)")
@@ -685,7 +685,7 @@ class DeltaSuite extends QueryTest
               },
               condition = "DELTA_UNSUPPORTED_SUBQUERY",
               sqlState = Some("0AKDC"),
-              parameters = Map("operation" -> "DELETE condition", "cond" -> ".*"),
+              parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
               matchPVals = true
             )
 
@@ -695,7 +695,7 @@ class DeltaSuite extends QueryTest
                 Seq(5).toDF("value")
                   .withColumn("is_odd", $"value" % 2 =!= 0)
                   .write
-                  .format("tahoe")
+                  .format("delta")
                   .mode("overwrite")
                   .option(DeltaOptions.REPLACE_WHERE_OPTION,
                     s"value IN (SELECT srcValue FROM $viewName)")
@@ -703,7 +703,7 @@ class DeltaSuite extends QueryTest
               },
               condition = "DELTA_UNSUPPORTED_SUBQUERY",
               sqlState = Some("0AKDC"),
-              parameters = Map("operation" -> "DELETE condition", "cond" -> ".*"),
+              parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
               matchPVals = true
             )
           }
