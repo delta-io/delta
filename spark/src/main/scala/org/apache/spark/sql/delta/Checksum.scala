@@ -482,7 +482,8 @@ trait RecordChecksum extends DeltaLogging {
       if (computedNumFiles != numFiles || computedTableSizeBytes != tableSizeBytes) {
         val filePathsFromPreviousVersion = oldVersionChecksum.allFiles
           .orElse {
-            recordFrameProfile("Delta", "VersionChecksum.computeNewChecksum.allFiles") {
+            recordFrameProfile(
+                "Delta", "VersionChecksum.computeNewChecksum.allFiles") {
               oldSnapshot.map(_.allFiles.collect().toSeq)
             }
           }
@@ -675,7 +676,8 @@ trait RecordChecksum extends DeltaLogging {
     // to crc.
     val oldAllFiles = oldVersionChecksum.allFiles
       .orElse {
-        recordFrameProfile("Delta", "VersionChecksum.incrementallyComputeAddFiles") {
+        recordFrameProfile(
+            "Delta", "VersionChecksum.incrementallyComputeAddFiles") {
           oldSnapshot.map(_.allFiles.collect().toSeq)
         }
       }
@@ -850,7 +852,8 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
   def validateFileListAgainstCRC(checksum: VersionChecksum, contextOpt: Option[String]): Boolean = {
     val fileSortKey = (f: AddFile) => (f.path, f.modificationTime, f.size)
     val filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
-    val filesFromStateReconstruction = recordFrameProfile("Delta", "snapshot.allFiles") {
+    val filesFromStateReconstruction = recordFrameProfile(
+        "Delta", "snapshot.allFiles") {
       allFilesViaStateReconstruction.collect().toSeq.sortBy(fileSortKey)
     }
     if (filesFromCrc == filesFromStateReconstruction) return true
