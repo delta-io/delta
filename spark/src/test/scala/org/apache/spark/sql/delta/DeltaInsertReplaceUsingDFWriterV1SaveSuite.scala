@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta
 
-import com.databricks.spark.util.Log4jUsageLogger
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
@@ -97,6 +96,28 @@ class DeltaInsertReplaceUsingDFWriterV1SaveSuite
     }
   }
 
+  test("save with replaceUsing: rejects mismatched column types without implicit casting") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      Seq((1, "target"), (2, "target"))
+        .toDF("id", "value")
+        .write.format("delta").save(path)
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          writeReplaceUsingDF(
+            sourceDF = Seq((1, 100), (3, 300))
+              .toDF("id", "value"),
+            target = path,
+            replaceUsingCols = "id")
+        },
+        condition = "DELTA_FAILED_TO_MERGE_FIELDS",
+        parameters = Map("currentField" -> ".*", "updateField" -> ".*"),
+        matchPVals = true
+      )
+    }
+  }
+
   test("save with replaceUsing: rejects Long source to Int target (no implicit narrowing)") {
     withTempDir { dir =>
       val path = dir.getAbsolutePath
@@ -160,6 +181,27 @@ class DeltaInsertReplaceUsingDFWriterV1SaveSuite
         parameters = Map("currentField" -> ".*", "updateField" -> ".*"),
         matchPVals = true
       )
+    }
+  }
+
+  test("save: replaceUsing succeeds with misaligned columns because save() is by name") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+
+      Seq((0, 1, "target"))
+        .toDF("non_match_col", "match_col", "row_origin")
+        .write.format("delta").save(path)
+
+      writeReplaceUsingDF(
+        sourceDF = Seq((1, 2, "source"))
+          .toDF("match_col", "non_match_col", "row_origin"),
+        target = path,
+        replaceUsingCols = "match_col")
+
+      checkAnswer(
+        spark.read.format("delta").load(path).orderBy("match_col"),
+        Seq(
+          Row(2, 1, "source")))
     }
   }
 }
