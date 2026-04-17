@@ -93,7 +93,12 @@ object SparkMimaExcludes {
 
       // Changes in 4.1.0
       // TODO: change in type hierarchy due to removal of DeltaThrowableConditionShim
-      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*")
+      ProblemFilters.exclude[MissingTypesProblem]("io.delta.exceptions.*"),
+
+      // Spark 4.0.x does not have MDC/logBasedOnLevel on the Logging trait (added in 4.1);
+      // compiling against Spark 4.0.x produces bytecode missing these inherited methods.
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.MDC"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("io.delta.tables.DeltaMergeBuilder.logBasedOnLevel")
 
       // scalastyle:on line.size.limit
   )
