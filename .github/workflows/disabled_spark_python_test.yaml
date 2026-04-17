@@ -3,12 +3,12 @@ on:
   workflow_dispatch: # manual-only, auto triggers removed
   # To re-enable, replace the above line with:
   # push:
-  #   branches: [kernel-20250227]
+  #   branches: [branch-kernel-20250227]
   #   paths-ignore:
   #     - '**.md'
   #     - '**.txt'
   # pull_request:
-  #   branches: [kernel-20250227]
+  #   branches: [branch-kernel-20250227]
   #   paths-ignore:
   #     - '**.md'
   #     - '**.txt'
