@@ -20,8 +20,6 @@ package org.apache.spark.sql.delta.commands
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-import scala.util.control.NonFatal
-
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.ClusteringColumnInfo
 import org.apache.spark.sql.delta._
@@ -620,14 +618,6 @@ case class AlterTableAddColumnsDeltaCommand(
               case QualifiedColTypeWithPosition(_, column, _) => column
             }), true)(!_.nullable).nonEmpty) {
         throw DeltaErrors.operationNotSupportedException("NOT NULL in ALTER TABLE ADD COLUMNS")
-      }
-
-      // TODO: remove this after auto cache refresh is merged.
-      table.tableIdentifier.foreach { identifier =>
-        try sparkSession.catalog.uncacheTable(identifier) catch {
-          case NonFatal(e) =>
-            log.warn(s"Exception when attempting to uncache table $identifier", e)
-        }
       }
 
       val metadata = txn.metadata
