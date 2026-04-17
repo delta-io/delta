@@ -50,9 +50,35 @@ import org.slf4j.LoggerFactory;
  * A commit coordinator client that uses unity-catalog as the commit coordinator.
  */
 public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
+  /** The single UC client for all commit operations (DRC or legacy). */
+  private final UCDeltaClient ucDeltaClient;
+
+
   public UCCommitCoordinatorClient(Map<String, String> conf, UCClient ucClient) {
+    this(conf, UCDeltaClient.fromLegacyClient(ucClient));
+  }
+
+  public UCCommitCoordinatorClient(
+      Map<String, String> conf,
+      UCClient ucClient,
+      String baseUri,
+      io.unitycatalog.client.auth.TokenProvider tokenProvider) {
+    this(conf, UCDeltaClient.fromLegacyClient(ucClient));
+  }
+
+  public UCCommitCoordinatorClient(
+      Map<String, String> conf,
+      UCClient ucClient,
+      String baseUri,
+      io.unitycatalog.client.auth.TokenProvider tokenProvider,
+      UCDeltaClient ucDeltaClient) {
+    this(conf, ucDeltaClient);
+  }
+
+  public UCCommitCoordinatorClient(Map<String, String> conf, UCDeltaClient client) {
     this.conf = conf;
-    this.ucClient = ucClient;
+    this.ucClient = client; // UCDeltaClient extends UCClient
+    this.ucDeltaClient = client;
   }
 
   /**
@@ -449,6 +475,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
+        boolean metadataChanged =
+            updatedActions.getNewMetadata() != updatedActions.getOldMetadata();
+        boolean protocolChanged =
+            updatedActions.getNewProtocol() != updatedActions.getOldProtocol();
+        // Pack old metadata/protocol into CatalogTrackedInfo for DRC diffing
+        CatalogTrackedInfo drcTrackedInfo = new CatalogTrackedInfo(
+            catalogTrackedInfo.deltaUniformIceberg(),
+            catalogTrackedInfo.etag(),
+            metadataChanged
+                ? Optional.of(updatedActions.getOldMetadata()) : Optional.empty(),
+            protocolChanged
+                ? Optional.of(updatedActions.getOldProtocol()) : Optional.empty());
         commitToUC(
           tableDesc,
           logPath,
@@ -456,14 +494,12 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
-          catalogTrackedInfo,
+          drcTrackedInfo,
           disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
+          metadataChanged
+              ? Optional.of(updatedActions.getNewMetadata()) : Optional.empty(),
+          protocolChanged
+              ? Optional.of(updatedActions.getNewProtocol()) : Optional.empty()
         );
         break;
       } catch (CommitFailedException cfe) {
@@ -666,8 +702,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
-      CatalogTrackedInfo.EMPTY
-      , true /* disown */,
+      CatalogTrackedInfo.EMPTY,
+      true /* disown */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* newProtocol */
     );
@@ -709,17 +745,18 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       commitTimestamp.orElseThrow(() -> new IllegalArgumentException(
         "Commit timestamp should be specified when commitFile is present"))
     ));
-    ucClient.commit(
-      extractUCTableId(tableDesc),
-      CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
-      commit,
-      lastKnownBackfilledVersion,
-      disown,
-      newMetadata,
-      newProtocol,
-        catalogTrackedInfo.deltaUniformIceberg()
+    // DRC needs old metadata/protocol for diffing and etag for concurrency.
+    // All DRC data flows through CatalogTrackedInfo.
+    ucDeltaClient.commit(
+      tableDesc, logPath,
+      commit, lastKnownBackfilledVersion, disown,
+      catalogTrackedInfo.oldMetadata(), newMetadata,
+      catalogTrackedInfo.oldProtocol(), newProtocol,
+      catalogTrackedInfo.deltaUniformIceberg(),
+      catalogTrackedInfo.etag()
     );
   }
+
 
   /**
    * Detects whether the current commit is a downgrade (disown) commit by checking
@@ -822,7 +859,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
         .stream()
         .sorted(Comparator.comparingLong(Commit::getVersion))
         .collect(Collectors.toList());
-    return new GetCommitsResponse(sortedCommits, resp.getLatestTableVersion());
+    return new GetCommitsResponse(
+        sortedCommits, resp.getLatestTableVersion(), resp.getEtag());
   }
 
   protected GetCommitsResponse getCommitsFromUCImpl(
@@ -830,15 +868,21 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> startVersion,
       Optional<Long> endVersion) {
     try {
-      return ucClient.getCommits(
-        extractUCTableId(tableDesc),
-        CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
-        startVersion,
-        endVersion);
-    } catch (IOException | UCCommitCoordinatorException e) {
+      // Use loadTable to get full table state (commits + etag) in one RPC.
+      String[] tp = extractTablePathForDeltaRest(tableDesc);
+      String ucTableId = extractUCTableId(tableDesc);
+      java.net.URI tableUri = io.delta.storage.commit.CoordinatedCommitsUtils
+          .getTablePath(tableDesc.getLogPath()).toUri();
+      UCDeltaClient.LoadTableResponse response = ucDeltaClient.loadTable(
+          tp != null ? tp[0] : null, tp != null ? tp[1] : null,
+          tp != null ? tp[2] : null,
+          ucTableId, tableUri, startVersion, endVersion);
+      return response.getCommitsResponse();
+    } catch (IOException e) {
       throw new RuntimeException(e);
     }
   }
+
 
   @Override
   public void backfillToVersion(
@@ -983,5 +1027,21 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       " is not supported by this version of the UC commit coordinator client. Please upgrade" +
       " the commit coordinator client to " + op + " this table.");
     }
+  }
+
+  /**
+   * Extracts catalog, schema, and table name from TableDescriptor for Delta REST API calls.
+   * Kept for backward compatibility -- commit path now goes through UCDeltaClient.
+   */
+  protected String[] extractTablePathForDeltaRest(TableDescriptor tableDesc) {
+    if (!tableDesc.getTableIdentifier().isPresent()) {
+      return null;
+    }
+    io.delta.storage.commit.TableIdentifier tableId = tableDesc.getTableIdentifier().get();
+    String[] namespace = tableId.getNamespace();
+    if (namespace.length != 2) {
+      return null;
+    }
+    return new String[]{namespace[0], namespace[1], tableId.getName()};
   }
 }

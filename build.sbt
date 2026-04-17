@@ -320,6 +320,16 @@ lazy val sparkV1 = (project in file("spark"))
     skipReleaseSettings, // Internal module - not published to Maven
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
 
+    // Conditional DRC shim for spark module (bridges CatalogPlugin to UCDeltaClient).
+    Compile / unmanagedSourceDirectories += {
+      val shimDir = if (sys.props.getOrElse("deltaRestCatalog", "false").toBoolean) {
+        "scala-shims/drc"
+      } else {
+        "scala-shims/no-drc"
+      }
+      baseDirectory.value / "src" / "main" / shimDir
+    },
+
     // Export as JAR instead of classes directory. This prevents dependent projects
     // (e.g., connectServer) from seeing multiple 'classes' directories with the same
     // name in their classpath, which would cause FileAlreadyExistsException.
@@ -1063,6 +1073,15 @@ lazy val storage = (project in file("storage"))
     commonSettings,
     exportJars := true,
     javaOnlyReleaseSettings,
+    // Conditional DRC shim for storage module
+    Compile / unmanagedSourceDirectories += {
+      val shimDir = if (sys.props.getOrElse("deltaRestCatalog", "false").toBoolean) {
+        "java-shims/drc"
+      } else {
+        "java-shims/no-drc"
+      }
+      baseDirectory.value / "src" / "main" / shimDir
+    },
     libraryDependencies ++= Seq(
       // User can provide any 2.x or 3.x version. We don't use any new fancy APIs. Watch out for
       // versions with known vulnerabilities.

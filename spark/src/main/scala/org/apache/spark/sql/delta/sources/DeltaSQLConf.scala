@@ -3296,6 +3296,17 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .doc("Maximum number of files allowed in initial snapshot for V2 streaming.")
       .intConf
       .createWithDefault(100000)
+
+  val DELTA_REST_CATALOG_ENABLED =
+    buildConf("unityCatalog.deltaRestCatalog.enabled")
+      .internal()
+      .doc(
+        "When enabled and the Delta REST Catalog client is on the classpath, " +
+        "Delta operations will use the native Delta REST Catalog API for " +
+        "communicating with Unity Catalog instead of the legacy API. " +
+        "This enables native protocol and schema handling.")
+      .booleanConf
+      .createWithDefault(false)
 }
 
 object DeltaSQLConf extends DeltaSQLConfBase

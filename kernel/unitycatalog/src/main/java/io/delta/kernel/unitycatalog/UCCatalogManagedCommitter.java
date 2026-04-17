@@ -38,7 +38,6 @@ import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.uccommitcoordinator.UCClient;
-import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorException;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import java.io.IOException;
 import java.util.Collections;
@@ -56,38 +55,50 @@ import org.slf4j.LoggerFactory;
 public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   private static final Logger logger = LoggerFactory.getLogger(UCCatalogManagedCommitter.class);
 
-  protected final UCClient ucClient;
+  protected final io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient;
   protected final String ucTableId;
   protected final Path tablePath;
   private final Optional<UCTableIdentifier> ucTableIdentifier;
 
   /**
-   * Creates a committer for an existing Unity Catalog-managed Delta table (version >= 1 writes).
-   *
-   * @param ucClient the Unity Catalog client to use for commit operations
-   * @param ucTableId the unique Unity Catalog table identifier
-   * @param tablePath the path to the Delta table in the underlying storage system
+   * Creates a committer for an existing UC-managed Delta table (version >= 1 writes). Legacy
+   * constructor -- wraps UCClient in UCDeltaClient.
    */
   public UCCatalogManagedCommitter(UCClient ucClient, String ucTableId, String tablePath) {
-    this(ucClient, ucTableId, tablePath, Optional.empty());
+    this(
+        io.delta.storage.commit.uccommitcoordinator.UCDeltaClient.fromLegacyClient(ucClient),
+        ucTableId,
+        tablePath,
+        Optional.empty());
   }
 
   /**
-   * Creates a committer for a new Unity Catalog-managed Delta table (CREATE TABLE). The provided
-   * {@link UCTableIdentifier} enables automatic table finalization in UC after writing the
-   * version-0 delta file.
+   * Creates a committer for a new UC-managed Delta table (CREATE TABLE). Legacy constructor --
+   * wraps UCClient in UCDeltaClient.
    */
   public UCCatalogManagedCommitter(
       UCClient ucClient, String ucTableId, String tablePath, UCTableIdentifier ucTableIdentifier) {
-    this(ucClient, ucTableId, tablePath, Optional.of(requireNonNull(ucTableIdentifier)));
+    this(
+        io.delta.storage.commit.uccommitcoordinator.UCDeltaClient.fromLegacyClient(ucClient),
+        ucTableId,
+        tablePath,
+        Optional.of(requireNonNull(ucTableIdentifier)));
+  }
+
+  public UCCatalogManagedCommitter(
+      io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient,
+      String ucTableId,
+      String tablePath,
+      UCTableIdentifier ucTableIdentifier) {
+    this(ucDeltaClient, ucTableId, tablePath, Optional.ofNullable(ucTableIdentifier));
   }
 
   private UCCatalogManagedCommitter(
-      UCClient ucClient,
+      io.delta.storage.commit.uccommitcoordinator.UCDeltaClient ucDeltaClient,
       String ucTableId,
       String tablePath,
       Optional<UCTableIdentifier> ucTableIdentifier) {
-    this.ucClient = requireNonNull(ucClient, "ucClient is null");
+    this.ucDeltaClient = requireNonNull(ucDeltaClient, "ucDeltaClient is null");
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
     this.ucTableIdentifier = requireNonNull(ucTableIdentifier);
@@ -331,7 +342,7 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
 
     try {
       logger.info("[{}] Finalizing table creation in Unity Catalog", ucTableId);
-      ucClient.finalizeCreate(
+      ucDeltaClient.finalizeCreate(
           tableIdentifier.getTableName(),
           tableIdentifier.getCatalogName(),
           tableIdentifier.getSchemaName(),
@@ -448,29 +459,30 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
               });
 
           try {
-            ucClient.commit(
+            String catalog = ucTableIdentifier.map(UCTableIdentifier::getCatalogName).orElse(null);
+            String schema = ucTableIdentifier.map(UCTableIdentifier::getSchemaName).orElse(null);
+            String table = ucTableIdentifier.map(UCTableIdentifier::getTableName).orElse(null);
+            ucDeltaClient.commit(
+                catalog,
+                schema,
+                table,
                 ucTableId,
                 tablePath.toUri(),
                 Optional.of(getUcCommitPayload(commitMetadata, kernelStagedCommitFileStatus)),
                 commitMetadata.getMaxKnownPublishedDeltaVersion(),
                 false /* isDisown */,
+                Optional.empty() /* oldMetadata -- not tracked in Kernel V2 */,
                 generateMetadataPayloadOpt(commitMetadata).map(MetadataAdapter::new),
+                Optional.empty() /* oldProtocol -- not tracked in Kernel V2 */,
                 commitMetadata.getNewProtocolOpt().map(ProtocolAdapter::new),
-                uniformMetadataOpt);
+                uniformMetadataOpt,
+                Optional.empty() /* etag -- not tracked in Kernel V2 */);
             return null;
           } catch (io.delta.storage.commit.CommitFailedException cfe) {
             throw storageCFEtoKernelCFE(cfe);
           } catch (IOException ex) {
             throw new CommitFailedException(
                 true /* retryable */, false /* conflict */, ex.getMessage(), ex);
-          } catch (UCCommitCoordinatorException ucce) {
-            // For now, this catches all UC exceptions such as:
-            // - CommitLimitReachedException -> TODO: publish in this case
-            // - InvalidTargetTableException
-            // - UpgradeNotAllowedException
-            // We can add specific catch statements for these exceptions if needed in the future.
-            throw new CommitFailedException(
-                false /* retryable */, false /* conflict */, ucce.getMessage(), ucce);
           }
         });
   }

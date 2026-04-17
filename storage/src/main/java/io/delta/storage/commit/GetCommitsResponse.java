@@ -31,9 +31,16 @@ public class GetCommitsResponse {
 
   private long latestTableVersion;
 
+  private String etag;
+
   public GetCommitsResponse(List<Commit> commits, long latestTableVersion) {
+    this(commits, latestTableVersion, null);
+  }
+
+  public GetCommitsResponse(List<Commit> commits, long latestTableVersion, String etag) {
     this.commits = commits;
     this.latestTableVersion = latestTableVersion;
+    this.etag = etag;
   }
 
   public List<Commit> getCommits() {
@@ -42,6 +49,11 @@ public class GetCommitsResponse {
 
   public long getLatestTableVersion() {
     return latestTableVersion;
+  }
+
+  /** Etag from DRC loadTable, or null for legacy. */
+  public String getEtag() {
+    return etag;
   }
 }
 

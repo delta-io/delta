@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCDeltaClient, UCTokenBasedDeltaRestClient, UCTokenBasedRestClient}
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -74,42 +74,75 @@ object UCCommitCoordinatorBuilder
       UCCommitCoordinatorClient.UC_METASTORE_ID_KEY,
       throw new IllegalArgumentException(
         s"UC metastore ID not found in the provided coordinator conf: $conf"))
-
-    commitCoordinatorClientCache.computeIfAbsent(
-      metastoreId,
-      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId)))
+    commitCoordinatorClientCache.computeIfAbsent(metastoreId,
+      _ => buildClient(spark, conf.asJava,
+        () => getMatchingUriAndAuthConfig(spark, metastoreId)))
   }
 
   override def buildForCatalog(
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
-      case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
+    buildClient(spark, Map.empty[String, String].asJava,
+      () => getCatalogConfigs(spark).find(_._1 == catalogName) match {
+        case Some((_, u, a)) => (u, a)
+        case None => throw new IllegalArgumentException(
+          s"Catalog $catalogName not found.")
+      })
+  }
+
+  /** Shared client if available, else legacy from URI/authConfig. */
+  private def buildClient(
+      spark: SparkSession,
+      conf: java.util.Map[String, String],
+      legacyConfig: () => (String, Map[String, String])
+  ): UCCommitCoordinatorClient = {
+    getSharedUCDeltaClient(spark) match {
+      case Some(client) =>
+        new UCCommitCoordinatorClient(conf, client)
       case None =>
-        throw new IllegalArgumentException(
-          s"Catalog $catalogName not found in the provided SparkSession configurations.")
+        val (uri, authConfig) = legacyConfig()
+        new UCCommitCoordinatorClient(conf,
+          ucClientFactory.createUCClient(uri, authConfig))
     }
-    val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
   }
 
   /**
-   * Finds and returns a UCClient that matches the given metastore ID.
-   *
-   * This method iterates through all configured catalogs in SparkSession, creates UCClients for
-   * each, gets their metastore ID and returns the one that matches the provided metastore ID.
-   * If no matching catalog is found or if multiple matching catalogs are found, it throws an
-   * appropriate exception.
+   * Try to get the shared UCDeltaClient from AbstractDeltaCatalog.
+   * Returns None when DRC is not available (no-DRC shim, released UC).
    */
-  private def getMatchingUCClient(spark: SparkSession, metastoreId: String): UCClient = {
+  private def getSharedUCDeltaClient(
+      spark: SparkSession): Option[UCDeltaClient] = {
+    import io.delta.storage.commit.uccommitcoordinator.UCDeltaClientProvider
+    getCatalogConfigs(spark).view.flatMap { case (name, _, _) =>
+      try {
+        val catalog = spark.sessionState.catalogManager
+          .catalog(name)
+        val inner = catalog.getClass
+          .getMethod("getDelegateCatalog").invoke(catalog)
+        inner match {
+          case p: UCDeltaClientProvider =>
+            Option(p.getUCDeltaClient())
+          case _ => None
+        }
+      } catch {
+        case _: Exception => None
+      }
+    }.headOption
+  }
+
+  /**
+   * Finds and returns the URI and auth config that matches the given metastore ID.
+   */
+  private def getMatchingUriAndAuthConfig(spark: SparkSession, metastoreId: String)
+    : (String, Map[String, String]) = {
     val matchingClients: List[(String, Map[String, String])] = getCatalogConfigs(spark)
       .map { case (name, uri, authConfig) => (uri, authConfig) }
-      .distinct // Remove duplicates since multiple catalogs can have the same uri and config
+      .distinct
       .filter { case (uri, authConfig) => getMetastoreId(uri, authConfig).contains(metastoreId) }
 
     matchingClients match {
       case Nil => throw noMatchingCatalogException(metastoreId)
-      case (uri, authConfig) :: Nil => ucClientFactory.createUCClient(uri, authConfig)
+      case (uri, authConfig) :: Nil => (uri, authConfig)
       case multiple => throw multipleMatchingCatalogs(metastoreId, multiple.map(_._1))
     }
   }
@@ -308,7 +341,7 @@ object UCTokenBasedRestClientFactory extends UCClientFactory {
     // We pass the configuration through without interpreting any specific keys,
     // as those are managed by the Unity Catalog client library
     val tokenProvider = TokenProvider.create(authConfig.asJava)
-    new UCTokenBasedRestClient(uri, tokenProvider, appVersions.asJava)
+    new UCTokenBasedDeltaRestClient(uri, tokenProvider, appVersions.asJava, false)
   }
 
   private[coordinatedcommits] def defaultAppVersions: Map[String, String] = {

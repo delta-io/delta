@@ -24,26 +24,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 /**
- * Tests that schema-changing and property-changing operations are blocked on Unity Catalog managed
- * (CatalogOwned) tables — regardless of which layer does the blocking.
- *
- * <p>There are two distinct layers of protection:
- *
- * <ol>
- *   <li><strong>Kill switch</strong> in {@code OptimisticTransaction.updateMetadata()}: blocks any
- *       commit that would change schema, partitions, description, or configuration on an existing
- *       CatalogOwned table. A second guard in {@code prepareCommit()} and {@code commitLarge()}
- *       blocks {@code delta.clustering} {@code DomainMetadata} changes (e.g. via RESTORE TABLE to a
- *       version written by an older client that had different clustering columns).
- *   <li><strong>UC catalog layer</strong> in {@code UCSingleCatalog}: {@code alterTable()} throws
- *       {@code UnsupportedOperationException} for all ALTER TABLE variants. INSERT OVERWRITE with
- *       {@code overwriteSchema=true} and {@code CREATE OR REPLACE TABLE} both route through REPLACE
- *       TABLE AS SELECT (RTAS) because {@code UCSingleCatalog} does not implement {@code
- *       StagingTableCatalog}; RTAS is not supported in OSS Delta.
- * </ol>
- *
- * <p>EXTERNAL tables are not CatalogOwned and are NOT affected by the kill switch; they continue to
- * allow schema evolution as before.
+ * Tests the remaining managed-table metadata restrictions together with the schema/property
+ * operations that are now supported for Unity Catalog managed Delta tables.
  */
 public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegrationBaseTest {
 
@@ -55,8 +37,8 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   private static final String CLUSTERING_KILL_SWITCH_ERROR =
       "Clustering column changes on Unity Catalog managed tables";
 
-  // Error produced by UCSingleCatalog.alterTable() for all ALTER TABLE variants.
-  private static final String ALTER_TABLE_ERROR = "Altering a table is not supported yet";
+  // Error produced by UCSingleCatalog.alterTable() when ALTER TABLE is not yet supported.
+  private static final String ALTER_NOT_SUPPORTED_ERROR = "Altering a table is not supported yet";
 
   // Error produced by OSS Delta when REPLACE TABLE AS SELECT (RTAS) is attempted.
   // Triggered by CREATE OR REPLACE TABLE and DataFrame saveAsTable(overwrite+overwriteSchema)
@@ -72,9 +54,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   }
 
   private static List<String> expectedAlterMetadataFailure() {
-    return supportsManagedReplaceViaUC()
-        ? List.of(ALTER_TABLE_ERROR, KILL_SWITCH_ERROR, CLUSTERING_KILL_SWITCH_ERROR)
-        : List.of(ALTER_TABLE_ERROR);
+    return List.of(KILL_SWITCH_ERROR, CLUSTERING_KILL_SWITCH_ERROR, ALTER_NOT_SUPPORTED_ERROR);
   }
 
   // ---------------------------------------------------------------------------
@@ -82,42 +62,30 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
   // ---------------------------------------------------------------------------
 
   /**
-   * INSERT with {@code autoMerge=true} and MERGE INTO with schema evolution must be blocked by the
-   * kill switch in {@code updateMetadata()} on CatalogOwned tables. The kill switch covers all
-   * metadata fields (schema, partitions, description, properties); schema evolution via autoMerge
-   * is the primary user-facing path that reaches it without going through ALTER TABLE.
+   * INSERT with {@code autoMerge=true} must propagate the evolved schema to UC for CatalogOwned
+   * tables. This exercises the coordinated-commit path that now carries metadata updates through
+   * the Delta REST update-table API together with the commit.
    */
   @Test
-  public void testMetadataChangesViaWritesAreBlocked() throws Exception {
+  public void testMetadataChangesViaWritesAreSupported() throws Exception {
     withNewTable(
-        "block_schema_evolution_target",
+        "schema_evolution_target",
         "id INT, name STRING",
         TableType.MANAGED,
         targetTable -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", targetTable);
           withNewTable(
-              "block_schema_evolution_source",
+              "schema_evolution_source",
               "id INT, name STRING, extra STRING",
               TableType.EXTERNAL,
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_value')", sourceTable);
                 sql("SET spark.databricks.delta.schema.autoMerge.enabled = true");
                 try {
-                  // INSERT with autoMerge introduces a new column.
-                  assertThrowsWithCauseContaining(
-                      KILL_SWITCH_ERROR,
-                      () -> sql("INSERT INTO %s SELECT * FROM %s", targetTable, sourceTable));
-
-                  // MERGE INTO with autoMerge introduces a new column from the source.
-                  assertThrowsWithCauseContaining(
-                      KILL_SWITCH_ERROR,
-                      () ->
-                          sql(
-                              "MERGE INTO %s AS target "
-                                  + "USING %s AS source "
-                                  + "ON target.id = source.id "
-                                  + "WHEN NOT MATCHED THEN INSERT *",
-                              targetTable, sourceTable));
+                  sql("INSERT INTO %s SELECT * FROM %s", targetTable, sourceTable);
+                  check(
+                      targetTable,
+                      List.of(List.of("1", "initial", "null"), List.of("2", "new", "extra_value")));
                 } finally {
                   sql("SET spark.databricks.delta.schema.autoMerge.enabled = false");
                 }
@@ -139,7 +107,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * CLUSTER BY is supported for managed tables.
    */
   @Test
-  public void testAlterTableOperationsAreBlocked() throws Exception {
+  public void testAlterTablePropertiesAndAddColumnsAreSupported() throws Exception {
     withNewTable(
         "block_alter_table_test",
         "id INT, name STRING",
@@ -147,20 +115,15 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
         tableName -> {
           sql("INSERT INTO %s VALUES (1, 'initial')", tableName);
 
-          // ALTER TABLE SET TBLPROPERTIES would change configuration.
-          assertThrowsWithCauseContainingAny(
-              expectedAlterMetadataFailure(),
-              () -> sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName));
+          // ALTER TABLE now works: UCSingleCatalog delegates to the DRC updateTable API
+          // for property changes, and returns loadTable for the result. Column/clustering
+          // changes go through Delta's transaction which commits via DRC.
+          sql("ALTER TABLE %s SET TBLPROPERTIES ('custom.key' = 'value')", tableName);
+          sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName);
+          sql("ALTER TABLE %s CLUSTER BY (id)", tableName);
 
-          // ALTER TABLE ADD COLUMNS would change the schema.
-          assertThrowsWithCauseContainingAny(
-              expectedAlterMetadataFailure(),
-              () -> sql("ALTER TABLE %s ADD COLUMNS (extra STRING)", tableName));
-
-          // ALTER TABLE CLUSTER BY would change clustering columns.
-          assertThrowsWithCauseContainingAny(
-              expectedAlterMetadataFailure(),
-              () -> sql("ALTER TABLE %s CLUSTER BY (id)", tableName));
+          // Verify the table is still readable after alterations
+          check(tableName, List.of(List.of("1", "initial", "null")));
         });
   }
 
@@ -264,7 +227,7 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
    * change instead.
    */
   @Test
-  public void testInsertOverwriteWithOverwriteSchemaIsBlocked() throws Exception {
+  public void testInsertOverwriteWithOverwriteSchemaSucceeds() throws Exception {
     withNewTable(
         "block_overwrite_schema_target",
         "id INT, name STRING",
@@ -277,17 +240,15 @@ public class UCDeltaTableBlockMetadataUpdateTest extends UCDeltaTableIntegration
               TableType.EXTERNAL,
               sourceTable -> {
                 sql("INSERT INTO %s VALUES (2, 'new', 'extra_val')", sourceTable);
-                assertThrowsWithCauseContaining(
-                    expectedManagedReplaceFailure(),
-                    () ->
-                        spark()
-                            .read()
-                            .table(sourceTable)
-                            .write()
-                            .format("delta")
-                            .mode("overwrite")
-                            .option("overwriteSchema", "true")
-                            .saveAsTable(targetTable));
+                spark()
+                    .read()
+                    .table(sourceTable)
+                    .write()
+                    .format("delta")
+                    .mode("overwrite")
+                    .option("overwriteSchema", "true")
+                    .saveAsTable(targetTable);
+                check(targetTable, List.of(List.of("2", "new", "extra_val")));
               });
         });
   }
