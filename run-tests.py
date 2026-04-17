@@ -53,6 +53,11 @@ def get_args():
         required=False,
         default=None,
         help="Spark version to use (passed as -DsparkVersion to SBT)")
+    parser.add_argument(
+        "--maven-repo",
+        required=False,
+        default=None,
+        help="Additional Maven repo to resolve staged new release artifacts")
     return parser.parse_args()
 
 
@@ -98,11 +103,14 @@ def run_sbt_tests(root_dir, test_group, coverage, scala_version=None, shard=None
     run_cmd(cmd, stream_output=True)
 
 
-def run_python_tests(root_dir):
+def run_python_tests(root_dir, maven_repo=None):
     print("##### Running Python tests #####")
     python_test_script = path.join(root_dir, path.join("python", "run-tests.py"))
     print("Calling script %s", python_test_script)
-    run_cmd(["python3", python_test_script], env={'DELTA_TESTING': '1'}, stream_output=True)
+    cmd = ["python3", python_test_script]
+    if maven_repo:
+        cmd.extend(["--maven-repo", maven_repo])
+    run_cmd(cmd, env={'DELTA_TESTING': '1'}, stream_output=True)
 
 
 def run_cmd(cmd, throw_on_error=True, env=None, stream_output=False, **kwargs):
@@ -202,7 +210,7 @@ def pull_or_build_docker_image(root_dir):
     return test_env_image_tag
 
 
-def run_tests_in_docker(image_tag, test_group):
+def run_tests_in_docker(image_tag, test_group, maven_repo=None):
     """
     Run the necessary tests in a docker container made from the given image.
     It starts the container with the delta repo mounted in it, and then
@@ -235,6 +243,8 @@ def run_tests_in_docker(image_tag, test_group):
     test_script_args = ""
     if test_group:
         test_script_args += " --group %s" % test_group
+    if maven_repo:
+        test_script_args += " --maven-repo %s" % maven_repo
 
     test_run_cmd = "docker run --rm  -v %s:%s -w %s %s %s ./%s %s" % (
         cwd, cwd, cwd, envs, image_tag, test_script, test_script_args
@@ -286,9 +296,9 @@ if __name__ == "__main__":
 
     if os.getenv("USE_DOCKER") is not None:
         test_env_image_tag = pull_or_build_docker_image(root_dir)
-        run_tests_in_docker(test_env_image_tag, args.group)
+        run_tests_in_docker(test_env_image_tag, args.group, args.maven_repo)
     elif args.group == "spark-python":
-        run_python_tests(root_dir)
+        run_python_tests(root_dir, args.maven_repo)
     else:
         scala_version = os.getenv("SCALA_VERSION")
         spark_version = args.spark_version or os.getenv("SPARK_VERSION")
