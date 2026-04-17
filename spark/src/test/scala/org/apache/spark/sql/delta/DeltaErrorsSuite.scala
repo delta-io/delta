@@ -2325,7 +2325,7 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_SOURCE_TABLE_IGNORE_CHANGES", "0A000", Map(
         "version" -> "10",
-        "file" -> "removedFile",
+        "changeInfo" -> "removedFile",
         "dataPath" -> "tablePath"
       ))
     }

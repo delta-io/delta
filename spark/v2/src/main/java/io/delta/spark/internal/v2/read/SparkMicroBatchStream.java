@@ -67,6 +67,7 @@ import org.apache.spark.sql.delta.DeltaTimeTravelSpec;
 import org.apache.spark.sql.delta.StartingVersion;
 import org.apache.spark.sql.delta.StartingVersionLatest$;
 import org.apache.spark.sql.delta.TypeWidening;
+import org.apache.spark.sql.delta.sources.AdmittableFile;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
@@ -98,7 +99,23 @@ public class SparkMicroBatchStream
 
   private static final Set<DeltaAction> ACTION_SET =
       Collections.unmodifiableSet(
-          new HashSet<>(Arrays.asList(DeltaAction.ADD, DeltaAction.REMOVE, DeltaAction.METADATA)));
+          new HashSet<>(
+              Arrays.asList(
+                  DeltaAction.ADD,
+                  DeltaAction.REMOVE,
+                  DeltaAction.METADATA,
+                  DeltaAction.COMMITINFO)));
+
+  /** Action set for CDC reads. */
+  private static final Set<DeltaAction> CDC_ACTION_SET =
+      Collections.unmodifiableSet(
+          new HashSet<>(
+              Arrays.asList(
+                  DeltaAction.ADD,
+                  DeltaAction.REMOVE,
+                  DeltaAction.METADATA,
+                  DeltaAction.CDC,
+                  DeltaAction.COMMITINFO)));
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -675,7 +692,10 @@ public class SparkMicroBatchStream
       long fromIndex,
       boolean isInitialSnapshot,
       Optional<DeltaSource.AdmissionLimits> limits) {
-    // TODO(#5319): getFileChangesForCDC if CDC is enabled.
+    if (options.readChangeFeed()) {
+      return getFileChangesWithRateLimitForCDC(
+          fromVersion, fromIndex, isInitialSnapshot, limits, /* endOffset= */ Optional.empty());
+    }
 
     CloseableIterator<IndexedFile> changes =
         getFileChanges(
@@ -729,7 +749,8 @@ public class SparkMicroBatchStream
   }
 
   /**
-   * Gets file changes for CDC mode. Mirrors DSv1: DeltaSourceCDCSupport.getFileChangesForCDC.
+   * Gets file changes for CDC mode with rate limiting. Mirrors DSv1:
+   * DeltaSourceCDCSupport.getFileChangesForCDC.
    *
    * @param fromVersion The starting version (exclusive with fromIndex)
    * @param fromIndex The starting index within fromVersion (exclusive)
@@ -738,7 +759,7 @@ public class SparkMicroBatchStream
    * @param endOffset The end offset (inclusive), or empty to read all available commits
    * @return An iterator of IndexedFile representing the CDC file changes
    */
-  CloseableIterator<IndexedFile> getFileChangesForCDC(
+  CloseableIterator<IndexedFile> getFileChangesWithRateLimitForCDC(
       long fromVersion,
       long fromIndex,
       boolean isInitialSnapshot,
@@ -760,17 +781,27 @@ public class SparkMicroBatchStream
                           file.getIndex(),
                           CDCDataFile.fromAddFile(file.getAddFile(), commitTimestamp))
                       : file);
+      // Filter already-processed files BEFORE admission so they don't consume the budget.
+      snapshotFiles =
+          snapshotFiles.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
+      // Admission for delta-log files happens inside filterDeltaLogsWithRateLimitForCDC
+      // (version-level + per-commit). Both share the same AdmissionLimits instance so
+      // the budget is continuous.
       if (limits.isPresent()) {
         snapshotFiles = snapshotFiles.takeWhile(limits.get()::admit);
       }
-      // TODO(#5319): combine with filterDeltaLogsForCDC for commits after snapshot
-      result = snapshotFiles;
+      CloseableIterator<IndexedFile> deltaChanges =
+          filterDeltaLogsWithRateLimitForCDC(
+              fromVersion + 1, fromVersion, fromIndex, limits, endOffset);
+      result = snapshotFiles.combine(deltaChanges);
     } else {
-      // TODO(#5319): incremental CDC via filterDeltaLogsForCDC
-      result = Utils.toCloseableIterator(Collections.emptyIterator());
+      result =
+          filterDeltaLogsWithRateLimitForCDC(
+              fromVersion, fromVersion, fromIndex, limits, endOffset);
     }
 
-    return applyBoundaryFiltering(result, fromVersion, fromIndex, endOffset);
+    // Start boundary already applied above (before admission). Only apply end boundary here.
+    return applyEndBoundaryFiltering(result, endOffset);
   }
 
   /**
@@ -788,12 +819,26 @@ public class SparkMicroBatchStream
       long fromIndex,
       Optional<DeltaSourceOffset> endOffset) {
     // Check start boundary (exclusive)
-    result =
-        result.filter(
-            file ->
-                file.getVersion() > fromVersion
-                    || (file.getVersion() == fromVersion && file.getIndex() > fromIndex));
+    result = result.filter(file -> isAfterStartBoundary(file, fromVersion, fromIndex));
 
+    return applyEndBoundaryFiltering(result, endOffset);
+  }
+
+  /**
+   * Returns true if the file is strictly after the (exclusive) resume point (fromVersion,
+   * fromIndex).
+   */
+  private static boolean isAfterStartBoundary(IndexedFile file, long fromVersion, long fromIndex) {
+    return file.getVersion() > fromVersion
+        || (file.getVersion() == fromVersion && file.getIndex() > fromIndex);
+  }
+
+  /**
+   * Applies end boundary filtering only. Used by CDC paths where start boundary filtering is
+   * applied before admission to avoid wasting budget on already-processed files.
+   */
+  private CloseableIterator<IndexedFile> applyEndBoundaryFiltering(
+      CloseableIterator<IndexedFile> result, Optional<DeltaSourceOffset> endOffset) {
     // If endOffset is provided, we are getting a batch on a constructed range so we should use
     // the endOffset as the limit.
     // Otherwise, we are looking for a new offset, so we try to use the latestOffset we found for
@@ -827,6 +872,33 @@ public class SparkMicroBatchStream
 
   private CloseableIterator<IndexedFile> filterDeltaLogs(
       long startVersion, Optional<DeltaSourceOffset> endOffset) {
+    return getCommitsFromRange(startVersion, endOffset, ACTION_SET)
+        .flatMap(commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
+  }
+
+  private CloseableIterator<IndexedFile> filterDeltaLogsWithRateLimitForCDC(
+      long startVersion,
+      long lastProcessedVersion,
+      long lastProcessedIndex,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffset) {
+    CloseableIterator<CommitActions> commits =
+        getCommitsFromRange(startVersion, endOffset, CDC_ACTION_SET);
+
+    // Early exit: skip opening further commits once the budget is spent.
+    if (limits.isPresent()) {
+      commits = commits.takeWhile(commit -> limits.get().hasCapacity());
+    }
+
+    return commits.flatMap(
+        commit ->
+            processCommitToIndexedFilesForCDC(
+                commit, startVersion, limits, endOffset, lastProcessedVersion, lastProcessedIndex));
+  }
+
+  /** Resolves the version range and returns commit actions from delta logs. */
+  private CloseableIterator<CommitActions> getCommitsFromRange(
+      long startVersion, Optional<DeltaSourceOffset> endOffset, Set<DeltaAction> actionSet) {
     Optional<Long> endVersionOpt =
         endOffset.isPresent() ? Optional.of(endOffset.get().reservoirVersion()) : Optional.empty();
 
@@ -874,15 +946,11 @@ public class SparkMicroBatchStream
     //    (e.g., if log files have been cleaned up after checkpointing).
     // 2. This matches DSv1 behavior which uses snapshotAtSourceInit's P&M to interpret all
     //    AddFile actions and performs per-commit protocol validation.
-    CloseableIterator<CommitActions> commitsIterator =
-        StreamingHelper.getCommitActionsFromRangeUnsafe(
-            engine,
-            (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
-            snapshotAtSourceInit.getPath(),
-            ACTION_SET);
-
-    return commitsIterator.flatMap(
-        commit -> processCommitToIndexedFiles(commit, startVersion, endOffset));
+    return StreamingHelper.getCommitActionsFromRangeUnsafe(
+        engine,
+        (io.delta.kernel.internal.commitrange.CommitRangeImpl) commitRange,
+        snapshotAtSourceInit.getPath(),
+        actionSet);
   }
 
   /**
@@ -1029,6 +1097,7 @@ public class SparkMicroBatchStream
     boolean shouldSkipCommit = false;
     Metadata metadataAction = null;
     String removeFileActionPath = null;
+    String operation = null;
 
     try (CloseableIterator<ColumnarBatch> actionsIter = commit.getActions()) {
       while (actionsIter.hasNext()) {
@@ -1063,6 +1132,17 @@ public class SparkMicroBatchStream
                     endOffsetOpt,
                     verifyMetadataAction);
           }
+
+          // Track CommitInfo for operation details in error messages.
+          Optional<CommitInfo> commitInfoOpt = StreamingHelper.getCommitInfo(batch, rowId);
+          if (commitInfoOpt.isPresent()) {
+            CommitInfo commitInfo = commitInfoOpt.get();
+            operation =
+                commitInfo
+                    .getOperation()
+                    .map(op -> String.format("%s (%s)", op, commitInfo.getOperationParameters()))
+                    .orElse(null);
+          }
         }
       }
     } catch (IOException e) {
@@ -1072,9 +1152,9 @@ public class SparkMicroBatchStream
     if (removeFileActionPath != null) {
       if (hasFileAdd && !shouldAllowChanges) {
         // Commit contains data changes (adds + removes) and changes are disallowed.
-        // TODO(#5319): log CommitInfo action's operation instead of path
+        String changeInfo = operation != null ? operation : removeFileActionPath;
         throw (RuntimeException)
-            DeltaErrors.deltaSourceIgnoreChangesError(version, removeFileActionPath, tablePath);
+            DeltaErrors.deltaSourceIgnoreChangesError(version, changeInfo, tablePath);
       } else if (!hasFileAdd && !shouldAllowDeletes) {
         // Commit contains only removes (deletes) and deletes are disallowed.
         throw (RuntimeException)
@@ -1473,13 +1553,17 @@ public class SparkMicroBatchStream
    * <p>Package-private for testing.
    */
   CloseableIterator<IndexedFile> processCommitToIndexedFilesForCDC(
-      CommitActions commit, long startVersion, Optional<DeltaSourceOffset> endOffsetOpt) {
+      CommitActions commit,
+      long startVersion,
+      Optional<DeltaSource.AdmissionLimits> limits,
+      Optional<DeltaSourceOffset> endOffsetOpt,
+      long lastProcessedVersion,
+      long lastProcessedIndex) {
     try {
       long version = commit.getVersion();
       long timestamp = commit.getTimestamp();
 
       if (isEndOffsetAtBaseIndex(endOffsetOpt, version)) {
-        Utils.closeCloseables(commit);
         return Utils.toCloseableIterator(
             Arrays.asList(
                     IndexedFile.sentinel(version, DeltaSourceOffset.BASE_INDEX()),
@@ -1490,12 +1574,25 @@ public class SparkMicroBatchStream
       List<IndexedFile> result =
           collectAndBuildCDCIndexedFiles(commit, version, timestamp, startVersion, endOffsetOpt);
 
-      result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
-      Utils.closeCloseables(commit);
+      // Pre-filter already-processed files from the resume commit BEFORE admission so they
+      // don't consume budget.
+      if (version == lastProcessedVersion) {
+        result.removeIf(f -> !isAfterStartBoundary(f, lastProcessedVersion, lastProcessedIndex));
+      }
+
+      if (limits.isPresent()) {
+        result = applyPerCommitCDCAdmission(result, limits.get(), version);
+        if (result.isEmpty()) {
+          return Utils.toCloseableIterator(Collections.emptyIterator());
+        }
+      } else {
+        result.add(IndexedFile.sentinel(version, DeltaSourceOffset.END_INDEX()));
+      }
       return Utils.toCloseableIterator(result.iterator());
     } catch (IOException e) {
-      Utils.closeCloseables(commit);
       throw new RuntimeException(e);
+    } finally {
+      Utils.closeCloseables(commit);
     }
   }
 
@@ -1609,6 +1706,80 @@ public class SparkMicroBatchStream
     return "0".equals(metrics.get("numTargetRowsInserted"))
         && "0".equals(metrics.get("numTargetRowsUpdated"))
         && "0".equals(metrics.get("numTargetRowsDeleted"));
+  }
+
+  /**
+   * Per-commit CDC admission control. Mirrors DSv1's IndexedChangeFileSeq.filterFiles.
+   *
+   * <p>Input is a single commit's IndexedFiles: an optional BASE sentinel (absent on resume when
+   * the sentinel was already processed) followed by data files. Applies batch or per-file admission
+   * and appends an END sentinel only when all data files are admitted. Returns empty list on
+   * batch-reject so the offset doesn't advance.
+   */
+  private List<IndexedFile> applyPerCommitCDCAdmission(
+      List<IndexedFile> commitFiles,
+      DeltaSource.AdmissionLimits admissionLimits,
+      long commitVersion) {
+    // Split out the optional BASE sentinel from data files.
+    Optional<IndexedFile> baseSentinel = Optional.empty();
+    List<IndexedFile> dataFiles = new ArrayList<>();
+    for (IndexedFile file : commitFiles) {
+      if (file.hasFileAction()) {
+        dataFiles.add(file);
+      } else {
+        Preconditions.checkState(
+            !baseSentinel.isPresent(),
+            String.format(
+                "Expected at most one BASE sentinel per commit, got multiple for version %s",
+                commitVersion));
+        baseSentinel = Optional.of(file);
+      }
+    }
+
+    // Batch-admit all or nothing when we can't split the commit:
+    //   - Explicit CDC: can't separate update_preimage/postimage
+    //   - Inferred CDC with DVs: can't split add/remove pairs
+    boolean requiresBatchAdmission =
+        dataFiles.stream()
+            .anyMatch(
+                f ->
+                    f.isAddCDCFile()
+                        || (f.getCDCDataFile() != null && f.getCDCDataFile().hasDeletionVector()));
+
+    List<IndexedFile> admittedData;
+    if (requiresBatchAdmission) {
+      if (admissionLimits.admit(toScalaAdmittableSeq(dataFiles))) {
+        admittedData = dataFiles;
+      } else {
+        return Collections.emptyList();
+      }
+    } else {
+      admittedData = new ArrayList<>();
+      for (IndexedFile file : dataFiles) {
+        if (admissionLimits.admit(file)) {
+          admittedData.add(file);
+        } else {
+          break;
+        }
+      }
+    }
+
+    List<IndexedFile> result = new ArrayList<>();
+    baseSentinel.ifPresent(result::add);
+    result.addAll(admittedData);
+    // Append END only if the entire commit was admitted. Partial admission leaves the offset
+    // on the last admitted file so the next batch resumes from there.
+    if (admittedData.size() >= dataFiles.size()) {
+      result.add(IndexedFile.sentinel(commitVersion, DeltaSourceOffset.END_INDEX()));
+    }
+    return result;
+  }
+
+  /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
+  private static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
+    return JavaConverters.asScalaBuffer(
+            files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
+        .toSeq();
   }
 
   private static boolean isCDFEnabled(Metadata metadata) {
