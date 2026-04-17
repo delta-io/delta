@@ -461,8 +461,8 @@ case class WriteIntoDelta(
     val processedCondition = conditions.reduceOption(And)
     // Clone the spark session to enable EXISTS subquery support in DELETE,
     // which is needed for replaceOn/replaceUsing conditions. Subqueries are
-    // not allowed for replaceWhere because we have not yet been able to
-    // support arbitrary EXISTS subquery conditions in DELETE.
+    // not allowed for replaceWhere because arbitrary EXISTS subquery
+    // conditions in DELETE are not supported.
     val sparkWithSubqueryDelete = spark.cloneSession()
     val allowExistsSubquery = options.isReplaceOnOrUsingDefined.toString
     sparkWithSubqueryDelete.conf.set(
