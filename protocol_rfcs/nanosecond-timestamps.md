@@ -10,7 +10,7 @@ Nanosecond resolution timestamps are widely supported in related formats (Arrow,
 
 Add a new feature:
 
-> This feature introduces two new data types to support timestamps with nanosecond resolution. One UTC, one without a timezone corresponding to `TimestampNtz`. For example: `1970-01-01 00:00:00.123456789+00:00` and `1970-01-01 00:00:00.123456789`, respectively.
+> This feature introduces two new data types to support timestamps with nanosecond resolution. One UTC, one without a timezone corresponding to `TimestampNtz`. For example: `1970-01-01T00:00:00.123456789Z` and `1970-01-01T00:00:00.123456789`, respectively.
 > The serialization method is described in Sections [Partition Value Serialization](#partition-value-serialization) and [Schema Serialization Format](#schema-serialization-format).
 >
 > To support this feature:
@@ -29,9 +29,9 @@ Add entries for nanosecond timestamps to the Primitive Types table:
 
 Add entries for nanosecond timestamps:
 
-> nanosecond timestamp: Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}.{nanosecond}`. For example: `1970-01-01 00:00:00.123456789`. Timestamps may also be encoded as an ISO8601 formatted timestamp adjusted to UTC timestamp such as `1970-01-01T00:00:00.123456789Z`
+> nanosecond timestamp: Encoded as `{year}-{month}-{day}T{hour}:{minute}:{second}.{nanosecond}Z`, a ISO8601 formatted timestamp adjusted to UTC. For example: `1970-01-01T00:00:00.123456789Z`.
 
-> nanosecond timestamp without timezone: Encoded as `{year}-{month}-{day} {hour}:{minute}:{second}.{nanosecond}`. For example: `1970-01-01 00:00:00.123456789`.
+> nanosecond timestamp without timezone: Encoded as `{year}-{month}-{day}T{hour}:{minute}:{second}.{nanosecond}`. For example: `1970-01-01T00:00:00.123456789`.
 
 ## Add Parquet Type mapping
 
