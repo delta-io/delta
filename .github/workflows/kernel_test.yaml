@@ -1,9 +1,9 @@
 name: "Delta Kernel"
 on:
   push:
-    branches: [kernel-20250227]
+    branches: [branch-kernel-20250227]
   pull_request:
-    branches: [kernel-20250227]
+    branches: [branch-kernel-20250227]
 jobs:
   test:
     name: "DK"
