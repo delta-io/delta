@@ -50,4 +50,36 @@ class DeltaInsertReplaceOnDFWriterV1SaveSuite
     }
     writer.save(target)
   }
+
+  // Misaligned column blocking only applies for replaceUsing, not replaceOn.
+  test("save - replaceOn with misaligned column positions between source and target") {
+    withTempDir { dir =>
+      val path = dir.getAbsolutePath
+      // Target schema: (id, data), id at position 0
+      Seq(
+        (1, "target"),
+        (2, "target"),
+        (3, "target"))
+        .toDF("id", "data")
+        .write.format("delta").save(path)
+      // Source schema: (data, id), id at position 1. save() inserts by name,
+      // and replaceOn also matches by name to detect rows to be deleted.
+      writeReplaceOnDF(
+        sourceDF = Seq(
+          ("source", 1),
+          ("source", 4))
+          .toDF("data", "id").as("s"),
+        target = path,
+        replaceOnCond = "t.id = s.id",
+        targetAlias = Some("t"))
+
+      checkAnswer(
+        spark.read.format("delta").load(path).orderBy("id"),
+        Seq(
+          Row(1, "source"),
+          Row(2, "target"),
+          Row(3, "target"),
+          Row(4, "source")))
+    }
+  }
 }
