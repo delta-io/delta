@@ -26,6 +26,7 @@ import org.apache.spark.sql.delta.DeltaOptions.{
 }
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, DataFrameWriter, QueryTest, Row, SaveMode}
@@ -291,6 +292,38 @@ class DeltaInsertReplaceOnOrUsingDFOptionCombinationSuite extends QueryTest
       }
     }
 
+    for {
+      enableDynamicPartitionOverwrite <- Seq(true, false)
+      partitionOverwriteMode <- SQLConf.PartitionOverwriteMode.values
+    } {
+      val testParamsMsg =
+        s"enableDynamicPartitionOverwrite=$enableDynamicPartitionOverwrite, " +
+          s"partitionOverwriteMode=$partitionOverwriteMode"
+      test(s"SQL session config DPO should not affect `$optionName` option, " +
+          s"save DataFrameWriterV1 API, $testParamsMsg") {
+        withSQLConf(
+          DeltaSQLConf.DYNAMIC_PARTITION_OVERWRITE_ENABLED.key ->
+            enableDynamicPartitionOverwrite.toString,
+          SQLConf.PARTITION_OVERWRITE_MODE.key -> partitionOverwriteMode.toString) {
+          withTempDir { tempDir =>
+            Seq((1, "a"), (2, "b")).toDF("id", "value")
+              .write.format("delta").save(tempDir.getAbsolutePath)
+            Seq((2, "c"), (3, "d")).toDF("id", "value")
+              .write.mode(SaveMode.Overwrite).format("delta")
+              .option(optionName, optionValue)
+              .save(tempDir.getAbsolutePath)
+            checkAnswer(
+              spark.read.format("delta").load(tempDir.getAbsolutePath).orderBy("id"),
+              optionName match {
+                case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+                case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+              }
+            )
+          }
+        }
+      }
+    }
+
     def writeSource(
         sourceDF: DataFrame,
         incompatibleOptionFn: DataFrameWriter[Row] => DataFrameWriter[Row])
@@ -349,6 +382,65 @@ class DeltaInsertReplaceOnOrUsingDFOptionCombinationSuite extends QueryTest
       }
     }
 
+    test(s"`overwriteSchema`=false should be valid with `$optionName`" +
+        ", save DataFrameWriterV1 API") {
+      withTempDir { tempDir =>
+        Seq((1, "a"), (2, "b")).toDF("id", "value")
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        Seq((2, "c"), (3, "d")).toDF("id", "value")
+          .write.mode(SaveMode.Overwrite).format("delta")
+          .option(optionName, optionValue)
+          .option(OVERWRITE_SCHEMA_OPTION, "false")
+          .save(tempDir.getAbsolutePath)
+        checkAnswer(
+          spark.read.format("delta").load(tempDir.getAbsolutePath).orderBy("id"),
+          optionName match {
+            case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+            case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+          }
+        )
+      }
+    }
+
+    test(s"`overwriteSchema`=false should be valid with `$optionName`" +
+        ", saveAsTable DataFrameWriterV1 API") {
+      withTable("target") {
+        Seq((1, "a"), (2, "b")).toDF("id", "value")
+          .write.format("delta").saveAsTable("target")
+        Seq((2, "c"), (3, "d")).toDF("id", "value")
+          .write.mode(SaveMode.Overwrite).format("delta")
+          .option(optionName, optionValue)
+          .option(OVERWRITE_SCHEMA_OPTION, "false")
+          .saveAsTable("target")
+        checkAnswer(
+          spark.read.format("delta").table("target").orderBy("id"),
+          optionName match {
+            case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+            case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+          }
+        )
+      }
+    }
+
+    test(s"`overwriteSchema`=false should be valid with `$optionName`" +
+        ", insertInto DataFrameWriterV1 API") {
+      withTable("target") {
+        Seq((1, "a"), (2, "b")).toDF("id", "value")
+          .write.format("delta").saveAsTable("target")
+        Seq((2, "c"), (3, "d")).toDF("id", "value")
+          .write.mode(SaveMode.Overwrite).format("delta")
+          .option(optionName, optionValue)
+          .option(OVERWRITE_SCHEMA_OPTION, "false")
+          .insertInto("target")
+        checkAnswer(
+          spark.read.format("delta").table("target").orderBy("id"),
+          optionName match {
+            case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+            case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+          }
+        )
+      }
+    }
     test(s"`dataChange`=false should be invalid with `$optionName`" +
         ", save DataFrameWriterV1 API") {
       withTempDir { tempDir =>
@@ -412,6 +504,66 @@ class DeltaInsertReplaceOnOrUsingDFOptionCombinationSuite extends QueryTest
         checkAnswer(
           spark.read.format("delta").load(tempDir.getAbsolutePath).orderBy("id", "value"),
           Seq(Row(1, "a"), Row(2, "b"), Row(2, "c"), Row(3, "d"))
+        )
+      }
+    }
+
+    test(s"`dataChange`=true should be valid with `$optionName`" +
+        ", save DataFrameWriterV1 API") {
+      withTempDir { tempDir =>
+        Seq((1, "a"), (2, "b")).toDF("id", "value")
+          .write.format("delta").save(tempDir.getAbsolutePath)
+        Seq((2, "c"), (3, "d")).toDF("id", "value")
+          .write.mode(SaveMode.Overwrite).format("delta")
+          .option(optionName, optionValue)
+          .option(DATA_CHANGE_OPTION, "true")
+          .save(tempDir.getAbsolutePath)
+        checkAnswer(
+          spark.read.format("delta").load(tempDir.getAbsolutePath).orderBy("id"),
+          optionName match {
+            case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+            case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+          }
+        )
+      }
+    }
+
+    test(s"`dataChange`=true should be valid with `$optionName`" +
+        ", saveAsTable DataFrameWriterV1 API") {
+      withTable("target") {
+        Seq((1, "a"), (2, "b")).toDF("id", "value")
+          .write.format("delta").saveAsTable("target")
+        Seq((2, "c"), (3, "d")).toDF("id", "value")
+          .write.mode(SaveMode.Overwrite).format("delta")
+          .option(optionName, optionValue)
+          .option(DATA_CHANGE_OPTION, "true")
+          .saveAsTable("target")
+        checkAnswer(
+          spark.read.format("delta").table("target").orderBy("id"),
+          optionName match {
+            case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+            case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+          }
+        )
+      }
+    }
+
+    test(s"`dataChange`=true should be valid with `$optionName`" +
+        ", insertInto DataFrameWriterV1 API") {
+      withTable("target") {
+        Seq((1, "a"), (2, "b")).toDF("id", "value")
+          .write.format("delta").saveAsTable("target")
+        Seq((2, "c"), (3, "d")).toDF("id", "value")
+          .write.mode(SaveMode.Overwrite).format("delta")
+          .option(optionName, optionValue)
+          .option(DATA_CHANGE_OPTION, "true")
+          .insertInto("target")
+        checkAnswer(
+          spark.read.format("delta").table("target").orderBy("id"),
+          optionName match {
+            case REPLACE_ON_OPTION => Seq(Row(2, "c"), Row(3, "d"))
+            case REPLACE_USING_OPTION => Seq(Row(1, "a"), Row(2, "c"), Row(3, "d"))
+          }
         )
       }
     }

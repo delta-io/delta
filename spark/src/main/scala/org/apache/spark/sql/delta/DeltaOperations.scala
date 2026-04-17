@@ -133,7 +133,9 @@ object DeltaOperations {
       override val userMetadata: Option[String] = None,
       isDynamicPartitionOverwrite: Option[Boolean] = None,
       canOverwriteSchema: Option[Boolean] = None,
-      canMergeSchema: Option[Boolean] = None
+      canMergeSchema: Option[Boolean] = None,
+      replaceOnCond: Option[String] = None,
+      replaceUsingCols: Option[String] = None
   ) extends Operation(OP_WRITE) {
     override val parameters: Map[String, Any] = Map("mode" -> mode.name()
     ) ++
@@ -144,7 +146,9 @@ object DeltaOperations {
       predicate.map("predicate" -> _) ++
       isDynamicPartitionOverwrite.map("isDynamicPartitionOverwrite" -> _) ++
       canOverwriteSchema.map("canOverwriteSchema" -> _) ++
-      canMergeSchema.map("canMergeSchema" -> _)
+      canMergeSchema.map("canMergeSchema" -> _) ++
+      replaceOnCond.map("replaceOnCond" -> _) ++
+      replaceUsingCols.map(v => "replaceUsingCols" -> s"($v)")
 
     val replaceWhereMetricsEnabled = SparkSession.active.conf.get(
       DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
@@ -154,7 +158,8 @@ object DeltaOperations {
 
     override def transformMetrics(metrics: Map[String, SQLMetric]): Map[String, String] = {
       // Need special handling for replaceWhere as it is implemented as a Write + Delete.
-      if (predicate.nonEmpty && replaceWhereMetricsEnabled) {
+      // We have special handling for replaceOn and replaceUsing as well.
+      if (shouldCollectInsertReplaceMetrics) {
         var strMetrics = super.transformMetrics(metrics)
         // find the case where deletedRows are not captured
         if (strMetrics.get("numDeletedRows").exists(_ == "0") &&
@@ -183,7 +188,7 @@ object DeltaOperations {
     }
 
     override val operationMetrics: Set[String] =
-      if (predicate.isEmpty || !replaceWhereMetricsEnabled) {
+      if (!shouldCollectInsertReplaceMetrics) {
         // Remove metrics are included to replaceWhere metrics
         // so they need to be added only when replaceWhere metrics are not presented
         val overwriteMetrics =
@@ -195,6 +200,7 @@ object DeltaOperations {
         DeltaOperationMetrics.WRITE ++ overwriteMetrics
       } else {
         // Need special handling for replaceWhere as rows/files are deleted as well.
+        // We have special handling for replaceOn and replaceUsing as well.
         DeltaOperationMetrics.WRITE_REPLACE_WHERE
       }
 
@@ -205,6 +211,11 @@ object DeltaOperations {
     override def checkAddFileWithDeletionVectorStatsAreNotTightBounds: Boolean = true
 
     override val isInPlaceFileMetadataUpdate: Option[Boolean] = Some(false)
+
+    def shouldCollectInsertReplaceMetrics: Boolean =
+      (predicate.nonEmpty && replaceWhereMetricsEnabled) ||
+        replaceOnCond.nonEmpty ||
+        replaceUsingCols.nonEmpty
 
     override def canChangePartitionColumns: Boolean = {
       // We don't have to return true if it is a new table, only on overwrite.
