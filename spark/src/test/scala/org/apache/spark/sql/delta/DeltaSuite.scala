@@ -650,57 +650,64 @@ class DeltaSuite extends QueryTest
     }
   }
 
-  test("replaceWhere blocks subquery") {
-    withTempDir { dir =>
-      Seq(1, 2, 3, 4).toDF("value")
-        .withColumn("is_odd", $"value" % 2 =!= 0)
-        .write
-        .format("delta")
-        .partitionBy("is_odd")
-        .save(dir.toString)
+  Seq(true, false).foreach { enableDeleteSubquery =>
+    test("replaceWhere blocks subquery regardless of subquery flag value" +
+        s" - enableDeleteSubquery=$enableDeleteSubquery") {
+      withSQLConf(
+          DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key ->
+          enableDeleteSubquery.toString) {
+        withTempDir { dir =>
+          Seq(1, 2, 3, 4).toDF("value")
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("tahoe")
+            .partitionBy("is_odd")
+            .save(dir.toString)
 
-      val viewName = "replaceWhereSubquerySource"
-      withView(viewName) {
-        spark.read.format("delta").load(dir.toString)
-          .where("is_odd = true")
-          .withColumnRenamed("value", "srcValue")
-          .createTempView(viewName)
+          val viewName = "replaceWhereSubquerySource"
+          withView(viewName) {
+            spark.read.format("delta").load(dir.toString)
+              .where("is_odd = true")
+              .withColumnRenamed("value", "srcValue")
+              .createTempView(viewName)
 
-        // EXISTS subquery should be rejected
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            Seq(5).toDF("value")
-              .withColumn("is_odd", $"value" % 2 =!= 0)
-              .write
-              .format("delta")
-              .mode("overwrite")
-              .option(DeltaOptions.REPLACE_WHERE_OPTION,
-                s"EXISTS (SELECT 1 FROM $viewName WHERE value = srcValue)")
-              .save(dir.toString)
-          },
-          condition = "DELTA_UNSUPPORTED_SUBQUERY",
-          sqlState = Some("0AKDC"),
-          parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
-          matchPVals = true
-        )
+            // EXISTS subquery should be rejected regardless of the subquery flag
+            checkError(
+              exception = intercept[DeltaAnalysisException] {
+                Seq(5).toDF("value")
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .write
+                  .format("tahoe")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                    s"EXISTS (SELECT 1 FROM $viewName WHERE value = srcValue)")
+                  .save(dir.toString)
+              },
+              condition = "DELTA_UNSUPPORTED_SUBQUERY",
+              sqlState = Some("0AKDC"),
+              parameters = Map("operation" -> "DELETE condition", "cond" -> ".*"),
+              matchPVals = true
+            )
 
-        // IN subquery should be rejected
-        checkError(
-          exception = intercept[DeltaAnalysisException] {
-            Seq(5).toDF("value")
-              .withColumn("is_odd", $"value" % 2 =!= 0)
-              .write
-              .format("delta")
-              .mode("overwrite")
-              .option(DeltaOptions.REPLACE_WHERE_OPTION,
-                s"value IN (SELECT srcValue FROM $viewName)")
-              .save(dir.toString)
-          },
-          condition = "DELTA_UNSUPPORTED_SUBQUERY",
-          sqlState = Some("0AKDC"),
-          parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
-          matchPVals = true
-        )
+            // IN subquery should be rejected regardless of the subquery flag
+            checkError(
+              exception = intercept[DeltaAnalysisException] {
+                Seq(5).toDF("value")
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .write
+                  .format("tahoe")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                    s"value IN (SELECT srcValue FROM $viewName)")
+                  .save(dir.toString)
+              },
+              condition = "DELTA_UNSUPPORTED_SUBQUERY",
+              sqlState = Some("0AKDC"),
+              parameters = Map("operation" -> "DELETE condition", "cond" -> ".*"),
+              matchPVals = true
+            )
+          }
+        }
       }
     }
   }
