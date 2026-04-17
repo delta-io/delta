@@ -119,7 +119,9 @@ case class WriteIntoDelta(
         isDynamicPartitionOverwrite =
           if (Try(options.isDynamicPartitionOverwriteMode).getOrElse(false)) Some(true) else None,
         canOverwriteSchema = if (options.canOverwriteSchema) Some(true) else None,
-        canMergeSchema = if (options.canMergeSchema) Some(true) else None
+        canMergeSchema = if (options.canMergeSchema) Some(true) else None,
+        replaceOnCond = options.replaceOn,
+        replaceUsingCols = options.replaceUsing
       )
       txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
     }
@@ -410,9 +412,12 @@ case class WriteIntoDelta(
         (newFiles, newFiles.collect { case a: AddFile => a }, Nil)
     }
 
-    // Need to handle replace where metrics separately.
-    if (maybeAliasedReplaceWhereExprsOpt.nonEmpty && replaceWhereOnDataColsEnabled &&
-        sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)) {
+    val shouldRecordReplaceWhereOpMetrics =
+      maybeAliasedReplaceWhereExprsOpt.nonEmpty && replaceWhereOnDataColsEnabled &&
+      sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_METRICS_ENABLED)
+    val shouldRecordInsertReplaceOpMetrics =
+      shouldRecordReplaceWhereOpMetrics || replaceOnOrUsingExprOpt.isDefined
+    if (shouldRecordInsertReplaceOpMetrics) {
       registerInsertReplaceMetrics(sparkSession, txn, newFiles, deletedFiles)
     } else if (mode == SaveMode.Overwrite &&
         sparkSession.conf.get(DeltaSQLConf.OVERWRITE_REMOVE_METRICS_ENABLED)) {
