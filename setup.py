@@ -66,7 +66,7 @@ setup(
     },
     install_requires=[
         'pyspark>=3.5.3,<3.6.0',
-        'importlib_metadata>=1.0.0',
+        'importlib_metadata>=1.0.0,<=8.7.1',
     ],
     python_requires='>=3.6',
     cmdclass={
