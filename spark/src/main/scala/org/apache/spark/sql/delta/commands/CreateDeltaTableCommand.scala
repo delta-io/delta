@@ -356,7 +356,9 @@ case class CreateDeltaTableCommand(
     // We are either appending/overwriting with saveAsTable or creating a new table with CTAS
     if (!hasBeenExecuted(txn, sparkSession, Some(options))) {
       val (taggedCommitData, op) = doDeltaWrite(updatedWriter, updatedWriter.data.schema.asNullable)
-      txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      InsertAtomicReplaceExecutionObserver.getObserver.commit {
+        txn.commit(taggedCommitData.actions, op, tags = taggedCommitData.stringTags)
+      }
     }
     txnToReturn
   }

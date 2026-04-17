@@ -123,7 +123,9 @@ case class WriteIntoDelta(
         replaceOnCond = options.replaceOn,
         replaceUsingCols = options.replaceUsing
       )
-      txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
+      insertAtomicReplaceExecutionObserver.commit {
+        txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
+      }
     }
     Seq.empty
   }
@@ -305,7 +307,9 @@ case class WriteIntoDelta(
         val cdcEnabled = CDCReader.isCDCEnabledOnTable(txn.metadata, sparkSession) &&
           (options.isReplaceOnOrUsingDefined ||
             sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED))
-        val removedFileActions = removeFiles(sparkSession, txn, conditions)
+        val removedFileActions = insertAtomicReplaceExecutionObserver.delete {
+          removeFiles(sparkSession, txn, conditions)
+        }
         val cdcExistsInRemoveOp = removedFileActions.exists(_.isInstanceOf[AddCDCFile])
 
         // The above REMOVE will not produce explicit CDF data when persistent DV is enabled.
@@ -358,12 +362,14 @@ case class WriteIntoDelta(
           } else {
             data
           }
-        val newFiles = try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
-          case e: InvariantViolationException if options.replaceWhere.isDefined =>
-            throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, e)
-          case e: InvariantViolationException if options.isReplaceOnOrUsingDefined =>
-            throw DeltaErrors.replaceOnOrUsingConstraintViolationException(
-              options.replaceOn.orElse(options.replaceUsing).get, e)
+        val newFiles = insertAtomicReplaceExecutionObserver.insert {
+          try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
+            case e: InvariantViolationException if options.replaceWhere.isDefined =>
+              throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, e)
+            case e: InvariantViolationException if options.isReplaceOnOrUsingDefined =>
+              throw DeltaErrors.replaceOnOrUsingConstraintViolationException(
+                options.replaceOn.orElse(options.replaceUsing).get, e)
+          }
         }
         (newFiles,
           newFiles.collect { case a: AddFile => a },
