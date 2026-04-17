@@ -650,6 +650,61 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  test("replaceWhere blocks subquery") {
+    withTempDir { dir =>
+      Seq(1, 2, 3, 4).toDF("value")
+        .withColumn("is_odd", $"value" % 2 =!= 0)
+        .write
+        .format("delta")
+        .partitionBy("is_odd")
+        .save(dir.toString)
+
+      val viewName = "replaceWhereSubquerySource"
+      withView(viewName) {
+        spark.read.format("delta").load(dir.toString)
+          .where("is_odd = true")
+          .withColumnRenamed("value", "srcValue")
+          .createTempView(viewName)
+
+        // EXISTS subquery should be rejected
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            Seq(5).toDF("value")
+              .withColumn("is_odd", $"value" % 2 =!= 0)
+              .write
+              .format("delta")
+              .mode("overwrite")
+              .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                s"EXISTS (SELECT 1 FROM $viewName WHERE value = srcValue)")
+              .save(dir.toString)
+          },
+          condition = "DELTA_UNSUPPORTED_SUBQUERY",
+          sqlState = Some("0AKDC"),
+          parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+          matchPVals = true
+        )
+
+        // IN subquery should be rejected
+        checkError(
+          exception = intercept[DeltaAnalysisException] {
+            Seq(5).toDF("value")
+              .withColumn("is_odd", $"value" % 2 =!= 0)
+              .write
+              .format("delta")
+              .mode("overwrite")
+              .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                s"value IN (SELECT srcValue FROM $viewName)")
+              .save(dir.toString)
+          },
+          condition = "DELTA_UNSUPPORTED_SUBQUERY",
+          sqlState = Some("0AKDC"),
+          parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+          matchPVals = true
+        )
+      }
+    }
+  }
+
   Seq(true, false).foreach { p =>
     test(s"replaceWhere user defined _change_type column doesn't get dropped - partitioned=$p") {
       withTable("tab") {
