@@ -464,9 +464,9 @@ case class WriteIntoDelta(
     // not allowed for replaceWhere because arbitrary EXISTS subquery
     // conditions in DELETE are not supported.
     val sparkWithSubqueryDelete = spark.cloneSession()
-    val allowExistsSubquery = options.isReplaceOnOrUsingDefined.toString
+    val allowExistsSubqueryForReplaceOnOrUsing = options.isReplaceOnOrUsingDefined.toString
     sparkWithSubqueryDelete.conf.set(
-      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key, value = allowExistsSubquery)
+      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key, value = allowExistsSubqueryForReplaceOnOrUsing)
     val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)
