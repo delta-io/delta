@@ -1945,12 +1945,15 @@ trait DescribeDeltaHistorySuiteBase
     if (asserts.canOverwriteSchema) expected += ("canOverwriteSchema" -> "true")
     if (asserts.canMergeSchema) expected += ("canMergeSchema" -> "true")
     asserts.predicate.foreach(pred => expected += ("predicate" -> pred))
+    asserts.replaceOnCond.foreach(cond => expected += ("replaceOnCond" -> cond))
+    asserts.replaceUsingCols.foreach(cols => expected += ("replaceUsingCols" -> cols))
     assertInHistory(opParams, expected.result())
   }
 
   def assertInHistory(opParams: Map[String, String], expected: Map[String, String]): Unit = {
     val allParams = Seq(
-      "isDynamicPartitionOverwrite", "predicate", "canOverwriteSchema", "canMergeSchema"
+      "isDynamicPartitionOverwrite", "predicate", "canOverwriteSchema", "canMergeSchema",
+      "replaceUsingCols", "replaceOnCond"
     )
     expected.foreach { case (key, value) =>
       assert(opParams.get(key).exists(_.contains(value)),
@@ -2009,7 +2012,9 @@ case class WriteOptionsAssertion(
     isDynamicPartitionOverwrite: Boolean = false,
     canOverwriteSchema: Boolean = false,
     canMergeSchema: Boolean = false,
-    predicate: Option[String] = None
+    predicate: Option[String] = None,
+    replaceOnCond: Option[String] = None,
+    replaceUsingCols: Option[String] = None
 )
 
 /**
@@ -2273,6 +2278,30 @@ trait WriteOptionsTestBase {
       """)
     }
   }(WriteOptionsAssertion(isDynamicPartitionOverwrite = true))
+
+  testTableWrite("write options for saveAsTable with replaceOn option") { tableName =>
+    withSQLConf(
+      DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true"
+    ) {
+      testData(ids = Seq(6), parts = Seq(1))
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceOn", "true")
+        .saveAsTable(tableName)
+    }
+  }(WriteOptionsAssertion(replaceOnCond = Some("true")))
+
+  testTableWrite("write options for saveAsTable with replaceUsing option") { tableName =>
+    withSQLConf(
+      DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "true"
+    ) {
+      testData(ids = Seq(6), parts = Seq(1))
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceUsing", "part")
+        .saveAsTable(tableName)
+    }
+  }(WriteOptionsAssertion(replaceUsingCols = Some("part")))
 }
 
 class DescribeDeltaHistorySuite
