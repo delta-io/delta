@@ -463,13 +463,17 @@ case class WriteIntoDelta(
       spark: SparkSession,
       txn: OptimisticTransaction,
       conditions: Seq[Expression]): Seq[Action] = {
-    // Clone the spark session to enable EXISTS subquery support in DELETE,
-    // which is needed for replaceOn/replaceUsing conditions.
-    val sparkWithSubqueryDelete = spark.cloneSession()
-    sparkWithSubqueryDelete.conf.set(
-      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key, value = "true")
     val relation = createTableRelation(txn, tableAliasOpt = options.targetAlias)
     val processedCondition = conditions.reduceOption(And)
+    // Clone the spark session to enable EXISTS subquery support in DELETE,
+    // which is needed for replaceOn/replaceUsing conditions. Subqueries are
+    // not allowed for replaceWhere because arbitrary EXISTS subquery
+    // conditions in DELETE are not supported.
+    val sparkWithSubqueryDelete = spark.cloneSession()
+    val allowExistsSubqueryForReplaceOnOrUsing = options.isReplaceOnOrUsingDefined.toString
+    sparkWithSubqueryDelete.conf.set(
+      key = DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key,
+      value = allowExistsSubqueryForReplaceOnOrUsing)
     val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)
