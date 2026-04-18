@@ -804,8 +804,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
-      "DeltaCatalog", "alterTable") {
+  override def alterTable(ident: Identifier, changes: TableChange*): Table =
+    recordFrameProfile("DeltaCatalog", "alterTable") {
     // We group the table changes by their type, since Delta applies each in a separate action.
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.

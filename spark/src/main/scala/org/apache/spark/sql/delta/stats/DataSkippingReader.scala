@@ -634,7 +634,8 @@ trait DataSkippingReaderBase
     } else nullStringLiteral
 
     val files =
-      recordFrameProfile("Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
+      recordFrameProfile(
+        "Delta", "DataSkippingReader.getDataSkippedFiles.collectFiles") {
       val df = filteredFiles.withColumn("stats", statsColumn)
       convertDataFrameToAddFiles(df)
     }
@@ -875,7 +876,8 @@ trait DataSkippingReaderBase
    * @return a sequence of addFiles for the given `paths`
    */
   def getSpecificFilesWithStats(paths: Seq[String]): Seq[AddFile] = {
-    recordFrameProfile("Delta", "DataSkippingReader.getSpecificFilesWithStats") {
+    recordFrameProfile(
+        "Delta", "DataSkippingReader.getSpecificFilesWithStats") {
       val right = paths.toDF(spark, "path")
       val df = allFiles.join(right, Seq("path"), "leftsemi")
       convertDataFrameToAddFiles(df)
