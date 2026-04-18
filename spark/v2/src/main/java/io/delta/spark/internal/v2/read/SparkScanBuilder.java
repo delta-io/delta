@@ -27,6 +27,7 @@ import java.util.stream.Collectors;
 import org.apache.spark.sql.connector.read.ScanBuilder;
 import org.apache.spark.sql.connector.read.Statistics;
 import org.apache.spark.sql.connector.read.SupportsPushDownFilters;
+import org.apache.spark.sql.connector.read.SupportsPushDownLimit;
 import org.apache.spark.sql.connector.read.SupportsPushDownRequiredColumns;
 import org.apache.spark.sql.sources.Filter;
 import org.apache.spark.sql.types.StructField;
@@ -38,7 +39,10 @@ import org.apache.spark.sql.util.CaseInsensitiveStringMap;
  * use Delta Kernel for reading Delta tables.
  */
 public class SparkScanBuilder
-    implements ScanBuilder, SupportsPushDownRequiredColumns, SupportsPushDownFilters {
+    implements ScanBuilder,
+        SupportsPushDownRequiredColumns,
+        SupportsPushDownFilters,
+        SupportsPushDownLimit {
 
   private io.delta.kernel.ScanBuilder kernelScanBuilder;
   private final Snapshot initialSnapshot;
@@ -57,6 +61,7 @@ public class SparkScanBuilder
   private Predicate[] pushedKernelPredicates;
   private Filter[] pushedSparkFilters;
   private Filter[] dataFilters;
+  private OptionalInt pushedLimit = OptionalInt.empty();
 
   /**
    * Creates a SparkScanBuilder with the given snapshot and configuration.
@@ -165,8 +170,38 @@ public class SparkScanBuilder
     return this.pushedSparkFilters;
   }
 
+  /**
+   * Accepts a limit hint from Spark's optimizer.
+   *
+   * <p>Always returns {@code true} because the limit is a hint: we use per-file {@code numRecords}
+   * stats to stop adding files to the scan plan once enough rows are accumulated. Because
+   * file-level granularity means the actual row count may exceed the limit (e.g., a single file
+   * with 1000 rows for LIMIT 5), {@link #isPartiallyPushed()} returns {@code true} so Spark always
+   * re-applies the LIMIT as a safety net.
+   *
+   * <p>This method may be called multiple times by the optimizer; the last value wins.
+   */
+  @Override
+  public boolean pushLimit(int limit) {
+    if (limit < 0) {
+      throw new IllegalArgumentException("Pushed limit must be non-negative, got: " + limit);
+    }
+    this.pushedLimit = OptionalInt.of(limit);
+    return true;
+  }
+
+  // isPartiallyPushed() defaults to true, which is correct:
+  // - File-level granularity: a file with 1000 rows included for LIMIT 5 has 995 excess rows
+  // - Deletion vectors: physical numRecords may overstate logical (surviving) rows
+  // - Spark must always keep the LocalLimit node as a safety net
+
   @Override
   public org.apache.spark.sql.connector.read.Scan build() {
+    // Spark's V2ScanRelationPushDown currently only pushes limits when no post-scan residual
+    // filters remain (PhysicalOperation(_, Nil, _)). Defensively clear the limit here when
+    // data filters exist, so the connector does not depend on this external optimizer invariant.
+    OptionalInt effectiveLimit = dataFilters.length > 0 ? OptionalInt.empty() : this.pushedLimit;
+
     return new SparkScan(
         snapshotManager,
         initialSnapshot,
@@ -177,7 +212,8 @@ public class SparkScanBuilder
         dataFilters,
         kernelScanBuilder.build(),
         catalogStats,
-        options);
+        options,
+        effectiveLimit);
   }
 
   CaseInsensitiveStringMap getOptions() {
@@ -190,5 +226,9 @@ public class SparkScanBuilder
 
   StructType getPartitionSchema() {
     return partitionSchema;
+  }
+
+  OptionalInt getPushedLimit() {
+    return pushedLimit;
   }
 }

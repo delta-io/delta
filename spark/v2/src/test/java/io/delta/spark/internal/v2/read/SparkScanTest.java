@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.spark.sql.catalyst.InternalRow;
@@ -822,6 +823,142 @@ public class SparkScanTest extends DeltaV2TestBase {
         0,
         scan.estimateStatistics().sizeInBytes().getAsLong(),
         "Statistics sizeInBytes should be 0 after filtering out all files");
+  }
+
+  // ================================================================================================
+  // Tests for limit pushdown
+  // ================================================================================================
+
+  @Test
+  public void testLimitPushdown_description() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    builder.pushLimit(10);
+    SparkScan scan = (SparkScan) builder.build();
+    assertTrue(
+        scan.description().contains("PushedLimit: 10"),
+        "description should contain PushedLimit when limit is pushed");
+  }
+
+  @Test
+  public void testLimitPushdown_descriptionNoLimit() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+    assertFalse(
+        scan.description().contains("PushedLimit"),
+        "description should not contain PushedLimit when no limit is pushed");
+  }
+
+  @Test
+  public void testLimitPushdown_equalsWithSameLimit() {
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushLimit(10);
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushLimit(10);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testLimitPushdown_notEqualsWithDifferentLimit() {
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushLimit(5);
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushLimit(100);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testLimitPushdown_notEqualsWithAndWithoutLimit() {
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan1 = (SparkScan) builder1.build();
+    // no limit
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushLimit(10);
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertNotEquals(scan1, scan2);
+    assertNotEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
+  @Test
+  public void testLimitPushdown_noLimit_plansAllFiles() throws Exception {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scan = (SparkScan) builder.build();
+    // No limit set -- all 5 files from partitioned table should be planned
+    List<PartitionedFile> files = getPartitionedFiles(scan);
+    assertEquals(5, files.size(), "All files should be planned without a limit");
+  }
+
+  @Test
+  public void testLimitPushdown_limit0_plansNoFiles() throws Exception {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    builder.pushLimit(0);
+    SparkScan scan = (SparkScan) builder.build();
+    List<PartitionedFile> files = getPartitionedFiles(scan);
+    assertEquals(0, files.size(), "LIMIT 0 should plan zero files");
+    assertEquals(0, getTotalBytes(scan));
+    assertEquals(0, getEstimatedSizeInBytes(scan));
+  }
+
+  @Test
+  public void testLimitPushdown_statisticsReflectPrunedFiles() throws Exception {
+    // First get baseline stats without limit
+    SparkScanBuilder builderAll = (SparkScanBuilder) table.newScanBuilder(options);
+    SparkScan scanAll = (SparkScan) builderAll.build();
+    long allFilesBytes = getTotalBytes(scanAll);
+    long allFilesEstimated = getEstimatedSizeInBytes(scanAll);
+
+    // Now with limit 1 -- should have fewer or equal bytes
+    SparkScanBuilder builderLimit = (SparkScanBuilder) table.newScanBuilder(options);
+    builderLimit.pushLimit(1);
+    SparkScan scanLimit = (SparkScan) builderLimit.build();
+    long limitBytes = getTotalBytes(scanLimit);
+    long limitEstimated = getEstimatedSizeInBytes(scanLimit);
+
+    assertTrue(
+        limitBytes <= allFilesBytes, "totalBytes with limit should be <= totalBytes without limit");
+    assertTrue(
+        limitEstimated <= allFilesEstimated,
+        "estimatedSize with limit should be <= estimatedSize without limit");
+  }
+
+  @Test
+  public void testLimitPushdown_negativeLimitRejected() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> builder.pushLimit(-1),
+        "Negative limit should be rejected");
+  }
+
+  @Test
+  public void testLimitPushdown_clearedWhenDataFiltersExist() {
+    SparkScanBuilder builder = (SparkScanBuilder) table.newScanBuilder(options);
+    // Push a data filter (non-partition filter) that becomes a post-scan residual
+    builder.pushFilters(
+        new org.apache.spark.sql.sources.Filter[] {
+          new org.apache.spark.sql.sources.EqualTo("name", "test")
+        });
+    builder.pushLimit(10);
+    SparkScan scan = (SparkScan) builder.build();
+
+    assertEquals(
+        OptionalInt.empty(),
+        scan.getPushedLimit(),
+        "Pushed limit should be cleared when data filters exist");
+    assertFalse(
+        scan.description().contains("PushedLimit"),
+        "Description should not contain PushedLimit when data filters cause limit to be cleared");
   }
 
   // ================================================================================================
