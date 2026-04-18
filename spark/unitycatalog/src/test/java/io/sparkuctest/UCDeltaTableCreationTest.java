@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -486,21 +487,78 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  /**
+   * Specification for a column in testTableWithSupportedDataTypes: its SQL DDL type, the SQL
+   * literal used in the INSERT, the expected toString() from the result row (null = byte-array ref
+   * check via startsWith("[B@")), and the expected UC typeText.
+   */
+  private static final class ColSpec {
+    final String name;
+    final String sqlType;
+    final String insertValue;
+    final String rowValue; // null = byte-array object ref, checked with startsWith
+    final String typeText;
+
+    ColSpec(String name, String sqlType, String insertValue, String rowValue, String typeText) {
+      this.name = name;
+      this.sqlType = sqlType;
+      this.insertValue = insertValue;
+      this.rowValue = rowValue;
+      this.typeText = typeText;
+    }
+  }
+
   @TestAllTableTypes
   public void testTableWithSupportedDataTypes(TableType tableType) throws Exception {
     Assumptions.assumeTrue(
         isUcSparkNewerThan040() || tableType != TableType.MANAGED,
         "Older UC Spark package can't support uploading complex types to UC server for managed table");
+
+    List<ColSpec> cols =
+        List.of(
+            new ColSpec("col_tinyint", "TINYINT", "CAST(1 AS TINYINT)", "1", "tinyint"),
+            new ColSpec("col_smallint", "SMALLINT", "CAST(100 AS SMALLINT)", "100", "smallint"),
+            new ColSpec("col_int", "INT", "1000", "1000", "int"),
+            new ColSpec("col_bigint", "BIGINT", "100000", "100000", "bigint"),
+            new ColSpec("col_float", "FLOAT", "2.5", "2.5", "float"),
+            new ColSpec("col_double", "DOUBLE", "1.5", "1.5", "double"),
+            new ColSpec("col_decimal", "DECIMAL(10,2)", "123.45", "123.45", "decimal(10,2)"),
+            new ColSpec("col_string", "STRING", "'test'", "test", "string"),
+            new ColSpec("col_char", "CHAR(10)", "'char_test'", "char_test ", "char(10)"),
+            new ColSpec(
+                "col_varchar", "VARCHAR(20)", "'varchar_test'", "varchar_test", "varchar(20)"),
+            new ColSpec("col_binary", "BINARY", "X'CAFEBABE'", null, "binary"),
+            new ColSpec("col_boolean", "BOOLEAN", "true", "true", "boolean"),
+            new ColSpec("col_date", "DATE", "DATE'2025-01-01'", "2025-01-01", "date"),
+            new ColSpec(
+                "col_timestamp",
+                "TIMESTAMP",
+                "TIMESTAMP'2025-01-01 12:00:00'",
+                "2025-01-01 12:00:00.0",
+                "timestamp"),
+            new ColSpec(
+                "col_timestamp_ntz",
+                "TIMESTAMP_NTZ",
+                "TIMESTAMP_NTZ'2025-01-01 12:00:00'",
+                "2025-01-01T12:00",
+                "timestamp_ntz"),
+            new ColSpec(
+                "col_arr", "ARRAY<INT>", "array(1, 2, 3)", "ArraySeq(1, 2, 3)", "array<int>"),
+            new ColSpec(
+                "col_map",
+                "MAP<STRING, INT>",
+                "map('key1', 10, 'key2', 20)",
+                "Map(key1 -> 10, key2 -> 20)",
+                "map<string,int>"),
+            new ColSpec(
+                "col_struct",
+                "STRUCT<a: INT, b: STRING>",
+                "struct(42, 'test')",
+                "[42,test]",
+                "struct<a:int,b:string>"));
+
     String schema =
-        // Numeric types
-        "col_tinyint TINYINT, col_smallint SMALLINT, col_int INT, col_bigint BIGINT, "
-            + "col_float FLOAT, col_double DOUBLE, col_decimal DECIMAL(10,2), "
-            // String and binary types
-            + "col_string STRING, col_char CHAR(10), col_varchar VARCHAR(20), col_binary BINARY, "
-            // Boolean type
-            + "col_boolean BOOLEAN, "
-            // Date and time types
-            + "col_date DATE, col_timestamp TIMESTAMP, col_timestamp_ntz TIMESTAMP_NTZ";
+        cols.stream().map(c -> c.name + " " + c.sqlType).collect(Collectors.joining(", "));
 
     withNewTable(
         "supported_types_table",
@@ -509,105 +567,32 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         tableName -> {
           // Insert sample data
           sql(
-              "INSERT INTO %s VALUES ("
-                  // Numeric values
-                  + "CAST(1 AS TINYINT), CAST(100 AS SMALLINT), 1000, 100000, "
-                  + "2.5, 1.5, 123.45, "
-                  // String and binary values
-                  + "'test', 'char_test', 'varchar_test', X'CAFEBABE', "
-                  // Boolean value
-                  + "true, "
-                  // Date and time values
-                  + "DATE'2025-01-01', TIMESTAMP'2025-01-01 12:00:00', "
-                  + "TIMESTAMP_NTZ'2025-01-01 12:00:00')",
-              tableName);
+              "INSERT INTO %s VALUES (%s)",
+              tableName, cols.stream().map(c -> c.insertValue).collect(Collectors.joining(", ")));
 
-          // Assert the unity catalog table information.
-          assertUCTableInfo(
+          // Assert the unity catalog table information, including column types.
+          assertUCTableInfoWithTypes(
               tableType,
               tableName,
-              List.of(
-                  "col_tinyint",
-                  "col_smallint",
-                  "col_int",
-                  "col_bigint",
-                  "col_float",
-                  "col_double",
-                  "col_decimal",
-                  "col_string",
-                  "col_char",
-                  "col_varchar",
-                  "col_binary",
-                  "col_boolean",
-                  "col_date",
-                  "col_timestamp",
-                  "col_timestamp_ntz"),
+              cols,
               // This feature is automatically enabled due to use of TIMESTAMP_NTZ
               Map.of("delta.feature.timestampNtz", "supported"),
               null,
               null);
 
-          // Verify data can be queried - checking that each column type is correctly
-          // stored/retrieved
+          // Verify data can be queried
           List<List<String>> results = sql("SELECT * FROM %s", tableName);
           assertThat(results).hasSize(1);
           List<String> row = results.get(0);
 
-          // Verify each column value
-          assertThat(row.get(0)).isEqualTo("1"); // TINYINT
-          assertThat(row.get(1)).isEqualTo("100"); // SMALLINT
-          assertThat(row.get(2)).isEqualTo("1000"); // INT
-          assertThat(row.get(3)).isEqualTo("100000"); // BIGINT
-          assertThat(row.get(4)).isEqualTo("2.5"); // FLOAT
-          assertThat(row.get(5)).isEqualTo("1.5"); // DOUBLE
-          assertThat(row.get(6)).isEqualTo("123.45"); // DECIMAL
-          assertThat(row.get(7)).isEqualTo("test"); // STRING
-          assertThat(row.get(8)).isEqualTo("char_test "); // CHAR (padded with space)
-          assertThat(row.get(9)).isEqualTo("varchar_test"); // VARCHAR
-          assertThat(row.get(10)).startsWith("[B@"); // BINARY (Java byte array object reference)
-          assertThat(row.get(11)).isEqualTo("true"); // BOOLEAN
-          assertThat(row.get(12)).isEqualTo("2025-01-01"); // DATE
-          assertThat(row.get(13)).isEqualTo("2025-01-01 12:00:00.0"); // TIMESTAMP
-          assertThat(row.get(14)).isEqualTo("2025-01-01T12:00"); // TIMESTAMP_NTZ
-        });
-  }
-
-  @TestAllTableTypes
-  public void testTableWithComplexTypes(TableType tableType) throws Exception {
-    Assumptions.assumeTrue(
-        isUcSparkNewerThan040() || tableType != TableType.MANAGED,
-        "Older UC Spark package can't support uploading complex types to UC server for managed table");
-    String schema =
-        "id INT, arr ARRAY<INT>, "
-            + "map_col MAP<STRING, INT>, "
-            + "struct_col STRUCT<a: INT, b: STRING>";
-
-    withNewTable(
-        "complex_types_table",
-        schema,
-        tableType,
-        tableName -> {
-          // Insert sample data
-          sql(
-              "INSERT INTO %s VALUES (1, array(1, 2, 3), "
-                  + "map('key1', 10, 'key2', 20), "
-                  + "struct(42, 'test'))",
-              tableName);
-
-          // Assert the unity catalog table information.
-          assertUCTableInfo(
-              tableType,
-              tableName,
-              List.of("id", "arr", "map_col", "struct_col"),
-              Map.of(),
-              null,
-              null);
-
-          // Verify data can be queried
-          check(
-              tableName,
-              List.of(
-                  List.of("1", "ArraySeq(1, 2, 3)", "Map(key1 -> 10, key2 -> 20)", "[42,test]")));
+          for (int i = 0; i < cols.size(); i++) {
+            ColSpec spec = cols.get(i);
+            if (spec.rowValue == null) {
+              assertThat(row.get(i)).as("row value for %s", spec.name).startsWith("[B@");
+            } else {
+              assertThat(row.get(i)).as("row value for %s", spec.name).isEqualTo(spec.rowValue);
+            }
+          }
         });
   }
 
@@ -635,18 +620,21 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         });
   }
 
+  /** Accepts column names only. Validates name and order, no type check. */
   private void assertUCTableInfo(
       TableType tableType,
       String fullTableName,
-      List<String> expectedColumns,
+      List<String> expectedColumnNames,
       Map<String, String> customizedProps,
       String comment,
       String externalTableLocation)
       throws ApiException {
-    assertUCTableInfo(
+    assertUCTableInfoImpl(
         tableType,
         fullTableName,
-        expectedColumns,
+        expectedColumnNames,
+        (i, col) ->
+            assertThat(col.getName()).as("name[%d]", i).isEqualTo(expectedColumnNames.get(i)),
         customizedProps,
         comment,
         externalTableLocation,
@@ -655,10 +643,67 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
         Optional.empty());
   }
 
+  /** Accepts column names only with cluster/partition. Validates name and order, no type check. */
   private void assertUCTableInfo(
       TableType tableType,
       String fullTableName,
-      List<String> expectedColumns,
+      List<String> expectedColumnNames,
+      Map<String, String> customizedProps,
+      String comment,
+      String externalTableLocation,
+      boolean withCluster,
+      Optional<String> clusterColumn,
+      Optional<String> partitionColumn)
+      throws ApiException {
+    assertUCTableInfoImpl(
+        tableType,
+        fullTableName,
+        expectedColumnNames,
+        (i, col) ->
+            assertThat(col.getName()).as("name[%d]", i).isEqualTo(expectedColumnNames.get(i)),
+        customizedProps,
+        comment,
+        externalTableLocation,
+        withCluster,
+        clusterColumn,
+        partitionColumn);
+  }
+
+  /** Accepts ColSpec list. Validates name, order, and type. */
+  private void assertUCTableInfoWithTypes(
+      TableType tableType,
+      String fullTableName,
+      List<ColSpec> expectedColumns,
+      Map<String, String> customizedProps,
+      String comment,
+      String externalTableLocation)
+      throws ApiException {
+    assertUCTableInfoImpl(
+        tableType,
+        fullTableName,
+        expectedColumns.stream().map(c -> c.name).collect(Collectors.toList()),
+        (i, col) -> {
+          ColSpec spec = expectedColumns.get(i);
+          assertThat(col.getName()).as("name[%d]", i).isEqualTo(spec.name);
+          assertThat(col.getTypeText()).as("typeText for %s", spec.name).isEqualTo(spec.typeText);
+        },
+        customizedProps,
+        comment,
+        externalTableLocation,
+        false,
+        Optional.empty(),
+        Optional.empty());
+  }
+
+  /**
+   * Core implementation. The {@code columnAssertion} lambda is called for each column (by index) on
+   * managed tables, allowing callers to check just names or names + types.
+   */
+  private void assertUCTableInfoImpl(
+      TableType tableType,
+      String fullTableName,
+      List<String> expectedColumnNames,
+      BiConsumer<Integer, ColumnInfo> columnAssertion,
       Map<String, String> customizedProps,
       String comment,
       String externalTableLocation,
@@ -689,10 +734,10 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     assertThat(columns).isNotNull();
 
     if (tableType == TableType.MANAGED) {
-      assertThat(columns).isNotEmpty();
-      List<String> columnNamesFromServer =
-          columns.stream().map(ColumnInfo::getName).collect(Collectors.toList());
-      assertThat(columnNamesFromServer).containsExactlyInAnyOrderElementsOf(expectedColumns);
+      assertThat(columns).hasSize(expectedColumnNames.size());
+      for (int i = 0; i < columns.size(); i++) {
+        columnAssertion.accept(i, columns.get(i));
+      }
       // Partition index is only set after UC-Spark 0.4.0
       if (isUcSparkNewerThan040() && partitionColumn.isPresent()) {
         List<ColumnInfo> matchingColumns =
@@ -771,7 +816,7 @@ public class UCDeltaTableCreationTest extends UCDeltaTableIntegrationBaseTest {
     for (List<String> row : rows) {
       String key = row.get(0);
       // Skip duplicate column names that appear in partition info
-      if (!expectedColumns.contains(key)) {
+      if (!expectedColumnNames.contains(key)) {
         describeResult.put(key, row.get(1));
       }
     }
