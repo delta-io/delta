@@ -24,6 +24,7 @@ import org.apache.spark.sql.delta.DeltaErrors
 import org.apache.spark.sql.delta.DeltaLog
 import org.apache.spark.sql.delta.DeltaOptions
 import org.apache.spark.sql.delta.DeltaTableUtils
+import org.apache.spark.sql.delta.InsertAtomicReplaceExecutionObserver
 import org.apache.spark.sql.delta.OptimisticTransaction
 import org.apache.spark.sql.delta.util.AnalysisHelper
 import org.apache.spark.sql.delta.actions.Action
@@ -84,7 +85,10 @@ trait WriteIntoDeltaLike extends DeltaCommand with AnalysisHelper {
 
   val deltaLog: DeltaLog
 
-
+  /** Contains the execution instrumentation set via thread-local. No-op by default. */
+  protected[delta] val insertAtomicReplaceExecutionObserver:
+      InsertAtomicReplaceExecutionObserver =
+    InsertAtomicReplaceExecutionObserver.getObserver
 
   // Helper for creating a SQLMetric and setting its value, since it isn't valid to create a
   // SQLMetric with a positive `initValue`.

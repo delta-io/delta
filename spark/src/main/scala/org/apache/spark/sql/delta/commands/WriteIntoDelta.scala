@@ -123,7 +123,9 @@ case class WriteIntoDelta(
         replaceOnCond = options.replaceOn,
         replaceUsingCols = options.replaceUsing
       )
-      txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
+      insertAtomicReplaceExecutionObserver.commit {
+        txn.commitIfNeeded(taggedCommitData.actions, operation, tags = taggedCommitData.stringTags)
+      }
     }
     Seq.empty
   }
@@ -305,7 +307,9 @@ case class WriteIntoDelta(
         val cdcEnabled = CDCReader.isCDCEnabledOnTable(txn.metadata, sparkSession) &&
           (options.isReplaceOnOrUsingDefined ||
             sparkSession.conf.get(DeltaSQLConf.REPLACEWHERE_DATACOLUMNS_WITH_CDF_ENABLED))
-        val removedFileActions = removeFiles(sparkSession, txn, conditions)
+        val removedFileActions = insertAtomicReplaceExecutionObserver.delete {
+          removeFiles(sparkSession, txn, conditions)
+        }
         val cdcExistsInRemoveOp = removedFileActions.exists(_.isInstanceOf[AddCDCFile])
 
         // The above REMOVE will not produce explicit CDF data when persistent DV is enabled.
@@ -358,12 +362,14 @@ case class WriteIntoDelta(
           } else {
             data
           }
-        val newFiles = try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
-          case e: InvariantViolationException if options.replaceWhere.isDefined =>
-            throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, e)
-          case e: InvariantViolationException if options.isReplaceOnOrUsingDefined =>
-            throw DeltaErrors.replaceOnOrUsingConstraintViolationException(
-              options.replaceOn.orElse(options.replaceUsing).get, e)
+        val newFiles = insertAtomicReplaceExecutionObserver.insert {
+          try txn.writeFiles(dataToWrite, Some(options), constraints) catch {
+            case e: InvariantViolationException if options.replaceWhere.isDefined =>
+              throw DeltaErrors.replaceWhereMismatchException(options.replaceWhere.get, e)
+            case e: InvariantViolationException if options.isReplaceOnOrUsingDefined =>
+              throw DeltaErrors.replaceOnOrUsingConstraintViolationException(
+                options.replaceOn.orElse(options.replaceUsing).get, e)
+          }
         }
         (newFiles,
           newFiles.collect { case a: AddFile => a },
@@ -457,13 +463,17 @@ case class WriteIntoDelta(
       spark: SparkSession,
       txn: OptimisticTransaction,
       conditions: Seq[Expression]): Seq[Action] = {
-    // Clone the spark session to enable EXISTS subquery support in DELETE,
-    // which is needed for replaceOn/replaceUsing conditions.
-    val sparkWithSubqueryDelete = spark.cloneSession()
-    sparkWithSubqueryDelete.conf.set(
-      DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key, value = "true")
     val relation = createTableRelation(txn, tableAliasOpt = options.targetAlias)
     val processedCondition = conditions.reduceOption(And)
+    // Clone the spark session to enable EXISTS subquery support in DELETE,
+    // which is needed for replaceOn/replaceUsing conditions. Subqueries are
+    // not allowed for replaceWhere because arbitrary EXISTS subquery
+    // conditions in DELETE are not supported.
+    val sparkWithSubqueryDelete = spark.cloneSession()
+    val allowExistsSubqueryForReplaceOnOrUsing = options.isReplaceOnOrUsingDefined.toString
+    sparkWithSubqueryDelete.conf.set(
+      key = DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key,
+      value = allowExistsSubqueryForReplaceOnOrUsing)
     val command = sparkWithSubqueryDelete.sessionState.analyzer.execute(
       DeleteFromTable(relation, processedCondition.getOrElse(Literal.TrueLiteral)))
     sparkWithSubqueryDelete.sessionState.analyzer.checkAnalysis(command)

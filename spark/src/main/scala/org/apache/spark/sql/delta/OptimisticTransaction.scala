@@ -18,12 +18,14 @@ package org.apache.spark.sql.delta
 
 // scalastyle:off import.ordering.noEmptyLine
 import java.nio.file.FileAlreadyExistsException
+import java.time.Instant
 import java.util.{ConcurrentModificationException, Optional, UUID}
 import java.util.concurrent.TimeUnit.{MINUTES, NANOSECONDS}
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable
 import scala.collection.mutable.{ArrayBuffer, HashSet}
+import scala.jdk.OptionConverters._
 import scala.util.control.NonFatal
 
 import com.databricks.spark.util.TagDefinitions.TAG_LOG_STORE_CLASS
@@ -54,6 +56,7 @@ import org.apache.spark.sql.util.ScalaExtensions._
 import io.delta.storage.commit._
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import org.apache.commons.lang3.NotImplementedException
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.{FileStatus, Path}
@@ -2670,7 +2673,30 @@ trait OptimisticTransactionImpl extends TransactionHelper
       currentTransactionInfo: CurrentTransactionInfo,
       attemptNumber: Int,
       isolationLevel: IsolationLevel): Snapshot = {
-    val actions = currentTransactionInfo.finalActionsToCommit
+    val targetCatalogTable = catalogTable
+    // If the table requires atomic Iceberg metadata generation
+    // , generate iceberg metadata and update the transaction info.
+    var icebergMetadataGenerationDurationMsOpt: Option[Long] = None
+    val updatedCurrentTransactionInfo =
+      targetCatalogTable
+      .map { table =>
+        val startNanos = System.nanoTime()
+        // Following call generates Iceberg metadata and updates CurrentTransactionInfo
+        val (updatedInfo, isConversionPerformed) =
+          generateIcebergAndUpdateCurrentTransactionInfo(
+            spark,
+            this,
+            attemptVersion,
+            currentTransactionInfo
+            , table
+          )
+        if (isConversionPerformed) {
+          icebergMetadataGenerationDurationMsOpt = Some(
+            NANOSECONDS.toMillis(System.nanoTime() - startNanos))
+        }
+        updatedInfo
+      }.getOrElse(currentTransactionInfo)
+    val actions = updatedCurrentTransactionInfo.finalActionsToCommit
     logInfo(
       log"Attempting to commit version ${MDC(DeltaLogKeys.VERSION, attemptVersion)} with " +
       log"${MDC(DeltaLogKeys.NUM_ACTIONS, actions.size.toLong)} actions with " +
@@ -2693,7 +2719,7 @@ trait OptimisticTransactionImpl extends TransactionHelper
     val jsonActions = actions.map(_.json)
 
     val (newChecksumOpt, commit) =
-      writeCommitFile(attemptVersion, jsonActions.toIterator, currentTransactionInfo)
+      writeCommitFile(attemptVersion, jsonActions.toIterator, updatedCurrentTransactionInfo)
 
     spark.sessionState.conf.setConf(
       DeltaSQLConf.DELTA_LAST_COMMIT_VERSION_IN_SESSION,
@@ -2851,7 +2877,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
         jsonActions,
         updatedActions,
         catalogTable.map(_.identifier),
-        CatalogTrackedInfo.EMPTY)
+        new CatalogTrackedInfo(currentTransactionInfo.convertedIcebergMetadata.toJava)
+      )
     }
     if (attemptVersion == 0L) {
       val expectedPathForCommitZero = unsafeDeltaFile(deltaLog.logPath, version = 0L).toUri
@@ -3133,6 +3160,40 @@ trait OptimisticTransactionImpl extends TransactionHelper
         throwError("WRONG_COLUMN_DEFAULTS_FOR_DELTA_FEATURE_NOT_ENABLED",
           Array("ALTER TABLE"))
       case _ =>
+    }
+  }
+
+  /**
+   * Generate Iceberg metadata and update current transaction Info accordingly
+   * return (the updated transaction info, if iceberg conversion has performed)
+   */
+  def generateIcebergAndUpdateCurrentTransactionInfo(
+      spark: SparkSession,
+      txn: TransactionHelper,
+      deltaAttemptVersion: Long,
+      txnInfo: CurrentTransactionInfo
+      , table: CatalogTable
+  ): (CurrentTransactionInfo, Boolean) = {
+   if (UniversalFormat.icebergEnabled(txnInfo.metadata)) {
+      logInfo(log"Generate Iceberg metadata for atomic Delta UniForm table pre-commit")
+      val icebergConverter = txn.deltaLog.icebergConverter
+      val (metadataLocation, baseConvertedDeltaVersion) = icebergConverter.convertUncommitedTxn(
+        txnInfo,
+        deltaAttemptVersion,
+        txn.deltaLog,
+        table
+      )
+      val newDeltaUniFormIceberg = new UniformMetadata(
+        new IcebergMetadata(
+          metadataLocation,
+          deltaAttemptVersion,
+          Instant.now.toString
+        )
+      )
+      (txnInfo.copy(convertedIcebergMetadata = Some(newDeltaUniFormIceberg)), true)
+    } else {
+      logInfo(log"No need to generate Iceberg metadata for the table pre-commit")
+      (txnInfo, false)
     }
   }
 
