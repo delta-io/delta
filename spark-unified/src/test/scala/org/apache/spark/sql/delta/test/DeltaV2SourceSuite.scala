@@ -131,7 +131,9 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "should not attempt to read a non exist version",
     "can delete old files of a snapshot without update",
     "Delta source advances with non-data inserts and generates empty dataframe for " +
-      "non-data operations"
+      "non-data operations",
+    "reading from table with multiple partition columns succeeds during restart",
+    "streaming read returns correct data from table with partition column in middle"
   )
 
   private lazy val shouldFailTests = Set(

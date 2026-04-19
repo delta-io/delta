@@ -23,6 +23,7 @@ import io.delta.kernel.internal.actions.DeletionVectorDescriptor;
 import io.delta.kernel.internal.actions.Metadata;
 import io.delta.kernel.internal.actions.Protocol;
 import io.delta.kernel.internal.tablefeatures.TableFeatures;
+import io.delta.spark.internal.v2.read.ColumnReorderReadFunction;
 import io.delta.spark.internal.v2.read.DeltaParquetFileFormatV2;
 import io.delta.spark.internal.v2.read.SparkReaderFactory;
 import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorReadFunction;
@@ -30,8 +31,11 @@ import io.delta.spark.internal.v2.read.deletionvector.DeletionVectorSchemaContex
 import io.delta.spark.internal.v2.read.rowtracking.RowTrackingReadFunction;
 import io.delta.spark.internal.v2.read.rowtracking.RowTrackingSchemaContext;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.apache.hadoop.conf.Configuration;
@@ -228,6 +232,11 @@ public class PartitionUtils {
     // DV file path resolution failures.
     String tablePath = snapshotImpl.getDataPath().toString();
 
+    // Preserve the caller-provided readDataSchema (pre-DV/RT augmentation) for the final
+    // column-reorder wrapper below. DV/RT inject + strip internal columns; from the outside,
+    // the reader chain still produces one StructField per column in (readDataSchema,partitions).
+    final StructType originalReadDataSchema = readDataSchema;
+
     boolean metadataColumnRequested =
         Arrays.stream(readDataSchema.fields())
             .anyMatch(field -> FileFormat$.MODULE$.METADATA_NAME().equals(field.name()));
@@ -294,7 +303,73 @@ public class PartitionUtils {
       readFunc = RowTrackingReadFunction.wrap(readFunc, rowTrackingSchemaContext.get());
     }
 
+    // Reorder output columns from (data ++ partitions) to the table's DDL order. Required
+    // because Spark's streaming plan binds output attributes to SparkTable.schema() (DDL
+    // order); without this reorder a downstream ordinal-based consumer can read a
+    // type-mismatched ColumnVector and NPE. No-op when partitions are already at the end.
+    // Uses the ORIGINAL readDataSchema (pre-DV/RT augmentation): DV strips its internal
+    // column and RT inserts _metadata between data and partitions, so what reaches this
+    // wrapper is logically (originalReadDataSchema ++ partitionSchema).
+    readFunc =
+        ColumnReorderReadFunction.wrap(
+            readFunc,
+            enableVectorizedReader,
+            readerOutputSchema(originalReadDataSchema, partitionSchema),
+            ddlOrderedOutputSchema(snapshot, originalReadDataSchema, partitionSchema));
+
     return new SparkReaderFactory(readFunc, enableVectorizedReader);
+  }
+
+  /**
+   * The output column layout that the underlying reader (before the reorder wrapper) produces: data
+   * columns followed by partition columns.
+   */
+  private static StructType readerOutputSchema(
+      StructType readDataSchema, StructType partitionSchema) {
+    List<StructField> fields =
+        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
+    for (StructField f : readDataSchema.fields()) {
+      fields.add(f);
+    }
+    for (StructField f : partitionSchema.fields()) {
+      fields.add(f);
+    }
+    return new StructType(fields.toArray(new StructField[0]));
+  }
+
+  /**
+   * The projection of {@code readDataSchema ∪ partitionSchema} in the table's DDL order (partition
+   * columns interleaved at their declared positions). Any field in {@code readDataSchema} that is
+   * not part of the table's persisted schema (e.g. Spark's synthetic {@code _metadata} column) is
+   * appended at the end in insertion order.
+   */
+  public static StructType ddlOrderedOutputSchema(
+      Snapshot snapshot, StructType readDataSchema, StructType partitionSchema) {
+    if (partitionSchema.fields().length == 0) {
+      // No partition columns — reader output already matches DDL order for included fields.
+      return readDataSchema;
+    }
+    StructType rawSchema =
+        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+            snapshot.getSchema());
+    LinkedHashMap<String, StructField> fieldsByName =
+        new LinkedHashMap<>(readDataSchema.fields().length + partitionSchema.fields().length);
+    for (StructField f : readDataSchema.fields()) {
+      fieldsByName.put(f.name(), f);
+    }
+    for (StructField f : partitionSchema.fields()) {
+      fieldsByName.put(f.name(), f);
+    }
+    List<StructField> ordered = new ArrayList<>(fieldsByName.size());
+    for (StructField f : rawSchema.fields()) {
+      StructField projected = fieldsByName.remove(f.name());
+      if (projected != null) {
+        ordered.add(projected);
+      }
+    }
+    // Append leftover fields (not in the persisted schema) preserving insertion order.
+    ordered.addAll(fieldsByName.values());
+    return new StructType(ordered.toArray(new StructField[0]));
   }
 
   /**
