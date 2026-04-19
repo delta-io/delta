@@ -10,10 +10,6 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
-env:
-  # SECURITY: Temporal lockdown — refuse any package version published after this date.
-  # This date is a pre-attack baseline (before the active PyPI supply chain attack).
-  UV_EXCLUDE_NEWER: "2026-03-10T00:00:00Z"
 jobs:
   test:
     name: "DIL: Scala ${{ matrix.scala }}"
@@ -45,21 +41,10 @@ jobs:
           key: delta-sbt-cache-spark4.0-scala${{ matrix.scala }}
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Install Job dependencies
+      - name: Install Python via uv
+        # No UV_EXCLUDE_NEWER needed: this workflow installs zero pip packages.
+        # Python is only used to run the stdlib-only run-tests.py driver.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
-          sudo apt install libedit-dev
-          # buf v1.28.1 (2023-11-15) — SHA from official release asset:
-          # https://github.com/bufbuild/buf/releases/download/v1.28.1/sha256.txt
-          BUF_VERSION="v1.28.1"
-          BUF_SHA256="870cf492d381a967d36636fdee9da44b524ea62aad163659b8dbf16a7da56987"
-          curl -fsSL -o buf-Linux-x86_64.tar.gz \
-            "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64.tar.gz"
-          echo "${BUF_SHA256}  buf-Linux-x86_64.tar.gz" | sha256sum -c -
-          mkdir -p ~/buf
-          tar -xzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
-          rm buf-Linux-x86_64.tar.gz
           uv python install 3.8
           uv venv .venv --python 3.8
       - name: Run Scala/Java and Python tests
