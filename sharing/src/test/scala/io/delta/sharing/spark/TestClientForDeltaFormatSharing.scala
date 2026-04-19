@@ -60,7 +60,9 @@ private[spark] class TestClientForDeltaFormatSharing(
     asyncQueryMaxDuration: Long = 600000L,
     tokenExchangeMaxRetries: Int = 5,
     tokenExchangeMaxRetryDurationInSeconds: Int = 60,
-    tokenRenewalThresholdInSeconds: Int = 600)
+    tokenRenewalThresholdInSeconds: Int = 600,
+    callerOrg: String = "",
+    skipFileIdHashVerification: Boolean = false)
     extends DeltaSharingClient {
 
   private val supportedReaderFeatures: Seq[String] = Seq(
@@ -71,7 +73,8 @@ private[spark] class TestClientForDeltaFormatSharing(
     TypeWideningTableFeature,
     VariantTypePreviewTableFeature,
     VariantTypeTableFeature,
-    VariantShreddingPreviewTableFeature
+    VariantShreddingPreviewTableFeature,
+    VariantShreddingTableFeature
   ).map(_.name)
 
   assert(
@@ -82,6 +85,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   )
 
   import TestClientForDeltaFormatSharing._
+
+  TestClientForDeltaFormatSharing.lastCallerOrg = callerOrg
 
   override def listAllTables(): Seq[Table] = throw new UnsupportedOperationException("not needed")
 
@@ -144,11 +149,16 @@ private[spark] class TestClientForDeltaFormatSharing(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     val tableFullName = s"${table.share}.${table.schema}.${table.name}"
     limit.foreach(lim => TestClientForDeltaFormatSharing.limits.put(tableFullName, lim))
     TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
+    TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {
+      TestClientForDeltaFormatSharing.fileIdHashHistory +=
+        ((table.name, "getFiles_snapshot", fileIdHash))
+    }
     jsonPredicateHints.foreach(p =>
       TestClientForDeltaFormatSharing.jsonPredicateHints.put(tableFullName, p))
 
@@ -206,12 +216,19 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     assert(
       endingVersion.isDefined,
       "endingVersion is not defined. This shouldn't happen in unit test."
     )
+    val tableFullName = s"${table.share}.${table.schema}.${table.name}"
+    TestClientForDeltaFormatSharing.requestedFormat.put(tableFullName, responseFormat)
+    TestClientForDeltaFormatSharing.fileIdHashHistory.synchronized {
+      TestClientForDeltaFormatSharing.fileIdHashHistory +=
+        ((table.name, s"getFiles_streaming_${startingVersion}_${endingVersion.get}", fileIdHash))
+    }
     val iterator = SparkEnv.get.blockManager
       .get[String](getBlockId(table.name, s"getFiles_${startingVersion}_${endingVersion.get}"))
       .map(_.data.asInstanceOf[Iterator[String]])
@@ -237,7 +254,8 @@ private[spark] class TestClientForDeltaFormatSharing(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     val suffix = cdfOptions
       .get(DeltaSharingOptions.CDF_START_VERSION)
@@ -308,4 +326,16 @@ object TestClientForDeltaFormatSharing {
   val limits = scala.collection.mutable.Map[String, Long]()
   val requestedFormat = scala.collection.mutable.Map[String, String]()
   val jsonPredicateHints = scala.collection.mutable.Map[String, String]()
+  @volatile var lastCallerOrg: String = ""
+
+  // Captures (tableName, queryType, fileIdHash) for each getFiles call.
+  val fileIdHashHistory = scala.collection.mutable.ArrayBuffer[(String, String, Option[String])]()
+
+  def clearFileIdHashHistory(): Unit = fileIdHashHistory.synchronized {
+    fileIdHashHistory.clear()
+  }
+
+  def getFileIdHashHistory: Seq[(String, String, Option[String])] = fileIdHashHistory.synchronized {
+    fileIdHashHistory.toSeq
+  }
 }

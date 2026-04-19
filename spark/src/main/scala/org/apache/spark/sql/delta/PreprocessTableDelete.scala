@@ -17,8 +17,9 @@
 package org.apache.spark.sql.delta
 
 import org.apache.spark.sql.delta.commands.DeleteCommand
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
-import org.apache.spark.sql.catalyst.expressions.SubqueryExpression
+import org.apache.spark.sql.catalyst.expressions.{Exists, SubqueryExpression}
 import org.apache.spark.sql.catalyst.plans.logical.{DeltaDelete, LogicalPlan}
 import org.apache.spark.sql.catalyst.rules.Rule
 import org.apache.spark.sql.internal.SQLConf
@@ -33,7 +34,15 @@ case class PreprocessTableDelete(sqlConf: SQLConf) extends Rule[LogicalPlan] {
       case d: DeltaDelete if d.resolved =>
         d.condition.foreach { cond =>
           if (SubqueryExpression.hasSubquery(cond)) {
-            throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
+            val hasExistsSubquery = cond.exists {
+              case _: Exists => false
+              case _: SubqueryExpression => true
+              case _ => false
+            }
+            if (!sqlConf.getConf(DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE) ||
+                hasExistsSubquery) {
+              throw DeltaErrors.subqueryNotSupportedException("DELETE", cond)
+            }
           }
         }
         DeleteCommand(d)

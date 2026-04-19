@@ -110,7 +110,7 @@ class HudiConverter
                     try {
                       logInfo(log"Converting Delta table [path=" +
                         log"${MDC(DeltaLogKeys.PATH, log.logPath)}, " +
-                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.tableId)}, " +
+                        log"tableId=${MDC(DeltaLogKeys.TABLE_ID, log.unsafeVolatileTableId)}, " +
                         log"version=${MDC(DeltaLogKeys.VERSION, snapshotVal.version)}] into Hudi")
                       convertSnapshot(snapshotVal, prevTxn)
                     } catch {

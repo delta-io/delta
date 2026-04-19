@@ -109,6 +109,7 @@
   - [Writer Version Requirements](#writer-version-requirements)
 - [Requirements for Readers](#requirements-for-readers)
   - [Reader Version Requirements](#reader-version-requirements)
+- [Table Properties](#table-properties)
 - [Appendix](#appendix)
   - [Valid Feature Names in Table Features](#valid-feature-names-in-table-features)
   - [Deletion Vector Format](#deletion-vector-format)
@@ -893,7 +894,7 @@ A given snapshot of the table can be computed by replaying the events committed 
  - A single `protocol` action
  - A single `metaData` action
  - A collection of `txn` actions with unique `appId`s
- - A collection of `domainMetadata` actions with unique `domain`s.
+ - A collection of `domainMetadata` actions with unique `domain`s, excluding tombstones (i.e. actions with `removed=true`).
  - A collection of `add` actions with unique path keys, corresponding to the newest (path, deletionVector.uniqueId) pair encountered for each path.
  - A collection of `remove` actions with unique `(path, deletionVector.uniqueId)` keys. The intersection of the primary keys in the `add` collection and `remove` collection must be empty. That means a logical file cannot exist in both the `remove` and `add` collections at the same time; however, the same *data file* can exist with *different* DVs in the `remove` collection, as logically they represent different content. The `remove` actions act as _tombstones_, and only exist for the benefit of the VACUUM command. Snapshot reads only return `add` actions on the read path.
  
@@ -983,7 +984,7 @@ In order to support column mapping, writers must:
      - write a `metaData` action to add the `delta.columnMapping.mode` table property.
  - Write data files by using the _physical name_ that is chosen for each column. The physical name of the column is static and can be different than the _display name_ of the column, which is changeable.
  - Write the 32 bit integer column identifier as part of the `field_id` field of the `SchemaElement` struct in the [Parquet Thrift specification](https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift).
- - Track partition values and column level statistics with the physical name of the column in the transaction log.
+ - Track partition values, column level statistics, and [clustering column](#clustered-table) names with the physical name of the column in the transaction log.
  - Assign a globally unique identifier as the physical name for each new column that is added to the schema. This is especially important for supporting cheap column deletions in `name` mode. In addition, column identifiers need to be assigned to each column. The maximum id that is assigned to a column is tracked as the table property `delta.columnMapping.maxColumnId`. This is an internal table property that cannot be configured by users. This value must increase monotonically as new columns are introduced and committed to the table alongside the introduction of the new columns to the schema.
 
 ## Reader Requirements for Column Mapping
@@ -1013,7 +1014,7 @@ Field Name | Data Type | Description
 -|-|-
 storageType | String | A single character to indicate how to access the DV. Legal options are: `['u', 'i', 'p']`.
 pathOrInlineDv | String | Three format options are currently proposed:<ul><li>If `storageType = 'u'` then  `<random prefix - optional><base85 encoded uuid>`: The deletion vector is stored in a file with a path relative to the data directory of this Delta table, and the  file name can be reconstructed from the UUID. See Derived Fields for how to reconstruct the file name. The random prefix is recovered as the extra characters before the (20 characters fixed length) uuid.</li><li>If `storageType = 'i'` then `<base85 encoded bytes>`: The deletion vector is stored inline in the log. The format used is the `RoaringBitmapArray` format also used when the DV is stored on disk and described in [Deletion Vector Format](#Deletion-Vector-Format).</li><li>If `storageType = 'p'` then `<absolute path>`: The DV is stored in a file with an absolute path given by this path, which has the same format as the `path` field in the `add`/`remove` actions.</li></ul>
-offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`.
+offset | Option[Int] | Start of the data for this DV in number of bytes from the beginning of the file it is stored in. Always `None` (absent in JSON) when `storageType = 'i'`. Interpret as `0` if absent for other `storageType`s.
 sizeInBytes | Int | Size of the serialized DV in bytes (raw data size, i.e. before base85 encoding, if inline).
 cardinality | Long | Number of rows the given DV logically removes from the file.
 
@@ -2090,7 +2091,7 @@ Each row in the checkpoint corresponds to a single action. The checkpoint **must
  * Files that have been [added](#Add-File-and-Remove-File) and not yet removed
  * Files that were recently [removed](#Add-File-and-Remove-File) and have not yet expired
  * [Transaction identifiers](#Transaction-Identifiers)
- * [Domain Metadata](#Domain-Metadata)
+ * [Domain Metadata](#Domain-Metadata) that have not been removed (i.e. excluding tombstones with `removed=true`)
  * [Checkpoint Metadata](#checkpoint-metadata) - Requires [V2 checkpoints](#v2-spec)
  * [Sidecar File](#sidecar-files) - Requires [V2 checkpoints](#v2-spec)
 
@@ -2433,6 +2434,15 @@ The requirements of the readers according to the protocol versions are summarize
 -|-
 Reader Version 2 | Respect [Column Mapping](#column-mapping)
 Reader Version 3 | Respect [Table Features](#table-features) for readers<br> - Writer Version must be 7
+
+# Table Properties
+
+Delta Lake tables support a set of properties stored in the `configuration` field of the `metaData` action that control various aspects of table behavior.
+
+Property | Description | Details
+-|-|-
+`delta.parquet.compression.codec` | Compression codec writers SHOULD use for new Parquet data and checkpoint files. Changing this property does not affect existing files; a table may contain files written with different codecs, which is a normal and expected state. | Widely supported values (matched case-insensitively): `uncompressed`/`none` (no compression), `snappy`, `gzip`, `lz4` (deprecated, Hadoop framing), `lz4_raw` ([LZ4 block format](https://parquet.apache.org/docs/file-format/data-pages/compression/#lz4_raw)), `zstd`.<br><br>When absent, writers SHOULD default to `zstd`. If a writer does not support or recognize the specified codec, it SHOULD abort with an appropriate error or fall back to a default codec.<br><br>Readers SHOULD support all codecs listed above regardless of the current property value. Parquet files written with other [parquet-supported codecs](https://parquet.apache.org/docs/file-format/data-pages/compression/) may also exist; readers MAY support reading these files.
+`delta.parquet.format.version` | Parquet data page format writers SHOULD use for new data files. This property is a directive to writers only; readers do not need to consult it, as Parquet pages are self-describing via the `PageType` field in each page header. Changing this property does not affect existing files; a table MAY contain files written with different data page versions, which is a normal and expected state. | Valid values: `1.0.0` (DataPageV1) and `2.x.x` (DataPageV2, where `x.x` is any minor.patch version). Recommended values are `1.0.0` and `2.12.0`.<br><br>When absent, writers SHOULD default to `1.0.0`. Writers SHOULD validate this property and abort if the value does not match `1.0.0` or `2.MINOR.PATCH`.<br><br>Readers SHOULD support both DataPageV1 and DataPageV2 pages regardless of this property's value. Tables intended for access by engines beyond the Delta Lake connectors SHOULD use `1.0.0`, as DataPageV2 support varies across the broader Parquet ecosystem.
 
 # Appendix
 

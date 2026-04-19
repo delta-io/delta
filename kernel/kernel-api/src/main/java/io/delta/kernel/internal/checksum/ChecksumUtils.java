@@ -120,7 +120,11 @@ public class ChecksumUtils {
     // Try to build CRC incrementally if possible
     Optional<CRCInfo> incrementallyBuiltCrc =
         lastSeenCrcInfo.isPresent()
-            ? buildCrcInfoIncrementally(lastSeenCrcInfo.get(), engine, logSegmentAtVersion)
+            ? buildCrcInfoIncrementally(
+                lastSeenCrcInfo.get(),
+                engine,
+                logSegmentAtVersion,
+                /* canBuildWithOnlyRequiredFields */ false)
             : Optional.empty();
 
     // Use incrementally built CRC if available, otherwise do full log replay
@@ -131,6 +135,25 @@ public class ChecksumUtils {
 
     ChecksumWriter checksumWriter = new ChecksumWriter(logSegmentAtVersion.getLogPath());
     checksumWriter.writeCheckSum(engine, crcInfo);
+  }
+
+  /**
+   * Attempts to incrementally compute the CRC at the segment's version by replaying subsequent
+   * delta files from the given base CRC. Returns {@link Optional#empty()} when the base CRC is
+   * absent or the incremental build is not possible.
+   *
+   * @param engine The engine to use for file operations
+   * @param logSegment The log segment to process
+   * @param lastSeenCrcInfo The last available CRC info to build upon, typically from {@link
+   *     io.delta.kernel.internal.replay.LogReplay#getLastSeenCrcInfo()}
+   * @return The incrementally-built CRC info, or empty
+   */
+  public static Optional<CRCInfo> tryBuildCrcIncrementally(
+      Engine engine, LogSegment logSegment, Optional<CRCInfo> lastSeenCrcInfo) throws IOException {
+    return lastSeenCrcInfo.isPresent()
+        ? buildCrcInfoIncrementally(
+            lastSeenCrcInfo.get(), engine, logSegment, /* canBuildWithOnlyRequiredFields */ true)
+        : Optional.empty();
   }
 
   /**
@@ -215,19 +238,24 @@ public class ChecksumUtils {
    * @param lastSeenCrcInfo The last available CRC info to build upon
    * @param engine The engine to use for file operations
    * @param logSegment The log segment to process
+   * @param canBuildWithOnlyRequiredFields If true, allows building CRC with only required fields.
+   *     Tolerates missing optional fields.
    * @return Optional containing the new CRC info, or empty if fallback is needed
    */
   private static Optional<CRCInfo> buildCrcInfoIncrementally(
-      CRCInfo lastSeenCrcInfo, Engine engine, LogSegment logSegment) throws IOException {
+      CRCInfo lastSeenCrcInfo,
+      Engine engine,
+      LogSegment logSegment,
+      boolean canBuildWithOnlyRequiredFields)
+      throws IOException {
     long startTime = System.currentTimeMillis();
-    // Can only build incrementally if we have domain metadata and file size histogram
-    if (!lastSeenCrcInfo.getDomainMetadata().isPresent()) {
+    if (!canBuildWithOnlyRequiredFields && !lastSeenCrcInfo.getDomainMetadata().isPresent()) {
       logger.info(
           "Falling back to full replay after {}ms: detected current crc missing domain metadata.",
           System.currentTimeMillis() - startTime);
       return Optional.empty();
     }
-    if (!lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
+    if (!canBuildWithOnlyRequiredFields && !lastSeenCrcInfo.getFileSizeHistogram().isPresent()) {
       logger.info(
           "Falling back to full replay after {}ms: "
               + "detected current crc missing file size histogram.",
@@ -285,12 +313,15 @@ public class ChecksumUtils {
 
             CommitInfo commitInfo = CommitInfo.fromColumnVector(commitInfoVector, i);
             if (commitInfo == null
-                || !INCREMENTAL_SUPPORTED_OPS.contains(commitInfo.getOperation())) {
+                || !commitInfo
+                    .getOperation()
+                    .filter(INCREMENTAL_SUPPORTED_OPS::contains)
+                    .isPresent()) {
               logger.info(
                   "Falling back to full replay after {}ms: "
                       + "unsupported operation '{}' for version {}",
                   System.currentTimeMillis() - startTime,
-                  commitInfo != null ? commitInfo.getOperation() : "null",
+                  commitInfo != null ? commitInfo.getOperation().orElse("null") : "null",
                   newVersion);
               return Optional.empty();
             }
@@ -329,22 +360,30 @@ public class ChecksumUtils {
       }
     }
 
-    // Merge with existing domain metadata
-    lastSeenCrcInfo
-        .getDomainMetadata()
-        .get()
-        .forEach(
-            dm -> {
-              if (!state.domainMetadataMap.containsKey(dm.getDomain())) {
-                state.domainMetadataMap.put(dm.getDomain(), dm);
-              }
-            });
-
-    // Filter to only non-removed domain metadata
-    Set<DomainMetadata> finalDomainMetadata = getNonRemovedDomainMetadata(state);
+    // Merge with existing domain metadata if available
+    Optional<Set<DomainMetadata>> finalDomainMetadata;
+    if (lastSeenCrcInfo.getDomainMetadata().isPresent()) {
+      lastSeenCrcInfo
+          .getDomainMetadata()
+          .get()
+          .forEach(
+              dm -> {
+                if (!state.domainMetadataMap.containsKey(dm.getDomain())) {
+                  state.domainMetadataMap.put(dm.getDomain(), dm);
+                }
+              });
+      finalDomainMetadata = Optional.of(getNonRemovedDomainMetadata(state));
+    } else {
+      finalDomainMetadata = Optional.empty();
+    }
     logger.info(
         "Successfully completed incremental CRC computation in {} ms",
         System.currentTimeMillis() - startTime);
+    Optional<FileSizeHistogram> finalHistogram =
+        lastSeenCrcInfo
+            .getFileSizeHistogram()
+            .map(h -> state.addedFileSizeHistogram.plus(h).minus(state.removedFileSizeHistogram));
+
     // Build and return the new CRC info
     return Optional.of(
         new CRCInfo(
@@ -354,12 +393,8 @@ public class ChecksumUtils {
             state.tableSizeByte.longValue() + lastSeenCrcInfo.getTableSizeBytes(),
             state.fileCount.longValue() + lastSeenCrcInfo.getNumFiles(),
             Optional.empty(),
-            Optional.of(finalDomainMetadata),
-            Optional.of(
-                state
-                    .addedFileSizeHistogram
-                    .plus(lastSeenCrcInfo.getFileSizeHistogram().get())
-                    .minus(state.removedFileSizeHistogram))));
+            finalDomainMetadata,
+            finalHistogram));
   }
 
   /** Processes an add file record and updates the state tracker. */

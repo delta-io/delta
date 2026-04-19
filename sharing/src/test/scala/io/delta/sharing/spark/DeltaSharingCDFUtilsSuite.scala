@@ -88,7 +88,9 @@ class TestDeltaSharingClientForCDFUtils(
     asyncQueryMaxDuration: Long = 600000L,
     tokenExchangeMaxRetries: Int = 5,
     tokenExchangeMaxRetryDurationInSeconds: Int = 60,
-    tokenRenewalThresholdInSeconds: Int = 600)
+    tokenRenewalThresholdInSeconds: Int = 600,
+    callerOrg: String = "",
+    skipFileIdHashVerification: Boolean = false)
     extends DeltaSharingClient {
 
   import CDFTesTUtils._
@@ -121,7 +123,8 @@ class TestDeltaSharingClientForCDFUtils(
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException("getFiles is not supported now.")
   }
@@ -129,7 +132,8 @@ class TestDeltaSharingClientForCDFUtils(
   override def getFiles(
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     throw new UnsupportedOperationException(s"getFiles with startingVersion($startingVersion)")
   }
@@ -137,7 +141,8 @@ class TestDeltaSharingClientForCDFUtils(
   override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]
   ): DeltaTableFiles = {
     numGetFileCalls += 1
     DeltaTableFiles(

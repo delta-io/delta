@@ -237,7 +237,8 @@ class Snapshot(
    * Use [[stateReconstruction]] to create a representation of the actions in this table.
    * Cache the resultant output.
    */
-  private lazy val cachedState = recordFrameProfile("Delta", "snapshot.cachedState") {
+  private lazy val cachedState =
+    recordFrameProfile("Delta", "snapshot.cachedState") {
     stateReconstructionTriggered = true
     cacheDS(stateReconstruction, s"Delta Table State #$version - $redactedPath")
   }
@@ -368,7 +369,8 @@ class Snapshot(
   }
 
   /** The current set of actions in this [[Snapshot]] as a typed Dataset. */
-  def stateDS: Dataset[SingleAction] = recordFrameProfile("Delta", "stateDS") {
+  def stateDS: Dataset[SingleAction] =
+    recordFrameProfile("Delta", "stateDS") {
     cachedState.getDS
   }
 
@@ -649,7 +651,10 @@ class Snapshot(
     deletedRecordCountsHistogramOpt = checksumOpt.flatMap(_.deletedRecordCountsHistogramOpt)
       .orElse(Option.when(_computedStateTriggered)(deletedRecordCountsHistogramOpt).flatten)
       .filter(_ => deletionVectorsReadableAndHistogramEnabled),
-    histogramOpt = checksumOpt.flatMap(_.histogramOpt)
+    histogramOpt = Option.when(fileSizeHistogramEnabled) {
+      checksumOpt.flatMap(_.histogramOpt)
+        .orElse(Option.when(_computedStateTriggered)(fileSizeHistogram).flatten)
+    }.flatten
   )
 
   /** Returns the data schema of the table, used for reading stats */
@@ -719,24 +724,28 @@ class Snapshot(
 
 
   def logInfo(msg: MessageWithContext): Unit = {
-    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logInfo(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext): Unit = {
-    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logWarning(msg: MessageWithContext, throwable: Throwable): Unit = {
-    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg,
-      throwable)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logWarning(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
   def logError(msg: MessageWithContext): Unit = {
-    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg)
   }
 
   def logError(msg: MessageWithContext, throwable: Throwable): Unit = {
-    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, deltaLog.tableId)}] " + msg, throwable)
+    val tableId = deltaLog.unsafeVolatileTableId
+    super.logError(log"[tableId=${MDC(DeltaLogKeys.TABLE_ID, tableId)}] " + msg, throwable)
   }
 
   override def toString: String =

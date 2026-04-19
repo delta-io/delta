@@ -450,6 +450,17 @@ def run_s3_log_store_util_integration_tests():
         print("Failed IntegrationTests")
         raise
 
+def run_flink_integration_tests():
+    print("\n\n##### Running Flink tests #####")
+    env = { }
+    try:
+        cmd = ["build/sbt", "project flink", "testOnly *DeltaSinkTest"]
+        print("\nRunning IntegrationTests of Flink\n=====================")
+        print("Command: %s" % " ".join(cmd))
+        run_cmd(cmd, stream_output=True, env=env)
+    except:
+        print("Failed IntegrationTests")
+        raise
 
 def run_iceberg_integration_tests(root_dir, version, iceberg_version, extra_maven_repo, variant):
     """
@@ -735,6 +746,12 @@ if __name__ == "__main__":
         action="store_true",
         help="Run only S3LogStoreUtil tests")
     parser.add_argument(
+        "--flink-only",
+        required=False,
+        default=False,
+        action="store_true",
+        help="Run only Flink tests")
+    parser.add_argument(
         "--scala-version",
         required=False,
         default="2.13",
@@ -772,7 +789,7 @@ if __name__ == "__main__":
         required=False,
         default=None,
         help="Directory path where the downloaded pypi artifacts are present. " +
-            "It should have two files: e.g. delta-spark-3.1.0.tar.gz, delta_spark-3.1.0-py3-none-any.whl")
+            "It should have two files: e.g. delta_spark-3.1.0.tar.gz, delta_spark-3.1.0-py3-none-any.whl")
     parser.add_argument(
         "--use-local",
         required=False,
@@ -941,6 +958,10 @@ if __name__ == "__main__":
 
     if args.s3_log_store_util_only:
         run_s3_log_store_util_integration_tests()
+        quit()
+
+    if args.flink_only:
+        run_flink_integration_tests()
         quit()
 
     if args.unity_catalog_commit_coordinator_integration_tests:
