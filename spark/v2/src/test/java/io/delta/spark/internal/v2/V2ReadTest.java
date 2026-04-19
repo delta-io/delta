@@ -16,11 +16,14 @@
 
 package io.delta.spark.internal.v2;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.Arrays;
 import java.util.List;
+import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.delta.DeltaLog;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
@@ -101,5 +104,90 @@ public class V2ReadTest extends V2TestBase {
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s`", tablePath)).count();
     // 500 odd numbers from 0-999: 1, 3, 5, ..., 999
     assertTrue(count == 500, "Expected 500 rows after DV filtering, got " + count);
+  }
+
+  /**
+   * V2 batch read works correctly with a partition column declared in the middle of the schema.
+   * Included alongside streaming tests to validate consistent behavior across batch and streaming
+   * paths (V2 batch binds output from {@code Scan.readSchema()} via {@code V2ScanRelationPushDown},
+   * so it's unaffected by the DDL/reader-order mismatch that the streaming path fixes).
+   */
+  @Test
+  public void testBatchReadPartitionColumnInMiddle(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) "
+                + "USING delta PARTITIONED BY (part)",
+            tablePath));
+    spark.sql(
+        str("INSERT INTO delta.`%s` VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300)", tablePath));
+
+    // User-facing schema stays in DDL order.
+    assertArrayEquals(
+        new String[] {"id", "part", "col3"},
+        spark.sql(str("SELECT * FROM dsv2.delta.`%s`", tablePath)).schema().fieldNames());
+    check(
+        str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        List.of(row(1L, 10L, 100), row(2L, 20L, 200), row(3L, 30L, 300)));
+  }
+
+  /**
+   * Control test: V2 batch read works when the partition column is declared at the END of the
+   * schema.
+   */
+  @Test
+  public void testBatchReadPartitionColumnAtEnd(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, col3 INT, part LONG) "
+                + "USING delta PARTITIONED BY (part)",
+            tablePath));
+    spark.sql(
+        str("INSERT INTO delta.`%s` VALUES (1, 100, 10), (2, 200, 20), (3, 300, 30)", tablePath));
+
+    check(
+        str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        List.of(row(1L, 100, 10L), row(2L, 200, 20L), row(3L, 300, 30L)));
+  }
+
+  /**
+   * Multiple partition columns interleaved with data columns, declared in reverse order in {@code
+   * PARTITIONED BY}.
+   */
+  @Test
+  public void testBatchReadMultiplePartitionColumns(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (a LONG, p1 STRING, b INT, p2 STRING, c DOUBLE) "
+                + "USING delta PARTITIONED BY (p2, p1)",
+            tablePath));
+    spark
+        .createDataFrame(
+            Arrays.asList(
+                RowFactory.create(1L, "x", 10, "y", 1.5),
+                RowFactory.create(2L, "x", 20, "z", 2.5),
+                RowFactory.create(3L, "w", 30, "y", 3.5)),
+            new org.apache.spark.sql.types.StructType()
+                .add("a", org.apache.spark.sql.types.DataTypes.LongType)
+                .add("p1", org.apache.spark.sql.types.DataTypes.StringType)
+                .add("b", org.apache.spark.sql.types.DataTypes.IntegerType)
+                .add("p2", org.apache.spark.sql.types.DataTypes.StringType)
+                .add("c", org.apache.spark.sql.types.DataTypes.DoubleType))
+        .write()
+        .format("delta")
+        .mode("append")
+        .partitionBy("p2", "p1")
+        .save(tablePath);
+
+    assertArrayEquals(
+        new String[] {"a", "p1", "b", "p2", "c"},
+        spark.sql(str("SELECT * FROM dsv2.delta.`%s`", tablePath)).schema().fieldNames());
+    check(
+        str("SELECT * FROM dsv2.delta.`%s` ORDER BY a", tablePath),
+        List.of(
+            row(1L, "x", 10, "y", 1.5), row(2L, "x", 20, "z", 2.5), row(3L, "w", 30, "y", 3.5)));
   }
 }
