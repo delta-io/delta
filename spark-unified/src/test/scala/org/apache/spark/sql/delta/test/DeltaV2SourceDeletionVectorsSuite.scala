@@ -65,8 +65,47 @@ class DeltaV2SourceDeletionVectorsSuite
     "subsequent DML commands are processed correctly in a batch - INSERT->DELETE" +
       " - List((ignoreChanges,true))",
     "multiple deletion vectors per file - List((ignoreChanges,true))",
-    "multiple deletion vectors per file - List((ignoreFileDeletion,true))"
+    "multiple deletion vectors per file - List((ignoreFileDeletion,true))",
+    "streaming read with nulls and deletion vectors does not NPE"
   )
+
+  /**
+   * Regression for #6578: streaming read over a DV-enabled table with NULL values must not NPE.
+   *
+   * Before fix: ColumnVectorWithFilter did not override closeIfFreeable, so it inherited the
+   * default that delegates to close() and released the underlying Parquet vector's `nulls`
+   * array. The vectorized reader reuses that vector for the next batch and NPEs in
+   * OnHeapColumnVector.putNotNulls when it dereferences the now-null array.
+   *
+   * The bug fires on any DV-enabled table regardless of whether a DV is actually present —
+   * DeletionVectorReadFunction wraps every file read once `tableSupportsDeletionVectors` is
+   * true. Multiple files ensure the vectorized reader transitions between batches/files,
+   * where the reuse of the released `nulls` array triggers the NPE.
+   */
+  test("streaming read with nulls and deletion vectors does not NPE") {
+    withTempDir { inputDir =>
+      val path = inputDir.getAbsolutePath
+      sql(
+        s"""CREATE TABLE delta.`$path` (id INT, value STRING, opt_int INT) USING delta
+           |TBLPROPERTIES ('delta.enableDeletionVectors' = 'true')""".stripMargin)
+      executeDml(
+        s"INSERT INTO delta.`$path` VALUES (1, null, null), (2, 'b', null), (null, null, null)")
+      executeDml(s"INSERT INTO delta.`$path` VALUES (3, 'c', 3), (null, 'x', 1)")
+
+      val df = loadStreamWithOptions(path, Map.empty)
+      testStream(df)(
+        AssertOnQuery { q =>
+          q.processAllAvailable()
+          true
+        },
+        AssertOnQuery { q =>
+          assert(
+            q.exception.isEmpty,
+            s"Expected no exception, but got: ${q.exception.map(_.toString).orNull}")
+          true
+        })
+    }
+  }
 
   private lazy val shouldFailTests = Set.empty[String]
 
