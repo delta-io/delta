@@ -20,6 +20,7 @@ import io.delta.internal.ApplyV2Streaming
 import org.apache.spark.sql.SparkSessionExtensions
 import org.apache.spark.sql.catalyst.plans.logical.LogicalPlan
 import org.apache.spark.sql.catalyst.rules.Rule
+import org.apache.spark.sql.delta.streaming.V2StreamingSchemaReorder
 
 /**
  * An extension for Spark SQL to activate Delta SQL parser to support Delta SQL grammar.
@@ -83,6 +84,10 @@ class DeltaSparkSessionExtension extends AbstractDeltaSparkSessionExtension {
     extensions.injectResolutionRule { session =>
       new ApplyV2Streaming(session)
     }
+
+    // Post-hoc so it sees StreamingRelationV2 from both V2-catalog and V1-fallback
+    // (ApplyV2Streaming) paths. Paired with ApplyV2Streaming above.
+    extensions.injectPostHocResolutionRule { _ => V2StreamingSchemaReorder }
   }
 
   /**

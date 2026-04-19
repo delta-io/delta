@@ -60,7 +60,7 @@ public class SparkGoldenTableTest {
         new SparkConf()
             .set("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
             .set("spark.sql.catalog.dsv2.base_path", tempDir.getAbsolutePath())
-            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
+            .set("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .set(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")

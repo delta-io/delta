@@ -32,7 +32,7 @@ public abstract class DeltaV2TestBase {
         SparkSession.builder()
             .master("local[*]")
             .appName("SparkKernelDsv2Tests")
-            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtensionV1")
+            .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
             .config(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")

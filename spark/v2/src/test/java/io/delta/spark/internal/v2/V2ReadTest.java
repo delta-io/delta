@@ -16,6 +16,7 @@
 
 package io.delta.spark.internal.v2;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -101,5 +102,26 @@ public class V2ReadTest extends V2TestBase {
     long count = spark.sql(str("SELECT * FROM dsv2.delta.`%s`", tablePath)).count();
     // 500 odd numbers from 0-999: 1, 3, 5, ..., 999
     assertTrue(count == 500, "Expected 500 rows after DV filtering, got " + count);
+  }
+
+  /** V2 batch read confirms the streaming fix doesn't perturb the (already-correct) batch path. */
+  @Test
+  public void testBatchReadPartitionColumnInMiddle(@TempDir File tempDir) {
+    String tablePath = tempDir.getAbsolutePath();
+    spark.sql(
+        str(
+            "CREATE TABLE delta.`%s` (id LONG, part LONG, col3 INT) "
+                + "USING delta PARTITIONED BY (part)",
+            tablePath));
+    spark.sql(
+        str("INSERT INTO delta.`%s` VALUES (1, 10, 100), (2, 20, 200), (3, 30, 300)", tablePath));
+
+    // User-facing schema stays in DDL order.
+    assertArrayEquals(
+        new String[] {"id", "part", "col3"},
+        spark.sql(str("SELECT * FROM dsv2.delta.`%s`", tablePath)).schema().fieldNames());
+    check(
+        str("SELECT * FROM dsv2.delta.`%s` ORDER BY id", tablePath),
+        List.of(row(1L, 10L, 100), row(2L, 20L, 200), row(3L, 30L, 300)));
   }
 }

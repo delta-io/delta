@@ -3236,6 +3236,40 @@ class DeltaSourceSuite extends DeltaSourceSuiteBase
       try { q2.processAllAvailable() } finally { q2.stop() }
     }
   }
+
+  test("streaming read returns correct data from table with partition column in middle") {
+    // E2E regression for the V2 partition-column NPE fixed by V2StreamingSchemaReorder.
+    withTempDirs { (inputDir, _, checkpointDir) =>
+      val tablePath = inputDir.getCanonicalPath
+      sql(s"CREATE TABLE delta.`$tablePath` (id LONG, part LONG, col3 INT) " +
+        "USING delta PARTITIONED BY (part)")
+
+      Seq((1L, 10L, 100), (2L, 20L, 200), (3L, 30L, 300))
+        .toDF("id", "part", "col3")
+        .write
+        .format("delta")
+        .mode("append")
+        .save(tablePath)
+
+      val streamingDF = loadStreamWithOptions(tablePath, Map.empty)
+      assert(streamingDF.schema.fieldNames.toSeq === Seq("id", "part", "col3"))
+
+      val q = streamingDF
+        .writeStream
+        .format("memory")
+        .queryName("midPartitionStreamTest")
+        .option("checkpointLocation", checkpointDir.getCanonicalPath)
+        .start()
+      try {
+        q.processAllAvailable()
+        checkAnswer(
+          sql("SELECT * FROM midPartitionStreamTest ORDER BY id"),
+          Row(1L, 10L, 100) :: Row(2L, 20L, 200) :: Row(3L, 30L, 300) :: Nil)
+      } finally {
+        q.stop()
+      }
+    }
+  }
 }
 
 /**

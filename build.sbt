@@ -468,8 +468,10 @@ lazy val sparkV2 = (project in file("spark/v2"))
     Compile / compile := (Compile / compile)
       .dependsOn(kernelApi / Compile / packageBin).value,
     Test / test := (Test / test)
-      .dependsOn(kernelApi / Compile / packageBin).value,
+      .dependsOn(kernelApi / Compile / packageBin)
+      .dependsOn(LocalProject("spark") / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Test / packageBin).value,
+    Test / unmanagedJars += (LocalProject("spark") / Compile / packageBin).value,
     Compile / unmanagedJars ++= Seq(
       (kernelApi / Compile / packageBin).value
     ),
