@@ -53,8 +53,8 @@ public class UnityCatalogUtils {
   private static final String UC_PROP_CLUSTERING_COLUMNS = "clusteringColumns";
   private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-  /** Read schema for parsing staged commit files. */
-  private static final StructType STAGED_COMMIT_READ_SCHEMA =
+  /** Read schema for parsing delta files. */
+  private static final StructType DELTA_FILE_READ_SCHEMA =
       new StructType()
           .add("protocol", Protocol.FULL_SCHEMA)
           .add("metaData", Metadata.FULL_SCHEMA)
@@ -62,9 +62,9 @@ public class UnityCatalogUtils {
           .add("domainMetadata", DomainMetadata.FULL_SCHEMA);
 
   /**
-   * Parse a single staged (unratified) commit JSON file and extract its actions.
+   * Parse a single delta file and extract its actions.
    *
-   * <p>Reads the commit file using the provided Engine's JsonHandler and extracts:
+   * <p>Reads the delta file using the provided Engine's JsonHandler and extracts:
    *
    * <ul>
    *   <li>Protocol action (if present)
@@ -73,11 +73,12 @@ public class UnityCatalogUtils {
    *   <li>DomainMetadata actions (zero or more)
    * </ul>
    *
-   * @param engine the engine to use for reading the JSON commit file
-   * @param commitFile the staged commit file to parse
-   * @return a {@link ParsedStagedCommit} containing the extracted actions
+   * @param engine the engine to use for reading the JSON delta file
+   * @param deltaFile the delta file to parse
+   * @return a {@link ParsedDeltaFileContents} containing the extracted actions
    */
-  public static ParsedStagedCommit parseCommitFile(Engine engine, FileStatus commitFile) {
+  public static ParsedDeltaFileContents parseDeltaFileContents(
+      Engine engine, FileStatus deltaFile) {
     Protocol protocol = null;
     Metadata metadata = null;
     CommitInfo commitInfo = null;
@@ -89,12 +90,12 @@ public class UnityCatalogUtils {
                 engine
                     .getJsonHandler()
                     .readJsonFiles(
-                        singletonCloseableIterator(commitFile),
-                        STAGED_COMMIT_READ_SCHEMA,
+                        singletonCloseableIterator(deltaFile),
+                        DELTA_FILE_READ_SCHEMA,
                         Optional.empty()),
-            "Parsing staged commit file %s with readSchema=%s",
-            commitFile.getPath(),
-            STAGED_COMMIT_READ_SCHEMA)) {
+            "Parsing delta file %s with readSchema=%s",
+            deltaFile.getPath(),
+            DELTA_FILE_READ_SCHEMA)) {
 
       while (batches.hasNext()) {
         final ColumnarBatch batch = batches.next();
@@ -120,11 +121,10 @@ public class UnityCatalogUtils {
         }
       }
     } catch (IOException ex) {
-      throw new UncheckedIOException(
-          "Failed to parse staged commit file: " + commitFile.getPath(), ex);
+      throw new UncheckedIOException("Failed to parse delta file: " + deltaFile.getPath(), ex);
     }
 
-    return new ParsedStagedCommit(
+    return new ParsedDeltaFileContents(
         Optional.ofNullable(protocol),
         Optional.ofNullable(metadata),
         Optional.ofNullable(commitInfo),

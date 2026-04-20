@@ -208,23 +208,23 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  //////////////////////////
-  // parseCommitFile tests
-  //////////////////////////
+  //////////////////////////////////
+  // parseDeltaFileContents tests
+  //////////////////////////////////
 
   /** Helper to write JSON action lines to a temp file and return a FileStatus for it. */
-  private def writeCommitFile(dir: String, lines: Seq[String]): FileStatus = {
-    val file = new File(dir, "test-commit.json")
+  private def writeDeltaFile(dir: String, lines: Seq[String]): FileStatus = {
+    val file = new File(dir, "test-delta-file.json")
     val writer = new PrintWriter(file)
     try {
-      lines.foreach(writer.println)
+      lines.foreach(line => writer.write(line + "\n"))
     } finally {
       writer.close()
     }
     FileStatus.of(file.getAbsolutePath, file.length(), file.lastModified())
   }
 
-  test("parseCommitFile: extracts protocol, metadata, commitInfo, and domainMetadata") {
+  test("parseDeltaFileContents: extracts protocol, metadata, commitInfo, and domainMetadata") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       val lines = Seq(
         """{"commitInfo":{"inCommitTimestamp":1749830855993,"timestamp":1749830855992,""" +
@@ -239,8 +239,8 @@ class UnityCatalogUtilsSuite
           """"writerFeatures":["catalogManaged","inCommitTimestamp"]}}""",
         """{"domainMetadata":{"domain":"delta.clustering","configuration":"{}","removed":false}}""")
 
-      val commitFile = writeCommitFile(tmpDir, lines)
-      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+      val deltaFile = writeDeltaFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseDeltaFileContents(engine, deltaFile)
 
       // Verify Protocol.
       assert(result.getProtocol.isPresent)
@@ -275,7 +275,8 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test("parseCommitFile: data-only commit with commitInfo returns empty protocol and metadata") {
+  test(
+    "parseDeltaFileContents: data-only delta file with commitInfo returns empty protocol and metadata") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       val lines = Seq(
         """{"commitInfo":{"inCommitTimestamp":1749830871085,"timestamp":1749830871084,""" +
@@ -285,8 +286,8 @@ class UnityCatalogUtilsSuite
         """{"add":{"path":"part-00000.parquet","partitionValues":{},"size":889,""" +
           """"modificationTime":1749830870833,"dataChange":true}}""")
 
-      val commitFile = writeCommitFile(tmpDir, lines)
-      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+      val deltaFile = writeDeltaFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseDeltaFileContents(engine, deltaFile)
 
       assert(!result.getProtocol.isPresent)
       assert(!result.getMetadata.isPresent)
@@ -298,7 +299,7 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test("parseCommitFile: commit with multiple domain metadata actions") {
+  test("parseDeltaFileContents: delta file with multiple domain metadata actions") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       val lines = Seq(
         """{"commitInfo":{"timestamp":100,"engineInfo":"e","operation":"op",""" +
@@ -311,8 +312,8 @@ class UnityCatalogUtilsSuite
         """{"domainMetadata":{"domain":"myapp.customDomain","configuration":"custom",""" +
           """"removed":true}}""")
 
-      val commitFile = writeCommitFile(tmpDir, lines)
-      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+      val deltaFile = writeDeltaFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseDeltaFileContents(engine, deltaFile)
 
       assert(!result.getProtocol.isPresent)
       assert(!result.getMetadata.isPresent)
@@ -335,15 +336,16 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test("parseCommitFile: commit with only metadata returns empty protocol and commitInfo") {
+  test(
+    "parseDeltaFileContents: delta file with only metadata returns empty protocol and commitInfo") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       // scalastyle:off line.size.limit
       val lines = Seq(
         """{"metaData":{"id":"meta-only-id","format":{"provider":"parquet","options":{}},"schemaString":"{\"type\":\"struct\",\"fields\":[{\"name\":\"x\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}]}","partitionColumns":[],"configuration":{}}}""")
       // scalastyle:on line.size.limit
 
-      val commitFile = writeCommitFile(tmpDir, lines)
-      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+      val deltaFile = writeDeltaFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseDeltaFileContents(engine, deltaFile)
 
       assert(!result.getProtocol.isPresent)
       assert(result.getMetadata.isPresent)
@@ -353,13 +355,14 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test("parseCommitFile: commit with only protocol returns empty metadata and commitInfo") {
+  test(
+    "parseDeltaFileContents: delta file with only protocol returns empty metadata and commitInfo") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       val lines = Seq(
         """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""")
 
-      val commitFile = writeCommitFile(tmpDir, lines)
-      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+      val deltaFile = writeDeltaFile(tmpDir, lines)
+      val result = UnityCatalogUtils.parseDeltaFileContents(engine, deltaFile)
 
       assert(result.getProtocol.isPresent)
       assert(result.getProtocol.get().getMinReaderVersion == 1)
@@ -370,10 +373,10 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test("parseCommitFile: empty commit file returns all fields absent") {
+  test("parseDeltaFileContents: empty delta file returns all fields absent") {
     withTempDirAndEngine { case (tmpDir, engine) =>
-      val commitFile = writeCommitFile(tmpDir, Seq.empty)
-      val result = UnityCatalogUtils.parseCommitFile(engine, commitFile)
+      val deltaFile = writeDeltaFile(tmpDir, Seq.empty)
+      val result = UnityCatalogUtils.parseDeltaFileContents(engine, deltaFile)
 
       assert(!result.getProtocol.isPresent)
       assert(!result.getMetadata.isPresent)

@@ -25,19 +25,17 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Immutable result of parsing a single staged (unratified) commit file. Contains the Protocol,
- * Metadata, CommitInfo, and DomainMetadata actions extracted from the commit JSON file.
- *
- * <p>Used to inspect staged commits before ratification.
+ * Immutable result of parsing a single delta file. Contains the Protocol, Metadata, CommitInfo, and
+ * DomainMetadata actions extracted from the JSON delta file.
  */
-public class ParsedStagedCommit {
+public class ParsedDeltaFileContents {
 
   private final Optional<Protocol> protocol;
   private final Optional<Metadata> metadata;
   private final Optional<CommitInfo> commitInfo;
   private final List<DomainMetadata> domainMetadatas;
 
-  public ParsedStagedCommit(
+  public ParsedDeltaFileContents(
       Optional<Protocol> protocol,
       Optional<Metadata> metadata,
       Optional<CommitInfo> commitInfo,
@@ -48,24 +46,24 @@ public class ParsedStagedCommit {
     this.domainMetadatas = Collections.unmodifiableList(domainMetadatas);
   }
 
-  /** Returns the Protocol action from the commit, if present. */
+  /** Returns the Protocol action from the delta file, if present. */
   public Optional<Protocol> getProtocol() {
     return protocol;
   }
 
-  /** Returns the Metadata action from the commit, if present. */
+  /** Returns the Metadata action from the delta file, if present. */
   public Optional<Metadata> getMetadata() {
     return metadata;
   }
 
-  /** Returns the CommitInfo action from the commit, if present. */
+  /** Returns the CommitInfo action from the delta file, if present. */
   public Optional<CommitInfo> getCommitInfo() {
     return commitInfo;
   }
 
   /**
-   * Returns all DomainMetadata actions from the commit. A commit can contain multiple domain
-   * metadata actions (one per domain, e.g. clustering, row tracking).
+   * Returns all DomainMetadata actions from the delta file. A delta file can contain multiple
+   * domain metadata actions (one per domain, e.g. clustering, row tracking).
    */
   public List<DomainMetadata> getDomainMetadatas() {
     return domainMetadatas;
