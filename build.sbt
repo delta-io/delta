@@ -723,12 +723,29 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-// Kept in sync with UC's version.sbt at the commit pinned in
-// project/unitycatalog-pin.sha. Bumping the pin to a UC commit that ships
-// a different version requires bumping this default in the same PR —
-// project/scripts/setup_unitycatalog_main.sh publishes whatever version
-// UC declares, and sbt will fail to resolve it if the two drift.
-val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.5.0-SNAPSHOT")
+// UC is published locally at <base>-<pinnedSha>. Encoding the SHA in the
+// Ivy version guarantees that bumping project/unitycatalog-pin.sha yields
+// a distinct artifact coordinate, so stale jars from a previous pin can
+// never resolve silently. `unityCatalogBaseVersion` must match UC's
+// version.sbt at the pinned commit; bumping to a UC commit that changes
+// that string requires updating this line in the same PR.
+val unityCatalogBaseVersion = "0.5.0-SNAPSHOT"
+val pinnedUnityCatalogSha: String = {
+  val pinFile = new java.io.File("project/unitycatalog-pin.sha")
+  val src = scala.io.Source.fromFile(pinFile)
+  try {
+    src.getLines()
+      .map(_.trim)
+      .filterNot(l => l.isEmpty || l.startsWith("#"))
+      .toList
+      .headOption
+      .getOrElse(sys.error(s"No SHA found in ${pinFile.getAbsolutePath}"))
+  } finally src.close()
+}
+val unityCatalogVersion = sys.props.getOrElse(
+  "unityCatalogVersion",
+  s"$unityCatalogBaseVersion-$pinnedUnityCatalogSha"
+)
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))

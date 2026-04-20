@@ -84,17 +84,28 @@ git -C "$UC_DIR" checkout --quiet FETCH_HEAD
 
 cd "$UC_DIR"
 
-# Extract the version UC will publish (e.g. "0.5.0-SNAPSHOT").
-UC_VERSION=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
-if [[ -z "$UC_VERSION" ]]; then
+# Extract UC's declared base version from version.sbt (e.g. "0.5.0-SNAPSHOT"),
+# then append the pinned SHA so every pin yields a distinct Ivy coordinate.
+# This is what eliminates the stale-jar risk on pin bumps where UC itself
+# didn't change its version string.
+UC_BASE_VERSION=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
+if [[ -z "$UC_BASE_VERSION" ]]; then
   echo "ERROR: Could not extract UC version from version.sbt" >&2
   exit 1
 fi
-echo ">>> UC version: $UC_VERSION"
+UC_VERSION="$UC_BASE_VERSION-$UC_REF"
+echo ">>> UC base version: $UC_BASE_VERSION"
+echo ">>> Publishing as:  $UC_VERSION"
 echo "$UC_VERSION" > "$UC_DIR/.uc-version"
+
+# Override version.sbt's value via sbt `set` so every publish* command uses
+# the composed <base>-<sha> coordinate. Applied as a persistent setting so
+# it sticks across the two sbt invocations below.
+SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
 echo ">>> Building and publishing UC client + server to local Maven repo"
 ./build/sbt \
+  "$SET_VERSION_CMD" \
   "set client / Compile / packageDoc / publishArtifact := false" \
   clean \
   client/generate \
@@ -107,6 +118,7 @@ echo ">>> Building and publishing UC client + server to local Maven repo"
 echo ">>> Building and publishing UC spark module to local Maven repo"
 for attempt in 1 2 3; do
   if ./build/sbt \
+    "$SET_VERSION_CMD" \
     "set client / Compile / packageDoc / publishArtifact := false" \
     spark/publishLocal \
     spark/publishM2; then
