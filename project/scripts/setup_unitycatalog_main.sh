@@ -1,38 +1,58 @@
 #!/usr/bin/env bash
 #
-# Builds Unity Catalog from source at the commit pinned in
-# project/unitycatalog-pin.sha and publishes the client / server / spark
-# jars to the local Ivy and Maven caches so Delta's sbt build can resolve
-# them. Delta master depends on APIs that are not yet in a released UC
-# version, which is why this step is required — not optional — before
-# building any sbt project that transitively touches the UC modules. See
-# UC_MASTER_TESTING.md for the full story.
+# TEMPORARY scaffolding — delete once UC 0.5 is released and Delta can
+# pin a released UC version instead (see `unityCatalogReleaseVersion` in
+# build.sbt).
 #
-# Idempotency: the script always clones UC (a shallow fetch-by-SHA takes
-# ~1s) so we can read its version.sbt to compute the exact Ivy coordinate
-# we'd publish. If the `unitycatalog-client` ivy.xml for that coordinate
-# already exists under ~/.ivy2/local, the slow sbt publish steps are
-# skipped. That's the canonical Ivy artifact path — the one sbt itself
-# uses for resolution — so the presence check is exactly the same as "sbt
-# can resolve this dep."
+# What this does:
+#   Clones Unity Catalog at the commit in project/unitycatalog-pin.sha,
+#   publishes the client / server / spark jars into ~/.ivy2/local (and
+#   ~/.m2) at coordinate <UC version.sbt>-<pinned sha>, e.g.
+#   0.5.0-SNAPSHOT-a7683a2306..., so sbt can resolve UC dependencies
+#   locally. build.sbt's unityCatalogVersion is derived from the same
+#   pin file, so publisher and consumer agree by construction.
 #
-# Environment variable overrides (all optional):
-#   UC_DIR   — directory to clone into   (default: /tmp/unitycatalog)
-#   UC_REPO  — git remote URL            (default: upstream unitycatalog)
-#   UC_REF   — commit / branch / tag     (default: SHA from unitycatalog-pin.sha)
-#   UC_FORCE — set to "1" to rebuild even if the Ivy artifact is present
+# Why locally:
+#   Delta master depends on UC APIs that aren't in any released UC yet.
+#   Encoding the pinned SHA in the Ivy coordinate means a pin bump
+#   changes the coordinate even when UC's version.sbt didn't move, so
+#   stale jars from a previous pin can't resolve silently.
 #
-# Setting UC_REF explicitly changes the coordinate the script computes, so
-# the idempotency check naturally falls through to a rebuild unless that
-# exact override has already been published. CI should never set UC_REF.
+# How to invoke:
+#   The first `build/sbt` that touches sparkUnityCatalog or
+#   kernelUnityCatalog calls this script automatically via
+#   `ensurePinnedUnityCatalog` (build.sbt). You only need to run it
+#   directly for debugging or for experimenting with an override ref.
 #
-# Outputs:
-#   $UC_DIR/.uc-version — the composed version that was published, e.g.
-#                         "0.5.0-SNAPSHOT-a7683a2306...". Callers read this
-#                         to pass -DunityCatalogVersion when experimenting
-#                         with a non-pinned ref; the default in build.sbt
-#                         derives from the pin file so the flag isn't
-#                         normally needed.
+# How to bump the pin:
+#   1. Edit project/unitycatalog-pin.sha to a newer SHA from
+#      https://github.com/unitycatalog/unitycatalog/commits/main
+#   2. If UC's version.sbt string changed at the new SHA, also update
+#      `unityCatalogBaseVersion` in build.sbt (same commit).
+#   3. Run this script locally; then `build/sbt sparkUnityCatalog/test
+#      kernelUnityCatalog/test`.
+#   4. Open a focused PR.
+#
+# Idempotency:
+#   Always clones UC shallowly to resolve the target coordinate (~1s),
+#   then checks ~/.ivy2/local/io.unitycatalog/unitycatalog-client/
+#   <coordinate>/ivys/ivy.xml — the canonical path sbt uses for
+#   resolution. If it's there, the sbt publish is skipped. UC_FORCE=1
+#   bypasses the check.
+#
+# Environment overrides:
+#   UC_DIR   directory to clone into  (default: /tmp/unitycatalog)
+#   UC_REPO  git remote URL           (default: upstream unitycatalog)
+#   UC_REF   commit / branch / tag    (default: pin file SHA)
+#   UC_FORCE set to "1" to rebuild even when the Ivy artifact exists
+#
+# Overriding UC_REF computes a different coordinate, which naturally
+# falls through to a rebuild unless that exact override was already
+# published. CI should never set UC_REF.
+#
+# Output: $UC_DIR/.uc-version contains the coordinate that was
+# published, for callers experimenting with an override (pass as
+# -DunityCatalogVersion=...).
 
 set -euo pipefail
 

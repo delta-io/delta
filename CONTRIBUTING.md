@@ -22,9 +22,6 @@ For more information, please refer to the [founding technical charter](https://d
 # Coding style
 We generally follow the [Apache Spark Scala Style Guide](https://spark.apache.org/contributing.html).
 
-# Building against Unity Catalog master
-Delta master depends on Unity Catalog APIs that are not yet in a released UC version, so the first sbt invocation after a clean checkout (or after a UC pin bump) will automatically build the pinned UC commit and publish it to your local Ivy cache. This takes a few minutes on a cold cache and is a no-op afterwards. See [UC_MASTER_TESTING.md](UC_MASTER_TESTING.md) for the full story and for how to bump the pin.
-
 # Sign your work
 The sign-off is a simple line at the end of the explanation for the patch. Your signature certifies that you wrote the patch or otherwise have the right to pass it on as an open-source patch. The rules are pretty simple: if you can certify the below (from developercertificate.org):
 
