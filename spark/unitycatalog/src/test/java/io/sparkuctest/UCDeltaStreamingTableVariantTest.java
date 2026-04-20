@@ -130,7 +130,18 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     }
   }
 
-  // Add new variants here. Each is tested with SNAPSHOT + INCREMENTAL x EXTERNAL + MANAGED.
+  // Add new variants here. Each is tested with
+  //   SNAPSHOT + INCREMENTAL + RESTART + STARTING_VERSION  x  EXTERNAL + MANAGED.
+  //
+  //   SNAPSHOT         — single AvailableNow query over setup state.
+  //   INCREMENTAL      — continuous query fed by incrementalSqls round-by-round.
+  //   RESTART          — stream setup -> stop -> run incrementals -> restart same checkpoint ->
+  //                       assert total streamed across both runs matches batch. Exercises the
+  //                       offset-log reload path distinct from fresh SNAPSHOT. Skipped when a
+  //                       variant has no incrementalSqls (nothing to distinguish from SNAPSHOT).
+  //   STARTING_VERSION — AvailableNow query with option("startingVersion", "0") over full setup
+  //                       + incremental state. Exercises the explicit-offset init path, distinct
+  //                       from the default initial-snapshot path used by SNAPSHOT/INCREMENTAL.
   private static final List<TableVariant> TABLE_VARIANTS =
       List.of(
 
@@ -664,11 +675,19 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                     DynamicTest.dynamicTest(
                         variant.name + " / SNAPSHOT / " + tableType,
                         () -> runSnapshotTest(variant, tableType)));
+                tests.add(
+                    DynamicTest.dynamicTest(
+                        variant.name + " / STARTING_VERSION / " + tableType,
+                        () -> runStartingVersionTest(variant, tableType)));
                 if (!variant.incrementalSqls.isEmpty()) {
                   tests.add(
                       DynamicTest.dynamicTest(
                           variant.name + " / INCREMENTAL / " + tableType,
                           () -> runIncrementalTest(variant, tableType)));
+                  tests.add(
+                      DynamicTest.dynamicTest(
+                          variant.name + " / RESTART / " + tableType,
+                          () -> runRestartTest(variant, tableType)));
                 }
               }
               return DynamicContainer.dynamicContainer(variant.name, tests);
@@ -768,6 +787,120 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               }
             } finally {
               query.stop();
+            }
+          } finally {
+            v.sparkConfOverrides.keySet().forEach(k -> spark().conf().unset(k));
+          }
+        });
+  }
+
+  /**
+   * Restart test: stream setup state with AvailableNow, stop, run incrementalSqls, then restart a
+   * second stream against the same checkpoint. The resumed stream must reload offsets and pick up
+   * the new commits. Asserts the union of the two memory sinks matches the current batch state
+   * (append-only) or is a superset of it (data-modifying, same relaxation as runSnapshotTest).
+   */
+  private void runRestartTest(TableVariant v, TableType tableType) throws Exception {
+    withTable(
+        v,
+        tableType,
+        fullName -> {
+          v.sparkConfOverrides.forEach((k, val) -> spark().conf().set(k, val));
+          try {
+            for (String s : v.setupSqls) sql(s, fullName);
+
+            // First run: process setup state and stop.
+            String qn1 = "rs1_" + UUID.randomUUID().toString().replace("-", "");
+            String ck = checkpoint();
+            DataStreamReader reader1 = spark().readStream().format("delta");
+            v.streamingReadOptions.forEach(reader1::option);
+            reader1
+                .table(fullName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn1)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", ck)
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
+
+            // Apply incremental commits while the stream is stopped.
+            for (String incrSql : v.incrementalSqls) sql(incrSql, fullName);
+
+            // Second run: same checkpoint location forces offset-log reload.
+            String qn2 = "rs2_" + UUID.randomUUID().toString().replace("-", "");
+            DataStreamReader reader2 = spark().readStream().format("delta");
+            v.streamingReadOptions.forEach(reader2::option);
+            reader2
+                .table(fullName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn2)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", ck)
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
+
+            List<List<String>> combined = new ArrayList<>();
+            combined.addAll(sql("SELECT * FROM %s", qn1));
+            combined.addAll(sql("SELECT * FROM %s", qn2));
+            List<List<String>> batch = sql("SELECT * FROM %s", fullName);
+            if (v.isAppendOnly()) {
+              assertThat(sorted(combined))
+                  .as("Restart: union of streamed rows should equal batch for %s", fullName)
+                  .isEqualTo(sorted(batch));
+            } else {
+              assertThat(combined)
+                  .as("Restart: union of streamed rows should contain all batch rows")
+                  .containsAll(batch);
+            }
+          } finally {
+            v.sparkConfOverrides.keySet().forEach(k -> spark().conf().unset(k));
+          }
+        });
+  }
+
+  /**
+   * StartingVersion test: runs setupSqls and incrementalSqls to bring the table to its final state,
+   * then streams with {@code option("startingVersion", "0")} + {@link Trigger#AvailableNow()}.
+   * Exercises the explicit-offset init path in SparkMicroBatchStream (distinct from the default
+   * initial-snapshot path used by SNAPSHOT).
+   */
+  private void runStartingVersionTest(TableVariant v, TableType tableType) throws Exception {
+    withTable(
+        v,
+        tableType,
+        fullName -> {
+          v.sparkConfOverrides.forEach((k, val) -> spark().conf().set(k, val));
+          try {
+            for (String s : v.setupSqls) sql(s, fullName);
+            for (String incrSql : v.incrementalSqls) sql(incrSql, fullName);
+
+            String qn = "sv_" + UUID.randomUUID().toString().replace("-", "");
+            DataStreamReader reader = spark().readStream().format("delta");
+            v.streamingReadOptions.forEach(reader::option);
+            reader
+                .option("startingVersion", "0")
+                .table(fullName)
+                .writeStream()
+                .format("memory")
+                .queryName(qn)
+                .outputMode("append")
+                .trigger(Trigger.AvailableNow())
+                .option("checkpointLocation", checkpoint())
+                .start()
+                .awaitTermination(STREAMING_TIMEOUT_MS);
+
+            if (v.isAppendOnly()) {
+              assertStreamingEqualsBatch(qn, fullName);
+            } else {
+              List<List<String>> streaming = sql("SELECT * FROM %s", qn);
+              List<List<String>> batch = sql("SELECT * FROM %s", fullName);
+              assertThat(streaming)
+                  .as("StartingVersion: streaming should contain all batch rows")
+                  .containsAll(batch);
             }
           } finally {
             v.sparkConfOverrides.keySet().forEach(k -> spark().conf().unset(k));
