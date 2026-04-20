@@ -1,89 +1,78 @@
-# Testing Delta Against Unity Catalog Master
+# Building Delta Against Pinned Unity Catalog Master
 
-Delta's sparkUnityCatalog and kernelUnityCatalog modules are exercised in CI against both a released Unity Catalog version *and* a specific commit on the Unity Catalog `main` branch. This doc explains what that means for local development.
+Delta master depends on Unity Catalog APIs that are not yet in a released UC version. To make CI and local builds reproducible, the exact UC commit Delta builds against is pinned in [`project/unitycatalog-pin.sha`](project/unitycatalog-pin.sha). This doc explains what that means for local development, and how to bump the pin.
 
-## TL;DR
+## TL;DR for local dev
 
-| You are… | What you need to do |
-| --- | --- |
-| A Delta dev **not** touching the `spark/unitycatalog` or `kernel/unitycatalog` modules | **Nothing.** The default `build/sbt` build resolves the released UC version from Maven Central. No change to your workflow. |
-| A Delta dev working on UC integration, and the code still builds against released UC | **Nothing required**, but you can opt into the pinned UC master SHA by running one script (below). |
-| A Delta dev writing code that uses UC APIs not yet released | Run the setup script once (see below). Then pass `-DunityCatalogVersion=<snapshot>` when building/testing. |
-
-## Why we pin a UC SHA
-
-The `Delta Spark (UC Master)` CI job builds Unity Catalog from source so Delta gets early signal on upcoming UC incompatibilities. If that job built from a floating `main`, an unrelated UC commit could turn Delta CI red in the middle of somebody else's PR. Pinning to a specific SHA removes that variable. The pin is bumped deliberately, in its own PR, so any new failures are attributable to that bump.
-
-The pinned SHA lives in [`project/unitycatalog-pin.sha`](project/unitycatalog-pin.sha) as a single source of truth that both CI and the local setup script read.
-
-## What stays the same for local dev
-
-`build.sbt` still defaults to the most recent *released* UC version (`unityCatalogVersion = "0.4.1"` at time of writing). That means:
-
-* `build/sbt compile`, `build/sbt spark/test`, etc. work with zero setup, as before.
-* `build/sbt sparkUnityCatalog/test` and `build/sbt kernelUnityCatalog/test` run against released UC, as before.
-* No new mandatory setup step, no submodules, no slow first builds.
-
-## When you **do** need to run against UC master locally
-
-Two cases:
-
-1. You want to reproduce a failure from the `Delta Spark (UC Master)` CI job.
-2. You are writing Delta code that needs a Unity Catalog API which isn't in the latest release yet. In this case your change will fail the default (released-UC) build — that's expected, and it means UC has to cut a release (or we have to wait to land your change) before Delta master can depend on it. In the meantime, you iterate locally against the pinned UC SHA.
-
-### One-time setup
+Run this **once** per clean checkout (and once more each time the pin is bumped):
 
 ```bash
-# From the Delta repo root. Takes a few minutes the first time.
 bash project/scripts/setup_unitycatalog_main.sh
 ```
 
-What this does:
-
-* Clones UC at the SHA pinned in `project/unitycatalog-pin.sha` into `/tmp/unitycatalog` (override with `UC_DIR=...`).
-* Runs `sbt publishLocal` / `publishM2` for the `client`, `server`, and `spark` UC modules so they are resolvable from your local Maven / Ivy caches.
-* Writes the UC version string (e.g. `0.5.0-SNAPSHOT`) to `/tmp/unitycatalog/.uc-version`.
-
-### Running Delta tests against the pinned UC master build
+After that, regular sbt works as you'd expect:
 
 ```bash
-UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
-build/sbt -DunityCatalogVersion=$UC_VERSION \
-    sparkUnityCatalog/test kernelUnityCatalog/test
+build/sbt compile
+build/sbt sparkUnityCatalog/test
+build/sbt kernelUnityCatalog/test
+# …etc.
 ```
 
-That `-DunityCatalogVersion` flag overrides the default in `build.sbt` for the duration of the sbt invocation only. Nothing is edited in your working tree, so you can freely switch back to the released-UC default by dropping the flag.
+The setup script is idempotent: on re-invocation it checks a marker under `~/.ivy2/local` and exits in under a second if the pinned SHA's jars are already published. The slow rebuild only fires when the pin moves (or when you pass `UC_FORCE=1`).
 
-### Overriding the ref
+No `-DunityCatalogVersion=…` flag is needed: `build.sbt`'s default is kept in sync with the version the pinned UC SHA publishes.
 
-For experimentation you can build a different UC ref without editing the pin file:
+## Why UC master instead of a release?
+
+Delta and Unity Catalog are developed in lockstep on several features. Delta master often needs APIs that have been merged to UC `main` but not yet shipped in a UC release. Rather than waiting for the next UC release to land each feature, we pin a specific UC commit, build it locally, and use it as a pre-release dependency.
+
+Pinning (vs. tracking a floating UC `main`) is what keeps this tolerable: every Delta PR builds against the same UC commit, so an unrelated UC-side change can't silently break Delta CI in the middle of another contributor's PR.
+
+## What if I'm not touching UC integration at all?
+
+You still need to run the setup script once, because `sparkUnityCatalog` is part of `sparkGroup` (the test group the `Delta Spark` workflow exercises), so plain `build/sbt compile` transitively pulls in the UC dependency.
+
+If the one-time build is genuinely painful for your workflow, tell us — we can look into publishing UC master snapshots to a shared Maven repo so local builds can resolve them without building from source.
+
+## Running against a non-pinned ref (experiments)
+
+You can override the ref via environment variables; the marker optimization turns off for non-default refs, so every invocation rebuilds:
 
 ```bash
-UC_REF=main bash project/scripts/setup_unitycatalog_main.sh            # latest main
-UC_REF=abc1234 bash project/scripts/setup_unitycatalog_main.sh         # specific SHA
+UC_REF=main bash project/scripts/setup_unitycatalog_main.sh           # floating UC main
+UC_REF=abc1234 bash project/scripts/setup_unitycatalog_main.sh        # specific SHA
 UC_REPO=git@github.com:myfork/unitycatalog.git \
-  UC_REF=my-branch bash project/scripts/setup_unitycatalog_main.sh     # your fork
+  UC_REF=my-branch bash project/scripts/setup_unitycatalog_main.sh    # your UC fork
 ```
 
-CI does **not** use these overrides — CI always builds the pinned SHA.
+If the ref you build has a different UC version than the pinned SHA, `build.sbt`'s default won't match what you just published, and sbt won't resolve the dependency. Override with `build/sbt -DunityCatalogVersion=$(cat /tmp/unitycatalog/.uc-version) …` for that invocation.
 
-## Bumping the pinned SHA
+## Bumping the pin
 
 1. Pick a newer SHA from [`unitycatalog/unitycatalog` commits on main](https://github.com/unitycatalog/unitycatalog/commits/main).
-2. Replace the SHA line in `project/unitycatalog-pin.sha`.
-3. Run the setup script + UC tests locally (the commands at the top of the pin file show the exact invocation).
-4. Open a small PR that only changes the pin. If `Delta Spark (UC Master)` stays green, merge. If it fails, the failure is attributable to changes between the old and new UC SHAs, which makes triage easy.
+2. Edit `project/unitycatalog-pin.sha`, replacing only the SHA line.
+3. Run the setup script locally to verify the new UC commit still builds:
+   ```bash
+   bash project/scripts/setup_unitycatalog_main.sh
+   ```
+4. Check the UC version it prints. If `version.sbt` on UC has changed (e.g. `0.5.0-SNAPSHOT` → `0.6.0-SNAPSHOT`), also edit `build.sbt`'s `unityCatalogVersion` default to match, in the same commit — otherwise sbt resolution fails.
+5. Run the UC tests:
+   ```bash
+   build/sbt sparkUnityCatalog/test kernelUnityCatalog/test
+   ```
+6. Open a focused PR (pin + build.sbt default, nothing else). If CI stays green, merge. If it fails, the failure is attributable to changes between the old and new UC SHAs, which makes triage easy.
 
-## FAQ
+## Troubleshooting
 
-**Q: What happens if Delta code starts using a UC API that isn't in the released UC version, and I don't run the setup script?**
-The default build fails to compile `sparkUnityCatalog` / `kernelUnityCatalog`. The error message from sbt will name the missing UC symbol. Run the setup script and re-run sbt with `-DunityCatalogVersion=<snapshot>`; that's the signal to switch into UC-master mode.
+**`sbt` complains it can't resolve `io.unitycatalog:unitycatalog-spark_…:0.5.0-SNAPSHOT`.**
+Run `bash project/scripts/setup_unitycatalog_main.sh`. The marker under `~/.ivy2/local/.unitycatalog-pin` was missing or didn't match the pinned SHA, so the publish step hadn't happened (or was for a stale pin).
 
-**Q: Can I just always build against the pinned UC master locally?**
-Yes — run the setup script once, then always pass `-DunityCatalogVersion=<snapshot>`. You can add that flag to a shell alias or to `SBT_OPTS`. Nothing in the repo forces you either way.
+**UC version in the error message doesn't match the default in `build.sbt`.**
+Someone bumped the pin to a UC commit with a newer `version.sbt` but forgot to bump `build.sbt`. Fix in one line or pass `-DunityCatalogVersion=<that version>` for the immediate command.
 
-**Q: Why isn't this automated via an sbt task?**
-An sbt task that shells out to `setup_unitycatalog_main.sh` on demand is possible, but it makes `build/sbt` depend on git, network, and a UC build for devs who never touch UC integration. Keeping setup explicit keeps the blast radius contained and makes failures easier to diagnose. If the UC integration surface grows enough that this stops being true, automating it is a follow-up.
+**I changed the pin and the setup script still emits the old version.**
+Stale marker. Pass `UC_FORCE=1` or delete `~/.ivy2/local/.unitycatalog-pin`, then re-run the setup script.
 
-**Q: Why is the build.sbt default not bumped to the UC master snapshot?**
-Because every Delta dev would then need to run the setup script before anything builds, even on changes unrelated to UC. As long as Delta master compiles cleanly against released UC, keeping the released version as the default is pure upside for local dev velocity. The day a Delta PR *has* to use a UC master API is the day to revisit this — and at that point, bumping the default in `build.sbt` is a one-line change.
+**CI passes but local fails (or vice versa).**
+Check your `~/.ivy2/local/.unitycatalog-pin` SHA matches `project/unitycatalog-pin.sha`. If different, rerun the setup script.

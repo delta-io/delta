@@ -1,0 +1,44 @@
+name: "Set up pinned Unity Catalog build"
+description: >-
+  Publishes Unity Catalog jars from the commit in project/unitycatalog-pin.sha
+  to the runner's local Ivy / Maven caches, using GitHub Actions cache so that
+  the slow UC build only runs the first time a pin is seen. Produces the UC
+  version as an output for callers that want to pass -DunityCatalogVersion.
+
+outputs:
+  uc_version:
+    description: "The Unity Catalog version that was published (e.g. 0.5.0-SNAPSHOT)."
+    value: ${{ steps.resolve.outputs.uc_version }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Restore pinned UC cache
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        # ~/.ivy2/local is what sbt publishLocal writes to and where the
+        # setup script's idempotency marker lives. ~/.m2 is for publishM2.
+        path: |
+          ~/.ivy2/local
+          ~/.m2/repository/io/unitycatalog
+        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/unitycatalog-pin.sha') }}
+    - name: Build Unity Catalog from pinned SHA
+      shell: bash
+      run: bash project/scripts/setup_unitycatalog_main.sh
+    - name: Save pinned UC cache
+      # Save only on master push so we don't thrash the cache from PRs, which
+      # share the same pin-hash key. Restore still works for PRs.
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: |
+          ~/.ivy2/local
+          ~/.m2/repository/io/unitycatalog
+        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/unitycatalog-pin.sha') }}
+    - name: Resolve UC version
+      id: resolve
+      shell: bash
+      run: |
+        UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+        echo "uc_version=$UC_VERSION" >> "$GITHUB_OUTPUT"
+        echo "UC version: $UC_VERSION"

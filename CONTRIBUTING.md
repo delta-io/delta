@@ -22,6 +22,15 @@ For more information, please refer to the [founding technical charter](https://d
 # Coding style
 We generally follow the [Apache Spark Scala Style Guide](https://spark.apache.org/contributing.html).
 
+# Building against Unity Catalog master
+Delta master depends on Unity Catalog APIs that are not yet in a released UC version, so a clean checkout needs one additional setup step before `build/sbt` can resolve the UC dependency:
+
+```bash
+bash project/scripts/setup_unitycatalog_main.sh
+```
+
+The script publishes the pinned UC build to your local Ivy / Maven caches and is fast to re-invoke. See [UC_MASTER_TESTING.md](UC_MASTER_TESTING.md) for the full story and for how to bump the pin.
+
 # Sign your work
 The sign-off is a simple line at the end of the explanation for the patch. Your signature certifies that you wrote the patch or otherwise have the right to pass it on as an open-source patch. The rules are pretty simple: if you can certify the below (from developercertificate.org):
 

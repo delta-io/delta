@@ -723,7 +723,12 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.1")
+// Kept in sync with UC's version.sbt at the commit pinned in
+// project/unitycatalog-pin.sha. Bumping the pin to a UC commit that ships
+// a different version requires bumping this default in the same PR —
+// project/scripts/setup_unitycatalog_main.sh publishes whatever version
+// UC declares, and sbt will fail to resolve it if the two drift.
+val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.5.0-SNAPSHOT")
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))

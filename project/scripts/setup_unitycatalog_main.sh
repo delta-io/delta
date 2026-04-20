@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 #
 # Builds Unity Catalog from source at the commit pinned in
-# project/unitycatalog-pin.sha and publishes jars to the local Maven/Ivy
-# cache so that Delta tests can exercise an unreleased UC version.
+# project/unitycatalog-pin.sha and publishes the client / server / spark
+# jars to the local Ivy and Maven caches so Delta's sbt build can resolve
+# them. Delta master depends on APIs that are not yet in a released UC
+# version, which is why this step is required — not optional — before
+# building any sbt project that transitively touches the UC modules. See
+# UC_MASTER_TESTING.md for the full story.
 #
-# Intended to be called from CI before the UC test step, and optionally
-# by local developers who want to test against UC master. See
-# UC_MASTER_TESTING.md for the full local-dev workflow.
+# Idempotency: a marker file under ~/.ivy2/local records the SHA the
+# cache was last built for. If the marker matches the pinned SHA, the
+# script skips the rebuild and just re-emits the UC version to the
+# sentinel path. That makes CI and local re-invocations cheap.
 #
 # Environment variable overrides (all optional):
 #   UC_DIR   — directory to clone into   (default: /tmp/unitycatalog)
 #   UC_REPO  — git remote URL            (default: upstream unitycatalog)
 #   UC_REF   — commit / branch / tag     (default: SHA from unitycatalog-pin.sha)
+#   UC_FORCE — set to "1" to force a rebuild even if the marker matches
 #
-# Setting UC_REF explicitly is useful for local experimentation; CI should
-# always build the pinned SHA so CI signal is reproducible.
+# Setting UC_REF explicitly forces a rebuild (the marker optimization only
+# applies when using the pinned SHA). CI should never set UC_REF.
 #
 # Outputs:
-#   $UC_DIR/.uc-version — the version UC published (e.g. "0.5.0-SNAPSHOT"),
-#                         which callers pass as -DunityCatalogVersion=<version>.
+#   $UC_DIR/.uc-version — the UC version that was published, e.g.
+#                         "0.5.0-SNAPSHOT". Callers read this when they
+#                         want to override -DunityCatalogVersion; the
+#                         default in build.sbt is kept in sync with the
+#                         pin so the flag isn't normally needed.
 
 set -euo pipefail
 
@@ -38,6 +47,29 @@ fi
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$DEFAULT_REF}"
+UC_FORCE="${UC_FORCE:-0}"
+
+# Marker lives under the local Ivy repo so GitHub Actions caches that
+# include ~/.ivy2 carry it automatically.
+MARKER_FILE="$HOME/.ivy2/local/.unitycatalog-pin"
+
+using_pinned_default=0
+if [[ "$UC_REF" == "$DEFAULT_REF" ]]; then
+  using_pinned_default=1
+fi
+
+# Fast path: pinned default + marker match + not forced → skip rebuild.
+if [[ "$using_pinned_default" -eq 1 && "$UC_FORCE" != "1" && -f "$MARKER_FILE" ]]; then
+  CACHED_SHA=$(awk -F= '/^sha=/ {print $2}' "$MARKER_FILE" 2>/dev/null)
+  CACHED_VERSION=$(awk -F= '/^version=/ {print $2}' "$MARKER_FILE" 2>/dev/null)
+  if [[ "$CACHED_SHA" == "$DEFAULT_REF" && -n "$CACHED_VERSION" ]]; then
+    echo ">>> UC jars already published for pinned SHA $DEFAULT_REF (version $CACHED_VERSION); skipping rebuild"
+    mkdir -p "$UC_DIR"
+    echo "$CACHED_VERSION" > "$UC_DIR/.uc-version"
+    echo ">>> To force a rebuild, set UC_FORCE=1"
+    exit 0
+  fi
+fi
 
 echo ">>> Fetching Unity Catalog from $UC_REPO at ref $UC_REF"
 rm -rf "$UC_DIR"
@@ -78,8 +110,15 @@ for attempt in 1 2 3; do
     "set client / Compile / packageDoc / publishArtifact := false" \
     spark/publishLocal \
     spark/publishM2; then
-    echo ">>> UC build complete. To run Delta UC tests against this build:"
-    echo ">>>   build/sbt -DunityCatalogVersion=$UC_VERSION sparkUnityCatalog/test kernelUnityCatalog/test"
+    if [[ "$using_pinned_default" -eq 1 ]]; then
+      mkdir -p "$(dirname "$MARKER_FILE")"
+      printf 'sha=%s\nversion=%s\n' "$UC_REF" "$UC_VERSION" > "$MARKER_FILE"
+    fi
+    echo ">>> UC build complete."
+    echo ">>> To run Delta UC tests against this build:"
+    echo ">>>   build/sbt sparkUnityCatalog/test kernelUnityCatalog/test"
+    echo ">>> (build.sbt's unityCatalogVersion default is kept in sync with the pin,"
+    echo ">>>  so -DunityCatalogVersion is only needed when experimenting with a non-pinned ref.)"
     exit 0
   fi
 
