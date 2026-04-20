@@ -26,9 +26,10 @@ runs:
       shell: bash
       run: bash project/scripts/setup_unitycatalog_main.sh
     - name: Save pinned UC cache
-      # Save only on master push so we don't thrash the cache from PRs, which
-      # share the same pin-hash key. Restore still works for PRs.
-      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      # Always try to save: the key embeds the pin hash, so writes are
+      # idempotent across PRs and branches (same pin → same jars). Saving on
+      # PRs means the first workflow in a PR populates the cache for the
+      # remaining workflows, avoiding N parallel UC rebuilds on pin bumps.
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |

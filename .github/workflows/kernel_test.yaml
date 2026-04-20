@@ -69,6 +69,12 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      # run-tests.py invokes sbt with `++ 2.13.16`, which triggers
+      # cross-version dependency resolution across every project (including
+      # kernelUnityCatalog). Publish the pinned UC build locally first so
+      # that resolution doesn't miss.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
