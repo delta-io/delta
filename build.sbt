@@ -736,12 +736,13 @@ lazy val contribs = (project in file("contribs"))
 //
 //  - Pinned-master mode (default on master): leave
 //    `unityCatalogReleaseVersion = None`. The version becomes
-//    `<unityCatalogBaseVersion>-<pinnedSha>`, where the SHA is read from
-//    the `UC_PIN_SHA=` line in project/scripts/setup_unitycatalog_main.sh
+//    `<unityCatalogBaseVersion>-<7-char sha>`, where the SHA is read
+//    from the `UC_PIN_SHA=` line in project/scripts/setup_unitycatalog_main.sh
 //    and jars are published locally by the same script. Encoding the
 //    SHA in the coordinate guarantees that a pin bump yields a distinct
 //    artifact coordinate, so stale jars from a previous pin can never
-//    resolve silently.
+//    resolve silently. The script applies the same truncation, so
+//    publisher and consumer agree.
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments;
 // the override bypasses both branches.
@@ -766,8 +767,14 @@ lazy val pinnedUnityCatalogSha: String = {
 }
 val unityCatalogVersion: String = sys.props.getOrElse(
   "unityCatalogVersion",
-  unityCatalogReleaseVersion.getOrElse(
-    s"$unityCatalogBaseVersion-$pinnedUnityCatalogSha"))
+  unityCatalogReleaseVersion.getOrElse {
+    // Match setup_unitycatalog_main.sh: 7 chars for a 40-char hex SHA,
+    // otherwise use the ref as-is (branch/tag names pass through).
+    val shortRef =
+      if (pinnedUnityCatalogSha.matches("[0-9a-f]{40}")) pinnedUnityCatalogSha.take(7)
+      else pinnedUnityCatalogSha
+    s"$unityCatalogBaseVersion-$shortRef"
+  })
 
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 

@@ -8,7 +8,7 @@
 #   Clones Unity Catalog at the commit pinned in this script (see the
 #   `UC_PIN_SHA=` line below), publishes the client / server / spark
 #   jars into ~/.ivy2/local (and ~/.m2) at coordinate
-#   <UC version.sbt>-<pinned sha>, e.g. 0.5.0-SNAPSHOT-a7683a2306...,
+#   <UC version.sbt>-<7-char sha>, e.g. 0.5.0-SNAPSHOT-a7683a2,
 #   so sbt can resolve UC dependencies locally. build.sbt reads the same
 #   `UC_PIN_SHA=` line, so publisher and consumer agree by construction.
 #
@@ -68,6 +68,16 @@ UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
 
+# Short form used in the Ivy coordinate (git's default abbreviation length).
+# For a 40-char hex SHA, take the first 7. For anything else (a branch name
+# or tag passed via UC_REF), use the whole ref as-is. build.sbt applies the
+# same truncation to UC_PIN_SHA, so the two agree by construction.
+if [[ "$UC_REF" =~ ^[0-9a-f]{40}$ ]]; then
+  UC_REF_SHORT="${UC_REF:0:7}"
+else
+  UC_REF_SHORT="$UC_REF"
+fi
+
 echo ">>> Fetching Unity Catalog from $UC_REPO at ref $UC_REF"
 rm -rf "$UC_DIR"
 mkdir -p "$UC_DIR"
@@ -89,7 +99,7 @@ if [[ -z "$UC_BASE_VERSION" ]]; then
   echo "ERROR: Could not extract UC version from version.sbt" >&2
   exit 1
 fi
-UC_VERSION="$UC_BASE_VERSION-$UC_REF"
+UC_VERSION="$UC_BASE_VERSION-$UC_REF_SHORT"
 echo ">>> UC base version: $UC_BASE_VERSION"
 echo ">>> Target coordinate: $UC_VERSION"
 echo "$UC_VERSION" > "$UC_DIR/.uc-version"
