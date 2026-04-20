@@ -513,6 +513,12 @@ public final class DeltaErrors {
     return new KernelException("Row tracking support cannot be changed once the table is created.");
   }
 
+  public static KernelException rowTrackingEnabledAndSuspended() {
+    return new KernelException(
+        "Row tracking cannot be both enabled (delta.enableRowTracking=true) "
+            + "and suspended (delta.rowTrackingSuspended=true) at the same time.");
+  }
+
   public static KernelException missingRowTrackingColumnRequested(String columnName) {
     return new KernelException(
         String.format(
