@@ -769,10 +769,6 @@ val unityCatalogVersion: String = sys.props.getOrElse(
   unityCatalogReleaseVersion.getOrElse(
     s"$unityCatalogBaseVersion-$pinnedUnityCatalogSha"))
 
-// True when the effective UC version requires the local publish step
-// (i.e. we're using the pinned master SHA or a snapshot override, not a
-// Maven-Central-resolvable release).
-val unityCatalogNeedsLocalPublish: Boolean = unityCatalogReleaseVersion.isEmpty
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 // Auto-publish the pinned UC build to ~/.ivy2/local the first time sbt tries
@@ -791,11 +787,11 @@ val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jacks
 //
 // Opt out of the auto-trigger with `-Ddelta.autoBuildPinnedUnityCatalog=false`
 // (sbt will then fail with a clear message pointing at the script instead).
-lazy val ensurePinnedUnityCatalog = taskKey[Unit](
+val ensurePinnedUnityCatalog = taskKey[Unit](
   "Publish the pinned UC master jars locally if the Ivy coordinate isn't already cached.")
 
 Global / ensurePinnedUnityCatalog := {
-  if (unityCatalogNeedsLocalPublish) {
+  if (unityCatalogReleaseVersion.isEmpty) {
     val log = streams.value.log
     val canary =
       file(sys.props("user.home")) / ".ivy2" / "local" / "io.unitycatalog" /
