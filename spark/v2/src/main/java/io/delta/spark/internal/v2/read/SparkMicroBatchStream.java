@@ -1335,8 +1335,8 @@ public class SparkMicroBatchStream
   /**
    * Check read-incompatible schema changes during stream (re)start so we could fail fast.
    *
-   * <p>This is called ONCE during the first latestOffset call to catch cases that normal
-   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
+   * <p>This is called ONCE during the first latestOffset call to catch cases that normal per-commit
+   * validation (checkReadIncompatibleSchemaChanges) misses.
    *
    * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
    * starts at version 1 with the latest version is version 3 and there is a schema change at
