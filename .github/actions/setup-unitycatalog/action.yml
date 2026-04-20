@@ -1,13 +1,14 @@
 name: "Set up pinned Unity Catalog build"
 description: >-
-  Publishes Unity Catalog jars from the commit in project/unitycatalog-pin.sha
-  to the runner's local Ivy / Maven caches, using GitHub Actions cache so that
-  the slow UC build only runs the first time a pin is seen. Produces the UC
+  Publishes Unity Catalog jars from the commit pinned in
+  project/scripts/setup_unitycatalog_main.sh (the UC_PIN_SHA= line) to the
+  runner's local Ivy / Maven caches, using GitHub Actions cache so the
+  slow UC build only runs the first time a pin is seen. Produces the UC
   version as an output for callers that want to pass -DunityCatalogVersion.
 
 outputs:
   uc_version:
-    description: "The Unity Catalog version that was published (e.g. 0.5.0-SNAPSHOT)."
+    description: "The Unity Catalog version that was published (e.g. 0.5.0-SNAPSHOT-<sha>)."
     value: ${{ steps.resolve.outputs.uc_version }}
 
 runs:
@@ -16,26 +17,27 @@ runs:
     - name: Restore pinned UC cache
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
-        # ~/.ivy2/local is what sbt publishLocal writes to and where the
-        # setup script's idempotency marker lives. ~/.m2 is for publishM2.
+        # ~/.ivy2/local is what sbt publishLocal writes to. ~/.m2 is for publishM2.
         path: |
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
-        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/unitycatalog-pin.sha') }}
+        # Cache key embeds the hash of the setup script, so bumping the
+        # UC_PIN_SHA= line (or any other script change) invalidates the cache.
+        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
     - name: Build Unity Catalog from pinned SHA
       shell: bash
       run: bash project/scripts/setup_unitycatalog_main.sh
     - name: Save pinned UC cache
-      # Always try to save: the key embeds the pin hash, so writes are
-      # idempotent across PRs and branches (same pin → same jars). Saving on
-      # PRs means the first workflow in a PR populates the cache for the
+      # Always try to save: the key embeds the script hash, so writes are
+      # idempotent across PRs and branches (same script → same jars). Saving
+      # on PRs means the first workflow in a PR populates the cache for the
       # remaining workflows, avoiding N parallel UC rebuilds on pin bumps.
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
-        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/unitycatalog-pin.sha') }}
+        key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
     - name: Resolve UC version
       id: resolve
       shell: bash

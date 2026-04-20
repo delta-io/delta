@@ -5,12 +5,12 @@
 # build.sbt).
 #
 # What this does:
-#   Clones Unity Catalog at the commit in project/unitycatalog-pin.sha,
-#   publishes the client / server / spark jars into ~/.ivy2/local (and
-#   ~/.m2) at coordinate <UC version.sbt>-<pinned sha>, e.g.
-#   0.5.0-SNAPSHOT-a7683a2306..., so sbt can resolve UC dependencies
-#   locally. build.sbt's unityCatalogVersion is derived from the same
-#   pin file, so publisher and consumer agree by construction.
+#   Clones Unity Catalog at the commit pinned in this script (see the
+#   `UC_PIN_SHA=` line below), publishes the client / server / spark
+#   jars into ~/.ivy2/local (and ~/.m2) at coordinate
+#   <UC version.sbt>-<pinned sha>, e.g. 0.5.0-SNAPSHOT-a7683a2306...,
+#   so sbt can resolve UC dependencies locally. build.sbt reads the same
+#   `UC_PIN_SHA=` line, so publisher and consumer agree by construction.
 #
 # Why locally:
 #   Delta master depends on UC APIs that aren't in any released UC yet.
@@ -25,8 +25,8 @@
 #   directly for debugging or for experimenting with an override ref.
 #
 # How to bump the pin:
-#   1. Edit project/unitycatalog-pin.sha to a newer SHA from
-#      https://github.com/unitycatalog/unitycatalog/commits/main
+#   1. Replace the SHA in the `UC_PIN_SHA=` line below with a newer one
+#      from https://github.com/unitycatalog/unitycatalog/commits/main
 #   2. If UC's version.sbt string changed at the new SHA, also update
 #      `unityCatalogBaseVersion` in build.sbt (same commit).
 #   3. Run this script locally; then `build/sbt sparkUnityCatalog/test
@@ -43,7 +43,7 @@
 # Environment overrides:
 #   UC_DIR   directory to clone into  (default: /tmp/unitycatalog)
 #   UC_REPO  git remote URL           (default: upstream unitycatalog)
-#   UC_REF   commit / branch / tag    (default: pin file SHA)
+#   UC_REF   commit / branch / tag    (default: UC_PIN_SHA below)
 #   UC_FORCE set to "1" to rebuild even when the Ivy artifact exists
 #
 # Overriding UC_REF computes a different coordinate, which naturally
@@ -56,22 +56,16 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PIN_FILE="$SCRIPT_DIR/../unitycatalog-pin.sha"
-
-# Read the pinned SHA, ignoring comments and blank lines.
-DEFAULT_REF=""
-if [[ -f "$PIN_FILE" ]]; then
-  DEFAULT_REF=$(grep -vE '^\s*(#|$)' "$PIN_FILE" | head -n 1 | tr -d '[:space:]')
-fi
-if [[ -z "$DEFAULT_REF" ]]; then
-  echo "ERROR: Could not read pinned UC SHA from $PIN_FILE" >&2
-  exit 1
-fi
+# -----------------------------------------------------------------------------
+# The pinned Unity Catalog commit. Bump this line to move the pin.
+# build.sbt and the CI cache key both read this exact line; keep the format
+# `UC_PIN_SHA=<40-char sha>` stable.
+UC_PIN_SHA=a7683a23063dab9b5faa534a38b3a9080461e62f
+# -----------------------------------------------------------------------------
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
 UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
-UC_REF="${UC_REF:-$DEFAULT_REF}"
+UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
 
 echo ">>> Fetching Unity Catalog from $UC_REPO at ref $UC_REF"

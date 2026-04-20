@@ -730,35 +730,38 @@ lazy val contribs = (project in file("contribs"))
 //  - Release mode (e.g. on delta release branches): set
 //    `unityCatalogReleaseVersion = Some("0.5.0")` (or whatever released
 //    version this branch ships against). sbt resolves that coordinate
-//    from Maven Central like any other dependency; no pin file is read,
-//    no setup script runs, and `ensurePinnedUnityCatalog` is a no-op.
+//    from Maven Central like any other dependency; the pinned-master
+//    scaffolding below is unused, and `ensurePinnedUnityCatalog` is a
+//    no-op.
 //
 //  - Pinned-master mode (default on master): leave
 //    `unityCatalogReleaseVersion = None`. The version becomes
 //    `<unityCatalogBaseVersion>-<pinnedSha>`, where the SHA is read from
-//    project/unitycatalog-pin.sha and jars are published locally via
-//    project/scripts/setup_unitycatalog_main.sh. Encoding the SHA in the
-//    coordinate guarantees that a pin bump yields a distinct artifact
-//    coordinate, so stale jars from a previous pin can never resolve
-//    silently.
+//    the `UC_PIN_SHA=` line in project/scripts/setup_unitycatalog_main.sh
+//    and jars are published locally by the same script. Encoding the
+//    SHA in the coordinate guarantees that a pin bump yields a distinct
+//    artifact coordinate, so stale jars from a previous pin can never
+//    resolve silently.
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments;
 // the override bypasses both branches.
 val unityCatalogReleaseVersion: Option[String] = None
 val unityCatalogBaseVersion = "0.5.0-SNAPSHOT"
 
-// Lazy so release-mode builds don't read the pin file (it may have been
-// deleted on a release branch, or simply be irrelevant there).
+// Lazy so release-mode builds don't open the setup script at all.
 lazy val pinnedUnityCatalogSha: String = {
-  val pinFile = new java.io.File("project/unitycatalog-pin.sha")
-  val src = scala.io.Source.fromFile(pinFile)
+  val scriptFile = new java.io.File("project/scripts/setup_unitycatalog_main.sh")
+  val src = scala.io.Source.fromFile(scriptFile)
   try {
     src.getLines()
       .map(_.trim)
-      .filterNot(l => l.isEmpty || l.startsWith("#"))
-      .toList
-      .headOption
-      .getOrElse(sys.error(s"No SHA found in ${pinFile.getAbsolutePath}"))
+      .collectFirst {
+        case line if line.startsWith("UC_PIN_SHA=") =>
+          line.stripPrefix("UC_PIN_SHA=").stripPrefix("\"").stripSuffix("\"").trim
+      }
+      .filter(_.nonEmpty)
+      .getOrElse(sys.error(
+        s"No non-empty UC_PIN_SHA= line found in ${scriptFile.getAbsolutePath}"))
   } finally src.close()
 }
 val unityCatalogVersion: String = sys.props.getOrElse(
