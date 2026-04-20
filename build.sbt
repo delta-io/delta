@@ -800,12 +800,15 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
 }
 
 Global / ensurePinnedUnityCatalog := {
+  // Resolve the .value dependencies eagerly — sbt's task macro warns when
+  // `.value` appears inside conditional branches.
+  val log = streams.value.log
   if (unityCatalogReleaseVersion.isEmpty) {
     val canary =
       file(sys.props("user.home")) / ".ivy2" / "local" / "io.unitycatalog" /
         "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
     if (!canary.exists) {
-      publishPinnedUnityCatalog(streams.value.log, canary)
+      publishPinnedUnityCatalog(log, canary)
     }
   }
 }
