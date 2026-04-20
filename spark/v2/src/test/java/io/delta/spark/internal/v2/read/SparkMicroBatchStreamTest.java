@@ -2146,7 +2146,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             Optional.of(10000L),
             "With both limits"),
 
-        // Edge cases
+        // start and end version equals
         Arguments.of(
             /* fromVersion= */ 3L,
             /* toVersion= */ 3L,
