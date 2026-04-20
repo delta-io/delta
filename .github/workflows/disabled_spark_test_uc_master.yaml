@@ -1,0 +1,76 @@
+name: "Delta Spark (UC Main Canary) [DISABLED]"
+# DISABLED while Delta master builds against a pinned UC master SHA (see
+# project/scripts/setup_unitycatalog_main.sh and `unityCatalogReleaseVersion`
+# in build.sbt). The main `Delta Spark` workflow already exercises UC
+# master at the pinned SHA, so a second workflow that also builds UC
+# from main would be redundant.
+#
+# This file is kept around so the floating-main canary — a non-blocking
+# early-warning signal against UC's latest `main`, ahead of any pin
+# bump — can be resurrected cheaply when Delta switches back to a
+# released UC version. To re-enable:
+#   1. Flip `unityCatalogReleaseVersion` in build.sbt to the released
+#      version, and drop the `Set up pinned Unity Catalog` steps from
+#      the other workflows.
+#   2. Rename this file to `spark_test_uc_master.yaml`.
+#   3. Restore the push/pull_request triggers below and remove the
+#      `workflow_dispatch`-only trigger.
+#   4. Update the UC build step to clone UC's `main` (floating, not
+#      pinned) — the pinned setup script this version referenced may
+#      have been deleted by then.
+on:
+  # Manual-only while disabled, so it doesn't run on every PR.
+  workflow_dispatch:
+  # To re-enable, replace the above with:
+  # push:
+  #   paths-ignore:
+  #     - '**.md'
+  #     - '**.txt'
+  # pull_request:
+  #   paths-ignore:
+  #     - '**.md'
+  #     - '**.txt'
+
+jobs:
+  test-uc-main:
+    name: "[Non Blocking] UC Integration Tests (Floating UC Main)"
+    # Guard against accidental runs while disabled. Remove when re-enabling.
+    if: false
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
+      - name: install java
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Build Unity Catalog from floating main
+        id: uc-build
+        run: |
+          # When re-enabling, replace this with a minimal fetch-and-publish
+          # of UC's `main` branch (UC_REF=main). The pinned-SHA setup script
+          # that lived here may not exist by then.
+          echo "TODO: re-implement floating-main UC build"
+          exit 1
+      - name: Run UC integration tests
+        id: tests
+        continue-on-error: true
+        run: |
+          build/sbt \
+            -DunityCatalogVersion=${{ steps.uc-build.outputs.uc_version }} \
+            sparkUnityCatalog/test kernelUnityCatalog/test
+      - name: Report test results
+        if: always()
+        run: |
+          if [[ "${{ steps.tests.outcome }}" == "failure" ]]; then
+            echo "::warning::UC main canary failed — this is a non-blocking advance-warning signal, check before bumping the pin."
+          else
+            echo "UC main canary passed."
+          fi
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: test-reports-uc-main-canary
+          path: "**/target/test-reports/*.xml"
+          retention-days: 7
