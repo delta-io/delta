@@ -1,20 +1,32 @@
 #!/usr/bin/env bash
 #
-# TEMPORARY scaffolding — delete once UC 0.5 is released and Delta can
-# pin a released UC version instead (see `unityCatalogReleaseVersion` in
-# build.sbt).
+# General-purpose helper to clone Unity Catalog at some ref and publish
+# its client/server/spark jars to ~/.ivy2/local (and ~/.m2) so sbt can
+# resolve UC dependencies locally. Useful whenever Delta needs a UC
+# build that isn't yet available on Maven Central — most obviously for
+# the pinned-master arrangement below, but also for the floating-main
+# canary in disabled_spark_test_uc_master.yaml and for ad-hoc dev
+# experimentation against UC master.
+#
+# What the pinned-master usage adds on top of the generic flow — and
+# which is temporary scaffolding to rip out when Delta can use a
+# released UC version again (flip `unityCatalogReleaseVersion` in
+# build.sbt) — is:
+#   - the UC_PIN_SHA / UC_BASE_VERSION constants below,
+#   - the `--print-version` short-circuit that build.sbt uses to
+#     discover the coordinate,
+#   - the sanity check that UC's version.sbt matches UC_BASE_VERSION.
+# Rip those out, keep the generic clone/publish flow.
 #
 # What this does:
-#   Publishes the pinned Unity Catalog build (client/server/spark jars)
-#   into ~/.ivy2/local so sbt can resolve UC dependencies locally for
-#   Delta master. The Ivy coordinate is <UC_BASE_VERSION>-<7-char sha>,
-#   e.g. 0.5.0-SNAPSHOT-a7683a2. Idempotent: when the canonical Ivy
-#   artifact already exists for the target coordinate, the slow sbt
-#   publish is skipped.
+#   Publishes UC (client/server/spark jars) into ~/.ivy2/local at
+#   coordinate <UC_BASE_VERSION>-<7-char sha>, e.g. 0.5.0-SNAPSHOT-a7683a2.
+#   Idempotent: when the canonical Ivy artifact already exists for the
+#   target coordinate, the slow sbt publish is skipped.
 #
 #   `--print-version` short-circuits before any filesystem work and just
 #   echoes the coordinate that would be published. That's how build.sbt
-#   discovers the version string.
+#   discovers the version string in pinned-master mode.
 #
 # Why local publish:
 #   Delta master depends on UC APIs that aren't in any released UC yet.
