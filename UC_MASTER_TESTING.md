@@ -2,6 +2,8 @@
 
 Delta master depends on Unity Catalog APIs that are not yet in a released UC version. To make CI and local builds reproducible, the exact UC commit Delta builds against is pinned in [`project/unitycatalog-pin.sha`](project/unitycatalog-pin.sha). This doc explains what that means for local development, and how to bump the pin.
 
+> **Release branches** use a released UC version instead and skip everything below. See the [Release-branch mode](#release-branch-mode) section for the one-line switch and the CI adjustments that go with it.
+
 ## TL;DR for local dev
 
 Just run sbt the way you normally would:
@@ -79,6 +81,16 @@ When you override `UC_REF`, the setup script publishes as `<base>-<that-ref>`, w
    build/sbt sparkUnityCatalog/test kernelUnityCatalog/test
    ```
 6. Open a focused PR (pin + build.sbt default, nothing else). If CI stays green, merge. If it fails, the failure is attributable to changes between the old and new UC SHAs, which makes triage easy.
+
+## Release-branch mode
+
+When cutting a Delta release branch that should build against a *released* UC version rather than the pinned master SHA:
+
+1. In `build.sbt`, set `unityCatalogReleaseVersion` to the released version (e.g. `Some("0.5.0")`). Leave `unityCatalogBaseVersion` alone; it's only used in pinned-master mode.
+2. Remove the `Set up pinned Unity Catalog` step from each CI workflow that has one (`spark_test`, `kernel_unitycatalog_test`, `build`, `kernel_test`, `unidoc`, `spark_examples_test`). In release mode the composite action just wastes CI time publishing jars sbt won't use.
+3. Optional: delete `project/unitycatalog-pin.sha`, `project/scripts/setup_unitycatalog_main.sh`, and `.github/actions/setup-unitycatalog/` on the release branch. They're dead code in release mode, and removing them makes that fact obvious to readers. (If you keep them, `build.sbt` will ignore them — `pinnedUnityCatalogSha` is lazy and is only read when `unityCatalogReleaseVersion` is `None`.)
+
+After step 1 alone, `build/sbt compile` on the release branch resolves `io.unitycatalog:unitycatalog-*:<released-version>` from Maven Central exactly like any other library, and `ensurePinnedUnityCatalog` is a no-op (the task body is skipped when `unityCatalogReleaseVersion` is set).
 
 ## Troubleshooting
 
