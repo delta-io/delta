@@ -42,6 +42,6 @@ runs:
       id: resolve
       shell: bash
       run: |
-        UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+        UC_VERSION=$(bash project/scripts/setup_unitycatalog_main.sh --print-version)
         echo "uc_version=$UC_VERSION" >> "$GITHUB_OUTPUT"
         echo "UC version: $UC_VERSION"
