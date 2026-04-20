@@ -5,14 +5,18 @@
 # build.sbt).
 #
 # What this does:
-#   Clones Unity Catalog at the commit pinned in this script (see the
-#   `UC_PIN_SHA=` line below), publishes the client / server / spark
-#   jars into ~/.ivy2/local (and ~/.m2) at coordinate
-#   <UC version.sbt>-<7-char sha>, e.g. 0.5.0-SNAPSHOT-a7683a2,
-#   so sbt can resolve UC dependencies locally. build.sbt reads the same
-#   `UC_PIN_SHA=` line, so publisher and consumer agree by construction.
+#   Publishes the pinned Unity Catalog build (client/server/spark jars)
+#   into ~/.ivy2/local so sbt can resolve UC dependencies locally for
+#   Delta master. The Ivy coordinate is <UC_BASE_VERSION>-<7-char sha>,
+#   e.g. 0.5.0-SNAPSHOT-a7683a2. Idempotent: when the canonical Ivy
+#   artifact already exists for the target coordinate, the slow sbt
+#   publish is skipped.
 #
-# Why locally:
+#   `--print-version` short-circuits before any filesystem work and just
+#   echoes the coordinate that would be published. That's how build.sbt
+#   discovers the version string.
+#
+# Why local publish:
 #   Delta master depends on UC APIs that aren't in any released UC yet.
 #   Encoding the pinned SHA in the Ivy coordinate means a pin bump
 #   changes the coordinate even when UC's version.sbt didn't move, so
@@ -21,24 +25,18 @@
 # How to invoke:
 #   The first `build/sbt` that touches sparkUnityCatalog or
 #   kernelUnityCatalog calls this script automatically via
-#   `ensurePinnedUnityCatalog` (build.sbt). You only need to run it
-#   directly for debugging or for experimenting with an override ref.
+#   `ensurePinnedUnityCatalog` in build.sbt. You only need to run it by
+#   hand for debugging or for experimenting with an override ref.
 #
 # How to bump the pin:
-#   1. Replace the SHA in the `UC_PIN_SHA=` line below with a newer one
-#      from https://github.com/unitycatalog/unitycatalog/commits/main
-#   2. If UC's version.sbt string changed at the new SHA, also update
-#      `unityCatalogBaseVersion` in build.sbt (same commit).
+#   1. Replace UC_PIN_SHA below with a newer commit from
+#      https://github.com/unitycatalog/unitycatalog/commits/main
+#   2. If UC's version.sbt string differs at the new SHA, also update
+#      UC_BASE_VERSION below (this script sanity-checks the two match
+#      when the slow path runs, so you'll get a loud error if not).
 #   3. Run this script locally; then `build/sbt sparkUnityCatalog/test
 #      kernelUnityCatalog/test`.
 #   4. Open a focused PR.
-#
-# Idempotency:
-#   Always clones UC shallowly to resolve the target coordinate (~1s),
-#   then checks ~/.ivy2/local/io.unitycatalog/unitycatalog-client/
-#   <coordinate>/ivys/ivy.xml — the canonical path sbt uses for
-#   resolution. If it's there, the sbt publish is skipped. UC_FORCE=1
-#   bypasses the check.
 #
 # Environment overrides:
 #   UC_DIR   directory to clone into  (default: /tmp/unitycatalog)
@@ -49,18 +47,15 @@
 # Overriding UC_REF computes a different coordinate, which naturally
 # falls through to a rebuild unless that exact override was already
 # published. CI should never set UC_REF.
-#
-# Output: $UC_DIR/.uc-version contains the coordinate that was
-# published, for callers experimenting with an override (pass as
-# -DunityCatalogVersion=...).
 
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# The pinned Unity Catalog commit. Bump this line to move the pin.
-# build.sbt and the CI cache key both read this exact line; keep the format
-# `UC_PIN_SHA=<40-char sha>` stable.
+# The pin. Bump both lines together if UC's version.sbt changed at the new SHA.
+# build.sbt's `unityCatalogVersion` is obtained by running this script with
+# `--print-version`, so these two values are the single source of truth.
 UC_PIN_SHA=a7683a23063dab9b5faa534a38b3a9080461e62f
+UC_BASE_VERSION=0.5.0-SNAPSHOT
 # -----------------------------------------------------------------------------
 
 UC_DIR="${UC_DIR:-/tmp/unitycatalog}"
@@ -68,14 +63,30 @@ UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
 
-# Short form used in the Ivy coordinate (git's default abbreviation length).
-# For a 40-char hex SHA, take the first 7. For anything else (a branch name
-# or tag passed via UC_REF), use the whole ref as-is. build.sbt applies the
-# same truncation to UC_PIN_SHA, so the two agree by construction.
+# 7-char suffix for the Ivy coordinate (matches git's default abbreviation).
+# For a 40-char hex SHA, take the first 7. Anything else (a branch name or
+# tag passed via UC_REF) passes through as-is.
 if [[ "$UC_REF" =~ ^[0-9a-f]{40}$ ]]; then
   UC_REF_SHORT="${UC_REF:0:7}"
 else
   UC_REF_SHORT="$UC_REF"
+fi
+UC_VERSION="$UC_BASE_VERSION-$UC_REF_SHORT"
+
+# --print-version: discover the coordinate without doing any work.
+# build.sbt uses this at load time to populate `unityCatalogVersion`.
+if [[ "${1:-}" == "--print-version" ]]; then
+  echo "$UC_VERSION"
+  exit 0
+fi
+
+# Canonical Ivy artifact path. If it exists, sbt can already resolve the
+# coordinate — no fetch, no publish, just exit.
+IVY_CANARY="$HOME/.ivy2/local/io.unitycatalog/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
+if [[ "$UC_FORCE" != "1" && -f "$IVY_CANARY" ]]; then
+  echo ">>> UC $UC_VERSION already published to ~/.ivy2/local; skipping."
+  echo ">>> (Set UC_FORCE=1 to rebuild anyway.)"
+  exit 0
 fi
 
 echo ">>> Fetching Unity Catalog from $UC_REPO at ref $UC_REF"
@@ -91,28 +102,16 @@ git -C "$UC_DIR" checkout --quiet FETCH_HEAD
 
 cd "$UC_DIR"
 
-# Compose the Ivy coordinate: <UC base version>-<resolved SHA>. Encoding
-# the SHA guarantees every pin yields a distinct coordinate, so a stale
-# build from a previous pin can never resolve silently.
-UC_BASE_VERSION=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
-if [[ -z "$UC_BASE_VERSION" ]]; then
-  echo "ERROR: Could not extract UC version from version.sbt" >&2
+# Sanity-check UC_BASE_VERSION against what UC actually declares at this
+# commit. If they drift (someone bumped UC_PIN_SHA across a UC
+# version.sbt change without also bumping UC_BASE_VERSION), the Ivy
+# coordinate wouldn't match what sbt publishes — fail loudly instead of
+# silently producing unresolvable coordinates.
+ACTUAL_BASE=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
+if [[ "$ACTUAL_BASE" != "$UC_BASE_VERSION" ]]; then
+  echo "ERROR: UC at $UC_REF has version.sbt '$ACTUAL_BASE', but this script pins UC_BASE_VERSION='$UC_BASE_VERSION'." >&2
+  echo "Bump UC_BASE_VERSION in this script to match." >&2
   exit 1
-fi
-UC_VERSION="$UC_BASE_VERSION-$UC_REF_SHORT"
-echo ">>> UC base version: $UC_BASE_VERSION"
-echo ">>> Target coordinate: $UC_VERSION"
-echo "$UC_VERSION" > "$UC_DIR/.uc-version"
-
-# Canonical Ivy artifact path. If this exists, sbt can already resolve the
-# coordinate — no need to re-publish.
-IVY_CANARY="$HOME/.ivy2/local/io.unitycatalog/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
-
-if [[ "$UC_FORCE" != "1" && -f "$IVY_CANARY" ]]; then
-  echo ">>> Found $IVY_CANARY"
-  echo ">>> UC $UC_VERSION already published to ~/.ivy2/local; skipping sbt build."
-  echo ">>> (Set UC_FORCE=1 to rebuild anyway.)"
-  exit 0
 fi
 
 # Override version.sbt via sbt `set` so every publish* command uses the

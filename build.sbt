@@ -735,46 +735,27 @@ lazy val contribs = (project in file("contribs"))
 //    no-op.
 //
 //  - Pinned-master mode (default on master): leave
-//    `unityCatalogReleaseVersion = None`. The version becomes
-//    `<unityCatalogBaseVersion>-<7-char sha>`, where the SHA is read
-//    from the `UC_PIN_SHA=` line in project/scripts/setup_unitycatalog_main.sh
-//    and jars are published locally by the same script. Encoding the
-//    SHA in the coordinate guarantees that a pin bump yields a distinct
-//    artifact coordinate, so stale jars from a previous pin can never
-//    resolve silently. The script applies the same truncation, so
-//    publisher and consumer agree.
+//    `unityCatalogReleaseVersion = None`. The version string is read by
+//    running project/scripts/setup_unitycatalog_main.sh --print-version,
+//    which encodes both the pinned SHA and the expected UC base version
+//    — the script is the single source of truth. The same script
+//    (without --print-version) publishes the matching jars to
+//    ~/.ivy2/local when `ensurePinnedUnityCatalog` decides they're
+//    missing.
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments;
 // the override bypasses both branches.
 val unityCatalogReleaseVersion: Option[String] = None
-val unityCatalogBaseVersion = "0.5.0-SNAPSHOT"
+val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
 
-// Lazy so release-mode builds don't open the setup script at all.
-lazy val pinnedUnityCatalogSha: String = {
-  val scriptFile = new java.io.File("project/scripts/setup_unitycatalog_main.sh")
-  val src = scala.io.Source.fromFile(scriptFile)
-  try {
-    src.getLines()
-      .map(_.trim)
-      .collectFirst {
-        case line if line.startsWith("UC_PIN_SHA=") =>
-          line.stripPrefix("UC_PIN_SHA=").stripPrefix("\"").stripSuffix("\"").trim
-      }
-      .filter(_.nonEmpty)
-      .getOrElse(sys.error(
-        s"No non-empty UC_PIN_SHA= line found in ${scriptFile.getAbsolutePath}"))
-  } finally src.close()
+// Lazy so release-mode builds never shell out.
+lazy val pinnedUnityCatalogVersion: String = {
+  import scala.sys.process._
+  Process(Seq("bash", unityCatalogSetupScript, "--print-version")).!!.trim
 }
 val unityCatalogVersion: String = sys.props.getOrElse(
   "unityCatalogVersion",
-  unityCatalogReleaseVersion.getOrElse {
-    // Match setup_unitycatalog_main.sh: 7 chars for a 40-char hex SHA,
-    // otherwise use the ref as-is (branch/tag names pass through).
-    val shortRef =
-      if (pinnedUnityCatalogSha.matches("[0-9a-f]{40}")) pinnedUnityCatalogSha.take(7)
-      else pinnedUnityCatalogSha
-    s"$unityCatalogBaseVersion-$shortRef"
-  })
+  unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
 
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
@@ -806,30 +787,29 @@ Global / ensurePinnedUnityCatalog := {
     if (!canary.exists) {
       val autoBuild =
         sys.props.getOrElse("delta.autoBuildPinnedUnityCatalog", "true").toBoolean
-      val script = "project/scripts/setup_unitycatalog_main.sh"
       if (!autoBuild) {
         sys.error(
           s"""|Pinned Unity Catalog jars are not published locally for coordinate
               |$unityCatalogVersion.
               |Auto-build is disabled (-Ddelta.autoBuildPinnedUnityCatalog=false).
-              |Run: bash $script""".stripMargin)
+              |Run: bash $unityCatalogSetupScript""".stripMargin)
       }
       log.info(
         s"[UC] Pinned UC jars not found for coordinate $unityCatalogVersion.")
       log.info(
-        s"[UC] Running $script — takes ~3-5 minutes on a cold cache, <1s on a warm one.")
+        s"[UC] Running $unityCatalogSetupScript — takes ~3-5 minutes on a cold cache, <1s on a warm one.")
       import scala.sys.process._
       val procLogger = ProcessLogger(
         line => log.info(s"[UC setup] $line"),
         line => log.warn(s"[UC setup] $line"))
-      val exit = Process(Seq("bash", script)).!(procLogger)
+      val exit = Process(Seq("bash", unityCatalogSetupScript)).!(procLogger)
       if (exit != 0) {
         sys.error(
-          s"[UC] $script exited with code $exit. Run it manually to see full output.")
+          s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
       }
       if (!canary.exists) {
         sys.error(
-          s"[UC] $script succeeded but ${canary.getAbsolutePath} is still missing — " +
+          s"[UC] $unityCatalogSetupScript succeeded but ${canary.getAbsolutePath} is still missing — " +
             "the publish target layout may have changed.")
       }
     }
