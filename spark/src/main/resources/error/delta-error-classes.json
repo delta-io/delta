@@ -183,6 +183,12 @@
     ],
     "sqlState" : "0AKDE"
   },
+  "DELTA_CANNOT_DROP_GEOSPATIAL_FEATURE" : {
+    "message" : [
+      "Cannot drop the geospatial table feature. Recreate the table or drop columns with geometry/geography types: <colNames> and try again."
+    ],
+    "sqlState" : "0AKDE"
+  },
   "DELTA_CANNOT_EVALUATE_EXPRESSION" : {
     "message" : [
       "Cannot evaluate expression: <expression>"
@@ -1333,6 +1339,18 @@
     ],
     "sqlState" : "42K09"
   },
+  "DELTA_GEOSPATIAL_NOT_SUPPORTED" : {
+    "message" : [
+      "Geospatial types are not supported in this version of Delta Lake."
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_GEOSPATIAL_SRID_NOT_SUPPORTED" : {
+    "message" : [
+      "Geospatial type has an unsupported srid: <srid>. Delta tables only support non-negative srid values."
+    ],
+    "sqlState" : "0AKDC"
+  },
   "DELTA_ICEBERG_COMPAT_VIOLATION" : {
     "message" : [
       "The validation of IcebergCompatV<version> has failed."
@@ -2254,6 +2272,12 @@
   "DELTA_OPERATION_NOT_ALLOWED_DETAIL" : {
     "message" : [
       "Operation not allowed: `<operation>` is not supported for Delta tables: <tableName>"
+    ],
+    "sqlState" : "0AKDC"
+  },
+  "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES" : {
+    "message" : [
+      "<operation> is not supported for data types: <dataTypeList>."
     ],
     "sqlState" : "0AKDC"
   },

@@ -621,6 +621,26 @@ case class ColumnMappingPreDowngradeCommand(table: DeltaTableV2)
   }
 }
 
+case class GeospatialPreDowngradeCommand(table: DeltaTableV2)
+  extends PreDowngradeTableFeatureCommand {
+
+  /**
+   * Throws an exception if the table has geospatial types, and returns false otherwise.
+   * We currently do not remove the geospatial statistics in the current table version so no
+   * action is required.
+   */
+  override def removeFeatureTracesIfNeeded(spark: SparkSession): PreDowngradeStatus = {
+    if (GeoSpatialPreviewTableFeature.validateDropInvariants(table, table.initialSnapshot)) {
+      return PreDowngradeStatus.DID_NOT_PERFORM_CHANGES
+    }
+    val geospatialCols = table.initialSnapshot.schema.fields
+      .filter(field => DeltaGeoSpatial.containsGeoColumns(field.dataType))
+    // We ask the user to explicitly drop the geospatial columns before the table feature
+    // can be dropped.
+    throw DeltaErrors.cannotDropGeospatialFeature(geospatialCols)
+  }
+}
+
 case class CheckConstraintsPreDowngradeTableFeatureCommand(table: DeltaTableV2)
     extends PreDowngradeTableFeatureCommand {
 

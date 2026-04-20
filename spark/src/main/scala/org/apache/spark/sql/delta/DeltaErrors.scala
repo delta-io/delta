@@ -380,6 +380,32 @@ trait DeltaErrorsBase
     )
   }
 
+  def cannotDropGeospatialFeature(cols: Seq[StructField]): Throwable = {
+    new DeltaAnalysisException(
+      errorClass = "DELTA_CANNOT_DROP_GEOSPATIAL_FEATURE",
+      messageParameters = Array(cols.map(_.name).mkString(", ")))
+  }
+
+  def geoSpatialNotSupportedException(): Throwable = {
+    new DeltaUnsupportedOperationException(
+      errorClass = "DELTA_GEOSPATIAL_NOT_SUPPORTED",
+      messageParameters = Array.empty
+    )
+  }
+
+  def operationNotSupportedForDataTypes(
+      operation: String,
+      unsupportedDataType: UnsupportedDataTypeInfo,
+      moreUnsupportedDataTypes: UnsupportedDataTypeInfo*): Throwable = {
+    val prettyMessage = (unsupportedDataType +: moreUnsupportedDataTypes)
+      .map(dt => s"${dt.column}: ${dt.dataType}")
+      .mkString("[", ", ", "]")
+    new DeltaAnalysisException(
+      errorClass = "DELTA_OPERATION_NOT_SUPPORTED_FOR_DATATYPES",
+      messageParameters = Array(operation, prettyMessage)
+    )
+  }
+
   def checkConstraintReferToWrongColumns(colName: String): Throwable = {
     new DeltaAnalysisException(
       errorClass = "DELTA_INVALID_CHECK_CONSTRAINT_REFERENCES",

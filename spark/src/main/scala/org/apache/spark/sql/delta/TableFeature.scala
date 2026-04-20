@@ -387,6 +387,8 @@ object TableFeature {
       IcebergCompatV1TableFeature,
       IcebergCompatV2TableFeature,
       DeletionVectorsTableFeature,
+      GeoSpatialPreviewTableFeature,
+      GeoSpatialTableFeature,
       VacuumProtocolCheckTableFeature,
       V2CheckpointTableFeature,
       RowTrackingFeature,
@@ -806,6 +808,54 @@ object VariantShreddingTableFeature
     // feature is enabled so old tables with only the preview table feature can be read.
     !protocol.isFeatureSupported(VariantShreddingPreviewTableFeature)
   }
+}
+
+/** Common base shared by the preview and geospatial table features. */
+abstract class GeoSpatialTableFeatureBase(name: String)
+  extends ReaderWriterFeature(name)
+  with RemovableFeature {
+
+  override def validateDropInvariants(table: DeltaTableV2, snapshot: Snapshot): Boolean =
+    !DeltaGeoSpatial.containsGeoColumns(snapshot.metadata.schema)
+
+  override def preDowngradeCommand(table: DeltaTableV2): PreDowngradeTableFeatureCommand =
+    GeospatialPreDowngradeCommand(table)
+
+  override def actionUsesFeature(action: Action): Boolean = false
+}
+
+/**
+ * Feature used for the private preview phase of geospatial support. Tables that have this
+ * feature are still supported even after the preview.
+ */
+object GeoSpatialPreviewTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial-dev")
+
+/**
+ * Stable feature for geospatial support.
+ *
+ * Table feature that adds support for GeoSpatial types (Geometry and Geography).
+ * Feature is automatically added whenever schema contains any of these two types.
+ * Additionally, feature is gated behind a delta.geo.preview.enabled config.
+ */
+object GeoSpatialTableFeature
+  extends GeoSpatialTableFeatureBase(name = "geospatial")
+  with FeatureAutomaticallyEnabledByMetadata {
+  override def metadataRequiresFeatureToBeEnabled(
+      protocol: Protocol, metadata: Metadata, spark: SparkSession): Boolean = {
+    val hasGeoColumns = DeltaGeoSpatial.containsGeoColumns(metadata.schema)
+
+    if (hasGeoColumns && !DeltaGeoSpatial.isPreviewEnabled(spark)) {
+      throw DeltaErrors.geoSpatialNotSupportedException()
+    }
+
+    hasGeoColumns &&
+    // Don't automatically enable the stable feature if the preview feature is already supported, to
+    // avoid possibly breaking old clients that only support the preview feature.
+    !protocol.isFeatureSupported(GeoSpatialPreviewTableFeature)
+  }
+
+  override def automaticallyUpdateProtocolOfExistingTables: Boolean = true
 }
 
 object DeletionVectorsTableFeature

@@ -2433,6 +2433,8 @@ trait OptimisticTransactionImpl extends TransactionHelper
 
     var finalActions = newMetadata.toSeq ++ newProtocol.toSeq ++ otherActions
 
+    DeltaGeoSpatial.validateCommitActions(spark, protocol, finalActions)
+
     // Block future cases of CDF + Column Mapping changes + file changes
     // This check requires having called
     // DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments which is done in the

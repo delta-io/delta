@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.schema
 
+import scala.collection.immutable.Queue
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
 import scala.util.control.NonFatal
@@ -82,6 +83,42 @@ object SchemaUtils extends DeltaLogging {
     }
 
     recurseIntoComplexTypes(schema, Nil)
+  }
+
+  /**
+   * Class to represent a nested column path.
+   */
+  private[delta] case class ColumnPath(parts: Queue[String] = Queue.empty) {
+    override def toString: String = parts.mkString(".")
+
+    def prepended(part: String): ColumnPath = ColumnPath(parts.+:(part))
+  }
+
+  /**
+   * Copied verbatim from Apache Spark.
+   *
+   * For the given dataType `dt` find all column paths that satisfy the given predicate `f`.
+   */
+  def findColumnPaths(dt: DataType)(f: DataType => Boolean): Seq[(ColumnPath, DataType)] = {
+    dt match {
+      case _ if f(dt) =>
+        Seq((ColumnPath(), dt))
+
+      case ArrayType(elementType, _) =>
+        findColumnPaths(elementType)(f).map { case (path, dt) => (path.prepended("element"), dt) }
+
+      case MapType(keyType, valueType, _) =>
+        findColumnPaths(keyType)(f).map { case (path, dt) => (path.prepended("key"), dt) } ++
+          findColumnPaths(valueType)(f).map { case (path, dt) => (path.prepended("value"), dt) }
+
+      case StructType(fields) =>
+        fields.flatMap { case StructField(name, dataType, _, _) =>
+          findColumnPaths(dataType)(f).map { case (path, dt) => (path.prepended(name), dt) }
+        }.toSeq
+
+      case _ =>
+        Nil
+    }
   }
 
   /** Copied over from DataType for visibility reasons. */
@@ -1569,6 +1606,8 @@ def normalizeColumnNamesInDataType(
     case DoubleType =>
     case StringType =>
     case DateType =>
+    case _: GeographyType =>
+    case _: GeometryType =>
     case TimestampType =>
     case TimestampNTZType =>
     case dt if dt.isInstanceOf[VariantType] =>
