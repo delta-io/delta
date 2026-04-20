@@ -275,8 +275,7 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test(
-    "parseDeltaFileContents: data-only delta file with commitInfo returns empty protocol and metadata") {
+  test("parseDeltaFileContents: data-only file with commitInfo, no protocol or metadata") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       val lines = Seq(
         """{"commitInfo":{"inCommitTimestamp":1749830871085,"timestamp":1749830871084,""" +
@@ -336,8 +335,7 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test(
-    "parseDeltaFileContents: delta file with only metadata returns empty protocol and commitInfo") {
+  test("parseDeltaFileContents: file with only metadata, no protocol or commitInfo") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       // scalastyle:off line.size.limit
       val lines = Seq(
@@ -355,8 +353,7 @@ class UnityCatalogUtilsSuite
     }
   }
 
-  test(
-    "parseDeltaFileContents: delta file with only protocol returns empty metadata and commitInfo") {
+  test("parseDeltaFileContents: file with only protocol, no metadata or commitInfo") {
     withTempDirAndEngine { case (tmpDir, engine) =>
       val lines = Seq(
         """{"protocol":{"minReaderVersion":1,"minWriterVersion":2}}""")
