@@ -5,13 +5,12 @@
 ## To make this blocking, add the job name to the required status checks in
 ## the branch protection rules for `master`.
 ##
-## DISABLED while Delta master builds against a pinned UC master SHA — the
-## main Delta Spark workflow already exercises UC master at that pin, so a
-## parallel floating-main workflow would be redundant. To re-enable (once
-## Delta goes back to a released UC version): drop the `[DISABLED]` suffix
-## from `name`, replace `workflow_dispatch:` with the original push /
-## pull_request triggers below, remove `if: false` from the job, and
-## rename the file back to `spark_test_uc_master.yaml`.
+## DISABLED while Delta master builds against a pinned UC master SHA — the main Delta Spark
+## workflow already exercises UC master at that pin, so a parallel floating-main workflow would
+## be redundant. To re-enable (once Delta goes back to a released UC version): drop the
+## `[DISABLED]` suffix from `name`, replace `workflow_dispatch:` with the original push /
+## pull_request triggers below, remove `if: false` from the job, and rename the file back to
+## `spark_test_uc_master.yaml`.
 
 name: "Delta Spark (UC Master) [DISABLED]"
 on:

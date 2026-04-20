@@ -723,28 +723,21 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-// Unity Catalog version resolution.
+// Unity Catalog version resolution. Two modes, flipped by `unityCatalogReleaseVersion`:
 //
-// Two modes, flipped by `unityCatalogReleaseVersion`:
+//  - Release mode (e.g. on delta release branches): set `unityCatalogReleaseVersion =
+//    Some("0.5.0")` (or whatever released version this branch ships against). sbt resolves that
+//    coordinate from Maven Central like any other dependency; the pinned-master scaffolding below
+//    is unused and `ensurePinnedUnityCatalog` is a no-op.
 //
-//  - Release mode (e.g. on delta release branches): set
-//    `unityCatalogReleaseVersion = Some("0.5.0")` (or whatever released
-//    version this branch ships against). sbt resolves that coordinate
-//    from Maven Central like any other dependency; the pinned-master
-//    scaffolding below is unused, and `ensurePinnedUnityCatalog` is a
-//    no-op.
+//  - Pinned-master mode (default on master): leave `unityCatalogReleaseVersion = None`. The
+//    version string is read by running `project/scripts/setup_unitycatalog_main.sh
+//    --print-version`, which encodes both the pinned SHA and the expected UC base version — the
+//    script is the single source of truth. The same script (without --print-version) publishes
+//    the matching jars to ~/.ivy2/local when `ensurePinnedUnityCatalog` decides they're missing.
 //
-//  - Pinned-master mode (default on master): leave
-//    `unityCatalogReleaseVersion = None`. The version string is read by
-//    running project/scripts/setup_unitycatalog_main.sh --print-version,
-//    which encodes both the pinned SHA and the expected UC base version
-//    — the script is the single source of truth. The same script
-//    (without --print-version) publishes the matching jars to
-//    ~/.ivy2/local when `ensurePinnedUnityCatalog` decides they're
-//    missing.
-//
-// Override with -DunityCatalogVersion=<anything> for ad-hoc experiments;
-// the override bypasses both branches.
+// Override with -DunityCatalogVersion=<anything> for ad-hoc experiments; the override bypasses
+// both branches.
 val unityCatalogReleaseVersion: Option[String] = None
 val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
 
@@ -759,22 +752,20 @@ val unityCatalogVersion: String = sys.props.getOrElse(
 
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
-// Auto-publish the pinned UC build to ~/.ivy2/local the first time sbt tries
-// to resolve UC. Hooked into the UC-dependent projects' `update` below, so
-// plain `sbt testOnly …` on a clean checkout just works — the user never
-// has to remember to run setup_unitycatalog_main.sh by hand.
+// Auto-publish the pinned UC build to ~/.ivy2/local the first time sbt tries to resolve UC.
+// Hooked into the UC-dependent projects' `update` below, so plain `sbt testOnly …` on a clean
+// checkout just works — the user never has to remember to run setup_unitycatalog_main.sh by hand.
 //
-// The check is the canonical Ivy artifact path (`ivys/ivy.xml` for the
-// expected coordinate). If the file is there, the publish already
-// happened; if it's missing, we shell out to the setup script. No
-// secondary marker file is involved — sbt resolution and this check agree
-// by construction.
+// The check is the canonical Ivy artifact path (`ivys/ivy.xml` for the expected coordinate). If
+// the file is there, the publish already happened; if it's missing, we shell out to the setup
+// script. No secondary marker file is involved — sbt resolution and this check agree by
+// construction.
 //
-// In release mode (`unityCatalogReleaseVersion = Some(…)`) this task is
-// a no-op: the coordinate is resolvable from Maven Central.
+// In release mode (`unityCatalogReleaseVersion = Some(…)`) this task is a no-op: the coordinate
+// is resolvable from Maven Central.
 //
-// Opt out of the auto-trigger with `-Ddelta.autoBuildPinnedUnityCatalog=false`
-// (sbt will then fail with a clear message pointing at the script instead).
+// Opt out of the auto-trigger with `-Ddelta.autoBuildPinnedUnityCatalog=false` (sbt will then
+// fail with a clear message pointing at the script instead).
 val ensurePinnedUnityCatalog = taskKey[Unit](
   "Publish the pinned UC master jars locally if the Ivy coordinate isn't already cached.")
 
