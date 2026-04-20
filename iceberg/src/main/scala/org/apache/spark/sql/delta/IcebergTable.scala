@@ -20,7 +20,7 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus, Snapshot}
+import org.apache.spark.sql.delta.{DeltaAnalysisException, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, IdMapping, SerializableFileStatus, Snapshot}
 import org.apache.spark.sql.delta.DeltaErrors.{cloneFromIcebergSourceWithoutSpecs, cloneFromIcebergSourceWithPartitionEvolution}
 import org.apache.spark.sql.delta.schema.SchemaMergingUtils
 import org.apache.spark.sql.delta.schema.SchemaUtils
@@ -31,7 +31,7 @@ import shadedForDelta.org.apache.iceberg.io.FileIO
 import shadedForDelta.org.apache.iceberg.transforms.{Bucket, IcebergPartitionUtil}
 import shadedForDelta.org.apache.iceberg.util.PropertyUtil
 
-import org.apache.spark.sql.{AnalysisException, SparkSession}
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.execution.datasources.PartitioningUtils
 import org.apache.spark.sql.types.StructType
 
@@ -241,9 +241,10 @@ class IcebergTable(
      * AnalysisException
      */
      try {
-       SchemaMergingUtils.checkColumnNameDuplication(tableSchema, "during convert to Delta")
+       SchemaMergingUtils.checkColumnNameDuplication(tableSchema, "TABLE_SCHEMA")
      } catch {
-       case e: AnalysisException if e.getMessage.contains("during convert to Delta") =>
+       case e: DeltaAnalysisException
+           if e.getErrorClass == "DELTA_DUPLICATE_COLUMNS_FOUND.TABLE_SCHEMA" =>
          throw new UnsupportedOperationException(
            IcebergTable.caseSensitiveConversionExceptionMsg(e.getMessage))
      }
