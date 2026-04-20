@@ -36,8 +36,8 @@ jobs:
             ~/.ivy2
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
-      # sbt resolves every aggregated project's deps on `publishM2`, which
-      # pulls in the UC modules. Publish the pinned UC build locally first.
+      # sbt resolves every aggregated project's deps on `publishM2`, which pulls in the UC
+      # modules. Publish the pinned UC build locally first.
       - name: Set up pinned Unity Catalog
         uses: ./.github/actions/setup-unitycatalog
 
