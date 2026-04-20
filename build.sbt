@@ -1178,6 +1178,11 @@ lazy val storage = (project in file("storage"))
       "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
     ),
 
+    // Publish the pinned UC jars before sbt tries to resolve them. storage is the transitive
+    // UC-client entry point for most of the build graph (sparkV1, sparkV2, kernelDefaults, etc.
+    // all .dependsOn(storage)), so hooking here covers nearly every compile path.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
+
     // Unidoc settings
     unidocSourceFilePatterns += SourceFilePattern("/LogStore.java", "/CloseableIterator.java"),
     TestParallelization.settings
@@ -1541,6 +1546,10 @@ lazy val flink = (project in file("flink"))
       "--add-opens=java.base/java.util=ALL-UNNAMED" // for Flink with Java 17.
     ),
     crossPaths := false,
+
+    // Publish the pinned UC jars before sbt tries to resolve them.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
+
     libraryDependencies ++= Seq(
       "org.apache.flink" % "flink-core" % flinkVersion % "provided",
       "org.apache.flink" % "flink-table-common" % flinkVersion % "provided",
