@@ -57,7 +57,6 @@ try:
     print("######### Delete every even value ##############")
     spark.sql("DELETE FROM delta.`{0}` WHERE (id % 2 == 0)".format(table_dir))
     spark.sql("SELECT * FROM delta.`%s`" % table_dir).show()
-
 finally:
     # cleanup
     spark.sql("DROP TABLE IF EXISTS newData")
