@@ -221,6 +221,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       )
 
     val writer = sourceQuery.map { df =>
+      val catalogTbl = Some(tableDesc)
       // For safety, only extract the file system options here, to create deltaLog.
       val fileSystemOptions = writeOptions.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
@@ -236,7 +237,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
           throw DeltaErrors.operationNotSupportedException("replaceUsing")
         }
       }
-      WriteIntoDelta(
+      val writeCmd = WriteIntoDelta(
         DeltaUtils.getDeltaLogFromTableOrPath(spark, existingTableOpt,
           new Path(loc), fileSystemOptions),
         operation.mode,
@@ -244,8 +245,22 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         withDb.partitionColumnNames,
         withDb.properties ++ commentOpt.map("comment" -> _),
         df,
-        Some(tableDesc),
+        catalogTbl,
         schemaInCatalog = if (newSchema != schema) Some(newSchema) else None)
+      if (deltaOptions.isReplaceOnOrUsingDefined &&
+          CreateDeltaTableLikeShims.isV1WriterSaveAsTableOverwrite(
+            deltaOptions, operation.mode)) {
+        DeltaInsertReplaceOnOrUsingCommand.createCmdForSaveAndSaveAsTable(
+          deltaTable = DeltaTableV2(
+            spark = spark,
+            path = writeCmd.deltaLog.dataPath,
+            catalogTable = catalogTbl),
+          data = df,
+          writeCmd = writeCmd,
+          apiOrigin = InsertReplaceOnOrUsingAPIOrigin.DFv1SaveAsTable)
+      } else {
+        writeCmd
+      }
     }
 
     CreateDeltaTableCommand(
@@ -789,8 +804,8 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     }
   }
 
-  override def alterTable(ident: Identifier, changes: TableChange*): Table = recordFrameProfile(
-      "DeltaCatalog", "alterTable") {
+  override def alterTable(ident: Identifier, changes: TableChange*): Table =
+    recordFrameProfile("DeltaCatalog", "alterTable") {
     // We group the table changes by their type, since Delta applies each in a separate action.
     // We also must define an artificial type for SetLocation, since data source V2 considers
     // location just another property but it's special in catalog tables.

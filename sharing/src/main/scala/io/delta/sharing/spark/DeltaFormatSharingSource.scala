@@ -200,12 +200,11 @@ case class DeltaFormatSharingSource(
   }
 
   // Whether this query is running in Trigger.AvailableNow mode.
-  // TODO: If SupportsConcurrentExecution is added, these need @volatile or synchronization.
-  private var isTriggerAvailableNow: Boolean = false
+  @volatile private var isTriggerAvailableNow: Boolean = false
 
   // The server version captured at query start for Trigger.AvailableNow. All processing is capped
   // at this version. Not persisted -- re-captured fresh on every query start.
-  private var frozenServerVersionForAvailableNow: Long = -1
+  @volatile private var frozenServerVersionForAvailableNow: Long = -1
 
   // A variable to store the latest table version on server, returned from the getTableVersion rpc.
   // Used to store the latest table version for getOrUpdateLatestTableVersion when not getting
@@ -214,6 +213,13 @@ case class DeltaFormatSharingSource(
   private var latestTableVersionOnServer: Long = -1
 
   override def prepareForTriggerAvailableNow(): Unit = {
+    if (frozenServerVersionForAvailableNow != -1) {
+      logWarning(
+        s"prepareForTriggerAvailableNow called but frozenServerVersionForAvailableNow is " +
+          s"already set to $frozenServerVersionForAvailableNow." +
+          getTableInfoForLogging
+      )
+    }
     // Capture the frozen version here rather than lazily in getOrUpdateLatestTableVersion to keep
     // that method simple (single early-return guard). Lazy capture would require two conditionals
     // inside getOrUpdateLatestTableVersion (check if already frozen + freeze after RPC).
@@ -240,6 +246,9 @@ case class DeltaFormatSharingSource(
    */
   private def getOrUpdateLatestTableVersion: Long = {
     if (isTriggerAvailableNow) {
+      require(frozenServerVersionForAvailableNow >= 0,
+        s"frozenServerVersionForAvailableNow must be >= 0 when isTriggerAvailableNow is true, " +
+          s"but got $frozenServerVersionForAvailableNow." + getTableInfoForLogging)
       return frozenServerVersionForAvailableNow
     }
     val currentTimeMillis = System.currentTimeMillis()

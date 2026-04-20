@@ -186,7 +186,7 @@ class IcebergConverter
    * @param catalogTable the catalogTable this conversion targets
    * @return (Iceberg metadata path, last converted Delta version)
    */
-  def convertUncommitedTxn(
+  override def convertUncommitedTxn(
       txnInfo: CurrentTransactionInfo,
       deltaAttemptVersion: Long,
       deltaLog: DeltaLog,

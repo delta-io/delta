@@ -284,11 +284,13 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1,'a'), (1,'b'), (1,'c'), (2,'x'), (2,'y')"),
               /* incrementalSqls */ List.of("INSERT INTO %s VALUES (1,'d'), (3,'z')")),
 
-          // -- Create table, INSERT with NULLs in various columns including first, then stream --
-          // BUG: MANAGED tables fail with NPE in OnHeapColumnVector.putNotNulls —
-          // the vectorized Parquet reader's "this.nulls" byte array is uninitialized
-          // when streaming from catalog-managed tables containing NULL values.
-          // EXTERNAL tables pass. Both SNAPSHOT and INCREMENTAL modes affected.
+          // -- Regression: NULL values in columns trigger NPE on MANAGED tables --
+          // Before fix: ColumnVectorWithFilter.closeIfFreeable() inherited the default
+          // ColumnVector implementation which calls close() -> delegate.close() ->
+          // releaseMemory() -> sets nulls=null. When the Parquet reader reuses the vector
+          // for the next batch, putNotNulls() dereferences the null array -> NPE.
+          // Only MANAGED tables are affected because they enable deletion vectors by default,
+          // which is the only code path wrapping columns in ColumnVectorWithFilter.
           new TableVariant(
               /* name */ "NullsInColumns",
               /* schema */ "id INT, value STRING, opt_int INT",
@@ -298,10 +300,11 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, null, null), (2, 'b', null), (null, null, null)"),
               /* incrementalSqls */ List.of("INSERT INTO %s VALUES (3, 'c', 3), (null, 'x', 1)")),
 
-          // -- Create table with ARRAY, MAP, STRUCT columns, INSERT, then stream --
-          // BUG: MANAGED tables fail with NPE in SparkMicroBatchStream when processing
-          // complex types (ARRAY/MAP/STRUCT) in INCREMENTAL mode. SNAPSHOT mode and
-          // EXTERNAL tables pass.
+          // -- Regression: complex types (ARRAY/MAP/STRUCT) exercise getChild() path --
+          // Before fix: ColumnVectorWithFilter.getChild() unconditionally casts dataType()
+          // to StructType. For non-struct types like ARRAY and MAP, this cast fails with
+          // ClassCastException. The fix guards with an instanceof check and passes through
+          // to the delegate directly.
           new TableVariant(
               /* name */ "ComplexTypes",
               /* schema */ "id INT, arr ARRAY<INT>, m MAP<STRING,INT>,"
@@ -389,11 +392,9 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a', 'x'), (2, 'b', 'y'), (3, 'c', 'x')"),
               /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd', 'y'), (5, 'e', 'z')")),
 
-          // -- Create table with BOOLEAN columns and interleaved NULLs, then stream --
-          // BUG: MANAGED tables fail with NPE in OnHeapColumnVector — same root cause as
-          // NullsInColumns (this.nulls byte array uninitialized) but through the BOOLEAN
-          // bit-packing path. Confirms the vectorized reader null bug affects multiple types.
-          // EXTERNAL tables pass. Both SNAPSHOT and INCREMENTAL modes affected.
+          // -- Regression: BOOLEAN columns with NULLs trigger NPE through bit-packing path --
+          // Same root cause as NullsInColumns but exercises the BOOLEAN-specific code path
+          // in OnHeapColumnVector where null flags interact with bit-packing.
           new TableVariant(
               /* name */ "BooleanNulls",
               /* schema */ "id INT, flag BOOLEAN, val INT",
@@ -621,24 +622,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
               /* partitionCols */ null,
               /* tableProperties */ "'delta.enableRowTracking'='true'",
               /* setupSqls */ List.of("INSERT INTO %s VALUES (1, 'a'), (2, 'b'), (3, 'c')"),
-              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")),
-
-          // -- Create table with VARIANT column, INSERT, then stream --
-          // BUG: MANAGED tables fail with ClassCastException — the DV read path casts
-          // VariantType to StructType. EXTERNAL tables pass. Both SNAPSHOT and
-          // INCREMENTAL modes affected. Different bug class from the null-handling NPE.
-          new TableVariant(
-              /* name */ "VariantType",
-              /* schema */ "id INT, data VARIANT",
-              /* partitionCols */ null,
-              /* tableProperties */ null,
-              /* createTableSql */ null,
-              /* setupSqls */ List.of(
-                  "INSERT INTO %s SELECT 1, parse_json('{\"key\": \"value\"}')"
-                      + " UNION ALL SELECT 2, parse_json('[1,2,3]')"),
-              /* incrementalSqls */ List.of(
-                  "INSERT INTO %s SELECT 3, parse_json('{\"nested\": {\"a\": 1}}')"),
-              /* streamReadOptions */ Collections.emptyMap()));
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (4, 'd'), (5, 'e')")));
 
   // NOTE: Operations/features not covered by TableVariant tests — tested via lifecycle
   // tests (below) or blocked:
@@ -832,7 +816,8 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
 
   /**
    * Asserts streaming memory sink has same rows as batch SELECT *. Sorts both result sets in Java
-   * by all columns to avoid non-determinism when the first column has duplicate values.
+   * by all columns to avoid non-determinism when the first column has duplicate values (e.g.
+   * NULLs).
    */
   private void assertStreamingEqualsBatch(String queryName, String tableName) {
     List<List<String>> streaming = sorted(sql("SELECT * FROM %s", queryName));

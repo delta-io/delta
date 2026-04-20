@@ -107,8 +107,9 @@ trait StateCache extends DeltaLogging {
   /**
    * Create a CachedDS instance for the given Dataset and the name.
    */
-  def cacheDS[A](ds: Dataset[A], name: String): CachedDS[A] = recordFrameProfile(
-    "Delta", "CachedDS.cacheDS") {
+  def cacheDS[A](ds: Dataset[A], name: String): CachedDS[A] =
+    recordFrameProfile(
+      "Delta", "CachedDS.cacheDS") {
     new CachedDS[A](ds, name)
   }
 
