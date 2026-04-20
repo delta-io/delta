@@ -22,8 +22,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.expressions.{AttributeMap, AttributeReference}
 import org.apache.spark.sql.catalyst.plans.logical._
-import org.apache.spark.sql.execution.datasources.v2.{DataSourceV2Relation, ExtractV2Table}
-import org.apache.spark.sql.execution.datasources.v2.DataSourceV2RelationShim
+import org.apache.spark.sql.execution.datasources.v2.DataSourceV2Relation
 
 /**
  * An analyzer resolution rule that handles implicit casting for all V2WriteCommands targeting
@@ -100,8 +99,8 @@ object DeltaV2WriteCommand {
       case _ => return None
     }
     w.table match {
-      case r @ ExtractV2Table(table: DeltaTableV2) =>
-        Some((r, table, writeOptionsOf(w)))
+      case r: DataSourceV2Relation if r.table.isInstanceOf[DeltaTableV2] =>
+        Some((r, r.table.asInstanceOf[DeltaTableV2], writeOptionsOf(w)))
       case _ => None
     }
   }
