@@ -748,6 +748,59 @@ val unityCatalogVersion = sys.props.getOrElse(
 )
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
+// Auto-publish the pinned UC build to ~/.ivy2/local the first time sbt tries
+// to resolve UC. Hooked into the UC-dependent projects' `update` below, so
+// plain `sbt testOnly …` on a clean checkout just works — the user never
+// has to remember to run setup_unitycatalog_main.sh by hand.
+//
+// The check is the canonical Ivy artifact path (`ivys/ivy.xml` for the
+// expected coordinate). If the file is there, the publish already
+// happened; if it's missing, we shell out to the setup script. No
+// secondary marker file is involved — sbt resolution and this check agree
+// by construction.
+//
+// Opt out with `-Ddelta.autoBuildPinnedUnityCatalog=false` (sbt will then
+// fail with a clear message pointing at the script instead).
+lazy val ensurePinnedUnityCatalog = taskKey[Unit](
+  "Publish the pinned UC master jars locally if the Ivy coordinate isn't already cached.")
+
+Global / ensurePinnedUnityCatalog := {
+  val log = streams.value.log
+  val canary =
+    file(sys.props("user.home")) / ".ivy2" / "local" / "io.unitycatalog" /
+      "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
+  if (!canary.exists) {
+    val autoBuild =
+      sys.props.getOrElse("delta.autoBuildPinnedUnityCatalog", "true").toBoolean
+    val script = "project/scripts/setup_unitycatalog_main.sh"
+    if (!autoBuild) {
+      sys.error(
+        s"""|Pinned Unity Catalog jars are not published locally for coordinate
+            |$unityCatalogVersion.
+            |Auto-build is disabled (-Ddelta.autoBuildPinnedUnityCatalog=false).
+            |Run: bash $script""".stripMargin)
+    }
+    log.info(
+      s"[UC] Pinned UC jars not found for coordinate $unityCatalogVersion.")
+    log.info(
+      s"[UC] Running $script — takes ~3-5 minutes on a cold cache, <1s on a warm one.")
+    import scala.sys.process._
+    val procLogger = ProcessLogger(
+      line => log.info(s"[UC setup] $line"),
+      line => log.warn(s"[UC setup] $line"))
+    val exit = Process(Seq("bash", script)).!(procLogger)
+    if (exit != 0) {
+      sys.error(
+        s"[UC] $script exited with code $exit. Run it manually to see full output.")
+    }
+    if (!canary.exists) {
+      sys.error(
+        s"[UC] $script succeeded but ${canary.getAbsolutePath} is still missing — " +
+          "the publish target layout may have changed.")
+    }
+  }
+}
+
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
   .disablePlugins(ScalafmtPlugin)
@@ -757,6 +810,9 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     skipReleaseSettings,
     javafmtCheckSettings(),
     CrossSparkVersions.sparkDependentSettings(sparkVersion),
+
+    // Publish the pinned UC jars before sbt tries to resolve them.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
     // This is a test-only module - no production sources
     Compile / sources := Seq.empty,
@@ -1056,6 +1112,9 @@ lazy val kernelUnityCatalog = (project in file("kernel/unitycatalog"))
     javaCheckstyleSettings("dev/kernel-checkstyle.xml"),
     scalaStyleSettings,
     scalafmtCheckSettings,
+
+    // Publish the pinned UC jars before sbt tries to resolve them.
+    update := update.dependsOn(ensurePinnedUnityCatalog).value,
 
     // Put the shaded kernel-api JAR on the classpath (compile & test)
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,

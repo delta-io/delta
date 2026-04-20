@@ -4,28 +4,41 @@ Delta master depends on Unity Catalog APIs that are not yet in a released UC ver
 
 ## TL;DR for local dev
 
-Run this **once** per clean checkout (and once more each time the pin is bumped):
+Just run sbt the way you normally would:
+
+```bash
+build/sbt sparkUnityCatalog/testOnly io.delta.unity.SomeSuite
+build/sbt kernelUnityCatalog/test
+build/sbt compile
+```
+
+That's it. `build.sbt` hooks an `ensurePinnedUnityCatalog` task into the `update` task of the two UC-dependent projects (`sparkUnityCatalog`, `kernelUnityCatalog`). On a clean checkout, the first sbt invocation that touches either project notices the pinned UC jars aren't in `~/.ivy2/local`, runs `project/scripts/setup_unitycatalog_main.sh` inline (you'll see `[UC setup] …` lines streaming in the sbt log), and proceeds. Takes a few minutes the first time, <1s every other time.
+
+You can also run the script directly if you want — the auto-trigger and manual invocation are the same code path:
 
 ```bash
 bash project/scripts/setup_unitycatalog_main.sh
 ```
 
-After that, regular sbt works as you'd expect:
-
-```bash
-build/sbt compile
-build/sbt sparkUnityCatalog/test
-build/sbt kernelUnityCatalog/test
-# …etc.
-```
-
-The setup script is idempotent: on re-invocation it checks a marker under `~/.ivy2/local` and exits in under a second if the pinned SHA's jars are already published. The slow rebuild only fires when the pin moves (or when you pass `UC_FORCE=1`).
-
 No `-DunityCatalogVersion=…` flag is needed: `build.sbt` reads the pinned SHA and composes the version string itself.
 
-### Why the Ivy version encodes the SHA
+To opt out of the auto-trigger (and instead get a clear error pointing at the script):
 
-UC is published locally as `<base>-<pinnedSha>` — e.g. `0.5.0-SNAPSHOT-a7683a23063dab9b5faa534a38b3a9080461e62f` — rather than the bare `0.5.0-SNAPSHOT` that UC's `version.sbt` declares. Encoding the SHA in the version string is what keeps stale jars from silently resolving: when the pin bumps, the Ivy coordinate changes, so sbt is forced to find the new jars (and the setup script must have run to publish them).
+```bash
+build/sbt -Ddelta.autoBuildPinnedUnityCatalog=false sparkUnityCatalog/test
+```
+
+### How the idempotency check works
+
+The setup script always does a shallow SHA-scoped clone of UC to read `version.sbt` (takes ~1s), then composes the Ivy coordinate `<base>-<pinnedSha>` — e.g. `0.5.0-SNAPSHOT-a7683a23063dab9b5faa534a38b3a9080461e62f`. It then checks whether the canonical Ivy artifact path
+
+```
+~/.ivy2/local/io.unitycatalog/unitycatalog-client/<coordinate>/ivys/ivy.xml
+```
+
+already exists. That's the exact path sbt itself uses for resolution, so "the file is there" and "sbt can already resolve this dep" are the same statement — no separate marker file, no secondary state to get out of sync. If it's there, the expensive sbt publish steps are skipped. If it's missing (fresh clone, or the pin moved, or someone nuked `~/.ivy2`), we rebuild.
+
+Encoding the SHA in the coordinate is also what eliminates the stale-jar gap on pin bumps: the coordinate changes even when UC's `version.sbt` didn't move, so a stale publish from a prior pin can never resolve silently.
 
 ## Why UC master instead of a release?
 
@@ -35,13 +48,13 @@ Pinning (vs. tracking a floating UC `main`) is what keeps this tolerable: every 
 
 ## What if I'm not touching UC integration at all?
 
-You still need to run the setup script once, because `sparkUnityCatalog` is part of `sparkGroup` (the test group the `Delta Spark` workflow exercises), so plain `build/sbt compile` transitively pulls in the UC dependency.
+You still get the UC build once — `sparkUnityCatalog` is part of `sparkGroup`, and any sbt command that triggers cross-project resolution (`publishM2`, `++ <scala>`, aggregate tasks) goes through the UC projects' `update` task, which runs the auto-trigger. On a fresh checkout that means the first sbt invocation takes a few extra minutes; subsequent invocations are unaffected.
 
-If the one-time build is genuinely painful for your workflow, tell us — we can look into publishing UC master snapshots to a shared Maven repo so local builds can resolve them without building from source.
+If the one-time build is genuinely painful, disable the auto-trigger with `-Ddelta.autoBuildPinnedUnityCatalog=false` for individual invocations that you know don't need UC.
 
 ## Running against a non-pinned ref (experiments)
 
-You can override the ref via environment variables; the marker optimization turns off for non-default refs, so every invocation rebuilds:
+Override the ref via environment variables. The setup script computes a different coordinate for the override, so the Ivy-cache check naturally falls through to a rebuild (unless that same override was already published):
 
 ```bash
 UC_REF=main bash project/scripts/setup_unitycatalog_main.sh           # floating UC main
@@ -70,16 +83,16 @@ When you override `UC_REF`, the setup script publishes as `<base>-<that-ref>`, w
 ## Troubleshooting
 
 **`sbt` complains it can't resolve `io.unitycatalog:unitycatalog-spark_…:0.5.0-SNAPSHOT-<sha>`.**
-Run `bash project/scripts/setup_unitycatalog_main.sh`. The marker under `~/.ivy2/local/.unitycatalog-pin` was missing or didn't match the pinned SHA, so the publish step hadn't happened (or was for a stale pin).
+The auto-trigger is either disabled (`-Ddelta.autoBuildPinnedUnityCatalog=false`) or you're sbt-resolving from a scope that doesn't go through `sparkUnityCatalog` / `kernelUnityCatalog`'s `update`. Run `bash project/scripts/setup_unitycatalog_main.sh` directly.
 
 **The `<sha>` in the error message is an old one.**
-Your working tree's `project/unitycatalog-pin.sha` doesn't match what `build.sbt` is reading. Either you have a stale file (pull latest) or sbt is reading from the wrong directory (run sbt from the repo root).
+Your working tree's `project/unitycatalog-pin.sha` doesn't match what `build.sbt` is reading. Either you have a stale file (pull latest) or sbt is running from the wrong directory (run from the repo root).
 
 **The `<base>` part of the error doesn't match UC's `version.sbt`.**
 Someone bumped the pin to a UC commit with a newer `version.sbt` but forgot to update `unityCatalogBaseVersion` in `build.sbt`. Fix in one line.
 
-**I changed the pin and the setup script still emits the old version.**
-Stale marker. Pass `UC_FORCE=1` or delete `~/.ivy2/local/.unitycatalog-pin`, then re-run the setup script.
+**The setup script doesn't rebuild when I expect it to.**
+Pass `UC_FORCE=1` to force a rebuild regardless of the Ivy cache. If something's wrong with the published jars, you can also delete the offending coordinate's directory under `~/.ivy2/local/io.unitycatalog/unitycatalog-{client,server,spark}/` and the next sbt invocation will republish.
 
 **CI passes but local fails (or vice versa).**
-Check your `~/.ivy2/local/.unitycatalog-pin` SHA matches `project/unitycatalog-pin.sha`. If different, rerun the setup script.
+Check that `~/.ivy2/local/io.unitycatalog/unitycatalog-client/` has a directory named for the composed coordinate your `project/unitycatalog-pin.sha` implies. If not, run the setup script.
