@@ -102,9 +102,28 @@ object IcebergTransactionUtils
       logicalToPhysicalPartitionNames: Map[String, String],
       statsParser: String => InternalRow,
       snapshot: Snapshot): DataFile = {
+    convertDeltaAddFileToIcebergDataFile(
+      add, tablePath, partitionSpec, logicalToPhysicalPartitionNames,
+      statsParser, snapshot.schema, snapshot.version, snapshot.statsSchema)
+  }
+
+  /**
+   * Snapshot-free overload for use on Spark executors where Snapshot is not serializable.
+   * Takes primitive/serializable parameters instead of a Snapshot.
+   */
+  private[delta] def convertDeltaAddFileToIcebergDataFile(
+      add: AddFile,
+      tablePath: Path,
+      partitionSpec: PartitionSpec,
+      logicalToPhysicalPartitionNames: Map[String, String],
+      statsParser: String => InternalRow,
+      tableSchema: StructType,
+      tableVersion: Long,
+      statsSchema: StructType): DataFile = {
     var dataFileBuilder =
       convertFileAction(
-        add, tablePath, partitionSpec, logicalToPhysicalPartitionNames, snapshot)
+        add, tablePath, partitionSpec, logicalToPhysicalPartitionNames,
+        tableSchema, tableVersion)
         // Attempt to attach the number of records metric regardless of whether the Delta stats
         // string is null/empty or not because this metric is required by Iceberg. If the number
         // of records is both unavailable here and unavailable in the Delta stats, Iceberg will
@@ -114,7 +133,7 @@ object IcebergTransactionUtils
     try {
       if (add.stats != null && add.stats.nonEmpty) {
         dataFileBuilder = dataFileBuilder.withMetrics(
-          getMetricsForIcebergDataFile(statsParser, add.stats, snapshot.statsSchema))
+          getMetricsForIcebergDataFile(statsParser, add.stats, statsSchema))
       }
     } catch {
       case NonFatal(e) =>
@@ -143,6 +162,21 @@ object IcebergTransactionUtils
       partitionSpec: PartitionSpec,
       logicalToPhysicalPartitionNames: Map[String, String],
       snapshot: Snapshot): DataFiles.Builder = {
+    convertFileAction(
+      f, tablePath, partitionSpec, logicalToPhysicalPartitionNames,
+      snapshot.schema, snapshot.version)
+  }
+
+  /**
+   * Snapshot-free overload for use on Spark executors.
+   */
+  private[delta] def convertFileAction(
+      f: FileAction,
+      tablePath: Path,
+      partitionSpec: PartitionSpec,
+      logicalToPhysicalPartitionNames: Map[String, String],
+      tableSchema: StructType,
+      tableVersion: Long): DataFiles.Builder = {
     val absPath = canonicalizeFilePath(f, tablePath)
     var builder = DataFiles
       .builder(partitionSpec)
@@ -152,7 +186,8 @@ object IcebergTransactionUtils
     if (partitionSpec.isPartitioned) {
       builder = builder.withPartition(
         DeltaToIcebergConvert.Partition.convertPartitionValues(
-          snapshot, partitionSpec, f.partitionValues, logicalToPhysicalPartitionNames))
+          tableSchema, tableVersion, partitionSpec, f.partitionValues,
+          logicalToPhysicalPartitionNames))
     }
     builder
   }

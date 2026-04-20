@@ -361,12 +361,25 @@ object DeltaToIcebergConvert
         partitionSpec: PartitionSpec,
         partitionValues: Map[String, String],
         logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {
-      val schema = snapshot.schema
+      convertPartitionValues(
+        snapshot.schema, snapshot.version, partitionSpec,
+        partitionValues, logicalToPhysicalPartitionNames)
+    }
+
+    /**
+     * Snapshot-free overload for use on Spark executors where Snapshot is not serializable.
+     */
+    private[delta] def convertPartitionValues(
+        tableSchema: StructType,
+        tableVersion: Long,
+        partitionSpec: PartitionSpec,
+        partitionValues: Map[String, String],
+        logicalToPhysicalPartitionNames: Map[String, String]): StructLike = {
       val ICEBERG_NULL_PARTITION_VALUE = "__HIVE_DEFAULT_PARTITION__"
       val partitionPath = partitionSpec.fields()
       val partitionVals = new Array[Any](partitionSpec.fields().size())
       val nameToDataTypes: Map[String, DataType] =
-        schema.fields.map(f => f.name -> f.dataType).toMap
+        tableSchema.fields.map(f => f.name -> f.dataType).toMap
       for (i <- partitionVals.indices) {
         val logicalPartCol = partitionPath.get(i).name()
         val physicalPartKey = logicalToPhysicalPartitionNames(logicalPartCol)
@@ -376,7 +389,7 @@ object DeltaToIcebergConvert
         val partitionColumnDataType = nameToDataTypes(logicalPartCol)
         val icebergPartitionValue =
           IcebergTransactionUtils.stringToIcebergPartitionValue(
-            partitionColumnDataType, partValue, snapshot.version)
+            partitionColumnDataType, partValue, tableVersion)
         partitionVals(i) = icebergPartitionValue
       }
       new IcebergTransactionUtils.Row(partitionVals)

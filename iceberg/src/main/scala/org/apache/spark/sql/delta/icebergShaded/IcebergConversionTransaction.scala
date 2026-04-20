@@ -34,7 +34,7 @@ import org.apache.spark.sql.delta.schema.SchemaUtils
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.commons.lang3.exception.ExceptionUtils
 import org.apache.hadoop.conf.Configuration
-import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFiles, ExpireSnapshots, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
+import shadedForDelta.org.apache.iceberg.{AppendFiles, BaseTransaction, DataFile, DeleteFiles, ExpireSnapshots, ManifestFile, OverwriteFiles, PartitionSpec, PendingUpdate, RewriteFiles, Schema => IcebergSchema, TableMetadata, Transaction => IcebergTransaction}
 import shadedForDelta.org.apache.iceberg.MetadataUpdate
 import shadedForDelta.org.apache.iceberg.MetadataUpdate.{AddPartitionSpec, AddSchema}
 import shadedForDelta.org.apache.iceberg.mapping.MappingUtil
@@ -219,6 +219,18 @@ class IcebergConversionTransaction(
     }
   }
 
+  /**
+   * Helper for distributed manifest writing. Uses AppendFiles.appendManifest to attach
+   * pre-written manifest files, bypassing in-memory DataFile accumulation on the driver.
+   */
+  class DistributedAppendHelper(appender: AppendFiles) extends TransactionHelper(appender) {
+    override def opType: String = "distributedAppend"
+
+    def appendManifest(manifest: ManifestFile): Unit = {
+      appender.appendManifest(manifest)
+    }
+  }
+
   class ExpireSnapshotHelper(expireSnapshot: ExpireSnapshots)
       extends TransactionHelper(expireSnapshot) {
 
@@ -306,6 +318,38 @@ class IcebergConversionTransaction(
     fileUpdates += ret
     ret
   }
+
+  def getDistributedAppendHelper: DistributedAppendHelper = {
+    val ret = new DistributedAppendHelper(txn.newAppend())
+    fileUpdates += ret
+    ret
+  }
+
+  /** Returns the metadata output location for writing manifest files. */
+  def getMetadataOutputLocation: String = {
+    val tableLocation = LocationUtil.stripTrailingSlash(txn.table().location)
+    val defaultLocation = s"$tableLocation/metadata"
+    LocationUtil.stripTrailingSlash(
+      txn.table().properties().getOrDefault(
+        shadedForDelta.org.apache.iceberg.TableProperties.WRITE_METADATA_LOCATION,
+        defaultLocation))
+  }
+
+  /** Returns the Iceberg table format version. */
+  def getFormatVersion: Int = {
+    val formatVersionStr = txn.table().properties().getOrDefault(
+      shadedForDelta.org.apache.iceberg.TableProperties.FORMAT_VERSION, "1")
+    formatVersionStr.toInt
+  }
+
+  /** Expose partition spec for distributed writer context. */
+  def getPartitionSpec: PartitionSpec = currentPartitionSpec
+
+  /** Expose logical-to-physical partition name mapping. */
+  def getLogicalToPhysicalPartitionNames: Map[String, String] = logicalToPhysicalPartitionNames
+
+  /** Expose table path for distributed writer context. */
+  def getTablePath: String = tablePath.toString
 
   /**
    * Handles the following update scenarios

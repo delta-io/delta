@@ -39,11 +39,20 @@ object DeltaFileProviderUtils extends DeltaLogging {
   val jsonStatsParseOption = Map.empty[String, String]
 
   private[delta] def createJsonStatsParser(schemaToUse: StructType): String => InternalRow = {
+    createJsonStatsParser(schemaToUse, SQLConf.get.sessionLocalTimeZone)
+  }
+
+  /**
+   * Overload that takes an explicit timezone, for use on Spark executors where
+   * SQLConf.get may not be available.
+   */
+  private[delta] def createJsonStatsParser(
+      schemaToUse: StructType, timeZone: String): String => InternalRow = {
     val parser = JsonToStructs(
       schema = schemaToUse,
       options = jsonStatsParseOption,
       child = null,
-      timeZoneId = Some(SQLConf.get.sessionLocalTimeZone)
+      timeZoneId = Some(timeZone)
     )
     (json: String) => {
       val utf8json = UTF8String.fromString(json)
