@@ -107,7 +107,7 @@ class SchemaUtilsSuite extends QueryTest
       .add("dupColName", IntegerType)
       .add("b", IntegerType)
       .add("dupColName", StringType)
-    expectFailure("dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in top level - case sensitivity") {
@@ -115,7 +115,7 @@ class SchemaUtilsSuite extends QueryTest
       .add("dupColName", IntegerType)
       .add("b", IntegerType)
       .add("dupCOLNAME", StringType)
-    expectFailure("dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name for nested column + non-nested column") {
@@ -124,7 +124,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("a", IntegerType)
         .add("b", IntegerType))
       .add("dupColName", IntegerType)
-    expectFailure("dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name for nested column + non-nested column - case sensitivity") {
@@ -133,7 +133,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("a", IntegerType)
         .add("b", IntegerType))
       .add("dupCOLNAME", IntegerType)
-    expectFailure("dupCOLNAME") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("dupCOLNAME") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in nested level") {
@@ -143,7 +143,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupColName", StringType)
       )
-    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in nested level - case sensitivity") {
@@ -153,7 +153,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupCOLNAME", StringType)
       )
-    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("top.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in double nested level") {
@@ -165,7 +165,7 @@ class SchemaUtilsSuite extends QueryTest
           .add("dupColName", StringType))
         .add("d", IntegerType)
       )
-    expectFailure("top.b.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("top.b.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in double nested array") {
@@ -177,9 +177,7 @@ class SchemaUtilsSuite extends QueryTest
           .add("dupColName", StringType))))
         .add("d", IntegerType)
       )
-    expectFailure("top.b.element.element.dupColName") {
-      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
-    }
+    expectFailure("top.b.element.element.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in double nested map") {
@@ -191,21 +189,21 @@ class SchemaUtilsSuite extends QueryTest
         .add("top", new StructType()
           .add("b", MapType(keyType.add("dupColName", StringType), keyType))
         )
-      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+      checkColumnNameDuplication(schema, "")
     }
     expectFailure("top.b.value.dupColName") {
       val schema = new StructType()
         .add("top", new StructType()
           .add("b", MapType(keyType, keyType.add("dupColName", StringType)))
         )
-      checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+      checkColumnNameDuplication(schema, "")
     }
     // This is okay
     val schema = new StructType()
       .add("top", new StructType()
         .add("b", MapType(keyType, keyType))
       )
-    checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+    checkColumnNameDuplication(schema, "")
   }
 
   test("duplicate column name in nested array") {
@@ -215,7 +213,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupColName", StringType))
       )
-    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column name in nested array - case sensitivity") {
@@ -225,7 +223,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("b", IntegerType)
         .add("dupCOLNAME", StringType))
       )
-    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("top.element.dupColName") { checkColumnNameDuplication(schema, "") }
   }
 
   test("non duplicate column because of back tick") {
@@ -234,7 +232,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("a", IntegerType)
         .add("b", IntegerType))
       .add("top.a", IntegerType)
-    checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+    checkColumnNameDuplication(schema, "")
   }
 
   test("non duplicate column because of back tick - nested") {
@@ -244,7 +242,7 @@ class SchemaUtilsSuite extends QueryTest
           .add("a", IntegerType)
           .add("b", IntegerType))
         .add("top.a", IntegerType))
-    checkColumnNameDuplication(schema, "TABLE_SCHEMA")
+    checkColumnNameDuplication(schema, "")
   }
 
   test("duplicate column with back ticks - nested") {
@@ -253,7 +251,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("top.a", StringType)
         .add("b", IntegerType)
         .add("top.a", IntegerType))
-    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "") }
   }
 
   test("duplicate column with back ticks - nested and case sensitivity") {
@@ -262,7 +260,7 @@ class SchemaUtilsSuite extends QueryTest
         .add("TOP.a", StringType)
         .add("b", IntegerType)
         .add("top.a", IntegerType))
-    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "TABLE_SCHEMA") }
+    expectFailure("first.`top.a`") { checkColumnNameDuplication(schema, "") }
   }
 
   /////////////////////////////

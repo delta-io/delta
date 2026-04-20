@@ -522,24 +522,14 @@ def normalizeColumnNamesInDataType(
     }
 
     def isStructReadCompatible(existing: StructType, newtype: StructType): Boolean = {
-      // scalastyle:off caselocale
-      def checkNoDuplicateColumns(schema: StructType, errorSubClass: String): Unit = {
-        val fieldNames = schema.fieldNames
-        val lowercaseNames = fieldNames.map(_.toLowerCase).toSet
-        if (lowercaseNames.size != fieldNames.length) {
-          val duplicates = fieldNames.groupBy(_.toLowerCase).collect {
-            case (_, names) if names.length > 1 => names.mkString(", ")
-          }
-          throw DeltaErrors.foundDuplicateColumnsException(errorSubClass,
-            duplicates.mkString(", "))
-        }
-      }
-
       val existingFields = toFieldMap(existing)
-      checkNoDuplicateColumns(existing, "EXISTING_SCHEMA")
+      // scalastyle:off caselocale
       val existingFieldNames = existing.fieldNames.map(_.toLowerCase).toSet
-      checkNoDuplicateColumns(newtype, "READ_SCHEMA")
+      assert(existingFieldNames.size == existing.length,
+        "Delta tables don't allow field names that only differ by case")
       val newFields = newtype.fieldNames.map(_.toLowerCase).toSet
+      assert(newFields.size == newtype.length,
+        "Delta tables don't allow field names that only differ by case")
       // scalastyle:on caselocale
 
       if (!allowMissingColumns &&

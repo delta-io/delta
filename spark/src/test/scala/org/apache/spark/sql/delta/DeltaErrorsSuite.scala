@@ -1645,10 +1645,10 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.foundDuplicateColumnsException("METADATA_UPDATE", "col1")
+        throw DeltaErrors.foundDuplicateColumnsException("integer", "col1")
       }
-      checkError(e, "DELTA_DUPLICATE_COLUMNS_FOUND.METADATA_UPDATE", "42711",
-        Map("duplicateCols" -> "col1"))
+      checkError(e, "DELTA_DUPLICATE_COLUMNS_FOUND", "42711",
+        Map("coltype" -> "integer", "duplicateCols" -> "col1"))
     }
     {
       val e = intercept[DeltaAnalysisException] {

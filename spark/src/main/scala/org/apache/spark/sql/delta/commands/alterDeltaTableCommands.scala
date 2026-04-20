@@ -654,7 +654,7 @@ case class AlterTableAddColumnsDeltaCommand(
           SchemaUtils.addColumn(schema, column, position)
       }
 
-      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "ADDING_COLUMNS")
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in adding columns")
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newMetadata = metadata.copy(schemaString = newSchema.json)
@@ -1186,7 +1186,7 @@ case class AlterTableReplaceColumnsDeltaCommand(
       val newSchema = SchemaUtils.changeDataType(existingSchema, changingSchema, resolver)
         .asInstanceOf[StructType]
 
-      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "REPLACING_COLUMNS")
+      SchemaMergingUtils.checkColumnNameDuplication(newSchema, "in replacing columns")
       SchemaUtils.checkSchemaFieldNames(newSchema, metadata.columnMappingMode)
 
       val newSchemaWithTypeWideningMetadata = TypeWideningMetadata.addTypeWideningMetadata(

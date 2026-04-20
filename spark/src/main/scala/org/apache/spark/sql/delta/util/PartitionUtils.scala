@@ -447,7 +447,7 @@ private[delta] object PartitionUtils {
     }
 
     checkColumnNameDuplication(
-      normalizedPartSpec.map(_._1), "PARTITION_SCHEMA", resolver)
+      normalizedPartSpec.map(_._1), "in the partition schema", resolver)
 
     normalizedPartSpec.toMap
   }
@@ -610,7 +610,7 @@ private[delta] object PartitionUtils {
       caseSensitive: Boolean): Unit = {
     checkColumnNameDuplication(
       partitionColumns,
-      "PARTITION_COLUMNS",
+      "in the partition columns",
       caseSensitive)
 
     partitionColumnsSchema(schema, partitionColumns, caseSensitive).foreach {
@@ -712,13 +712,12 @@ private[delta] object PartitionUtils {
    * the duplication exists.
    *
    * @param columnNames column names to check
-   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
-   *                      duplicate was found (e.g. "PARTITION_SCHEMA", "CLUSTER_BY").
+   * @param colType column type name, used in an exception message
    * @param resolver resolver used to determine if two identifiers are equal
    */
   def checkColumnNameDuplication(
-      columnNames: Seq[String], errorSubClass: String, resolver: Resolver): Unit = {
-    checkColumnNameDuplication(columnNames, errorSubClass, isCaseSensitiveAnalysis(resolver))
+      columnNames: Seq[String], colType: String, resolver: Resolver): Unit = {
+    checkColumnNameDuplication(columnNames, colType, isCaseSensitiveAnalysis(resolver))
   }
 
   /**
@@ -726,12 +725,11 @@ private[delta] object PartitionUtils {
    * the duplication exists.
    *
    * @param columnNames column names to check
-   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
-   *                      duplicate was found (e.g. "PARTITION_COLUMNS", "CLUSTER_BY").
+   * @param colType column type name, used in an exception message
    * @param caseSensitiveAnalysis whether duplication checks should be case sensitive or not
    */
   def checkColumnNameDuplication(
-      columnNames: Seq[String], errorSubClass: String, caseSensitiveAnalysis: Boolean): Unit = {
+      columnNames: Seq[String], colType: String, caseSensitiveAnalysis: Boolean): Unit = {
     // scalastyle:off caselocale
     val names = if (caseSensitiveAnalysis) columnNames else columnNames.map(_.toLowerCase)
     // scalastyle:on caselocale
@@ -739,7 +737,7 @@ private[delta] object PartitionUtils {
       val duplicateColumns = names.groupBy(identity).collect {
         case (x, ys) if ys.length > 1 => s"`$x`"
       }
-      throw DeltaErrors.foundDuplicateColumnsException(errorSubClass,
+      throw DeltaErrors.foundDuplicateColumnsException(colType,
         duplicateColumns.mkString(", "))
     }
   }
