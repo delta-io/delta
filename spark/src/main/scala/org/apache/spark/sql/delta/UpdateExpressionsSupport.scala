@@ -634,6 +634,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
       generatedColumns: Seq[StructField],
       updateExprs: Seq[Option[Expression]],
       postEvolutionTargetSchema: Option[StructType] = None): Seq[Expression] = {
+    val sparkSession = SparkSession.active
     val targetSchema = postEvolutionTargetSchema.getOrElse(updateTarget.schema)
     assert(
       targetSchema.size == updateExprs.length,
@@ -649,6 +650,10 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
     }.toMap
     // Create a fake Project to resolve the generation expressions
     val fakePlan = Project(exprsForProject.values.toArray[NamedExpression], updateTarget)
+    if (conf.getConf(DeltaSQLConf.DELTA_GENERATED_COLUMN_EAGER_ANALYZE_PLAN)) {
+      sparkSession.sessionState.analyzer.checkAnalysis(fakePlan)
+    }
+
     schemaWithExprs.map {
       case (_, Some(expr)) => expr
       case (targetCol, None) =>
@@ -657,7 +662,7 @@ trait UpdateExpressionsSupport extends SQLConfHelper with AnalysisHelper with De
           generatedColumns.find(f => conf.resolver(f.name, targetCol.name)) match {
             case Some(field) =>
               val expr = GeneratedColumn.getGenerationExpression(field).get
-              resolveReferencesForExpressions(SparkSession.active, expr :: Nil, fakePlan).head
+              resolveReferencesForExpressions(sparkSession, expr :: Nil, fakePlan).head
             case None =>
               // Should not happen
               throw DeltaErrors.nonGeneratedColumnMissingUpdateExpression(targetCol.name)
