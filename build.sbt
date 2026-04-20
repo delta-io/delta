@@ -769,40 +769,43 @@ val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jacks
 val ensurePinnedUnityCatalog = taskKey[Unit](
   "Publish the pinned UC master jars locally if the Ivy coordinate isn't already cached.")
 
+// Extracted so the task body can read as a short guard rather than three nested ifs.
+def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit = {
+  val shouldAutoBuild =
+    sys.props.getOrElse("delta.autoBuildPinnedUnityCatalog", "true").toBoolean
+  if (!shouldAutoBuild) {
+    sys.error(
+      s"""|Pinned Unity Catalog jars are not published locally for coordinate
+          |$unityCatalogVersion.
+          |Auto-build is disabled (-Ddelta.autoBuildPinnedUnityCatalog=false).
+          |Run: bash $unityCatalogSetupScript""".stripMargin)
+  }
+  log.info(s"[UC] Pinned UC jars not found for coordinate $unityCatalogVersion.")
+  log.info(
+    s"[UC] Running $unityCatalogSetupScript — takes ~3-5 minutes on a cold cache, <1s on a warm one.")
+  import scala.sys.process._
+  val procLogger = ProcessLogger(
+    line => log.info(s"[UC setup] $line"),
+    line => log.warn(s"[UC setup] $line"))
+  val exit = Process(Seq("bash", unityCatalogSetupScript)).!(procLogger)
+  if (exit != 0) {
+    sys.error(
+      s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
+  }
+  if (!canary.exists) {
+    sys.error(
+      s"[UC] $unityCatalogSetupScript succeeded but ${canary.getAbsolutePath} is still missing — " +
+        "the publish target layout may have changed.")
+  }
+}
+
 Global / ensurePinnedUnityCatalog := {
   if (unityCatalogReleaseVersion.isEmpty) {
-    val log = streams.value.log
     val canary =
       file(sys.props("user.home")) / ".ivy2" / "local" / "io.unitycatalog" /
         "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
     if (!canary.exists) {
-      val autoBuild =
-        sys.props.getOrElse("delta.autoBuildPinnedUnityCatalog", "true").toBoolean
-      if (!autoBuild) {
-        sys.error(
-          s"""|Pinned Unity Catalog jars are not published locally for coordinate
-              |$unityCatalogVersion.
-              |Auto-build is disabled (-Ddelta.autoBuildPinnedUnityCatalog=false).
-              |Run: bash $unityCatalogSetupScript""".stripMargin)
-      }
-      log.info(
-        s"[UC] Pinned UC jars not found for coordinate $unityCatalogVersion.")
-      log.info(
-        s"[UC] Running $unityCatalogSetupScript — takes ~3-5 minutes on a cold cache, <1s on a warm one.")
-      import scala.sys.process._
-      val procLogger = ProcessLogger(
-        line => log.info(s"[UC setup] $line"),
-        line => log.warn(s"[UC setup] $line"))
-      val exit = Process(Seq("bash", unityCatalogSetupScript)).!(procLogger)
-      if (exit != 0) {
-        sys.error(
-          s"[UC] $unityCatalogSetupScript exited with code $exit. Run it manually to see full output.")
-      }
-      if (!canary.exists) {
-        sys.error(
-          s"[UC] $unityCatalogSetupScript succeeded but ${canary.getAbsolutePath} is still missing — " +
-            "the publish target layout may have changed.")
-      }
+      publishPinnedUnityCatalog(streams.value.log, canary)
     }
   }
 }
