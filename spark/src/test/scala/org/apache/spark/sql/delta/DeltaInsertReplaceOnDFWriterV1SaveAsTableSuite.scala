@@ -20,12 +20,8 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{DataFrame, Row}
-import org.apache.spark.sql.internal.SQLConf
 
-/**
- * Tests replaceOn via DataFrameWriterV1 save() API.
- */
-class DeltaInsertReplaceOnDFWriterV1SaveSuite
+class DeltaInsertReplaceOnDFWriterV1SaveAsTableSuite
   extends DeltaInsertReplaceOnDFWriterTests {
   import testImplicits._
 
@@ -48,38 +44,50 @@ class DeltaInsertReplaceOnDFWriterV1SaveSuite
     if (mergeSchema) {
       writer = writer.option("mergeSchema", "true")
     }
-    writer.save(target)
+    writer.saveAsTable(s"delta.`$target`")
   }
 
-  // Misaligned column blocking only applies for replaceUsing, not replaceOn.
-  test("save - replaceOn with misaligned column positions between source and target") {
-    withTempDir { dir =>
-      val path = dir.getAbsolutePath
-      // Target schema: (id, data), id at position 0
-      Seq(
-        (1, "target"),
-        (2, "target"),
-        (3, "target"))
+  test("saveAsTable: replaceOn with always-true condition replaces all") {
+    withTable("target") {
+      Seq((1, "original"), (2, "original"))
         .toDF("id", "data")
-        .write.format("delta").save(path)
-      // Source schema: (data, id), id at position 1. save() inserts by name,
-      // and replaceOn also matches by name to detect rows to be deleted.
-      writeReplaceOnDF(
-        sourceDF = Seq(
-          ("source", 1),
-          ("source", 4))
-          .toDF("data", "id").as("s"),
-        target = path,
-        replaceOnCond = "t.id = s.id",
-        targetAlias = Some("t"))
+        .write.format("delta").saveAsTable("target")
+
+      Seq((10, "new1"), (20, "new2")).toDF("id", "data")
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceOn", "true")
+        .saveAsTable("target")
 
       checkAnswer(
-        spark.read.format("delta").load(path).orderBy("id"),
+        spark.table("target").orderBy("id"),
         Seq(
-          Row(1, "source"),
+          Row(10, "new1"),
+          Row(20, "new2")))
+    }
+  }
+
+  test("saveAsTable: basic replaceOn with single matching column") {
+    withTable("target") {
+      Seq((1, "target"), (2, "target"), (3, "target"))
+        .toDF("id", "data")
+        .write.format("delta").saveAsTable("target")
+
+      Seq((1, "replaced"), (4, "new"))
+        .toDF("id", "data").as("s")
+        .write.format("delta")
+        .mode("overwrite")
+        .option("replaceOn", "t.id = s.id")
+        .option("targetAlias", "t")
+        .saveAsTable("target")
+
+      checkAnswer(
+        spark.table("target").orderBy("id"),
+        Seq(
+          Row(1, "replaced"),
           Row(2, "target"),
           Row(3, "target"),
-          Row(4, "source")))
+          Row(4, "new")))
     }
   }
 }

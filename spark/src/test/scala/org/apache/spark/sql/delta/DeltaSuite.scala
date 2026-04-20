@@ -650,6 +650,68 @@ class DeltaSuite extends QueryTest
     }
   }
 
+  Seq(true, false).foreach { enableDeleteSubquery =>
+    test("replaceWhere blocks subquery regardless of subquery flag value" +
+        s" - enableDeleteSubquery=$enableDeleteSubquery") {
+      withSQLConf(
+          DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key ->
+          enableDeleteSubquery.toString) {
+        withTempDir { dir =>
+          Seq(1, 2, 3, 4).toDF("value")
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .partitionBy("is_odd")
+            .save(dir.toString)
+
+          val viewName = "replaceWhereSubquerySource"
+          withView(viewName) {
+            spark.read.format("delta").load(dir.toString)
+              .where("is_odd = true")
+              .withColumnRenamed("value", "srcValue")
+              .createTempView(viewName)
+
+            // EXISTS subquery should be rejected regardless of the subquery flag
+            checkError(
+              exception = intercept[DeltaAnalysisException] {
+                Seq(5).toDF("value")
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                    s"EXISTS (SELECT 1 FROM $viewName WHERE value = srcValue)")
+                  .save(dir.toString)
+              },
+              condition = "DELTA_UNSUPPORTED_SUBQUERY",
+              sqlState = Some("0AKDC"),
+              parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+              matchPVals = true
+            )
+
+            // IN subquery should be rejected regardless of the subquery flag
+            checkError(
+              exception = intercept[DeltaAnalysisException] {
+                Seq(5).toDF("value")
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                    s"value IN (SELECT srcValue FROM $viewName)")
+                  .save(dir.toString)
+              },
+              condition = "DELTA_UNSUPPORTED_SUBQUERY",
+              sqlState = Some("0AKDC"),
+              parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+              matchPVals = true
+            )
+          }
+        }
+      }
+    }
+  }
+
   Seq(true, false).foreach { p =>
     test(s"replaceWhere user defined _change_type column doesn't get dropped - partitioned=$p") {
       withTable("tab") {
@@ -3424,49 +3486,63 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
 
   for (insertReplaceCriteriaType <- Seq("replaceOn", "replaceUsing")) {
     test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 save API") {
-      withTempDir { tempDir =>
-        checkError(
-          intercept[DeltaAnalysisException] {
-            spark.range(100).select("id").write.format("delta")
-              .mode("overwrite")
-              .option(insertReplaceCriteriaType, "true")
-              .save(tempDir.toString)
-          },
-          condition = "DELTA_OPERATION_NOT_ALLOWED",
-          sqlState = "0AKDC",
-          parameters = Map("operation" -> insertReplaceCriteriaType))
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTempDir { tempDir =>
+          checkError(
+            intercept[DeltaAnalysisException] {
+              spark.range(100).select("id").write.format("delta")
+                .mode("overwrite")
+                // For replaceOn: 'true' is a matching condition.
+                // For replaceUsing: 'true' is a matching column.
+                .option(insertReplaceCriteriaType, "true")
+                .save(tempDir.toString)
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType))
+        }
       }
     }
 
     test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 insertInto") {
-      withTable("target") {
-        sql("CREATE TABLE target (id bigint, data string) USING delta")
-        val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
-        checkError(
-          intercept[DeltaAnalysisException] {
-            df.write.format("delta")
-              .mode("overwrite")
-              .option(insertReplaceCriteriaType, "true")
-              .insertInto("target")
-          },
-          condition = "DELTA_OPERATION_NOT_ALLOWED",
-          sqlState = "0AKDC",
-          parameters = Map("operation" -> insertReplaceCriteriaType))
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTable("target") {
+          sql("CREATE TABLE target (id bigint, data string) USING delta")
+          val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+          checkError(
+            intercept[DeltaAnalysisException] {
+              df.write.format("delta")
+                .mode("overwrite")
+                .option(insertReplaceCriteriaType, "true")
+                .insertInto("target")
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType))
+        }
       }
     }
 
     test(s"$insertReplaceCriteriaType option is not yet supported via saveAsTable") {
-      withTable("target") {
-        checkError(
-          intercept[DeltaAnalysisException] {
-            spark.range(10).write.format("delta")
-              .option(insertReplaceCriteriaType, "true")
-              .saveAsTable("target")
-          },
-          condition = "DELTA_OPERATION_NOT_ALLOWED",
-          sqlState = "0AKDC",
-          parameters = Map("operation" -> insertReplaceCriteriaType)
-        )
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTable("target") {
+          checkError(
+            intercept[DeltaAnalysisException] {
+              spark.range(10).write.format("delta")
+                .option(insertReplaceCriteriaType, "true")
+                .saveAsTable("target")
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType)
+          )
+        }
       }
     }
   }
