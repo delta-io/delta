@@ -1,0 +1,19 @@
+# Pinned Unity Catalog commit (single source of truth).
+#
+# This SHA is built from source and used by the "Delta Spark (UC Master)"
+# CI workflow to exercise Delta against a specific commit on the Unity
+# Catalog main branch. Pinning gives us deterministic, reproducible CI
+# instead of a floating main that can break unrelated PRs.
+#
+# To bump:
+#   1. Pick a newer SHA from https://github.com/unitycatalog/unitycatalog/commits/main
+#   2. Replace the SHA below.
+#   3. Run locally to validate the build is green:
+#         bash project/scripts/setup_unitycatalog_main.sh
+#         UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+#         build/sbt -DunityCatalogVersion=$UC_VERSION \
+#             sparkUnityCatalog/test kernelUnityCatalog/test
+#   4. Commit the bump in its own PR so the signal is attributable.
+#
+# Lines starting with "#" and blank lines are ignored by the setup script.
+a7683a23063dab9b5faa534a38b3a9080461e62f

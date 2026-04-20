@@ -1,6 +1,8 @@
-## Non-blocking CI job that runs UC integration tests against Unity Catalog built
-## from source (main branch). This gives early warning of upcoming UC
-## incompatibilities without blocking PR merges.
+## Non-blocking CI job that runs UC integration tests against Unity Catalog
+## built from source at the commit pinned in project/unitycatalog-pin.sha.
+## Pinning (rather than tracking a floating main) makes CI signal
+## reproducible and keeps unrelated UC-side changes from breaking Delta PRs.
+## The pin is bumped deliberately in its own PR; see UC_MASTER_TESTING.md.
 ##
 ## To make this blocking, add the job name to the required status checks in
 ## the branch protection rules for `master`.
@@ -18,7 +20,7 @@ on:
 
 jobs:
   test-uc-master:
-    name: "[Non Blocking] UC Integration Tests (UC Main)"
+    name: "[Non Blocking] UC Integration Tests (Pinned UC Master SHA)"
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
@@ -35,8 +37,12 @@ jobs:
             ~/.ivy2
             ~/.m2
             ~/.cache/coursier
-          key: delta-sbt-cache-uc-master
-      - name: Build Unity Catalog from source
+          # Include the pinned SHA in the cache key so bumping the pin
+          # forces a clean UC build, never a stale one.
+          key: delta-sbt-cache-uc-master-${{ hashFiles('project/unitycatalog-pin.sha') }}
+          restore-keys: |
+            delta-sbt-cache-uc-master-
+      - name: Build Unity Catalog from pinned SHA
         id: uc-build
         run: |
           bash project/scripts/setup_unitycatalog_main.sh
@@ -53,10 +59,11 @@ jobs:
       - name: Report test results
         if: always()
         run: |
+          PINNED_SHA=$(grep -vE '^\s*(#|$)' project/unitycatalog-pin.sha | head -n 1 | tr -d '[:space:]')
           if [[ "${{ steps.tests.outcome }}" == "failure" ]]; then
-            echo "::warning::UC master integration tests failed — this is a non-blocking signal. Check test logs for details."
+            echo "::warning::UC master integration tests failed at pinned SHA $PINNED_SHA — this is a non-blocking signal. Check test logs for details."
           else
-            echo "UC master integration tests passed."
+            echo "UC master integration tests passed at pinned SHA $PINNED_SHA."
           fi
       - name: Upload test reports
         if: always()
