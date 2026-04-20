@@ -1,10 +1,9 @@
 name: "Set up pinned Unity Catalog build"
 description: >-
-  Publishes Unity Catalog jars from the commit pinned in
-  project/scripts/setup_unitycatalog_main.sh (the UC_PIN_SHA= line) to the
-  runner's local Ivy / Maven caches, using GitHub Actions cache so the
-  slow UC build only runs the first time a pin is seen. Produces the UC
-  version as an output for callers that want to pass -DunityCatalogVersion.
+  Publishes Unity Catalog jars from the commit pinned in project/scripts/setup_unitycatalog_main.sh
+  (the UC_PIN_SHA= line) to the runner's local Ivy / Maven caches, using GitHub Actions cache so the
+  slow UC build only runs the first time a pin is seen. Produces the UC version as an output for
+  callers that want to pass -DunityCatalogVersion.
 
 outputs:
   uc_version:
