@@ -1,27 +1,22 @@
-name: "Delta Spark (UC Main Canary) [DISABLED]"
-# DISABLED while Delta master builds against a pinned UC master SHA (see
-# project/scripts/setup_unitycatalog_main.sh and `unityCatalogReleaseVersion`
-# in build.sbt). The main `Delta Spark` workflow already exercises UC
-# master at the pinned SHA, so a second workflow that also builds UC
-# from main would be redundant.
-#
-# This file is kept around so the floating-main canary — a non-blocking
-# early-warning signal against UC's latest `main`, ahead of any pin
-# bump — can be resurrected cheaply when Delta switches back to a
-# released UC version. To re-enable:
-#   1. Flip `unityCatalogReleaseVersion` in build.sbt to the released
-#      version, and drop the `Set up pinned Unity Catalog` steps from
-#      the other workflows.
-#   2. Rename this file to `spark_test_uc_master.yaml`.
-#   3. Restore the push/pull_request triggers below and remove the
-#      `workflow_dispatch`-only trigger.
-#   4. Update the UC build step to clone UC's `main` (floating, not
-#      pinned) — the pinned setup script this version referenced may
-#      have been deleted by then.
+## Non-blocking CI job that runs UC integration tests against Unity Catalog built
+## from source (main branch). This gives early warning of upcoming UC
+## incompatibilities without blocking PR merges.
+##
+## To make this blocking, add the job name to the required status checks in
+## the branch protection rules for `master`.
+##
+## DISABLED while Delta master builds against a pinned UC master SHA — the
+## main Delta Spark workflow already exercises UC master at that pin, so a
+## parallel floating-main workflow would be redundant. To re-enable (once
+## Delta goes back to a released UC version): drop the `[DISABLED]` suffix
+## from `name`, replace `workflow_dispatch:` with the original push /
+## pull_request triggers below, remove `if: false` from the job, and
+## rename the file back to `spark_test_uc_master.yaml`.
+
+name: "Delta Spark (UC Master) [DISABLED]"
 on:
-  # Manual-only while disabled, so it doesn't run on every PR.
-  workflow_dispatch:
-  # To re-enable, replace the above with:
+  workflow_dispatch: # manual-only while disabled
+  # Original triggers, restore when re-enabling:
   # push:
   #   paths-ignore:
   #     - '**.md'
@@ -32,8 +27,8 @@ on:
   #     - '**.txt'
 
 jobs:
-  test-uc-main:
-    name: "[Non Blocking] UC Integration Tests (Floating UC Main)"
+  test-uc-master:
+    name: "[Non Blocking] UC Integration Tests (UC Main)"
     # Guard against accidental runs while disabled. Remove when re-enabling.
     if: false
     runs-on: ubuntu-24.04
@@ -44,14 +39,22 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
-      - name: Build Unity Catalog from floating main
+      - name: Cache Scala, SBT, Maven local
+        uses: actions/cache@6f8efc29b200d32929f49075959781ed54ec270c # v3
+        with:
+          path: |
+            ~/.sbt
+            ~/.ivy2
+            ~/.m2
+            ~/.cache/coursier
+          key: delta-sbt-cache-uc-master
+      - name: Build Unity Catalog from source
         id: uc-build
         run: |
-          # When re-enabling, replace this with a minimal fetch-and-publish
-          # of UC's `main` branch (UC_REF=main). The pinned-SHA setup script
-          # that lived here may not exist by then.
-          echo "TODO: re-implement floating-main UC build"
-          exit 1
+          bash project/scripts/setup_unitycatalog_main.sh
+          UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+          echo "uc_version=$UC_VERSION" >> $GITHUB_OUTPUT
+          echo "UC version: $UC_VERSION"
       - name: Run UC integration tests
         id: tests
         continue-on-error: true
@@ -63,14 +66,14 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.tests.outcome }}" == "failure" ]]; then
-            echo "::warning::UC main canary failed — this is a non-blocking advance-warning signal, check before bumping the pin."
+            echo "::warning::UC master integration tests failed — this is a non-blocking signal. Check test logs for details."
           else
-            echo "UC main canary passed."
+            echo "UC master integration tests passed."
           fi
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: test-reports-uc-main-canary
+          name: test-reports-uc-master
           path: "**/target/test-reports/*.xml"
           retention-days: 7
