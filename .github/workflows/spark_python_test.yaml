@@ -1,21 +1,15 @@
-name: "Delta Spark Python [DISABLED]"
-# SECURITY: All Python/PySpark workflows disabled due to active supply chain attack
-# targeting OSS package ecosystems (PyPI). C2 domains: models.litellm.cloud, checkmarx.zone
-# Date disabled: 2026-03-25
-# To re-enable: remove 'if: false' from all jobs and restore original triggers
+name: "Delta Spark Python"
 on:
-  workflow_dispatch: # manual-only, auto triggers removed
-  # To re-enable, replace the above line with:
-  # push:
-  #   branches: [master]
-  #   paths-ignore:
-  #     - '**.md'
-  #     - '**.txt'
-  # pull_request:
-  #   branches: [master]
-  #   paths-ignore:
-  #     - '**.md'
-  #     - '**.txt'
+  push:
+    branches: [branch-4.2]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
+  pull_request:
+    branches: [branch-4.2]
+    paths-ignore:
+      - '**.md'
+      - '**.txt'
 env:
   # SECURITY: Temporal lockdown — refuse any package version published after this date.
   # This date is a pre-attack baseline (before the active PyPI supply chain attack).
@@ -24,7 +18,6 @@ jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)
   generate-matrix:
-    if: false # SECURITY: disabled - supply chain attack mitigation
     name: "Generate Released Spark Versions Matrix"
     runs-on: ubuntu-24.04
     outputs:
@@ -45,7 +38,6 @@ jobs:
           echo "Generated released Spark versions: $SPARK_VERSIONS"
 
   test:
-    if: false # SECURITY: disabled - supply chain attack mitigation
     name: "DSP (${{ matrix.spark_version }})"
     runs-on: ubuntu-24.04
     needs: generate-matrix
@@ -88,21 +80,10 @@ jobs:
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
       - name: Set up uv
         run: bash project/scripts/install-uv.sh
-      - name: Install Job dependencies
+      - name: Set up buf
+        run: bash project/scripts/install-buf.sh
+      - name: Install Python and dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
-          sudo apt install libedit-dev
-          # buf v1.28.1 (2023-11-15) — SHA from official release asset:
-          # https://github.com/bufbuild/buf/releases/download/v1.28.1/sha256.txt
-          BUF_VERSION="v1.28.1"
-          BUF_SHA256="870cf492d381a967d36636fdee9da44b524ea62aad163659b8dbf16a7da56987"
-          curl -fsSL -o buf-Linux-x86_64.tar.gz \
-            "https://github.com/bufbuild/buf/releases/download/${BUF_VERSION}/buf-Linux-x86_64.tar.gz"
-          echo "${BUF_SHA256}  buf-Linux-x86_64.tar.gz" | sha256sum -c -
-          mkdir -p ~/buf
-          tar -xzf buf-Linux-x86_64.tar.gz -C ~/buf --strip-components 1
-          rm buf-Linux-x86_64.tar.gz
           uv python install 3.10
           uv venv .venv --python 3.10
           # Install hash-verified locked dependencies (see .github/ci-requirements/spark-python/)
