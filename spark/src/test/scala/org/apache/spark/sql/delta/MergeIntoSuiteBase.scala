@@ -3526,8 +3526,16 @@ trait DeltaDMLInMemoryTestUtils
   private def assertNoParquetFiles(tableName: String): Unit = {
     import java.nio.file.{Files, Path}
 
-    val catalogTable = spark.sessionState.catalog.getTableMetadata(
-      TableIdentifier(tableName))
+    val ident = TableIdentifier(tableName)
+
+    // Temp views don't create anything on the disk, but still use `withTable`.
+    // Either way, something that doesn't have a catalog entry, but is used in `withTable` should
+    // not be checked on disk.
+    if (!spark.sessionState.catalog.tableExists(ident)) {
+      return
+    }
+
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
     val dataPath = new File(new URI(catalogTable.location.toString))
     if (dataPath.exists()) {
       val stream = Files.walk(dataPath.toPath)

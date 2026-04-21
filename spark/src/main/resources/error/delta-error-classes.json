@@ -932,6 +932,11 @@
           "The duplicate was found in CLUSTER BY."
         ]
       },
+      "CONVERT_TO_DELTA" : {
+        "message" : [
+          "The duplicate was found during conversion to Delta."
+        ]
+      },
       "DATA" : {
         "message" : [
           "The duplicate was found in the data being saved."

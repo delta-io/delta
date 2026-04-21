@@ -32,8 +32,11 @@ import org.apache.spark.sql.connector.expressions.Transform
  * to return [[InMemorySparkTable]].
  */
 class InMemoryDeltaCatalog extends DeltaCatalog {
-  override def dropTable(ident: Identifier): Boolean =
-    InMemoryDeltaCatalog.dropTable(ident)
+  override def dropTable(ident: Identifier): Boolean = {
+    val removedInMemory = InMemoryDeltaCatalog.dropTable(ident)
+    val removedUnderlying = super.dropTable(ident)
+    removedInMemory || removedUnderlying
+  }
 
   override def loadCatalogTable(ident: Identifier, catalogTable: CatalogTable): Table =
     InMemoryDeltaCatalog.getOrCreateTable(ident, catalogTable, spark)
