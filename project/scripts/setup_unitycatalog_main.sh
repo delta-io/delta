@@ -89,10 +89,22 @@ if [[ "${1:-}" == "--print-version" ]]; then
   exit 0
 fi
 
-# Canonical Ivy artifact path. If it exists, sbt can already resolve the coordinate - no fetch,
-# no publish, just exit.
-IVY_CANARY="$HOME/.ivy2/local/io.unitycatalog/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
-if [[ "$UC_FORCE" != "1" && -f "$IVY_CANARY" ]]; then
+# Canonical Ivy artifact paths. Delta depends on all three UC modules; if any is missing
+# we must re-publish. If all exist, sbt can resolve every coordinate - no fetch, no publish.
+IVY_LOCAL="$HOME/.ivy2/local/io.unitycatalog"
+IVY_CANARY_CLIENT="$IVY_LOCAL/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
+IVY_CANARY_SERVER="$IVY_LOCAL/unitycatalog-server/$UC_VERSION/ivys/ivy.xml"
+IVY_CANARY_SPARK="$IVY_LOCAL/unitycatalog-spark_2.13/$UC_VERSION/ivys/ivy.xml"
+ALL_CANARIES=("$IVY_CANARY_CLIENT" "$IVY_CANARY_SERVER" "$IVY_CANARY_SPARK")
+
+all_canaries_present() {
+  for c in "${ALL_CANARIES[@]}"; do
+    [[ -f "$c" ]] || return 1
+  done
+  return 0
+}
+
+if [[ "$UC_FORCE" != "1" ]] && all_canaries_present; then
   echo ">>> UC $UC_VERSION already published to ~/.ivy2/local; skipping."
   echo ">>> (Set UC_FORCE=1 to rebuild anyway.)"
   exit 0
@@ -160,10 +172,12 @@ for attempt in 1 2 3; do
     "set client / Compile / packageDoc / publishArtifact := false" \
     spark/publishLocal \
     spark/publishM2; then
-    if [[ ! -f "$IVY_CANARY" ]]; then
-      echo "ERROR: publish succeeded but $IVY_CANARY is missing - the publish target layout may have changed." >&2
-      exit 1
-    fi
+    for c in "${ALL_CANARIES[@]}"; do
+      if [[ ! -f "$c" ]]; then
+        echo "ERROR: publish succeeded but $c is missing - the publish target layout may have changed." >&2
+        exit 1
+      fi
+    done
     echo ">>> UC build complete. Published coordinate: $UC_VERSION"
     exit 0
   fi
