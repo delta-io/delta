@@ -43,13 +43,14 @@
 #   4. Open a focused PR.
 #
 # Environment overrides:
-#   UC_DIR   directory to clone into  (default: /tmp/unitycatalog)
-#   UC_REPO  git remote URL           (default: upstream unitycatalog)
-#   UC_REF   commit / branch / tag    (default: UC_PIN_SHA below)
+#   UC_DIR   directory to clone into       (default: /tmp/unitycatalog)
+#   UC_REPO  git remote URL                (default: upstream unitycatalog)
+#   UC_REF   must be `main` or UC_PIN_SHA  (default: UC_PIN_SHA below)
 #   UC_FORCE set to "1" to rebuild even when the Ivy artifact exists
 #
-# Overriding UC_REF computes a different coordinate, which naturally falls through to a rebuild
-# unless that exact override was already published. CI should never set UC_REF.
+# UC_REF is restricted to exactly two values by design: the pinned SHA (the normal case) or
+# `main` (for the floating-main canary flow). Any other value is rejected. CI should never set
+# UC_REF.
 
 set -euo pipefail
 
@@ -66,13 +67,19 @@ UC_REPO="${UC_REPO:-https://github.com/unitycatalog/unitycatalog.git}"
 UC_REF="${UC_REF:-$UC_PIN_SHA}"
 UC_FORCE="${UC_FORCE:-0}"
 
-# 7-char suffix for the Ivy coordinate (matches git's default abbreviation). For a 40-char hex
-# SHA, take the first 7. Anything else (a branch name or tag passed via UC_REF) passes through
-# as-is.
-if [[ "$UC_REF" =~ ^[0-9a-f]{40}$ ]]; then
-  UC_REF_SHORT="${UC_REF:0:7}"
+# Enforce the two-value contract. Anything else is either a typo or a misuse and would bypass the
+# safety check below.
+if [[ "$UC_REF" != "main" && "$UC_REF" != "$UC_PIN_SHA" ]]; then
+  echo "ERROR: UC_REF must be 'main' or the pinned SHA ($UC_PIN_SHA). Got: $UC_REF" >&2
+  exit 1
+fi
+
+# 7-char suffix for the Ivy coordinate. The pinned SHA gets abbreviated to git's default length;
+# the string `main` passes through as-is, yielding coordinates like `0.5.0-SNAPSHOT-main`.
+if [[ "$UC_REF" == "main" ]]; then
+  UC_REF_SHORT="main"
 else
-  UC_REF_SHORT="$UC_REF"
+  UC_REF_SHORT="${UC_REF:0:7}"
 fi
 UC_VERSION="$UC_BASE_VERSION-$UC_REF_SHORT"
 
@@ -92,45 +99,33 @@ if [[ "$UC_FORCE" != "1" && -f "$IVY_CANARY" ]]; then
   exit 0
 fi
 
-# Safety check: verify UC_PIN_SHA is actually a commit on UC's main branch, not a stray ref
-# (e.g. a fork, a PR branch, a dangling commit). Uses GitHub's compare API; `ahead` or
-# `identical` means the SHA is reachable from main. Only runs for the pinned default  -
-# explicit UC_REF overrides are for experimentation and skip this check.
-if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
-  echo ">>> Verifying $UC_REF is on UC main via GitHub compare API"
-  CURL_AUTH=()
-  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-    CURL_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
-  fi
-  COMPARE_STATUS=$(curl -fsSL "${CURL_AUTH[@]}" \
-    "https://api.github.com/repos/unitycatalog/unitycatalog/compare/$UC_REF...main" \
-    | grep -m1 '"status"' \
-    | sed 's/.*"status":[[:space:]]*"\([^"]*\)".*/\1/' || true)
-  case "$COMPARE_STATUS" in
-    ahead|identical)
-      echo ">>> $UC_REF is on UC main ($COMPARE_STATUS)"
-      ;;
-    *)
-      echo "ERROR: UC_PIN_SHA=$UC_REF is not reachable from unitycatalog/unitycatalog main" >&2
-      echo "       (GitHub compare status: ${COMPARE_STATUS:-unknown})." >&2
-      echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
-      exit 1
-      ;;
-  esac
-fi
-
-echo ">>> Fetching Unity Catalog from $UC_REPO at ref $UC_REF"
+echo ">>> Fetching Unity Catalog main from $UC_REPO"
 rm -rf "$UC_DIR"
 mkdir -p "$UC_DIR"
-# `git fetch <sha>` works for any commit (not just refs) because GitHub enables
-# uploadpack.allowReachableSHA1InWant. This keeps the fetch shallow regardless of how far back on
-# main the pinned SHA is.
+# Fetch main's full history so we can run `git merge-base --is-ancestor` below to verify the
+# pinned SHA is actually on main. UC's repo is small; full fetch of one branch is cheap.
 git -C "$UC_DIR" init --quiet
 git -C "$UC_DIR" remote add origin "$UC_REPO"
-git -C "$UC_DIR" fetch --depth 1 --quiet origin "$UC_REF"
-git -C "$UC_DIR" checkout --quiet FETCH_HEAD
+git -C "$UC_DIR" fetch --quiet origin main
 
 cd "$UC_DIR"
+
+# Safety check: the pinned SHA must be reachable from UC main. Local `merge-base --is-ancestor`
+# on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
+# the pinned SHA; UC_REF=main is trivially on main.
+if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
+  if ! git merge-base --is-ancestor "$UC_PIN_SHA" FETCH_HEAD 2>/dev/null; then
+    echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
+    echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$UC_REF" == "main" ]]; then
+  git checkout --quiet FETCH_HEAD
+else
+  git checkout --quiet "$UC_PIN_SHA"
+fi
 
 # Sanity-check UC_BASE_VERSION against what UC actually declares at this commit. If they drift
 # (someone bumped UC_PIN_SHA across a UC version.sbt change without also bumping
