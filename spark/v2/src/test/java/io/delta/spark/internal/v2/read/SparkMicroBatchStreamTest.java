@@ -2146,7 +2146,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
             Optional.of(10000L),
             "With both limits"),
 
-        // Edge cases
+        // start and end version equals
         Arguments.of(
             /* fromVersion= */ 3L,
             /* toVersion= */ 3L,
@@ -3179,7 +3179,7 @@ public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
    * Test that verifies DSv1 and DSv2 throw errors when the starting snapshot has an incompatible
    * schema change that gets reverted before the latest version.
    *
-   * <p>Edge case: checkReadIncompatibleSchemaChange only checks metadata actions, so it misses the
+   * <p>Scenario: checkReadIncompatibleSchemaChange only checks metadata actions, so it misses the
    * incompatible intermediate state (id → userId → id). The
    * checkReadIncompatibleSchemaChangeOnStreamStartOnce method catches this by validating each
    * snapshot in the range.
