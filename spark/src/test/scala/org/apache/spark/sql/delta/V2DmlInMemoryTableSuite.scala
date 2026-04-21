@@ -20,11 +20,12 @@ import java.io.File
 import java.net.URI
 import java.nio.file.{Files, Path}
 
+import org.apache.spark.sql.delta.catalog.{InMemoryDeltaCatalog, InMemorySparkTable}
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
-import org.apache.spark.sql.delta.catalog.{InMemoryDeltaCatalog, InMemorySparkTable}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 
 /**
