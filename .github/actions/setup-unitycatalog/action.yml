@@ -14,6 +14,7 @@ runs:
   using: "composite"
   steps:
     - name: Restore pinned UC cache
+      id: uc-cache
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         # ~/.ivy2/local is what sbt publishLocal writes to. ~/.m2 is for publishM2.
@@ -27,10 +28,12 @@ runs:
       shell: bash
       run: bash project/scripts/setup_unitycatalog_main.sh
     - name: Save pinned UC cache
-      # Always try to save: the key embeds the script hash, so writes are idempotent across PRs
-      # and branches (same script -> same jars). Saving on PRs means the first workflow in a PR
-      # populates the cache for the remaining workflows, avoiding N parallel UC rebuilds on pin
-      # bumps.
+      # Only attempt a save when the restore missed. When multiple parallel matrix jobs all see
+      # a cache miss (first CI run after a pin bump), only the first to reach this step wins the
+      # GHA cache reservation; the rest log "another job may be creating this cache" warnings.
+      # Gating on cache-hit means cached runs (the common steady state) skip the save entirely,
+      # which eliminates those warnings on every subsequent run.
+      if: steps.uc-cache.outputs.cache-hit != 'true'
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: |
