@@ -732,7 +732,7 @@ lazy val contribs = (project in file("contribs"))
 //
 //  - Pinned-master mode (default on master): leave `unityCatalogReleaseVersion = None`. The
 //    version string is read by running `project/scripts/setup_unitycatalog_main.sh
-//    --print-version`, which encodes both the pinned SHA and the expected UC base version — the
+//    --print-version`, which encodes both the pinned SHA and the expected UC base version - the
 //    script is the single source of truth. The same script (without --print-version) publishes
 //    the matching jars to ~/.ivy2/local when `ensurePinnedUnityCatalog` decides they're missing.
 //
@@ -753,15 +753,15 @@ val unityCatalogVersion: String = sys.props.getOrElse(
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 // Auto-publish the pinned UC build to ~/.ivy2/local the first time sbt tries to resolve UC.
-// Hooked into the UC-dependent projects' `update` below, so plain `sbt testOnly …` on a clean
-// checkout just works — the user never has to remember to run setup_unitycatalog_main.sh by hand.
+// Hooked into the UC-dependent projects' `update` below, so plain `sbt testOnly ...` on a clean
+// checkout just works - the user never has to remember to run setup_unitycatalog_main.sh by hand.
 //
 // The check is the canonical Ivy artifact path (`ivys/ivy.xml` for the expected coordinate). If
 // the file is there, the publish already happened; if it's missing, we shell out to the setup
-// script. No secondary marker file is involved — sbt resolution and this check agree by
+// script. No secondary marker file is involved - sbt resolution and this check agree by
 // construction.
 //
-// In release mode (`unityCatalogReleaseVersion = Some(…)`) this task is a no-op: the coordinate
+// In release mode (`unityCatalogReleaseVersion = Some(...)`) this task is a no-op: the coordinate
 // is resolvable from Maven Central.
 //
 // Opt out of the auto-trigger with `-Ddelta.autoBuildPinnedUnityCatalog=false` (sbt will then
@@ -782,7 +782,7 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
   }
   log.info(s"[UC] Pinned UC jars not found for coordinate $unityCatalogVersion.")
   log.info(
-    s"[UC] Running $unityCatalogSetupScript — takes ~3-5 minutes on a cold cache, <1s on a warm one.")
+    s"[UC] Running $unityCatalogSetupScript - takes ~3-5 minutes on a cold cache, <1s on a warm one.")
   import scala.sys.process._
   val procLogger = ProcessLogger(
     line => log.info(s"[UC setup] $line"),
@@ -794,13 +794,13 @@ def publishPinnedUnityCatalog(log: sbt.util.Logger, canary: java.io.File): Unit 
   }
   if (!canary.exists) {
     sys.error(
-      s"[UC] $unityCatalogSetupScript succeeded but ${canary.getAbsolutePath} is still missing — " +
+      s"[UC] $unityCatalogSetupScript succeeded but ${canary.getAbsolutePath} is still missing - " +
         "the publish target layout may have changed.")
   }
 }
 
 Global / ensurePinnedUnityCatalog := {
-  // Resolve the .value dependencies eagerly — sbt's task macro warns when
+  // Resolve the .value dependencies eagerly - sbt's task macro warns when
   // `.value` appears inside conditional branches.
   val log = streams.value.log
   if (unityCatalogReleaseVersion.isEmpty) {
@@ -1105,7 +1105,7 @@ lazy val kernelBenchmarks = (project in file("kernel/kernel-benchmarks"))
     exportJars := false,
     javafmtCheckSettings,
     scalafmtCheckSettings,
-    
+
     libraryDependencies ++= Seq(
       "org.openjdk.jmh" % "jmh-core" % "1.37" % "test",
       "org.openjdk.jmh" % "jmh-generator-annprocess" % "1.37" % "test",

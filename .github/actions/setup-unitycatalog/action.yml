@@ -28,7 +28,7 @@ runs:
       run: bash project/scripts/setup_unitycatalog_main.sh
     - name: Save pinned UC cache
       # Always try to save: the key embeds the script hash, so writes are idempotent across PRs
-      # and branches (same script → same jars). Saving on PRs means the first workflow in a PR
+      # and branches (same script -> same jars). Saving on PRs means the first workflow in a PR
       # populates the cache for the remaining workflows, avoiding N parallel UC rebuilds on pin
       # bumps.
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0

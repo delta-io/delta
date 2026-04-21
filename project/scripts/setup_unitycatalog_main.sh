@@ -2,13 +2,13 @@
 #
 # General-purpose helper to clone Unity Catalog at some ref and publish its client/server/spark
 # jars to ~/.ivy2/local (and ~/.m2) so sbt can resolve UC dependencies locally. Useful whenever
-# Delta needs a UC build that isn't yet available on Maven Central — most obviously for the
+# Delta needs a UC build that isn't yet available on Maven Central - most obviously for the
 # pinned-master arrangement below, but also for the floating-main canary in
 # disabled_spark_test_uc_master.yaml and for ad-hoc dev experimentation against UC master.
 #
-# What the pinned-master usage adds on top of the generic flow — and which is temporary
+# What the pinned-master usage adds on top of the generic flow - and which is temporary
 # scaffolding to rip out when Delta can use a released UC version again (flip
-# `unityCatalogReleaseVersion` in build.sbt) — is:
+# `unityCatalogReleaseVersion` in build.sbt) - is:
 #   - the UC_PIN_SHA / UC_BASE_VERSION constants below,
 #   - the `--print-version` short-circuit that build.sbt uses to discover the coordinate,
 #   - the sanity check that UC's version.sbt matches UC_BASE_VERSION.
@@ -83,7 +83,7 @@ if [[ "${1:-}" == "--print-version" ]]; then
   exit 0
 fi
 
-# Canonical Ivy artifact path. If it exists, sbt can already resolve the coordinate — no fetch,
+# Canonical Ivy artifact path. If it exists, sbt can already resolve the coordinate - no fetch,
 # no publish, just exit.
 IVY_CANARY="$HOME/.ivy2/local/io.unitycatalog/unitycatalog-client/$UC_VERSION/ivys/ivy.xml"
 if [[ "$UC_FORCE" != "1" && -f "$IVY_CANARY" ]]; then
@@ -94,7 +94,7 @@ fi
 
 # Safety check: verify UC_PIN_SHA is actually a commit on UC's main branch, not a stray ref
 # (e.g. a fork, a PR branch, a dangling commit). Uses GitHub's compare API; `ahead` or
-# `identical` means the SHA is reachable from main. Only runs for the pinned default —
+# `identical` means the SHA is reachable from main. Only runs for the pinned default  -
 # explicit UC_REF overrides are for experimentation and skip this check.
 if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
   echo ">>> Verifying $UC_REF is on UC main via GitHub compare API"
@@ -134,7 +134,7 @@ cd "$UC_DIR"
 
 # Sanity-check UC_BASE_VERSION against what UC actually declares at this commit. If they drift
 # (someone bumped UC_PIN_SHA across a UC version.sbt change without also bumping
-# UC_BASE_VERSION), the Ivy coordinate wouldn't match what sbt publishes — fail loudly instead of
+# UC_BASE_VERSION), the Ivy coordinate wouldn't match what sbt publishes - fail loudly instead of
 # silently producing unresolvable coordinates.
 ACTUAL_BASE=$(grep 'ThisBuild / version' version.sbt | sed 's/.*:= *"\(.*\)"/\1/')
 if [[ "$ACTUAL_BASE" != "$UC_BASE_VERSION" ]]; then
@@ -158,7 +158,7 @@ echo ">>> Building and publishing UC client + server to local Maven repo"
   server/publishLocal \
   server/publishM2
 
-# spark/publishM2 can hit a transient coursier lock race — retry up to 3 times.
+# spark/publishM2 can hit a transient coursier lock race - retry up to 3 times.
 echo ">>> Building and publishing UC spark module to local Maven repo"
 for attempt in 1 2 3; do
   if ./build/sbt \
@@ -167,7 +167,7 @@ for attempt in 1 2 3; do
     spark/publishLocal \
     spark/publishM2; then
     if [[ ! -f "$IVY_CANARY" ]]; then
-      echo "ERROR: publish succeeded but $IVY_CANARY is missing — the publish target layout may have changed." >&2
+      echo "ERROR: publish succeeded but $IVY_CANARY is missing - the publish target layout may have changed." >&2
       exit 1
     fi
     echo ">>> UC build complete. Published coordinate: $UC_VERSION"
