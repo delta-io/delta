@@ -625,6 +625,12 @@ public final class DeltaErrors {
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
       throw e;
+    } catch (KernelEngineException e) {
+      // Don't double-wrap: KernelEngineException is a sibling of KernelException (both extend
+      // RuntimeException), so it doesn't match the catch above. Without this, an already-wrapped
+      // engine exception gets re-wrapped by an outer wrapEngineException call, which hides the
+      // original cause one extra level deep and breaks direct-cause checks at consumers.
+      throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);
     }
@@ -643,6 +649,10 @@ public final class DeltaErrors {
       // Let any KernelExceptions fall through (even though these generally shouldn't
       // originate from the engine implementation there are some edge cases such as
       // deserializeStructType)
+      throw e;
+    } catch (KernelEngineException e) {
+      // See note in wrapEngineException: avoid double-wrapping an already-wrapped engine
+      // exception.
       throw e;
     } catch (RuntimeException e) {
       throw new KernelEngineException(String.format(msgString, args), e);
