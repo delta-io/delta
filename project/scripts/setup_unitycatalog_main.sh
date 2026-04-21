@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# General-purpose helper to clone Unity Catalog at some ref and publish its client/server/spark
-# jars to ~/.ivy2/local (and ~/.m2) so sbt can resolve UC dependencies locally. Useful whenever
-# Delta needs a UC build that isn't yet available on Maven Central - most obviously for the
-# pinned-master arrangement below, but also for the floating-main canary in
-# disabled_spark_test_uc_master.yaml and for ad-hoc dev experimentation against UC master.
+# Helper to clone Unity Catalog at the pinned SHA (or `main` for the floating canary) and
+# publish its client/server/spark jars to ~/.ivy2/local (and ~/.m2) so sbt can resolve UC
+# dependencies locally. Used by the pinned-master arrangement below and by the floating-main
+# canary in disabled_spark_test_uc_master.yaml. UC_REF is restricted to `main` or the pinned
+# SHA; no other values are accepted.
 #
 # What the pinned-master usage adds on top of the generic flow - and which is temporary
 # scaffolding to rip out when Delta can use a released UC version again (flip
