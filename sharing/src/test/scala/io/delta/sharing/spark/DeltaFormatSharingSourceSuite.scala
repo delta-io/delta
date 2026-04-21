@@ -552,6 +552,8 @@ class DeltaFormatSharingSourceSuite
     // Verifies that a non-backward-compatible Metadata action within the CDF range causes
     // the stream to fail. The Metadata is delivered via includeHistoricalMetadata=true in
     // getCDFFiles, and DeltaSource detects the incompatible change (DROP COLUMN) and fails.
+    // v1 rows (written before the schema change) are flushed to the sink before the stream
+    // throws at v2; v3 rows (after the schema change) remain unprocessed.
     // This is the counterpart to the backward-compatible ADD COLUMN test above.
     withTempDirs { (_, outputDir, checkpointDir) =>
       val deltaTableName = "delta_table_cdf_schema_break"
@@ -587,20 +589,36 @@ class DeltaFormatSharingSourceSuite
           val profileFile = prepareProfileFile(tempDir)
           withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
             val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
-            val df = spark.readStream
+            val q = spark.readStream
               .format("deltaSharing")
               .option("responseFormat", "delta")
               .option("readChangeFeed", "true")
               .option("startingVersion", "1")
               .load(tablePath)
+              .select("c1", "_change_type", "_commit_version")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
             val e = intercept[Exception] {
-              testStream(df)(
-                AssertOnQuery { q => q.processAllAvailable(); true }
-              )
+              try {
+                q.processAllAvailable()
+              } finally {
+                q.stop()
+              }
             }
             assert(
               e.getMessage.contains("DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"),
               s"Expected schema change error, got: ${e.getMessage}")
+
+            // Verify v1 rows were flushed to the sink before the stream failed on the v2
+            // schema change. v3 rows are not processed since the stream stopped at v2.
+            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
+              .select("c1", "_change_type", "_commit_version").orderBy("c1")
+            checkAnswer(result, Seq(
+              Row(1, "insert", 1L),
+              Row(2, "insert", 1L)
+            ))
           }
         }
       }
