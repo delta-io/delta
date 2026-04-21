@@ -92,6 +92,33 @@ if [[ "$UC_FORCE" != "1" && -f "$IVY_CANARY" ]]; then
   exit 0
 fi
 
+# Safety check: verify UC_PIN_SHA is actually a commit on UC's main branch, not a stray ref
+# (e.g. a fork, a PR branch, a dangling commit). Uses GitHub's compare API; `ahead` or
+# `identical` means the SHA is reachable from main. Only runs for the pinned default —
+# explicit UC_REF overrides are for experimentation and skip this check.
+if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
+  echo ">>> Verifying $UC_REF is on UC main via GitHub compare API"
+  CURL_AUTH=()
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    CURL_AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  fi
+  COMPARE_STATUS=$(curl -fsSL "${CURL_AUTH[@]}" \
+    "https://api.github.com/repos/unitycatalog/unitycatalog/compare/$UC_REF...main" \
+    | grep -m1 '"status"' \
+    | sed 's/.*"status":[[:space:]]*"\([^"]*\)".*/\1/' || true)
+  case "$COMPARE_STATUS" in
+    ahead|identical)
+      echo ">>> $UC_REF is on UC main ($COMPARE_STATUS)"
+      ;;
+    *)
+      echo "ERROR: UC_PIN_SHA=$UC_REF is not reachable from unitycatalog/unitycatalog main" >&2
+      echo "       (GitHub compare status: ${COMPARE_STATUS:-unknown})." >&2
+      echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
+      exit 1
+      ;;
+  esac
+fi
+
 echo ">>> Fetching Unity Catalog from $UC_REPO at ref $UC_REF"
 rm -rf "$UC_DIR"
 mkdir -p "$UC_DIR"
