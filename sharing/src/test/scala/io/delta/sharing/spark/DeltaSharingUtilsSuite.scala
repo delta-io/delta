@@ -19,7 +19,7 @@ package io.delta.sharing.spark
 import scala.reflect.ClassTag
 
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
-import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table}
+import io.delta.sharing.client.model.{DeltaTableFiles, DeltaTableMetadata, Table, TemporaryCredentials}
 import io.delta.sharing.spark.DeltaSharingUtils._
 
 import org.apache.spark.{SharedSparkContext, SparkEnv, SparkFunSuite}
@@ -133,7 +133,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      refreshToken: Option[String]
+      refreshToken: Option[String],
+      fileIdHash: Option[String]
     ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
@@ -144,8 +145,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
       )
     }
 
-    override def getFiles(table: Table, startingVersion: Long, endingVersion: Option[Long])
-    : DeltaTableFiles = {
+    override def getFiles(
+      table: Table,
+      startingVersion: Long,
+      endingVersion: Option[Long],
+      fileIdHash: Option[String]
+    ): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       DeltaTableFiles(
@@ -158,7 +163,8 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
     override def getCDFFiles(
       table: Table,
       cdfOptions: Map[String, String],
-      includeHistoricalMetadata: Boolean): DeltaTableFiles = {
+      includeHistoricalMetadata: Boolean,
+      fileIdHash: Option[String]): DeltaTableFiles = {
       val file = getAddFileStr()
       val dv = getDeletionVectorStr()
       val cdc = getCdcStr()
@@ -167,6 +173,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
         respondedFormat = DeltaSharingRestClient.RESPONSE_FORMAT_DELTA,
         lines = Seq(file, dv, cdc)
       )
+    }
+
+    override def generateTemporaryTableCredential(
+        table: Table,
+        location: Option[String]): TemporaryCredentials = {
+      throw new UnsupportedOperationException("generateTemporaryTableCredential is not implemented")
     }
   }
 
@@ -277,11 +289,12 @@ class DeltaSharingUtilsSuite extends SparkFunSuite with SharedSparkContext {
         versionAsOf: Option[Long],
         timestampAsOf: Option[String],
         jsonPredicateHints: Option[String],
-        refreshToken: Option[String]
+        refreshToken: Option[String],
+        fileIdHash: Option[String]
       ): DeltaTableFiles = {
         lastRefreshToken = refreshToken
         super.getFiles(table, predicates, limit, versionAsOf, timestampAsOf,
-          jsonPredicateHints, refreshToken)
+          jsonPredicateHints, refreshToken, fileIdHash)
       }
     }
 

@@ -16,6 +16,15 @@
 
 package io.sparkuctest;
 
+import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
+
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -26,8 +35,13 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DynamicContainer;
+import org.junit.jupiter.api.DynamicTest;
+import org.junit.jupiter.api.TestFactory;
+import org.opentest4j.TestAbortedException;
 
 /**
  * Abstract base class for Unity Catalog + Delta Table integration tests.
@@ -39,13 +53,56 @@ import org.junit.jupiter.api.BeforeAll;
  * <p>Subclasses must provide an executor by implementing the getSqlExecutor method.
  */
 public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSupport {
+  public static final List<TableType> ALL_TABLE_TYPES =
+      List.of(TableType.EXTERNAL, TableType.MANAGED);
 
   /**
-   * Provides all table types for parameterized tests. Tests can use this as a @MethodSource to test
-   * different table types.
+   * Tests with this annotation will test against ALL_TABLE_TYPES. Example:
+   *
+   * <pre>{@code
+   * @TestAllTableTypes
+   * public void testAdvancedInsertOperations(TableType tableType)
+   * }</pre>
    */
-  protected static Stream<TableType> allTableTypes() {
-    return Stream.of(TableType.EXTERNAL, TableType.MANAGED);
+  @Target(ElementType.METHOD)
+  @Retention(RetentionPolicy.RUNTIME)
+  public @interface TestAllTableTypes {}
+
+  /** Generate dynamic tests for all methods with @TestAllTableTypes to run with ALL_TABLE_TYPES. */
+  @TestFactory
+  Stream<DynamicContainer> allTableTypesTestsFactory() {
+    List<Method> methods =
+        Stream.of(this.getClass().getDeclaredMethods())
+            .filter(m -> m.isAnnotationPresent(TestAllTableTypes.class))
+            .collect(Collectors.toList());
+    List<DynamicContainer> containers = new ArrayList<>();
+    for (Method method : methods) {
+      List<DynamicTest> tests = new ArrayList<>();
+      for (TableType tableType : ALL_TABLE_TYPES) {
+        String testName = String.format("%s(%s)", method.getName(), tableType);
+        tests.add(
+            DynamicTest.dynamicTest(
+                testName,
+                () -> {
+                  try {
+                    method.invoke(this, tableType);
+                  } catch (InvocationTargetException e) {
+                    // Unwrap so JUnit sees the original exception type. Without this,
+                    // TestAbortedException (thrown by Assumptions) gets wrapped and JUnit
+                    // treats the test as failed instead of skipped. Also unwrap
+                    // RuntimeException/Error so assertThrows() in individual tests still
+                    // matches the expected exception class rather than InvocationTargetException.
+                    Throwable cause = e.getCause();
+                    if (cause instanceof TestAbortedException) throw (TestAbortedException) cause;
+                    if (cause instanceof RuntimeException) throw (RuntimeException) cause;
+                    if (cause instanceof Error) throw (Error) cause;
+                    throw e;
+                  }
+                }));
+      }
+      containers.add(DynamicContainer.dynamicContainer(method.getName(), tests));
+    }
+    return containers.stream();
   }
 
   private SparkSession sparkSession;
@@ -74,8 +131,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   }
 
   private SparkConf configureSparkWithUnityCatalog(SparkConf conf) {
-    // Set the AWS S3 implementation for remote unity catalog server testing.
-    conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    // Use fake S3 filesystem for local testing; real S3A for remote UC.
+    if (isUCRemoteConfigured()) {
+      conf.set("spark.hadoop.fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    } else {
+      conf.set("spark.hadoop.fs.s3.impl", S3CredentialFileSystem.class.getName());
+    }
 
     // Set the catalog specific configs.
     UnityCatalogInfo uc = unityCatalogInfo();
@@ -93,6 +154,11 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       sparkSession = null;
     }
     // UC server is stopped by UnityCatalogSupport.tearDownServer()
+  }
+
+  /** Get the SparkSession for direct access (e.g., for streaming operations). */
+  protected SparkSession spark() {
+    return sparkSession;
   }
 
   /** Get the SQL executor. Private to force subclasses to use sql() and check() methods. */
@@ -153,14 +219,45 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
    *
    * @param tableName The simple table name (without catalog/schema prefix)
    * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
    * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param tableProperties Additional table properties (e.g., "delta.enableChangeDataFeed"="true")
    * @param testCode The test function that receives the full table name
    */
   protected void withNewTable(
-      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      String tableProperties,
+      TestCode testCode)
       throws Exception {
-    UnityCatalogInfo uc = unityCatalogInfo();
-    String fullTableName = uc.catalogName() + "." + uc.schemaName() + "." + tableName;
+    String fullTableName = fullTableName(tableName);
+
+    // Create th partition cause.
+    StringBuilder partitionCause = new StringBuilder();
+    if (partitionFields != null && !partitionFields.trim().isEmpty()) {
+      partitionCause.append(String.format("PARTITIONED BY (%s)", partitionFields));
+    }
+
+    // Build table properties clause
+    StringBuilder tblPropertiesClause = new StringBuilder();
+    if (tableType == TableType.MANAGED) {
+      tblPropertiesClause.append("'delta.feature.catalogManaged'='supported'");
+    }
+    if (tableProperties != null && !tableProperties.trim().isEmpty()) {
+      if (tblPropertiesClause.length() > 0) {
+        tblPropertiesClause.append(", ");
+      }
+      tblPropertiesClause.append(tableProperties);
+    }
+
+    final String tblPropertiesSql;
+    if (tblPropertiesClause.length() > 0) {
+      tblPropertiesSql = "TBLPROPERTIES (" + tblPropertiesClause + ")";
+    } else {
+      tblPropertiesSql = "";
+    }
 
     if (tableType == TableType.EXTERNAL) {
       // External table requires a location
@@ -168,8 +265,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
           (Path dir) -> {
             Path tablePath = new Path(dir, tableName);
             sql(
-                "CREATE TABLE %s (%s) USING DELTA LOCATION '%s'",
-                fullTableName, tableSchema, tablePath.toString());
+                "CREATE TABLE %s (%s) USING DELTA %s %s LOCATION '%s'",
+                fullTableName,
+                tableSchema,
+                partitionCause.toString(),
+                tblPropertiesSql,
+                tablePath.toString());
 
             try {
               testCode.run(fullTableName);
@@ -181,9 +282,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
       sql(
-          "CREATE TABLE %s (%s) USING DELTA "
-              + "TBLPROPERTIES ('delta.feature.catalogManaged'='supported')",
-          fullTableName, tableSchema);
+          "CREATE TABLE %s (%s) USING DELTA %s %s",
+          fullTableName, tableSchema, partitionCause.toString(), tblPropertiesSql);
 
       try {
         testCode.run(fullTableName);
@@ -191,6 +291,112 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
         sql("DROP TABLE IF EXISTS %s", fullTableName);
       }
     }
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param partitionFields The partition fields (e.g., "id, name")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName,
+      String tableSchema,
+      String partitionFields,
+      TableType tableType,
+      TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, partitionFields, tableType, null, testCode);
+  }
+
+  /**
+   * Helper method to create a new Delta table, run test code, and clean up.
+   *
+   * @param tableName The simple table name (without catalog/schema prefix)
+   * @param tableSchema The table schema (e.g., "id INT, name STRING")
+   * @param tableType The type of table (EXTERNAL or MANAGED)
+   * @param testCode The test function that receives the full table name
+   */
+  protected void withNewTable(
+      String tableName, String tableSchema, TableType tableType, TestCode testCode)
+      throws Exception {
+    withNewTable(tableName, tableSchema, null, tableType, testCode);
+  }
+
+  /** Returns the fully qualified table name for a given simple table name. */
+  protected String fullTableName(String simpleName) {
+    UnityCatalogInfo uc = unityCatalogInfo();
+    return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
+  }
+
+  /** Returns the current (latest) version of the table. */
+  protected long currentVersion(String tableName) {
+    return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
+  }
+
+  /** Returns the timestamp of the current (latest) version. */
+  protected String currentTimestamp(String tableName) {
+    return sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(1);
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains {@code
+   * expectedMessage}.
+   */
+  protected void assertThrowsWithCauseContaining(
+      String expectedMessage, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                if (t.getMessage() != null && t.getMessage().contains(expectedMessage)) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing '"
+                      + expectedMessage
+                      + "' in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains at least one of
+   * the provided messages.
+   */
+  protected void assertThrowsWithCauseContainingAny(
+      List<String> expectedMessages, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                String message = t.getMessage();
+                if (message != null
+                    && expectedMessages.stream().anyMatch(expected -> message.contains(expected))) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing one of "
+                      + expectedMessages
+                      + " in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
+  /** Helper to build an expected row as a list of string values. */
+  protected static List<String> row(String... values) {
+    return List.of(values);
   }
 
   /** Functional interface for test code that takes a temporary directory. */

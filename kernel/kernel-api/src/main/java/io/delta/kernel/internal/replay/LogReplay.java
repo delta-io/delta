@@ -170,13 +170,21 @@ public class LogReplay {
   }
 
   /**
+   * Returns the last-seen CRC info from the log segment if available. Lazily loads and caches the
+   * CRC file on first access. Returns empty if no CRC file exists in the log segment.
+   */
+  public Optional<CRCInfo> getLastSeenCrcInfo() {
+    return lazyLatestCrcInfo.get();
+  }
+
+  /**
    * Returns the CRC info for the current snapshot version if available. Lazily loads and caches the
    * CRC file on first access. Returns empty if no CRC file exists at the snapshot version.
    */
   public Optional<CRCInfo> getCrcInfoAtSnapshotVersion() {
     // TODO: We should first just check if the checksum file in the LogSegment is at this snapshot
     //       version.
-    return lazyLatestCrcInfo.get().filter(crcInfo -> crcInfo.getVersion() == getVersion());
+    return getLastSeenCrcInfo().filter(crcInfo -> crcInfo.getVersion() == getVersion());
   }
 
   /**
@@ -354,6 +362,14 @@ public class LogReplay {
       while (reverseIter.hasNext()) {
         final ActionWrapper nextElem = reverseIter.next();
         final long version = nextElem.getVersion();
+
+        // Stop before processing any batch from a version below minLogVersion. We use
+        // less-than (not equality) to ensure all batches from the minLogVersion file are
+        // fully processed, since a single large log file may produce multiple batches.
+        if (minLogVersion.isPresent() && version < minLogVersion.get()) {
+          break;
+        }
+
         final ColumnarBatch columnarBatch = nextElem.getColumnarBatch();
         logReadCount++;
         assert (columnarBatch.getSchema().equals(DOMAIN_METADATA_READ_SCHEMA));
@@ -363,9 +379,6 @@ public class LogReplay {
         // We are performing a reverse log replay. This function ensures that only the first
         // encountered domain metadata for each domain is added to the map.
         DomainMetadataUtils.populateDomainMetadataMap(dmVector, domainMetadataMap);
-        if (minLogVersion.isPresent() && minLogVersion.get() == version) {
-          break;
-        }
       }
       logger.info(
           "{}: Loading domain metadata from log for version {}, "

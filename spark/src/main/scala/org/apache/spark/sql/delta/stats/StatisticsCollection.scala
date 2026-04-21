@@ -25,6 +25,7 @@ import scala.language.existentials
 
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.{Checkpoints, DeletionVectorsTableFeature, DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaIllegalArgumentException, DeltaLog, DeltaUDF, NoMapping}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.DeltaColumnMapping.COLUMN_MAPPING_PHYSICAL_NAME_KEY
 import org.apache.spark.sql.delta.DeltaOperations.ComputeStats
@@ -232,10 +233,27 @@ trait StatisticsCollection extends DeltaLogging {
     }
 
     // This may be very expensive because it is rewriting JSON.
+    // If the stats schema contains variant types, we need to encode them as Z85 strings
+    // before serializing to JSON. This preserves the variant stats that were originally
+    // written with Z85 encoding.
+    val statsStruct = struct(allStatCols: _*)
+    val encodedStatsStruct = if (SchemaUtils.checkForVariantTypeColumnsRecursively(statsSchema)) {
+      Column(EncodeNestedVariantAsZ85String(statsStruct.expr))
+    } else {
+      statsStruct
+    }
+
     withStats
-      .withColumn("stats", when(col(statsColName).isNotNull, to_json(struct(allStatCols: _*))))
+      .withColumn("stats", when(col(statsColName).isNotNull, to_json(encodedStatsStruct)))
       .drop(col(Checkpoints.STRUCT_STATS_COL_NAME)) // Note: does not always exist.
   }
+
+  /**
+   * Returns the prefix length of strings that should be used for data skipping.
+   * Intentionally left abstract to let implementation decide whether table property overrides
+   * need to be included.
+   */
+  protected def getDataSkippingStringPrefixLength: Int
 
   /**
    * Returns a struct column that can be used to collect statistics for the current
@@ -245,8 +263,7 @@ trait StatisticsCollection extends DeltaLogging {
    * collect the NULL_COUNT stats for it as the number of rows.
    */
   lazy val statsCollector: Column = {
-    val stringPrefix =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
+    val stringPrefix = getDataSkippingStringPrefixLength
 
     // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
     val tightBoundsColOpt =
@@ -262,6 +279,11 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
+        // Write null for min/max Variant stats because collecting variant stats is not supported
+        // yet.
+        case (c, SkippingEligibleDataType(_: VariantType), true) =>
+          lit(null).cast(VariantType)
+
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
           min(c)
@@ -272,6 +294,11 @@ trait StatisticsCollection extends DeltaLogging {
           val udfTruncateMax =
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
+
+        // Write null for min/max Variant stats because collecting variant stats is not supported
+        // yet.
+        case (c, SkippingEligibleDataType(_: VariantType), true) =>
+          lit(null).cast(VariantType)
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>

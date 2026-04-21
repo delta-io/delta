@@ -36,6 +36,7 @@ import io.delta.kernel.types.StructType;
 import io.delta.kernel.utils.CloseableIterator;
 import io.delta.kernel.utils.FileStatus;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -228,6 +229,13 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
   public ActionWrapper next() {
     if (closed) {
       throw new IllegalStateException("Can't call `next` on a closed iterator.");
+    }
+    if (Thread.currentThread().isInterrupted()) {
+      // Throw a typed InterruptedIOException (wrapped, since next() does not declare checked
+      // exceptions) so engines whose interrupt-handling recognizes standard JDK interrupt types
+      // (e.g. Spark's StreamExecution.isInterruptionException) treat this as a clean shutdown
+      // rather than a real error.
+      throw new UncheckedIOException(new InterruptedIOException("Thread was interrupted"));
     }
 
     if (!hasNext()) {
@@ -479,7 +487,7 @@ public class ActionsIterator implements CloseableIterator<ActionWrapper> {
                     deltaReadSchema,
                     checkpointPredicate);
 
-            long version = checkpointVersion(nextFilePath);
+            long version = nextLogFile.getVersion();
             return combine(dataIter, true /* isFromCheckpoint */, version, Optional.empty());
           }
         default:

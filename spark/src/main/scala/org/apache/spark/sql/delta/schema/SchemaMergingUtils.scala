@@ -100,13 +100,14 @@ object SchemaMergingUtils {
    * the duplication exists.
    *
    * @param schema the schema to check for duplicates
-   * @param colType column type name, used in an exception message
+   * @param errorSubClass error sub-class for DELTA_DUPLICATE_COLUMNS_FOUND indicating where the
+   *                      duplicate was found (e.g. "METADATA_UPDATE", "TABLE_SCHEMA").
    * @param caseSensitive Whether we should exception if two columns have casing conflicts. This
    *                      should default to false for Delta.
    */
   def checkColumnNameDuplication(
       schema: StructType,
-      colType: String,
+      errorSubClass: String,
       caseSensitive: Boolean = false): Unit = {
     val columnNames = explodeNestedFieldNames(schema)
     // scalastyle:off caselocale
@@ -121,8 +122,8 @@ object SchemaMergingUtils {
         case (x, ys) if ys.length > 1 => s"$x"
       }
       throw new DeltaAnalysisException(
-        errorClass = "DELTA_DUPLICATE_COLUMNS_FOUND",
-        messageParameters = Array(colType, duplicateColumns.mkString(", ")))
+        errorClass = s"DELTA_DUPLICATE_COLUMNS_FOUND.$errorSubClass",
+        messageParameters = Array(duplicateColumns.mkString(", ")))
     }
   }
 
@@ -155,7 +156,7 @@ object SchemaMergingUtils {
       keepExistingType: Boolean = false,
       typeWideningMode: TypeWideningMode = TypeWideningMode.NoTypeWidening,
       caseSensitive: Boolean = false): StructType = {
-    checkColumnNameDuplication(dataSchema, "in the data to save", caseSensitive)
+    checkColumnNameDuplication(dataSchema, "DATA", caseSensitive)
     mergeDataTypes(
       tableSchema,
       dataSchema,
@@ -339,6 +340,11 @@ object SchemaMergingUtils {
       tf: (Seq[String], StructField, Resolver) => StructField): T = {
     def transform[E <: DataType](path: Seq[String], dt: E): E = {
       val newDt = dt match {
+        case s: StructType
+          if org.apache.spark.sql.execution.datasources.VariantMetadata.isVariantStruct(s) =>
+          // A variant struct is logically still a variant, so we should not recurse into its
+          // fields like a normal struct.
+          s
         case StructType(fields) =>
           StructType(fields.map { field =>
             val newField = tf(path, field, DELTA_COL_RESOLVER)

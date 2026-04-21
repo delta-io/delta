@@ -47,7 +47,8 @@ object DeltaSharingUtils extends Logging {
       TypeWideningTableFeature.name,
       VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name,
-      VariantShreddingPreviewTableFeature.name
+      VariantShreddingPreviewTableFeature.name,
+      VariantShreddingTableFeature.name
     )
 
   val SUPPORTED_READER_FEATURES: Seq[String] =
@@ -59,7 +60,8 @@ object DeltaSharingUtils extends Logging {
       TypeWideningTableFeature.name,
       VariantTypePreviewTableFeature.name,
       VariantTypeTableFeature.name,
-      VariantShreddingPreviewTableFeature.name
+      VariantShreddingPreviewTableFeature.name,
+      VariantShreddingTableFeature.name
     )
 
   // The prefix will be used for block ids of all blocks that store the delta log in BlockManager.
@@ -186,7 +188,8 @@ object DeltaSharingUtils extends Logging {
       versionAsOf: Option[Long],
       timestampAsOf: Option[String],
       jsonPredicateHints: Option[String],
-      useRefreshToken: Boolean): RefresherFunction = { refreshTokenOpt =>
+      useRefreshToken: Boolean,
+      fileIdHash: Option[String] = None): RefresherFunction = { refreshTokenOpt =>
     {
       // If versionAsOf is specified, ignore refresh token (e.g., in streaming queries)
       val tableFiles = client
@@ -197,7 +200,8 @@ object DeltaSharingUtils extends Logging {
           versionAsOf = versionAsOf,
           timestampAsOf = timestampAsOf,
           jsonPredicateHints = jsonPredicateHints,
-          refreshToken = if (useRefreshToken) refreshTokenOpt else None
+          refreshToken = if (useRefreshToken) refreshTokenOpt else None,
+          fileIdHash = fileIdHash
         )
       getTableRefreshResult(tableFiles)
     }
@@ -212,12 +216,14 @@ object DeltaSharingUtils extends Logging {
   def getRefresherForGetCDFFiles(
       client: DeltaSharingClient,
       table: Table,
-      cdfOptions: Map[String, String]): RefresherFunction = { (_: Option[String]) =>
+      cdfOptions: Map[String, String],
+      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client.getCDFFiles(
         table = table,
         cdfOptions = cdfOptions,
-        includeHistoricalMetadata = true
+        includeHistoricalMetadata = true,
+        fileIdHash = fileIdHash
       )
       getTableRefreshResult(tableFiles)
     }
@@ -233,10 +239,16 @@ object DeltaSharingUtils extends Logging {
       client: DeltaSharingClient,
       table: Table,
       startingVersion: Long,
-      endingVersion: Option[Long]): RefresherFunction = { (_: Option[String]) =>
+      endingVersion: Option[Long],
+      fileIdHash: Option[String] = None): RefresherFunction = { (_: Option[String]) =>
     {
       val tableFiles = client
-        .getFiles(table = table, startingVersion = startingVersion, endingVersion = endingVersion)
+        .getFiles(
+          table = table,
+          startingVersion = startingVersion,
+          endingVersion = endingVersion,
+          fileIdHash = fileIdHash
+        )
       getTableRefreshResult(tableFiles)
     }
   }

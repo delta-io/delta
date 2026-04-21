@@ -45,7 +45,7 @@ addSbtPlugin("org.scoverage" % "sbt-scoverage" % "2.4.0")
 //The following fix the conflict:
 libraryDependencySchemes += "org.scala-lang.modules" %% "scala-xml" % VersionScheme.Always % "test"
 
-addSbtPlugin("net.aichler" % "sbt-jupiter-interface" % "0.9.1")
+addSbtPlugin("com.github.sbt.junit" % "sbt-jupiter-interface" % "0.17.0")
 
 addSbtPlugin("software.purpledragon" % "sbt-checkstyle-plugin" % "4.0.1")
 // By default, sbt-checkstyle-plugin uses checkstyle version 6.15, but we should set it to use the

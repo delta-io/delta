@@ -36,7 +36,7 @@ object CatalogTableTestUtils {
    * @param properties table properties (default: empty)
    * @param storageProperties storage properties (default: empty)
    * @param locationUri optional storage location URI
-   * @param nullStorage if true, sets storage to null (for edge case testing)
+   * @param nullStorage if true, sets storage to null (for null storage testing)
    * @param nullStorageProperties if true, sets storage properties to null
    */
   def createCatalogTable(
@@ -54,7 +54,7 @@ object CatalogTableTestUtils {
 
     val identifier = catalogName match {
       case Some(catalog) =>
-        TableIdentifier(tableName, Some("default") /* database */, Some(catalog) /* catalog */ )
+        TableIdentifier(tableName, Some("default"), Some(catalog))
       case None => TableIdentifier(tableName)
     }
 

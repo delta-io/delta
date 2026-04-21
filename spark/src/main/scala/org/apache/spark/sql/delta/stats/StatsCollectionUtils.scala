@@ -23,8 +23,8 @@ import scala.language.existentials
 import scala.util.control.NonFatal
 
 // scalastyle:off import.ordering.noEmptyLine
-import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaColumnMappingMode, DeltaConfigs, DeltaErrors, DeltaLog, IdMapping, NameMapping, NoMapping, Snapshot}
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata}
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.stats.DeltaStatistics._
@@ -76,6 +76,7 @@ object StatsCollectionUtils
       snapshot: Snapshot,
       addFiles: Dataset[AddFile],
       numFilesOpt: Option[Long],
+      stringTruncateLength: Int,
       ignoreMissingStats: Boolean = true,
       setBoundsToWide: Boolean = false): Dataset[AddFile] = {
 
@@ -89,9 +90,6 @@ object StatsCollectionUtils
 
     val parquetRebaseMode =
       spark.sessionState.conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString
-
-    val stringTruncateLength =
-      spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH)
 
     val statsCollector = StatsCollector(
       snapshot.columnMappingMode,
@@ -192,6 +190,17 @@ object StatsCollectionUtils
     }
 
     addFile.copy(stats = JsonUtils.toJson(statsWithTightBoundsCol))
+  }
+
+  /**
+   * Get the string prefix length used for data skipping based on the following precedence:
+   *   1. If the provided metadata is not null, and the delta table property is set inside, use it;
+   *   2. Otherwise, use the Spark configuration.
+   */
+  def getDataSkippingStringPrefixLength(spark: SparkSession, metadata: Metadata): Int = {
+    Option(metadata)
+      .flatMap(DeltaConfigs.DATA_SKIPPING_STRING_PREFIX_LENGTH.fromMetaData)
+      .getOrElse(spark.sessionState.conf.getConf(DeltaSQLConf.DATA_SKIPPING_STRING_PREFIX_LENGTH))
   }
 }
 

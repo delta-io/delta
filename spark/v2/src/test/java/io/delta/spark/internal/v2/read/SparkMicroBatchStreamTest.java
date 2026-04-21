@@ -15,18 +15,28 @@
  */
 package io.delta.spark.internal.v2.read;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.delta.kernel.CommitActions;
+import io.delta.kernel.data.ColumnarBatch;
 import io.delta.kernel.utils.CloseableIterator;
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import io.delta.spark.internal.v2.snapshot.PathBasedSnapshotManager;
 import io.delta.spark.internal.v2.utils.ScalaUtils;
 import java.io.File;
+import java.nio.channels.ClosedByInterruptException;
+import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
@@ -41,16 +51,14 @@ import org.apache.spark.sql.connector.read.PartitionReader;
 import org.apache.spark.sql.connector.read.PartitionReaderFactory;
 import org.apache.spark.sql.connector.read.streaming.Offset;
 import org.apache.spark.sql.connector.read.streaming.ReadLimit;
-import org.apache.spark.sql.delta.CheckpointInstance;
-import org.apache.spark.sql.delta.DeltaLog;
-import org.apache.spark.sql.delta.DeltaOptions;
-import org.apache.spark.sql.delta.Snapshot;
+import org.apache.spark.sql.delta.*;
 import org.apache.spark.sql.delta.sources.DeltaSQLConf;
 import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.ReadMaxBytes;
 import org.apache.spark.sql.delta.storage.ClosableIterator;
 import org.apache.spark.sql.delta.util.JsonUtils;
+import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -62,7 +70,7 @@ import scala.collection.JavaConverters;
 import scala.collection.immutable.Map$;
 import scala.collection.immutable.Seq;
 
-public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
+public class SparkMicroBatchStreamTest extends DeltaV2TestBase {
 
   /**
    * Helper method to create a minimal SparkMicroBatchStream instance for tests that only check for
@@ -89,12 +97,44 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   }
 
   @Test
-  public void testInitialOffset_throwsUnsupportedOperationException(@TempDir File tempDir) {
-    SparkMicroBatchStream microBatchStream = createTestStream(tempDir);
-    UnsupportedOperationException exception =
-        assertThrows(UnsupportedOperationException.class, () -> microBatchStream.initialOffset());
+  public void testInitialOffset_withInitialSnapshot(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_initial_snapshot_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Insert some data to create versions
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 3,
+        /* rowsPerVersion= */ 10,
+        /* includeEmptyVersion= */ false);
+
+    // Create stream without startingVersion (emptyDeltaOptions)
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Get the latest version
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    long latestVersion = deltaLog.update(false, Option.empty(), Option.empty()).version();
+
+    // Call initialOffset - should create initial snapshot at latest version
+    Offset initialOffset = stream.initialOffset();
+    assertNotNull(initialOffset, "Initial offset should not be null");
+
+    DeltaSourceOffset deltaOffset = (DeltaSourceOffset) initialOffset;
     assertEquals(
-        "initialOffset with initial snapshot is not supported yet", exception.getMessage());
+        latestVersion,
+        deltaOffset.reservoirVersion(),
+        "Initial offset should be at latest version");
+    assertEquals(
+        DeltaSourceOffset.BASE_INDEX(),
+        deltaOffset.index(),
+        "Initial offset should start at BASE_INDEX");
+    assertTrue(
+        deltaOffset.isInitialSnapshot(), "Initial offset should be marked as initial snapshot");
   }
 
   @Test
@@ -237,6 +277,11 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /** Provides test parameters for the initialOffset parity test. */
   private static Stream<Arguments> initialOffsetParameters() {
     return Stream.of(
+        // Initial snapshot cases (no startingVersion)
+        Arguments.of(null, ReadLimitConfig.noLimit(), "InitialSnapshot_NoLimit"),
+        Arguments.of(null, ReadLimitConfig.maxFiles(5), "InitialSnapshot_MaxFiles"),
+        Arguments.of(null, ReadLimitConfig.maxBytes(1000), "InitialSnapshot_MaxBytes"),
+        // Specific version cases
         Arguments.of("0", ReadLimitConfig.noLimit(), "NoLimit1"),
         Arguments.of("1", ReadLimitConfig.noLimit(), "NoLimit2"),
         Arguments.of("3", ReadLimitConfig.noLimit(), "NoLimit3"),
@@ -256,6 +301,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /**
    * Parameterized test that verifies parity between DSv1 DeltaSource.getFileChanges and DSv2
    * SparkMicroBatchStream.getFileChanges using Delta Kernel APIs.
+   *
+   * <p>Tests both regular delta log streaming and initial snapshot scenarios.
    *
    * <p>TODO(#5319): consider adding a test similar to SparkGoldenTableTest.java.
    *
@@ -331,6 +378,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
   /** Provides test parameters for the parameterized getFileChanges test. */
   private static Stream<Arguments> getFileChangesParameters() {
     boolean notInitialSnapshot = false;
+    boolean isInitialSnapshot = true;
     long BASE_INDEX = DeltaSourceOffset.BASE_INDEX();
     long END_INDEX = DeltaSourceOffset.END_INDEX();
     Optional<Long> noEndVersion = Optional.empty();
@@ -374,8 +422,66 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             "With EndVersion 4"),
 
         // Empty Range
+        Arguments.of(2L, 50L, notInitialSnapshot, Optional.of(2L), Optional.of(40L), "Empty Range"),
+
+        // Initial Snapshot: snapshot only (no subsequent delta changes to combine)
         Arguments.of(
-            2L, 50L, notInitialSnapshot, Optional.of(2L), Optional.of(40L), "Empty Range"));
+            0L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            noEndVersion,
+            noEndIndex,
+            "InitialSnapshot_Version0_NoDelta"),
+        Arguments.of(
+            2L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            noEndVersion,
+            noEndIndex,
+            "InitialSnapshot_Version2_NoDelta"),
+
+        // Initial Snapshot: snapshot + delta changes (tests combine logic)
+        // Note: These assume the table has 5 versions (latest=5), so snapshot at version 0-2 will
+        // have delta changes to combine
+        Arguments.of(
+            0L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(5L),
+            Optional.of(END_INDEX),
+            "InitialSnapshot_Version0_WithDelta_ToEnd"),
+        Arguments.of(
+            1L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(3L),
+            Optional.of(END_INDEX),
+            "InitialSnapshot_Version1_WithDelta_ToVersion3"),
+        Arguments.of(
+            2L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(4L),
+            noEndIndex,
+            "InitialSnapshot_Version2_WithDelta_ToVersion4"),
+
+        // Initial Snapshot: with specific endIndex
+        Arguments.of(
+            0L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            Optional.of(2L),
+            Optional.of(5L),
+            "InitialSnapshot_Version0_WithEndIndex"),
+
+        // Initial Snapshot: at latest version (latestVersion == fromVersion, no delta to combine)
+        Arguments.of(
+            5L,
+            BASE_INDEX,
+            isInitialSnapshot,
+            noEndVersion,
+            noEndIndex,
+            "InitialSnapshot_LatestVersion_NoDelta"));
   }
 
   // ================================================================================================
@@ -386,11 +492,13 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
    * Test that verifies parity between DSv1 DeltaSource.getFileChangesWithRateLimit and DSv2
    * SparkMicroBatchStream.getFileChangesWithRateLimit.
    *
-   * <p>TODO(#5318): test initial snapshot once we fully support it.
+   * <p>Tests both regular delta log streaming and initial snapshot scenarios with rate limiting.
    */
   @ParameterizedTest
   @MethodSource("getFileChangesWithRateLimitParameters")
   public void testGetFileChangesWithRateLimit(
+      long fromVersion,
+      boolean isInitialSnapshot,
       Optional<Integer> maxFiles,
       Optional<Long> maxBytes,
       String testDescription,
@@ -418,9 +526,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
         deltaSource.getFileChangesWithRateLimit(
-            /* fromVersion= */ 0L,
-            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ false,
+            fromVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            isInitialSnapshot,
             ScalaUtils.toScalaOption(dsv1Limits));
     List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
     while (deltaChanges.hasNext()) {
@@ -440,10 +548,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
     try (CloseableIterator<IndexedFile> kernelChanges =
         stream.getFileChangesWithRateLimit(
-            /* fromVersion= */ 0L,
-            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
-            /* isInitialSnapshot= */ false,
-            dsv2Limits)) {
+            fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot, dsv2Limits)) {
       List<IndexedFile> kernelFilesList = new ArrayList<>();
       while (kernelChanges.hasNext()) {
         kernelFilesList.add(kernelChanges.next());
@@ -454,21 +559,53 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   /** Provides test parameters for the parameterized getFileChangesWithRateLimit test. */
   private static Stream<Arguments> getFileChangesWithRateLimitParameters() {
+    boolean notInitialSnapshot = false;
+    boolean isInitialSnapshot = true;
     Optional<Integer> noMaxFiles = Optional.empty();
     Optional<Long> noMaxBytes = Optional.empty();
 
+    // Arguments: (fromVersion, isInitialSnapshot, maxFiles, maxBytes, testDescription)
     return Stream.of(
-        // No rate limits
-        Arguments.of(noMaxFiles, noMaxBytes, "No limits"),
-        // MaxFiles only
-        Arguments.of(Optional.of(5), noMaxBytes, "MaxFiles"),
-        // MaxBytes only
-        Arguments.of(noMaxFiles, Optional.of(5000L), "MaxBytes"),
-        // Both limits
-        Arguments.of(Optional.of(10), Optional.of(10000L), "MaxFiles and MaxBytes"));
+        // Regular delta log streaming (not initial snapshot)
+        Arguments.of(0L, notInitialSnapshot, noMaxFiles, noMaxBytes, "DeltaLog_NoLimits"),
+        Arguments.of(0L, notInitialSnapshot, Optional.of(5), noMaxBytes, "DeltaLog_MaxFiles"),
+        Arguments.of(0L, notInitialSnapshot, noMaxFiles, Optional.of(5000L), "DeltaLog_MaxBytes"),
+        Arguments.of(
+            0L,
+            notInitialSnapshot,
+            Optional.of(10),
+            Optional.of(10000L),
+            "DeltaLog_MaxFilesAndMaxBytes"),
+
+        // Initial snapshot with rate limiting
+        Arguments.of(
+            0L, isInitialSnapshot, noMaxFiles, noMaxBytes, "InitialSnapshot_Version0_NoLimits"),
+        Arguments.of(
+            0L, isInitialSnapshot, Optional.of(5), noMaxBytes, "InitialSnapshot_Version0_MaxFiles"),
+        Arguments.of(
+            0L,
+            isInitialSnapshot,
+            noMaxFiles,
+            Optional.of(5000L),
+            "InitialSnapshot_Version0_MaxBytes"),
+        Arguments.of(
+            0L,
+            isInitialSnapshot,
+            Optional.of(10),
+            Optional.of(10000L),
+            "InitialSnapshot_Version0_MaxFilesAndMaxBytes"),
+        Arguments.of(
+            2L, isInitialSnapshot, Optional.of(5), noMaxFiles, "InitialSnapshot_Version2_MaxFiles"),
+        Arguments.of(
+            2L,
+            isInitialSnapshot,
+            noMaxFiles,
+            Optional.of(3000L),
+            "InitialSnapshot_Version2_MaxBytes"));
   }
 
-  private void compareFileChanges(
+  /** Package-private so CDC tests can reuse without duplication. */
+  static void compareFileChanges(
       List<org.apache.spark.sql.delta.sources.IndexedFile> deltaSourceFiles,
       List<IndexedFile> kernelFiles) {
     assertEquals(
@@ -496,18 +633,46 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
               "Index mismatch at index %d: dsv1=%d, dsv2=%d",
               i, deltaFile.index(), kernelFile.getIndex()));
 
-      // Sentinel files have null AddFile and null RemoveFile.
-      String deltaPath = deltaFile.add() != null ? deltaFile.add().path() : null;
-      String kernelPath =
-          kernelFile.getAddFile() != null ? kernelFile.getAddFile().getPath() : null;
-
-      if (deltaPath != null || kernelPath != null) {
-        assertEquals(
-            deltaPath,
-            kernelPath,
-            String.format(
-                "AddFile path mismatch at index %d: dsv1=%s, dsv2=%s", i, deltaPath, kernelPath));
+      // Compare file paths across all action types: AddFile, RemoveFile, and explicit CDC.
+      // DSv1 holds add/remove/cdc as separate fields; DSv2 wraps them in CDCDataFile.
+      String dsv1AddPath = deltaFile.add() != null ? deltaFile.add().path() : null;
+      String dsv2AddPath = null;
+      if (kernelFile.getAddFile() != null) {
+        dsv2AddPath = kernelFile.getAddFile().getPath();
+      } else if (kernelFile.getCDCDataFile() != null
+          && kernelFile.getCDCDataFile().getAddFile() != null) {
+        dsv2AddPath = kernelFile.getCDCDataFile().getAddFile().getPath();
       }
+      assertEquals(
+          dsv1AddPath,
+          dsv2AddPath,
+          String.format(
+              "AddFile path mismatch at index %d: dsv1=%s, dsv2=%s", i, dsv1AddPath, dsv2AddPath));
+
+      String dsv1RemovePath = deltaFile.remove() != null ? deltaFile.remove().path() : null;
+      String dsv2RemovePath = null;
+      if (kernelFile.getCDCDataFile() != null
+          && kernelFile.getCDCDataFile().getRemoveFile() != null) {
+        dsv2RemovePath = kernelFile.getCDCDataFile().getRemoveFile().getPath();
+      }
+      assertEquals(
+          dsv1RemovePath,
+          dsv2RemovePath,
+          String.format(
+              "RemoveFile path mismatch at index %d: dsv1=%s, dsv2=%s",
+              i, dsv1RemovePath, dsv2RemovePath));
+
+      // Explicit CDC: DSv1 has cdc.path(), DSv2 doesn't store the path yet (added in cdf5).
+      // For now, verify both sides agree on whether an explicit CDC file is present.
+      boolean dsv1HasCDC = deltaFile.cdc() != null;
+      boolean dsv2HasCDC =
+          kernelFile.getCDCDataFile() != null && kernelFile.getCDCDataFile().isAddCDCFile();
+      assertEquals(
+          dsv1HasCDC,
+          dsv2HasCDC,
+          String.format(
+              "Explicit CDC presence mismatch at index %d: dsv1=%s, dsv2=%s",
+              i, dsv1HasCDC, dsv2HasCDC));
     }
   }
 
@@ -597,6 +762,79 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             "Multiple consecutive metadata-only versions"));
   }
 
+  @Test
+  public void testGetFileChanges_lazyLoading(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_lazy_loading_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // Create 3 INSERT versions (versions 1-3 with ADD files only)
+    sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", testTableName);
+    sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", testTableName);
+    sql("INSERT INTO %s VALUES (5, 'User5'), (6, 'User6')", testTableName);
+
+    // Version 4: DELETE operation that will create a REMOVE file
+    sql("DELETE FROM %s WHERE id = 1", testTableName);
+
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    // Get file changes from version 0 (which will include versions 1-4)
+    CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(
+            /* fromVersion= */ 0L,
+            /* fromIndex= */ DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false,
+            /* endOffset= */ Optional.empty());
+
+    try {
+      // Partially consume the iterator: only read files from versions 1-2
+      // With lazy loading, this should succeed without hitting the REMOVE file error in version 4
+      List<IndexedFile> partialFiles = new ArrayList<>();
+      int filesRead = 0;
+      int targetVersion = 2; // Only read up to version 2
+
+      while (kernelChanges.hasNext()) {
+        IndexedFile file = kernelChanges.next();
+        partialFiles.add(file);
+        filesRead++;
+
+        // Stop after we've passed version 2's END sentinel
+        // Each version has: BEGIN sentinel + actual files + END sentinel
+        if (file.getVersion() == targetVersion
+            && file.getIndex() == DeltaSourceOffset.END_INDEX()) {
+          break;
+        }
+      }
+
+      // If we got here, lazy loading worked - we successfully read versions 1-2 without
+      // encountering the REMOVE file error in version 4
+      // Version 0 (CREATE TABLE): BEGIN + 1 metadata/protocol action + END = 3 files
+      // Version 1 (INSERT): BEGIN + 1 data file + END = 3 files
+      // Version 2 (INSERT): BEGIN + 1 data file + END = 3 files
+      // Total = 9 files
+      assertEquals(9, filesRead, "Should have read exactly 9 IndexedFiles from versions 0-2");
+
+      // Now consume the rest of the iterator - this should hit the REMOVE file in version 4
+      assertThrows(
+          UnsupportedOperationException.class,
+          () -> {
+            while (kernelChanges.hasNext()) {
+              kernelChanges.next(); // This should throw when it reaches version 4's REMOVE
+            }
+          },
+          "Should throw UnsupportedOperationException when reaching version 4 with REMOVE file");
+    } finally {
+      try {
+        kernelChanges.close();
+      } catch (Exception ignored) {
+      }
+    }
+  }
+
   // ================================================================================================
   // Tests for REMOVE file handling
   // ================================================================================================
@@ -627,6 +865,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
 
+    AtomicInteger dsv1SuccessfulCalls = new AtomicInteger(0);
     UnsupportedOperationException dsv1Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -638,12 +877,14 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                       isInitialSnapshot,
                       endOffset,
                       /* verifyMetadataAction= */ true);
-              // Consume the iterator to trigger validation
-              while (deltaChanges.hasNext()) {
-                // Exception is thrown by .next() when it encounters a REMOVE
-                deltaChanges.next();
+              try {
+                while (deltaChanges.hasNext()) {
+                  deltaChanges.next(); // Should throw when hitting REMOVE file
+                  dsv1SuccessfulCalls.incrementAndGet();
+                }
+              } finally {
+                deltaChanges.close();
               }
-              deltaChanges.close();
             },
             String.format("DSv1 should throw on REMOVE for scenario: %s", testDescription));
 
@@ -653,6 +894,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, hadoopConf);
     SparkMicroBatchStream stream =
         createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+    AtomicInteger dsv2SuccessfulCalls = new AtomicInteger(0);
     UnsupportedOperationException dsv2Exception =
         assertThrows(
             UnsupportedOperationException.class,
@@ -664,28 +907,36 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                       isInitialSnapshot,
                       ScalaUtils.toJavaOptional(endOffset));
               try {
-                // Consume the iterator to trigger validation (if not already triggered)
                 while (kernelChanges.hasNext()) {
-                  kernelChanges.next();
+                  kernelChanges.next(); // Should throw when hitting REMOVE file
+                  dsv2SuccessfulCalls.incrementAndGet();
                 }
-                kernelChanges.close();
               } finally {
-                // Make sure to close the iterator even if exception occurs
-                if (kernelChanges != null) {
-                  try {
-                    kernelChanges.close();
-                  } catch (Exception ignored) {
-                  }
-                }
+                kernelChanges.close();
               }
             },
             String.format("DSv2 should throw on REMOVE for scenario: %s", testDescription));
 
-    // TODO(#5318): Add precise exception point verification when DSv2 implements
-    // lazy loading. Currently, DSv1 uses lazy loading (throws during .next() iteration after
-    // processing ADD files) while DSv2 uses eager loading (throws during getFileChanges() before
-    // iteration begins). Once DSv2 implements lazy loading, both should throw at exactly the same
-    // point.
+    // Verify both threw at the exact same point
+    assertEquals(
+        dsv1SuccessfulCalls.get(),
+        dsv2SuccessfulCalls.get(),
+        String.format(
+            "DSv1 and DSv2 should throw after the same number of next() calls for scenario: %s. "
+                + "DSv1=%d, DSv2=%d",
+            testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
+
+    // Verify both error messages reference the same CommitInfo operation name.
+    // We compare only the operation name (e.g. "MERGE", "DELETE") because the full
+    // operationParameters differ in key ordering and value quoting between V1 and V2.
+    String dsv1Op = extractOperationName(dsv1Exception.getMessage());
+    String dsv2Op = extractOperationName(dsv2Exception.getMessage());
+    assertEquals(
+        dsv1Op,
+        dsv2Op,
+        String.format(
+            "DSv1 and DSv2 should report the same operation name for scenario: %s",
+            testDescription));
   }
 
   /** Provides test scenarios that generate REMOVE actions through various DML operations. */
@@ -742,7 +993,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
                   String sourceTableName = "merge_source_" + System.nanoTime();
                   sql(
                       "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
-                      sourceTableName, tempDir.getAbsolutePath() + "_source");
+                      sourceTableName, new File(tempDir, "source").getAbsolutePath());
                   sql("INSERT INTO %s VALUES (2, 'UpdatedUser2'), (4, 'User4')", sourceTableName);
 
                   // Perform MERGE operation
@@ -754,7 +1005,463 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
                   sql("DROP TABLE IF EXISTS %s", sourceTableName);
                 },
-            "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"));
+            "MERGE: Matched (REMOVE+ADD) and not matched (ADD)"),
+
+        // Full table delete (only RemoveFiles, no AddFiles)
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                },
+            "DELETE: Full table delete (removes only, no adds)"));
+  }
+
+  // ================================================================================================
+  // Shared helpers for ignoreDeletes / skipChangeCommits / ignoreChanges parity tests
+  // ================================================================================================
+
+  /**
+   * Extracts the operation name (e.g. "DELETE", "MERGE", "UPDATE") from a
+   * deltaSourceIgnoreChangesError message. Returns null if no operation name is found (e.g. for
+   * delete-only commits where the message contains a file path instead).
+   */
+  private static String extractOperationName(String errorMessage) {
+    java.util.regex.Matcher matcher =
+        java.util.regex.Pattern.compile("for example ([A-Z_ ]+?)\\s*\\(").matcher(errorMessage);
+    return matcher.find() ? matcher.group(1).trim() : null;
+  }
+
+  /**
+   * Runs a parity test: verifies that DSv1 and DSv2 produce identical file changes for the given
+   * option and scenario.
+   */
+  private void runFileChangeParityTest(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      File tempDir,
+      String optionName,
+      boolean usePartitionedTable)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_" + optionName + "_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    if (usePartitionedTable) {
+      createEmptyPartitionedTestTable(testTablePath, testTableName);
+    } else {
+      createEmptyTestTable(testTablePath, testTableName);
+    }
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    DeltaOptions options = createDeltaOptions(optionName, "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+        deltaSource.getFileChanges(
+            fromVersion, fromIndex, isInitialSnapshot, endOffset, /* verifyMetadataAction= */ true);
+    List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+    while (deltaChanges.hasNext()) {
+      deltaFilesList.add(deltaChanges.next());
+    }
+    deltaChanges.close();
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+    try (CloseableIterator<IndexedFile> kernelChanges =
+        stream.getFileChanges(fromVersion, fromIndex, isInitialSnapshot, Optional.empty())) {
+      List<IndexedFile> kernelFilesList = new ArrayList<>();
+      while (kernelChanges.hasNext()) {
+        kernelFilesList.add(kernelChanges.next());
+      }
+      compareFileChanges(deltaFilesList, kernelFilesList);
+    }
+  }
+
+  /**
+   * Runs a throws-parity test: verifies that both DSv1 and DSv2 throw UnsupportedOperationException
+   * after the same number of next() calls.
+   */
+  private void runFileChangeThrowsParityTest(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      File tempDir,
+      String optionName)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_" + optionName + "_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    scenarioSetup.setup(testTableName, tempDir);
+
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+    DeltaOptions options = createDeltaOptions(optionName, "true");
+
+    // DSv1
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath, options);
+
+    AtomicInteger dsv1SuccessfulCalls = new AtomicInteger(0);
+    UnsupportedOperationException dsv1Exception =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> {
+              ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+                  deltaSource.getFileChanges(
+                      fromVersion,
+                      fromIndex,
+                      isInitialSnapshot,
+                      endOffset,
+                      /* verifyMetadataAction= */ true);
+              try {
+                while (deltaChanges.hasNext()) {
+                  deltaChanges.next();
+                  dsv1SuccessfulCalls.incrementAndGet();
+                }
+              } finally {
+                deltaChanges.close();
+              }
+            },
+            String.format(
+                "DSv1 should throw on change commit with %s for: %s", optionName, testDescription));
+
+    // DSv2
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, options);
+
+    AtomicInteger dsv2SuccessfulCalls = new AtomicInteger(0);
+    UnsupportedOperationException dsv2Exception =
+        assertThrows(
+            UnsupportedOperationException.class,
+            () -> {
+              CloseableIterator<IndexedFile> kernelChanges =
+                  stream.getFileChanges(
+                      fromVersion, fromIndex, isInitialSnapshot, Optional.empty());
+              try {
+                while (kernelChanges.hasNext()) {
+                  kernelChanges.next();
+                  dsv2SuccessfulCalls.incrementAndGet();
+                }
+              } finally {
+                kernelChanges.close();
+              }
+            },
+            String.format(
+                "DSv2 should throw on change commit with %s for: %s", optionName, testDescription));
+
+    assertEquals(
+        dsv1SuccessfulCalls.get(),
+        dsv2SuccessfulCalls.get(),
+        String.format(
+            "DSv1 and DSv2 should throw after the same number of next() calls for: %s. "
+                + "DSv1=%d, DSv2=%d",
+            testDescription, dsv1SuccessfulCalls.get(), dsv2SuccessfulCalls.get()));
+
+    // Verify both error messages reference the same CommitInfo operation name.
+    String dsv1Op = extractOperationName(dsv1Exception.getMessage());
+    String dsv2Op = extractOperationName(dsv2Exception.getMessage());
+    assertEquals(
+        dsv1Op,
+        dsv2Op,
+        String.format(
+            "DSv1 and DSv2 should report the same operation name for: %s", testDescription));
+  }
+
+  // ================================================================================================
+  // Tests for ignoreDeletes parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreDeletes=true, both DSv1 and DSv2 produce the same file changes for
+   * delete-only commits (commits with only RemoveFile actions, no AddFile actions). The delete-only
+   * commit should be silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreDeletes_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreDeletes", true);
+  }
+
+  /**
+   * Verifies that with ignoreDeletes=true, both DSv1 and DSv2 still throw on commits containing
+   * both adds and removes (e.g., UPDATE, MERGE), since ignoreDeletes only suppresses delete-only
+   * commits.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreDeletes_changeCommitStillThrows(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeThrowsParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreDeletes");
+  }
+
+  // ================================================================================================
+  // Tests for skipChangeCommits parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with skipChangeCommits=true, both DSv1 and DSv2 produce the same file changes for
+   * delete-only commits. Since skipChangeCommits suppresses all commits containing RemoveFile
+   * actions, these commits should be silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withSkipChangeCommits_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "skipChangeCommits", true);
+  }
+
+  /**
+   * Verifies that with skipChangeCommits=true, both DSv1 and DSv2 silently skip commits containing
+   * both adds and removes (e.g., UPDATE, MERGE), instead of throwing. This is the key behavioral
+   * difference from ignoreDeletes, which throws on such commits.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withSkipChangeCommits_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "skipChangeCommits", false);
+  }
+
+  // ================================================================================================
+  // Tests for ignoreChanges parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreChanges=true, both DSv1 and DSv2 produce the same file changes for
+   * delete-only commits. Since ignoreChanges implies shouldAllowDeletes, these commits should be
+   * silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreChanges_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreChanges", true);
+  }
+
+  /**
+   * Verifies that with ignoreChanges=true, both DSv1 and DSv2 produce the same file changes for
+   * change commits (commits containing both AddFile and RemoveFile actions). Unlike ignoreDeletes,
+   * ignoreChanges allows these commits through and emits their AddFiles.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreChanges_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreChanges", false);
+  }
+
+  // ================================================================================================
+  // Tests for ignoreFileDeletion parity between DSv1 and DSv2
+  // ================================================================================================
+
+  /**
+   * Verifies that with ignoreFileDeletion=true, both DSv1 and DSv2 produce the same file changes
+   * for delete-only commits. Since ignoreFileDeletion implies shouldAllowDeletes, these commits
+   * should be silently skipped (only sentinels emitted, no data files).
+   */
+  @ParameterizedTest
+  @MethodSource("deleteOnlyScenarios")
+  public void testGetFileChanges_withIgnoreFileDeletion_deleteOnlyParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreFileDeletion", true);
+  }
+
+  /**
+   * Verifies that with ignoreFileDeletion=true, both DSv1 and DSv2 produce the same file changes
+   * for change commits (commits containing both AddFile and RemoveFile actions). Unlike
+   * ignoreDeletes, ignoreFileDeletion allows these commits through and emits their AddFiles.
+   */
+  @ParameterizedTest
+  @MethodSource("changeCommitScenarios")
+  public void testGetFileChanges_withIgnoreFileDeletion_changeCommitParity(
+      ScenarioSetup scenarioSetup,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    runFileChangeParityTest(
+        scenarioSetup, isInitialSnapshot, testDescription, tempDir, "ignoreFileDeletion", false);
+  }
+
+  // TODO(#5319): test the combinations of ignoreDeletes, skipChangeCommits, and ignoreChanges
+  // ================================================================================================
+  // Shared scenario providers for ignoreDeletes, skipChangeCommits, ignoreChanges, and
+  // ignoreFileDeletion tests
+  // ================================================================================================
+
+  /**
+   * Provides delete-only scenarios: commits with only RemoveFile actions and no AddFile actions.
+   * Used by ignoreDeletes, skipChangeCommits, ignoreChanges, and ignoreFileDeletion tests.
+   *
+   * <p>Arguments: (ScenarioSetup, isInitialSnapshot, testDescription)
+   */
+  private static Stream<Arguments> deleteOnlyScenarios() {
+    return Stream.of(
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                },
+            false,
+            "Full table delete"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                },
+            false,
+            "Insert-Delete-Insert: data resumes after delete"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'PartA'), (2, 'PartA'), (3, 'PartB')", tableName);
+                  sql("DELETE FROM %s WHERE name = 'PartA'", tableName);
+                },
+            false,
+            "Partitioned table: delete entire partition"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableDeletionVectors' = true)",
+                      tableName);
+                  sql(
+                      "INSERT INTO %s SELECT /*+ COALESCE(1) */ * FROM VALUES "
+                          + "(1, 'User1'), (2, 'User2'), (3, 'User3') AS t(id, name)",
+                      tableName);
+                  sql("DELETE FROM %s WHERE id >= 1", tableName);
+                },
+            false,
+            "Full DELETE with DV: full file delete via WHERE clause"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2')", tableName);
+                  sql("INSERT INTO %s VALUES (3, 'User3'), (4, 'User4')", tableName);
+                  sql("DELETE FROM %s", tableName);
+                },
+            true,
+            "Full table delete with initial snapshot"));
+  }
+
+  /**
+   * Provides change-commit scenarios: commits containing both AddFile and RemoveFile actions (e.g.,
+   * UPDATE, MERGE). Used by ignoreDeletes, skipChangeCommits, ignoreChanges, and ignoreFileDeletion
+   * tests — ignoreDeletes expects these to throw, skipChangeCommits expects them to be silently
+   * skipped, and ignoreChanges/ignoreFileDeletion expect them to pass through with AddFiles
+   * emitted.
+   *
+   * <p>Arguments: (ScenarioSetup, isInitialSnapshot, testDescription)
+   */
+  private static Stream<Arguments> changeCommitScenarios() {
+    return Stream.of(
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  sql("UPDATE %s SET name = 'Updated' WHERE id = 1", tableName);
+                },
+            false,
+            "UPDATE: AddFile + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  String sourceTableName = "merge_src_" + System.nanoTime();
+                  sql(
+                      "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'",
+                      sourceTableName, new File(tempDir, "source").getAbsolutePath());
+                  sql("INSERT INTO %s VALUES (2, 'UpdatedUser2'), (4, 'User4')", sourceTableName);
+                  sql(
+                      "MERGE INTO %s AS target USING %s AS source ON target.id = source.id "
+                          + "WHEN MATCHED THEN UPDATE SET target.name = source.name "
+                          + "WHEN NOT MATCHED THEN INSERT (id, name) "
+                          + "VALUES (source.id, source.name)",
+                      tableName, sourceTableName);
+                  sql("DROP TABLE IF EXISTS %s", sourceTableName);
+                },
+            false,
+            "MERGE: AddFile + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s SET TBLPROPERTIES ('delta.enableDeletionVectors' = true)",
+                      tableName);
+                  // Coalesce to to ensure DV is partial delete
+                  sql(
+                      "INSERT INTO %s SELECT /*+ COALESCE(1) */ * FROM VALUES "
+                          + "(1, 'User1'), (2, 'User2'), (3, 'User3') AS t(id, name)",
+                      tableName);
+                  sql("DELETE FROM %s WHERE id = 1", tableName);
+                },
+            false,
+            "Partial DELETE with DV: AddFile(with DV) + RemoveFile"),
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("INSERT INTO %s VALUES (1, 'User1'), (2, 'User2'), (3, 'User3')", tableName);
+                  sql("UPDATE %s SET name = 'Updated' WHERE id = 1", tableName);
+                },
+            true,
+            "UPDATE with initial snapshot: AddFile + RemoveFile"));
   }
 
   @Test
@@ -1439,13 +2146,215 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
             Optional.of(10000L),
             "With both limits"),
 
-        // Edge cases
+        // start and end version equals
         Arguments.of(
             /* fromVersion= */ 3L,
             /* toVersion= */ 3L,
             noMaxFiles,
             noMaxBytes,
             "Same version (3 to 3)"));
+  }
+
+  // ================================================================================================
+  // Tests for planInputPartitions with excludeRegex
+  // ================================================================================================
+
+  /**
+   * Parameterized test that verifies planInputPartitions correctly applies the excludeRegex read
+   * option.
+   *
+   * <p>Uses a partitioned table so file paths contain partition directory names (e.g.
+   * "category=alpha/..."), making it straightforward to craft regex patterns that target specific
+   * subsets of files.
+   *
+   * <p>Verifies correctness by extracting the {@code id} column (always at ordinal 0) from the
+   * reader output and comparing the resulting set of IDs against the expected set.
+   */
+  @ParameterizedTest
+  @MethodSource("excludeRegexPlanInputPartitionsParameters")
+  public void testPlanInputPartitions_excludeRegex(
+      String excludeRegexPattern,
+      long fromVersion,
+      long toVersion,
+      int[] expectedIds,
+      boolean isInitialSnapshot,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_exclude_regex_" + Math.abs(testDescription.hashCode()) + "_" + System.nanoTime();
+
+    // Create table partitioned by category with 4 versions of data.
+    // Version 0: CREATE TABLE (empty)
+    // Version 1: ids {1,2} in category=alpha
+    // Version 2: ids {3,4} in category=beta
+    // Version 3: ids {5,6} in category=alpha
+    // Version 4: ids {7,8} in category=gamma
+    sql(
+        "CREATE TABLE %s (id INT, name STRING, category STRING) "
+            + "USING delta LOCATION '%s' PARTITIONED BY (category)",
+        testTableName, testTablePath);
+    sql("INSERT INTO %s VALUES (1, 'Alice', 'alpha'), (2, 'Bob', 'alpha')", testTableName);
+    sql("INSERT INTO %s VALUES (3, 'Charlie', 'beta'), (4, 'David', 'beta')", testTableName);
+    sql("INSERT INTO %s VALUES (5, 'Eve', 'alpha'), (6, 'Frank', 'alpha')", testTableName);
+    sql("INSERT INTO %s VALUES (7, 'Grace', 'gamma'), (8, 'Harry', 'gamma')", testTableName);
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(
+            deltaLog.tableId(), fromVersion, DeltaSourceOffset.BASE_INDEX(), isInitialSnapshot);
+    DeltaSourceOffset endOffset =
+        new DeltaSourceOffset(
+            deltaLog.tableId(), toVersion, DeltaSourceOffset.END_INDEX(), isInitialSnapshot);
+
+    DeltaOptions options = createDeltaOptions("excludeRegex", excludeRegexPattern);
+
+    // DSv2: planInputPartitions + createReaderFactory
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, spark.sessionState().newHadoopConf());
+    org.apache.spark.sql.delta.Snapshot deltaSnapshot = deltaLog.unsafeVolatileSnapshot();
+    StructType fullSchema = deltaSnapshot.metadata().schema();
+    StructType partitionSchema = deltaSnapshot.metadata().partitionSchema();
+    Set<String> partitionColNames =
+        Arrays.stream(partitionSchema.fieldNames()).collect(Collectors.toSet());
+    StructType dataSchema =
+        new StructType(
+            Arrays.stream(fullSchema.fields())
+                .filter(f -> !partitionColNames.contains(f.name()))
+                .toArray(StructField[]::new));
+
+    SparkMicroBatchStream stream =
+        new SparkMicroBatchStream(
+            snapshotManager,
+            snapshotManager.loadLatestSnapshot(),
+            spark.sessionState().newHadoopConf(),
+            spark,
+            options,
+            testTablePath,
+            dataSchema,
+            partitionSchema,
+            fullSchema,
+            new org.apache.spark.sql.sources.Filter[0],
+            Map$.MODULE$.empty());
+
+    InputPartition[] partitions = stream.planInputPartitions(startOffset, endOffset);
+    PartitionReaderFactory readerFactory = stream.createReaderFactory();
+
+    // Extract IDs (column ordinal 0) from reader output.
+    // We read only the id to avoid schema complications with partitioned tables where
+    // the vectorized reader may not include partition columns in the InternalRow.
+    List<Integer> dsv2Ids = new ArrayList<>();
+    for (InputPartition partition : partitions) {
+      if (readerFactory.supportColumnarReads(partition)) {
+        PartitionReader<org.apache.spark.sql.vectorized.ColumnarBatch> reader =
+            readerFactory.createColumnarReader(partition);
+        while (reader.next()) {
+          org.apache.spark.sql.vectorized.ColumnarBatch batch = reader.get();
+          for (int rowId = 0; rowId < batch.numRows(); rowId++) {
+            dsv2Ids.add(batch.getRow(rowId).getInt(0));
+          }
+        }
+        reader.close();
+      } else {
+        PartitionReader<InternalRow> reader = readerFactory.createReader(partition);
+        while (reader.next()) {
+          dsv2Ids.add(reader.get().getInt(0));
+        }
+        reader.close();
+      }
+    }
+
+    List<Integer> expected =
+        Arrays.stream(expectedIds).sorted().boxed().collect(Collectors.toList());
+    Collections.sort(dsv2Ids);
+
+    assertEquals(
+        expected,
+        dsv2Ids,
+        String.format("[%s] ID mismatch: expected=%s, got=%s", testDescription, expected, dsv2Ids));
+  }
+
+  /** Provides test parameters for the excludeRegex planInputPartitions test. */
+  private static Stream<Arguments> excludeRegexPlanInputPartitionsParameters() {
+    return Stream.of(
+        Arguments.of(
+            /* excludeRegexPattern= */ (String) null,
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ false,
+            "No excludeRegex - all versions"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=alpha",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {3, 4, 7, 8},
+            /* isInitialSnapshot= */ false,
+            "Exclude alpha category"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=beta",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ false,
+            "Exclude beta category"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=gamma",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6},
+            /* isInitialSnapshot= */ false,
+            "Exclude gamma category"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=(alpha|beta)",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {7, 8},
+            /* isInitialSnapshot= */ false,
+            "Exclude alpha and beta categories"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "nonexistent_xyz_pattern",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ false,
+            "Regex matching no files"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=",
+            /* fromVersion= */ 1L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {},
+            /* isInitialSnapshot= */ false,
+            "Regex matching all files"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=alpha",
+            /* fromVersion= */ 2L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {3, 4, 7, 8},
+            /* isInitialSnapshot= */ false,
+            "Exclude alpha versions 2 to 4"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=beta",
+            /* fromVersion= */ 2L,
+            /* toVersion= */ 2L,
+            /* expectedIds= */ new int[] {},
+            /* isInitialSnapshot= */ false,
+            "Exclude beta version 2 only"),
+        Arguments.of(
+            /* excludeRegexPattern= */ (String) null,
+            /* fromVersion= */ 0L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            /* isInitialSnapshot= */ true,
+            "Initial snapshot - no excludeRegex"),
+        Arguments.of(
+            /* excludeRegexPattern= */ "category=alpha",
+            /* fromVersion= */ 0L,
+            /* toVersion= */ 4L,
+            /* expectedIds= */ new int[] {3, 4, 7, 8},
+            /* isInitialSnapshot= */ true,
+            "Initial snapshot - exclude alpha"));
   }
 
   /**
@@ -1601,7 +2510,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
       throws Exception {
     // Negative values are rejected during DeltaOptions parsing, before getStartingVersion is
     // called.
-    assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("-1"));
+    assertThrows(IllegalArgumentException.class, () -> createDeltaOptions("startingVersion", "-1"));
   }
 
   /**
@@ -1711,7 +2620,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // dsv1
     DeltaLog freshDeltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource =
-        createDeltaSource(freshDeltaLog, testTablePath, createDeltaOptions(startingVersion));
+        createDeltaSource(
+            freshDeltaLog, testTablePath, createDeltaOptions("startingVersion", startingVersion));
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // dsv2
@@ -1719,7 +2629,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
-            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
+            snapshotManager,
+            new Configuration(),
+            createDeltaOptions("startingVersion", startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(
@@ -1727,6 +2639,775 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         dsv2Result,
         Optional.of(Long.parseLong(startingVersion)),
         "Protocol validation fallback with non-recreatable version");
+  }
+
+  /**
+   * Test that verifies parity between DSv1 DeltaSource.getStartingVersion and DSv2
+   * SparkMicroBatchStream.getStartingVersion when using startingTimestamp option.
+   *
+   * <p>Uses ICT (In-Commit Timestamps) so we can read exact commit timestamps from the delta log
+   * and test the boundary case where startingTimestamp exactly equals a commit time.
+   */
+  @Test
+  public void testGetStartingVersionFromTimestamp(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_starting_timestamp_" + System.nanoTime();
+
+    // Enable ICT so commit timestamps are deterministic and stored in the delta log
+    sql(
+        "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'"
+            + " TBLPROPERTIES ('delta.enableInCommitTimestamps' = 'true')",
+        testTableName, testTablePath); // Version 0
+
+    String beforeV1TS = new Timestamp(System.currentTimeMillis()).toString();
+    // Version 1
+    sql("INSERT INTO %s VALUES (1, 'User1')", testTableName);
+    Thread.sleep(10);
+    String betweenV1V2TS = new Timestamp(System.currentTimeMillis()).toString();
+    // Version 2
+    sql("INSERT INTO %s VALUES (2, 'User2')", testTableName);
+    Thread.sleep(10);
+    String afterV2TS = new Timestamp(System.currentTimeMillis()).toString();
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+
+    // Read exact commit timestamps from the delta log for boundary testing
+    scala.collection.Seq<DeltaHistory> history =
+        deltaLog.history().getHistory(0L, scala.Option.apply(2L), scala.Option.empty());
+    java.util.Map<Long, Timestamp> versionTimestamps = new java.util.HashMap<>();
+    for (int i = 0; i < history.size(); i++) {
+      DeltaHistory entry = history.apply(i);
+      long version = (long) entry.version().get();
+      versionTimestamps.put(version, entry.timestamp());
+    }
+    String v1ExactTS = versionTimestamps.get(1L).toString();
+    String v2ExactTS = versionTimestamps.get(2L).toString();
+
+    class TimestampTestCase {
+      final String timestamp;
+      final long expectedVersion;
+      final String message;
+
+      TimestampTestCase(String timestamp, long expectedVersion, String message) {
+        this.timestamp = timestamp;
+        this.expectedVersion = expectedVersion;
+        this.message = message;
+      }
+    }
+
+    TimestampTestCase[] testCases = {
+      new TimestampTestCase(beforeV1TS, 1L, "timestamp between v0 and v1 should return version 1"),
+      new TimestampTestCase(
+          v1ExactTS, 1L, "timestamp exactly at v1 commit time should return version 1"),
+      new TimestampTestCase(
+          betweenV1V2TS, 2L, "timestamp between v1 and v2 should return version 2"),
+      new TimestampTestCase(
+          v2ExactTS, 2L, "timestamp exactly at v2 commit time should return version 2")
+    };
+    for (TimestampTestCase testCase : testCases) {
+      String timestamp = testCase.timestamp;
+      long expectedVersion = testCase.expectedVersion;
+      String message = testCase.message;
+
+      // dsv1
+      DeltaSource deltaSource =
+          createDeltaSource(
+              deltaLog, testTablePath, createDeltaOptions("startingTimestamp", timestamp));
+      scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
+
+      // dsv2
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, new Configuration());
+      SparkMicroBatchStream dsv2Stream =
+          createTestStreamWithDefaults(
+              snapshotManager,
+              new Configuration(),
+              createDeltaOptions("startingTimestamp", timestamp));
+      Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
+
+      compareStartingVersionResults(dsv1Result, dsv2Result, Optional.of(expectedVersion), message);
+    }
+
+    // dsv1
+    DeltaSource deltaSource =
+        createDeltaSource(
+            deltaLog, testTablePath, createDeltaOptions("startingTimestamp", afterV2TS));
+    DeltaAnalysisException dsv1Exception =
+        assertThrows(
+            DeltaAnalysisException.class,
+            deltaSource::getStartingVersion,
+            String.format(
+                "DSv1 should throw when no commit after timestamp and not allow out of range"));
+
+    // dsv2
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, new Configuration());
+    SparkMicroBatchStream dsv2Stream =
+        createTestStreamWithDefaults(
+            snapshotManager,
+            new Configuration(),
+            createDeltaOptions("startingTimestamp", afterV2TS));
+    DeltaAnalysisException dsv2Exception =
+        assertThrows(
+            DeltaAnalysisException.class,
+            dsv2Stream::getStartingVersion,
+            String.format(
+                "DSv2 should throw when no commit after timestamp and not allow out of range"));
+
+    assertEquals(
+        dsv1Exception.getErrorClass(),
+        dsv2Exception.getErrorClass(),
+        "v1 connector and v2 connector should throw the same error class when no commit after timestamp and not allow out of range");
+    assertEquals(
+        dsv1Exception.getMessageParameters(),
+        dsv2Exception.getMessageParameters(),
+        "v1 connector and v2 connector should throw the same error messages when no commit after timestamp and not allow out of range");
+  }
+
+  // ================================================================================================
+  // Tests for checkReadIncompatibleSchemaChanges parity between v1 connector vs v2 connector
+  // ================================================================================================
+
+  // TODO(#5319): Tests on RESTORE on delta table after applying an additive schema change
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 throw DeltaIllegalStateException when
+   * encountering forward-fill additive schema change actions.
+   */
+  @ParameterizedTest
+  @MethodSource("additiveSchemaEvolutionScenarios")
+  public void testSchemaEvolution_onForwardAdditiveChanges_throwsError(
+      ScenarioSetup scenarioSetup,
+      Map<String, String> sparkConf,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_forward_additive_changes"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Try to read from version 0, which should include commits with METADATA actions
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    boolean isInitialSnapshot = false;
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+
+    try {
+      // setup specific spark config
+      sparkConf.forEach((key, value) -> spark.conf().set(key, value));
+
+      // Create DSv1 DeltaSource
+      DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+      DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+
+      // Create DSv2 SparkMicroBatchStream
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      // Execute schema change after source initialization to ensure forward change
+      scenarioSetup.setup(testTableName, tempDir);
+
+      DeltaIllegalStateException dsv1Exception =
+          assertThrows(
+              DeltaIllegalStateException.class,
+              () -> {
+                ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+                    deltaSource.getFileChanges(
+                        fromVersion,
+                        fromIndex,
+                        isInitialSnapshot,
+                        endOffset,
+                        /* verifyMetadataAction= */ true);
+                // Consume the iterator to trigger validation
+                while (deltaChanges.hasNext()) {
+                  // Exception is thrown by .next() when it encounters a REMOVE
+                  deltaChanges.next();
+                }
+                deltaChanges.close();
+              },
+              String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
+
+      DeltaIllegalStateException dsv2Exception =
+          assertThrows(
+              DeltaIllegalStateException.class,
+              () -> {
+                CloseableIterator<IndexedFile> kernelChanges =
+                    stream.getFileChanges(
+                        fromVersion,
+                        fromIndex,
+                        isInitialSnapshot,
+                        ScalaUtils.toJavaOptional(endOffset));
+                try {
+                  // Consume the iterator to trigger validation (if not already triggered)
+                  while (kernelChanges.hasNext()) {
+                    kernelChanges.next();
+                  }
+                  kernelChanges.close();
+                } finally {
+                  // Make sure to close the iterator even if exception occurs
+                  if (kernelChanges != null) {
+                    try {
+                      kernelChanges.close();
+                    } catch (Exception ignored) {
+                    }
+                  }
+                }
+              },
+              String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+
+      assertEquals(
+          dsv1Exception.getErrorClass(),
+          dsv2Exception.getErrorClass(),
+          "v1 connector and v2 connector should throw the same error class on forward-fill additive schema changes");
+      assertEquals(
+          dsv1Exception.getMessageParameters(),
+          dsv2Exception.getMessageParameters(),
+          "v1 connector and v2 connector should throw the same error messages on forward-fill additive schema changes");
+    } finally {
+      // recover spark config to original state
+      sparkConf.forEach((key, value) -> spark.conf().unset(key));
+    }
+  }
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 return the same file changes when
+   * encountering backfill additive schema change actions.
+   */
+  @ParameterizedTest
+  @MethodSource("additiveSchemaEvolutionScenarios")
+  public void testSchemaEvolution_onBackfillAdditiveChanges(
+      ScenarioSetup scenarioSetup,
+      Map<String, String> sparkConf,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_backfill_additive_changes"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Execute schema change before source initialization to ensure backfill change
+    scenarioSetup.setup(testTableName, tempDir);
+
+    // Try to read from version 0, which should include commits with METADATA actions
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    boolean isInitialSnapshot = false;
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+
+    try {
+      // setup specific spark config
+      sparkConf.forEach((key, value) -> spark.conf().set(key, value));
+
+      // Test DSv1 DeltaSource
+      DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+      DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+      ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+          deltaSource.getFileChanges(
+              fromVersion,
+              fromIndex,
+              isInitialSnapshot,
+              endOffset,
+              /* verifyMetadataAction= */ true);
+      List<org.apache.spark.sql.delta.sources.IndexedFile> deltaFilesList = new ArrayList<>();
+      while (deltaChanges.hasNext()) {
+        deltaFilesList.add(deltaChanges.next());
+      }
+      deltaChanges.close();
+
+      // Test DSv2 SparkMicroBatchStream
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+      try (CloseableIterator<IndexedFile> kernelChanges =
+          stream.getFileChanges(
+              fromVersion, fromIndex, isInitialSnapshot, ScalaUtils.toJavaOptional(endOffset))) {
+        List<IndexedFile> kernelFilesList = new ArrayList<>();
+        while (kernelChanges.hasNext()) {
+          kernelFilesList.add(kernelChanges.next());
+        }
+        compareFileChanges(deltaFilesList, kernelFilesList);
+      }
+    } finally {
+      // recover spark config to original state
+      sparkConf.forEach((key, value) -> spark.conf().unset(key));
+    }
+  }
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 throw Exception when encountering
+   * forward-fill non-additive schema change actions.
+   */
+  @ParameterizedTest
+  @MethodSource("nonAdditiveSchemaEvolutionScenarios")
+  public void testSchemaEvolution_onForwardNonAdditiveChanges_throwsError(
+      ScenarioSetup scenarioSetup,
+      Map<String, String> sparkConf,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_forward_non_additive_changes"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Try to read from version 0, which should include commits with METADATA actions
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    boolean isInitialSnapshot = false;
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+
+    try {
+      // setup specific spark config
+      sparkConf.forEach((key, value) -> spark.conf().set(key, value));
+
+      // Create DSv1 DeltaSource
+      DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+      DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+
+      // Create DSv2 SparkMicroBatchStream
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      // Execute schema change after source initialization to ensure forward change
+      scenarioSetup.setup(testTableName, tempDir);
+
+      DeltaUnsupportedOperationException dsv1Exception =
+          assertThrows(
+              DeltaUnsupportedOperationException.class,
+              () -> {
+                ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+                    deltaSource.getFileChanges(
+                        fromVersion,
+                        fromIndex,
+                        isInitialSnapshot,
+                        endOffset,
+                        /* verifyMetadataAction= */ true);
+                // Consume the iterator to trigger validation
+                while (deltaChanges.hasNext()) {
+                  // Exception is thrown by .next() when it encounters a REMOVE
+                  deltaChanges.next();
+                }
+                deltaChanges.close();
+              },
+              String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
+
+      DeltaUnsupportedOperationException dsv2Exception =
+          assertThrows(
+              DeltaUnsupportedOperationException.class,
+              () -> {
+                CloseableIterator<IndexedFile> kernelChanges =
+                    stream.getFileChanges(
+                        fromVersion,
+                        fromIndex,
+                        isInitialSnapshot,
+                        ScalaUtils.toJavaOptional(endOffset));
+                try {
+                  // Consume the iterator to trigger validation (if not already triggered)
+                  while (kernelChanges.hasNext()) {
+                    kernelChanges.next();
+                  }
+                  kernelChanges.close();
+                } finally {
+                  // Make sure to close the iterator even if exception occurs
+                  if (kernelChanges != null) {
+                    try {
+                      kernelChanges.close();
+                    } catch (Exception ignored) {
+                    }
+                  }
+                }
+              },
+              String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+
+      // TODO(#5319): assertEqual after schema tracking log is supported
+      String expectedPrefix = "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE";
+      assertTrue(
+          dsv1Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v1 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv1Exception.getErrorClass()));
+      assertTrue(
+          dsv2Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v2 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv2Exception.getErrorClass()));
+      assertEquals(
+          dsv1Exception.getMessageParameters(),
+          dsv2Exception.getMessageParameters(),
+          "v1 connector and v2 connector should throw the same error messages on forward-fill non-additive schema changes");
+    } finally {
+      // recover spark config to original state
+      sparkConf.forEach((key, value) -> spark.conf().unset(key));
+    }
+  }
+
+  /**
+   * Parameterized test that verifies both DSv1 and DSv2 throw Exception when encountering backfill
+   * non-additive schema change actions.
+   */
+  @ParameterizedTest
+  @MethodSource("nonAdditiveSchemaEvolutionScenarios")
+  public void testSchemaEvolution_onBackfillNonAdditiveChanges_throwsError(
+      ScenarioSetup scenarioSetup,
+      Map<String, String> sparkConf,
+      String testDescription,
+      @TempDir File tempDir)
+      throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName =
+        "test_backfill_non_additive_changes"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Try to read from version 0, which should include commits with METADATA actions
+    long fromVersion = 0L;
+    long fromIndex = DeltaSourceOffset.BASE_INDEX();
+    boolean isInitialSnapshot = false;
+    Option<DeltaSourceOffset> endOffset = Option.empty();
+
+    try {
+      // setup specific spark config
+      sparkConf.forEach((key, value) -> spark.conf().set(key, value));
+
+      // Execute schema change before source initialization to ensure backfill change
+      scenarioSetup.setup(testTableName, tempDir);
+
+      // Create DSv1 DeltaSource
+      DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+      DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+
+      // Create DSv2 SparkMicroBatchStream
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      DeltaUnsupportedOperationException dsv1Exception =
+          assertThrows(
+              DeltaUnsupportedOperationException.class,
+              () -> {
+                ClosableIterator<org.apache.spark.sql.delta.sources.IndexedFile> deltaChanges =
+                    deltaSource.getFileChanges(
+                        fromVersion,
+                        fromIndex,
+                        isInitialSnapshot,
+                        endOffset,
+                        /* verifyMetadataAction= */ true);
+                // Consume the iterator to trigger validation
+                while (deltaChanges.hasNext()) {
+                  // Exception is thrown by .next() when it encounters a REMOVE
+                  deltaChanges.next();
+                }
+                deltaChanges.close();
+              },
+              String.format("DSv1 should throw on METADATA for scenario: %s", testDescription));
+
+      DeltaUnsupportedOperationException dsv2Exception =
+          assertThrows(
+              DeltaUnsupportedOperationException.class,
+              () -> {
+                CloseableIterator<IndexedFile> kernelChanges =
+                    stream.getFileChanges(
+                        fromVersion,
+                        fromIndex,
+                        isInitialSnapshot,
+                        ScalaUtils.toJavaOptional(endOffset));
+                try {
+                  // Consume the iterator to trigger validation (if not already triggered)
+                  while (kernelChanges.hasNext()) {
+                    kernelChanges.next();
+                  }
+                  kernelChanges.close();
+                } finally {
+                  // Make sure to close the iterator even if exception occurs
+                  if (kernelChanges != null) {
+                    try {
+                      kernelChanges.close();
+                    } catch (Exception ignored) {
+                    }
+                  }
+                }
+              },
+              String.format("DSv2 should throw on METADATA for scenario: %s", testDescription));
+
+      // TODO(#5319): assertEqual after schema tracking log is supported
+      String expectedPrefix = "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE";
+      assertTrue(
+          dsv1Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v1 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv1Exception.getErrorClass()));
+      assertTrue(
+          dsv2Exception.getErrorClass().startsWith(expectedPrefix),
+          String.format(
+              "v2 connector error class should start with %s, but got: %s",
+              expectedPrefix, dsv2Exception.getErrorClass()));
+      assertEquals(
+          dsv1Exception.getMessageParameters(),
+          dsv2Exception.getMessageParameters(),
+          "v1 connector and v2 connector should throw the same error messages on backfill non-additive schema changes");
+    } finally {
+      // recover spark config to original state
+      sparkConf.forEach((key, value) -> spark.conf().unset(key));
+    }
+  }
+
+  /**
+   * Test that verifies DSv1 and DSv2 throw errors when the starting snapshot has an incompatible
+   * schema change that gets reverted before the latest version.
+   *
+   * <p>Scenario: checkReadIncompatibleSchemaChange only checks metadata actions, so it misses the
+   * incompatible intermediate state (id → userId → id). The
+   * checkReadIncompatibleSchemaChangeOnStreamStartOnce method catches this by validating each
+   * snapshot in the range.
+   */
+  @Test
+  public void testSchemaEvolution_onStreamStartOnce(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testDescription = "testSchemaEvolution_onStreamStartOnce";
+    String testTableName =
+        "test_schema_changes_on_stream_start_once"
+            + Math.abs(testDescription.hashCode())
+            + "_"
+            + System.nanoTime();
+    createSchemaEvolutionTestTable(testTablePath, testTableName);
+
+    // Execute schema change before source initialization to ensure backfill change
+    spark.sql(String.format("ALTER table %s RENAME COLUMN id TO userId", testTableName));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (3, 'Cathy', 5, named_struct('col1', 18, 'col2', 'SF'))",
+            testTableName));
+    // Record the version prior to reverting schema change
+    long incompatibleSchemaVersion =
+        DeltaLog.forTable(spark, new Path(testTablePath))
+            .update(false, Option.empty(), Option.empty())
+            .version();
+    // Revert the schema change
+    spark.sql(String.format("ALTER table %s RENAME COLUMN userId TO id", testTableName));
+    spark.sql(
+        String.format(
+            "INSERT INTO %s VALUES (4, 'David', 8, named_struct('col1', 47, 'col2', 'DC'))",
+            testTableName));
+
+    DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
+    String tableId = deltaLog.tableId();
+    // Try to read from version 0 without readLimit to check all commits
+    DeltaSourceOffset startOffset =
+        new DeltaSourceOffset(
+            tableId,
+            incompatibleSchemaVersion,
+            DeltaSourceOffset.BASE_INDEX(),
+            /* isInitialSnapshot= */ false);
+    ReadLimit readLimit = ReadLimitConfig.noLimit().toReadLimit();
+
+    // Test DSv1 DeltaSource
+    DeltaSource deltaSource = createDeltaSource(deltaLog, testTablePath);
+    DeltaUnsupportedOperationException dsv1Exception =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> deltaSource.latestOffset(startOffset, readLimit),
+            String.format(
+                "DSv1 should throw error on stream start for scenario: %s", testDescription));
+    assertThat(dsv1Exception.getStackTrace())
+        .as("Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'")
+        .anyMatch(
+            element ->
+                element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+
+    // Test DSv2 SparkMicroBatchStream
+    Configuration hadoopConf = new Configuration();
+    PathBasedSnapshotManager snapshotManager =
+        new PathBasedSnapshotManager(testTablePath, hadoopConf);
+    SparkMicroBatchStream stream =
+        createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+    DeltaUnsupportedOperationException dsv2Exception =
+        assertThrows(
+            DeltaUnsupportedOperationException.class,
+            () -> stream.latestOffset(startOffset, readLimit),
+            String.format(
+                "DSv2 should throw error on stream start for scenario: %s", testDescription));
+    assertThat(dsv2Exception.getStackTrace())
+        .as("Error should be thrown by 'checkReadIncompatibleSchemaChangeOnStreamStartOnce'")
+        .anyMatch(
+            element ->
+                element.toString().contains("checkReadIncompatibleSchemaChangeOnStreamStartOnce"));
+
+    // TODO(#5319): assertEqual after schema tracking log is supported
+    String expectedPrefix = "DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE";
+    assertTrue(
+        dsv1Exception.getErrorClass().startsWith(expectedPrefix),
+        String.format(
+            "v1 connector error class should start with %s, but got: %s",
+            expectedPrefix, dsv1Exception.getErrorClass()));
+    assertTrue(
+        dsv2Exception.getErrorClass().startsWith(expectedPrefix),
+        String.format(
+            "v2 connector error class should start with %s, but got: %s",
+            expectedPrefix, dsv2Exception.getErrorClass()));
+    assertEquals(
+        dsv1Exception.getMessageParameters(),
+        dsv2Exception.getMessageParameters(),
+        "v1 connector and v2 connector should throw the same error messages on stream start schema changes");
+  }
+
+  /** Provides test scenarios that generate additive schema changes actions. */
+  private static Stream<Arguments> additiveSchemaEvolutionScenarios() {
+    return Stream.of(
+        // Add nullable INT column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Add nullable INT column"),
+
+        // Add nullable STRING column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ADD COLUMN address STRING", tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Add nullable STRING column"),
+
+        // Add nullable STRUCT column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s ADD COLUMN (address STRUCT<country: STRING, zip: INT>)",
+                      tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Add nullable STRUCT column"),
+
+        // Add multiple nullable columns
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql(
+                      "ALTER TABLE %s ADD COLUMN (address STRING, zip INT, time TIMESTAMP)",
+                      tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Add multiple nullable columns"),
+
+        // Make non-nullable column nullable
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Make non-nullable column nullable"),
+
+        // Add nullable column and then make non-nullable column nullable
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
+                  sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Add nullable column and then make non-nullable column nullable"),
+
+        // Make non-nullable column nullable and then add nullable column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ADD COLUMN age INT", tableName);
+                  sql("ALTER TABLE %s ALTER COLUMN id DROP NOT NULL", tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Make non-nullable column nullable and then add nullable column"),
+
+        // Widen INT column to BIGINT
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ALTER COLUMN id TYPE BIGINT", tableName);
+                },
+            // Set enableSchemaTrackingForTypeWidening to be false to treat widening type changes as
+            // additive
+            /* sparkConf */ Map.of(
+                DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING().key(), "false"),
+            "Widen INT column to BIGINT"));
+  }
+
+  /** Provides test scenarios that generate non-additive schema changes actions. */
+  private static Stream<Arguments> nonAdditiveSchemaEvolutionScenarios() {
+    return Stream.of(
+        // Rename column
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s RENAME COLUMN id TO userId", tableName);
+                },
+            /* sparkConf */ Map.of(),
+            "Rename column"),
+
+        // Drop nullable, non-nullable and struct columns
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s DROP COLUMNS (id, value, info)", tableName);
+                },
+            /* sparkConf */ Map.of(
+                DeltaSQLConf
+                    .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES()
+                    .key(),
+                "false"),
+            "Drop nullable, non-nullable and struct columns"),
+
+        // Drop column in nested struct
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s DROP COLUMNS info.col1", tableName);
+                },
+            /* sparkConf */ Map.of(
+                DeltaSQLConf
+                    .DELTA_STREAMING_UNSAFE_READ_ON_INCOMPATIBLE_COLUMN_MAPPING_SCHEMA_CHANGES()
+                    .key(),
+                "false"),
+            "Drop column in nested struct"),
+
+        // Widen INT column to BIGINT
+        Arguments.of(
+            (ScenarioSetup)
+                (tableName, tempDir) -> {
+                  sql("ALTER TABLE %s ALTER COLUMN id TYPE BIGINT", tableName);
+                },
+            // Set enableSchemaTrackingForTypeWidening to be true to treat widening type changes as
+            // non-additive
+            /* sparkConf */ Map.of(
+                DeltaSQLConf.DELTA_TYPE_WIDENING_ENABLE_STREAMING_SCHEMA_TRACKING().key(), "true"),
+            "Widen INT column to BIGINT"));
   }
 
   // ================================================================================================
@@ -1822,7 +3503,7 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
 
   /** Helper method to execute SQL with String.format. */
   private static void sql(String query, Object... args) {
-    SparkDsv2TestBase.spark.sql(String.format(query, args));
+    DeltaV2TestBase.spark.sql(String.format(query, args));
   }
 
   /**
@@ -1941,32 +3622,36 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         /* filters= */ emptySeq);
   }
 
-  /** Helper method to create a SparkMicroBatchStream with default empty values for testing. */
+  /** Helper method to create a SparkMicroBatchStream with default values for testing. */
   private SparkMicroBatchStream createTestStreamWithDefaults(
       PathBasedSnapshotManager snapshotManager, Configuration hadoopConf, DeltaOptions options) {
+    io.delta.kernel.Snapshot snapshot = snapshotManager.loadLatestSnapshot();
+    StructType tableSchema =
+        io.delta.spark.internal.v2.utils.SchemaUtils.convertKernelSchemaToSparkSchema(
+            snapshot.getSchema());
     return new SparkMicroBatchStream(
         snapshotManager,
-        snapshotManager.loadLatestSnapshot(),
+        snapshot,
         hadoopConf,
         spark,
         options,
         /* tablePath= */ "",
-        /* dataSchema= */ new StructType(),
+        /* dataSchema= */ tableSchema,
         /* partitionSchema= */ new StructType(),
         /* readDataSchema= */ new StructType(),
         /* dataFilters= */ new org.apache.spark.sql.sources.Filter[0],
         /* scalaOptions= */ scala.collection.immutable.Map$.MODULE$.empty());
   }
 
-  /** Helper method to create DeltaOptions with startingVersion for testing. */
-  private DeltaOptions createDeltaOptions(String startingVersionValue) {
-    if (startingVersionValue == null) {
+  /** Helper method to create DeltaOptions with read option for testing. */
+  private DeltaOptions createDeltaOptions(String optionName, String optionValue) {
+    if (optionName == null || optionValue == null) {
       // Empty options
       return emptyDeltaOptions();
     } else {
-      // Create Scala Map with startingVersion
+      // Create Scala Map with read option
       scala.collection.immutable.Map<String, String> scalaMap =
-          Map$.MODULE$.<String, String>empty().updated("startingVersion", startingVersionValue);
+          Map$.MODULE$.<String, String>empty().updated(optionName, optionValue);
       return new DeltaOptions(scalaMap, spark.sessionState().conf());
     }
   }
@@ -1981,7 +3666,8 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
     // DSv1: Create DeltaSource and get starting version
     DeltaLog deltaLog = DeltaLog.forTable(spark, new Path(testTablePath));
     DeltaSource deltaSource =
-        createDeltaSource(deltaLog, testTablePath, createDeltaOptions(startingVersion));
+        createDeltaSource(
+            deltaLog, testTablePath, createDeltaOptions("startingVersion", startingVersion));
     scala.Option<Object> dsv1Result = deltaSource.getStartingVersion();
 
     // DSv2: Create SparkMicroBatchStream and get starting version
@@ -1989,7 +3675,9 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         new PathBasedSnapshotManager(testTablePath, new Configuration());
     SparkMicroBatchStream dsv2Stream =
         createTestStreamWithDefaults(
-            snapshotManager, new Configuration(), createDeltaOptions(startingVersion));
+            snapshotManager,
+            new Configuration(),
+            createDeltaOptions("startingVersion", startingVersion));
     Optional<Long> dsv2Result = dsv2Stream.getStartingVersion();
 
     compareStartingVersionResults(dsv1Result, dsv2Result, expectedVersion, testDescription);
@@ -2018,5 +3706,218 @@ public class SparkMicroBatchStreamTest extends SparkDsv2TestBase {
         expectedVersion,
         dsv2Result,
         String.format("DSv2 getStartingVersion should match for %s", testDescription));
+  }
+
+  @Test
+  public void testMemoryProtection_initialSnapshotTooLarge(@TempDir File tempDir) throws Exception {
+    String testTablePath = tempDir.getAbsolutePath();
+    String testTableName = "test_memory_protection_" + System.nanoTime();
+    createEmptyTestTable(testTablePath, testTableName);
+
+    // At version 5, there will be at least 25 files.
+    insertVersions(
+        testTableName,
+        /* numVersions= */ 10,
+        /* rowsPerVersion= */ 5,
+        /* includeEmptyVersion= */ false);
+
+    String configKey = DeltaSQLConf.DELTA_STREAMING_INITIAL_SNAPSHOT_MAX_FILES().key();
+    spark.conf().set(configKey, "5");
+
+    try {
+      Configuration hadoopConf = new Configuration();
+      PathBasedSnapshotManager snapshotManager =
+          new PathBasedSnapshotManager(testTablePath, hadoopConf);
+      SparkMicroBatchStream stream =
+          createTestStreamWithDefaults(snapshotManager, hadoopConf, emptyDeltaOptions());
+
+      long version = 5L;
+      long fromIndex = DeltaSourceOffset.BASE_INDEX();
+      boolean isInitialSnapshot = true;
+
+      RuntimeException exception =
+          assertThrows(
+              RuntimeException.class,
+              () -> {
+                try (CloseableIterator<IndexedFile> iter =
+                    stream.getFileChanges(
+                        version, fromIndex, isInitialSnapshot, Optional.empty())) {
+                  while (iter.hasNext()) {
+                    iter.next();
+                  }
+                }
+              });
+
+      String errorMessage = exception.getMessage();
+      assertTrue(errorMessage.contains("DELTA_STREAMING_INITIAL_SNAPSHOT_TOO_LARGE"));
+      assertTrue(
+          errorMessage.contains("initial snapshot") || errorMessage.contains("Initial snapshot"));
+    } finally {
+      spark.conf().unset(configKey);
+    }
+  }
+
+  /**
+   * Simulates the Kernel integration path where {@code DefaultJsonHandler.hasNext()} wraps a {@link
+   * ClosedByInterruptException} inside a {@link io.delta.kernel.exceptions.KernelEngineException}.
+   * Verifies that {@code findClosedByInterruptCause} extracts the interrupt cause so {@code
+   * latestOffset()} can re-throw it as {@link java.io.UncheckedIOException} for Spark's {@code
+   * isInterruptedByStop}.
+   */
+  @Test
+  public void testFindClosedByInterruptCause() {
+    // KernelEngineException wrapping ClosedByInterruptException -> present
+    ClosedByInterruptException cbie = new ClosedByInterruptException();
+    assertThat(
+            SparkMicroBatchStream.findClosedByInterruptCause(
+                new io.delta.kernel.exceptions.KernelEngineException("readJsonFile", cbie)))
+        .isPresent()
+        .contains(cbie);
+
+    // Plain RuntimeException -> empty
+    assertThat(SparkMicroBatchStream.findClosedByInterruptCause(new RuntimeException("unrelated")))
+        .isEmpty();
+
+    // KernelEngineException wrapping a different IOException -> empty
+    assertThat(
+            SparkMicroBatchStream.findClosedByInterruptCause(
+                new io.delta.kernel.exceptions.KernelEngineException(
+                    "readJsonFile", new java.io.FileNotFoundException("missing"))))
+        .isEmpty();
+  }
+
+  /** Regression test: closing the wrapped iterator must also close CommitActions. */
+  @Test
+  public void testWrapIteratorWithCommitClose_closesCommitOnIteratorClose() throws Exception {
+    AtomicBoolean commitClosed = new AtomicBoolean(false);
+    AtomicBoolean innerClosed = new AtomicBoolean(false);
+
+    CloseableIterator<IndexedFile> inner =
+        new CloseableIterator<IndexedFile>() {
+          private boolean consumed = false;
+
+          @Override
+          public boolean hasNext() {
+            return !consumed;
+          }
+
+          @Override
+          public IndexedFile next() {
+            consumed = true;
+            return IndexedFile.sentinel(/* version= */ 1L, /* index= */ 0L);
+          }
+
+          @Override
+          public void close() {
+            innerClosed.set(true);
+          }
+        };
+
+    try (CloseableIterator<IndexedFile> wrapped =
+        SparkMicroBatchStream.wrapIteratorWithCommitClose(
+            inner, newTrackingCommitActions(commitClosed))) {
+      while (wrapped.hasNext()) {
+        wrapped.next();
+      }
+    }
+
+    assertTrue(innerClosed.get(), "Inner iterator should be closed");
+    assertTrue(commitClosed.get(), "CommitActions should be closed");
+  }
+
+  /** Closing the wrapped iterator before full consumption must still close CommitActions. */
+  @Test
+  public void testWrapIteratorWithCommitClose_closesCommitOnEarlyClose() throws Exception {
+    AtomicBoolean commitClosed = new AtomicBoolean(false);
+
+    CloseableIterator<IndexedFile> inner =
+        new CloseableIterator<IndexedFile>() {
+          private int remaining = 10;
+
+          @Override
+          public boolean hasNext() {
+            return remaining > 0;
+          }
+
+          @Override
+          public IndexedFile next() {
+            remaining--;
+            return IndexedFile.sentinel(/* version= */ 1L, /* index= */ remaining);
+          }
+
+          @Override
+          public void close() {}
+        };
+
+    try (CloseableIterator<IndexedFile> wrapped =
+        SparkMicroBatchStream.wrapIteratorWithCommitClose(
+            inner, newTrackingCommitActions(commitClosed))) {
+      assertTrue(wrapped.hasNext());
+      wrapped.next();
+      // Intentionally don't consume the rest
+    }
+
+    assertTrue(commitClosed.get(), "CommitActions should be closed on early termination");
+  }
+
+  /** If inner.close() throws, CommitActions must still be closed. */
+  @Test
+  public void testWrapIteratorWithCommitClose_closesCommitEvenWhenInnerCloseThrows()
+      throws Exception {
+    AtomicBoolean commitClosed = new AtomicBoolean(false);
+
+    CloseableIterator<IndexedFile> inner =
+        new CloseableIterator<IndexedFile>() {
+          @Override
+          public boolean hasNext() {
+            return false;
+          }
+
+          @Override
+          public IndexedFile next() {
+            throw new java.util.NoSuchElementException();
+          }
+
+          @Override
+          public void close() {
+            throw new RuntimeException("inner close failed");
+          }
+        };
+
+    CloseableIterator<IndexedFile> wrapped =
+        SparkMicroBatchStream.wrapIteratorWithCommitClose(
+            inner, newTrackingCommitActions(commitClosed));
+    try {
+      wrapped.close();
+    } catch (RuntimeException e) {
+      // Expected — inner.close() threw
+    }
+
+    assertTrue(commitClosed.get(), "CommitActions should be closed even when inner.close() throws");
+  }
+
+  /** Creates a CommitActions stub that sets {@code closedFlag} to true on close. */
+  private static CommitActions newTrackingCommitActions(AtomicBoolean closedFlag) {
+    return new CommitActions() {
+      @Override
+      public long getVersion() {
+        return 1L;
+      }
+
+      @Override
+      public long getTimestamp() {
+        return 0L;
+      }
+
+      @Override
+      public CloseableIterator<ColumnarBatch> getActions() {
+        throw new UnsupportedOperationException("not needed for this test");
+      }
+
+      @Override
+      public void close() {
+        closedFlag.set(true);
+      }
+    };
   }
 }

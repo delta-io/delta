@@ -143,8 +143,10 @@ public class TableFeatures {
 
     @Override
     public boolean hasKernelWriteSupport(Metadata metadata) {
-      // writable if change data feed is disabled
-      return !TableConfig.CHANGE_DATA_FEED_ENABLED.fromMetadata(metadata);
+      // Kernel now supports writes to CDF-enabled tables with restrictions.
+      // Validation is performed at commit time to check for unsupported mixed operations
+      // (add+remove with dataChange=true) which would require CDC file generation.
+      return true;
     }
 
     @Override
@@ -203,6 +205,20 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature GEOSPATIAL_RW_FEATURE = new GeoSpatialTableFeature();
+
+  private static class GeoSpatialTableFeature extends TableFeature.ReaderWriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    GeoSpatialTableFeature() {
+      super("geospatial", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasGeospatial(metadata);
+    }
+  }
+
   /* ---- Start: variantType ---- */
   // Base class for variantType and variantType-preview features. Both features are same in terms
   // of behavior and given the feature is graduated, we will enable the `variantType` by default
@@ -238,19 +254,19 @@ public class TableFeatures {
       new VariantTypeTableFeatureBase("variantType-preview");
   /* ---- End: variantType ---- */
 
-  /* ---- Start: variantShredding-preview ---- */
-  public static final TableFeature VARIANT_SHREDDING_PREVIEW_RW_FEATURE =
-      new VariantShreddingPreviewFeature();
-
-  private static class VariantShreddingPreviewFeature extends TableFeature.ReaderWriterFeature
-      implements FeatureAutoEnabledByMetadata {
-    VariantShreddingPreviewFeature() {
-      super("variantShredding-preview", /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
-    }
-
-    @Override
-    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
-      return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata);
+  /* ---- Start: variantShredding ---- */
+  // Base class for variantShredding and variantShredding-preview features. Both features have
+  // identical behavior. Now that variantShredding has graduated to GA:
+  //
+  // - When `delta.enableVariantShredding` is set to true, the GA feature (`variantShredding`)
+  //   is automatically enabled unless the table already has `variantShredding-preview` in its
+  //   protocol (to avoid breaking clients that only understand the preview feature).
+  // - The preview feature (`variantShredding-preview`) is never auto-enabled. To use it on a
+  //   new table, a user must explicitly set `delta.feature.variantShredding-preview=supported`
+  //   in the table properties.
+  private static class VariantShreddingTableFeatureBase extends TableFeature.ReaderWriterFeature {
+    VariantShreddingTableFeatureBase(String featureName) {
+      super(featureName, /* minReaderVersion = */ 3, /* minWriterVersion = */ 7);
     }
 
     @Override
@@ -258,7 +274,29 @@ public class TableFeatures {
       return new HashSet<>(Arrays.asList(TableFeatures.VARIANT_RW_FEATURE));
     }
   }
-  /* ---- End: variantShredding-preview ---- */
+
+  private static class VariantShreddingTableFeature extends VariantShreddingTableFeatureBase
+      implements FeatureAutoEnabledByMetadata {
+    VariantShreddingTableFeature() {
+      super("variantShredding");
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return TableConfig.VARIANT_SHREDDING_ENABLED.fromMetadata(metadata)
+          &&
+          // Don't automatically enable the stable feature if the preview feature is
+          // already supported, to avoid possibly breaking old clients that only
+          // support the preview feature.
+          !protocol.supportsFeature(VARIANT_SHREDDING_PREVIEW_RW_FEATURE);
+    }
+  }
+
+  public static final TableFeature VARIANT_SHREDDING_RW_FEATURE =
+      new VariantShreddingTableFeature();
+  public static final TableFeature VARIANT_SHREDDING_PREVIEW_RW_FEATURE =
+      new VariantShreddingTableFeatureBase("variantShredding-preview");
+  /* ---- End: variantShredding ---- */
 
   public static final TableFeature DOMAIN_METADATA_W_FEATURE = new DomainMetadataFeature();
 
@@ -449,6 +487,15 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature CHECKPOINT_PROTECTION_W_FEATURE =
+      new CheckpointProtectionTableFeature();
+
+  private static class CheckpointProtectionTableFeature extends TableFeature.WriterFeature {
+    CheckpointProtectionTableFeature() {
+      super("checkpointProtection", /* minWriterVersion = */ 7);
+    }
+  }
+
   /**
    * Support reading / metadata writes on tables with the feature. Don't support writing new data
    * rows with default values. Don't allow updating the types of columns with default values.
@@ -498,6 +545,43 @@ public class TableFeatures {
     }
   }
 
+  public static final TableFeature MATERIALIZE_PARTITION_COLUMNS_W_FEATURE =
+      new MaterializePartitionColumnsFeature();
+
+  private static class MaterializePartitionColumnsFeature extends TableFeature.WriterFeature {
+    MaterializePartitionColumnsFeature() {
+      super("materializePartitionColumns", /* minWriterVersion = */ 7);
+    }
+  }
+
+  /** This feature was replaced with its stable version, `collations`. */
+  public static final TableFeature COLLATIONS_PREVIEW_W_FEATURE = new CollationsPreview();
+
+  private static class CollationsPreview extends TableFeature.WriterFeature {
+    CollationsPreview() {
+      super("collations-preview", /* minWriterVersion = */ 7);
+    }
+  }
+
+  /** The stable collation feature. */
+  public static final TableFeature COLLATIONS_W_FEATURE = new Collations();
+
+  private static class Collations extends TableFeature.WriterFeature
+      implements FeatureAutoEnabledByMetadata {
+    Collations() {
+      super("collations", /* minWriterVersion = */ 7);
+    }
+
+    @Override
+    public boolean metadataRequiresFeatureToBeEnabled(Protocol protocol, Metadata metadata) {
+      return hasCollatedColumn(metadata.getSchema())
+          &&
+          // Don't automatically enable the stable feature if the preview feature is already
+          // supported, to avoid breaking old clients that only support the preview feature.
+          !protocol.supportsFeature(COLLATIONS_PREVIEW_W_FEATURE);
+    }
+  }
+
   /////////////////////////////////////////////////////////////////////////////////
   /// END: Define the {@link TableFeature}s                                     ///
   /////////////////////////////////////////////////////////////////////////////////
@@ -517,6 +601,7 @@ public class TableFeatures {
               ALLOW_COLUMN_DEFAULTS_W_FEATURE,
               APPEND_ONLY_W_FEATURE,
               CATALOG_MANAGED_RW_FEATURE,
+              CHECKPOINT_PROTECTION_W_FEATURE,
               CHECKPOINT_V2_RW_FEATURE,
               CHANGE_DATA_FEED_W_FEATURE,
               CLUSTERING_W_FEATURE,
@@ -530,6 +615,7 @@ public class TableFeatures {
               IDENTITY_COLUMNS_W_FEATURE,
               IN_COMMIT_TIMESTAMP_W_FEATURE,
               INVARIANTS_W_FEATURE,
+              MATERIALIZE_PARTITION_COLUMNS_W_FEATURE,
               ROW_TRACKING_W_FEATURE,
               TIMESTAMP_NTZ_RW_FEATURE,
               TYPE_WIDENING_RW_PREVIEW_FEATURE,
@@ -537,9 +623,13 @@ public class TableFeatures {
               VACUUM_PROTOCOL_CHECK_RW_FEATURE,
               VARIANT_RW_FEATURE,
               VARIANT_RW_PREVIEW_FEATURE,
+              VARIANT_SHREDDING_RW_FEATURE,
               VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
               ICEBERG_WRITER_COMPAT_V1,
-              ICEBERG_WRITER_COMPAT_V3));
+              ICEBERG_WRITER_COMPAT_V3,
+              COLLATIONS_PREVIEW_W_FEATURE,
+              COLLATIONS_W_FEATURE,
+              GEOSPATIAL_RW_FEATURE));
 
   public static final Map<String, TableFeature> TABLE_FEATURE_MAP =
       Collections.unmodifiableMap(
@@ -837,11 +927,34 @@ public class TableFeatures {
     }
   }
 
+  public static boolean hasGeospatial(Metadata metadata) {
+    return new SchemaIterable(metadata.getSchema())
+        .stream()
+            .anyMatch(
+                element ->
+                    element.getField().getDataType() instanceof GeometryType
+                        || element.getField().getDataType() instanceof GeographyType);
+  }
+
   /**
    * Check if the table schema has a column of type. Caution: works only for the primitive types.
    */
   private static boolean hasTypeColumn(StructType tableSchema, DataType type) {
     return new SchemaIterable(tableSchema)
         .stream().anyMatch(element -> element.getField().getDataType().equals(type));
+  }
+
+  /**
+   * Check if the table schema has any string column with a non-default (non-UTF8_BINARY) collation.
+   */
+  static boolean hasCollatedColumn(StructType tableSchema) {
+    return new SchemaIterable(tableSchema)
+        .stream()
+            .anyMatch(
+                element -> {
+                  DataType dataType = element.getField().getDataType();
+                  return dataType instanceof StringType
+                      && !((StringType) dataType).isUTF8BinaryCollated();
+                });
   }
 }

@@ -16,11 +16,14 @@
 package io.delta.spark.internal.v2.catalog;
 
 import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_READ;
+import static org.apache.spark.sql.connector.catalog.TableCapability.BATCH_WRITE;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.delta.spark.internal.v2.SparkDsv2TestBase;
+import io.delta.spark.internal.v2.DeltaV2TestBase;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.net.URI;
@@ -38,10 +41,13 @@ import org.apache.spark.sql.catalyst.TableIdentifier;
 import org.apache.spark.sql.catalyst.catalog.CatalogTable;
 import org.apache.spark.sql.connector.catalog.Column;
 import org.apache.spark.sql.connector.catalog.Identifier;
+import org.apache.spark.sql.connector.catalog.SupportsWrite;
 import org.apache.spark.sql.connector.expressions.Transform;
+import org.apache.spark.sql.connector.write.LogicalWriteInfo;
 import org.apache.spark.sql.delta.catalog.DeltaTableV2;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -49,7 +55,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import scala.Option;
 
-public class SparkTableTest extends SparkDsv2TestBase {
+public class SparkTableTest extends DeltaV2TestBase {
 
   @ParameterizedTest(name = "{0} - {1}")
   @MethodSource("tableTestCases")
@@ -166,6 +172,8 @@ public class SparkTableTest extends SparkDsv2TestBase {
 
     // ===== Test capabilities =====
     assertTrue(kernelTable.capabilities().contains(BATCH_READ));
+    assertTrue(kernelTable.capabilities().contains(BATCH_WRITE));
+    assertTrue(kernelTable instanceof SupportsWrite);
 
     // ===== Test getCatalogTable based on construction method =====
     Optional<CatalogTable> retrievedCatalogTable = kernelTable.getCatalogTable();
@@ -185,6 +193,10 @@ public class SparkTableTest extends SparkDsv2TestBase {
             "Retrieved catalog table should match the original");
         break;
     }
+
+    // ===== Test getTablePath returns Path from tablePath =====
+    Path retrievedPath = kernelTable.getTablePath();
+    assertEquals(new Path(path), retrievedPath, "getTablePath should return Path from tablePath");
   }
 
   /** Enum to represent different construction methods for SparkTable */
@@ -369,9 +381,9 @@ public class SparkTableTest extends SparkDsv2TestBase {
     URI uri = new URI("file:///data/spark%25dir%25prefix/table");
     String result = (String) getDecodedPath.invoke(null, uri);
 
-    // Hadoop Path.toString() includes the scheme for file URIs
+    // For file URIs, getDecodedPath returns just the path without the scheme
     assertEquals(
-        "file:/data/spark%dir%prefix/table",
+        "/data/spark%dir%prefix/table",
         result, "URL-encoded characters should be properly decoded");
   }
 
@@ -384,5 +396,124 @@ public class SparkTableTest extends SparkDsv2TestBase {
         Arguments.of("abfss", "abfss://container@account.dfs.core.windows.net/path/to/table"),
         Arguments.of("gs", "gs://bucket/path/to/table"),
         Arguments.of("hdfs", "hdfs://namenode:8020/path/to/table"));
+  }
+
+  @Test
+  public void testEqualsAndHashCode(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_equals (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_equals");
+    Map<String, String> options = Collections.singletonMap("key", "value");
+
+    SparkTable table1 = new SparkTable(identifier, path, options);
+    SparkTable table2 = new SparkTable(identifier, path, options);
+    SparkTable table3 = new SparkTable(identifier, path, Collections.emptyMap());
+
+    // Same identifier, path, and options should be equal
+    assertEquals(table1, table2);
+    assertEquals(table1.hashCode(), table2.hashCode());
+
+    // Different options should not be equal and hashCodes should differ
+    assertNotEquals(table1, table3);
+    assertNotEquals(table1.hashCode(), table3.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithCatalogTable(@TempDir File tempDir) throws Exception {
+    String path1 = new File(tempDir, "table1").getAbsolutePath();
+    String path2 = new File(tempDir, "table2").getAbsolutePath();
+    spark.sql(
+        String.format("CREATE TABLE test_catalog1 (id INT) USING delta LOCATION '%s'", path1));
+    spark.sql(
+        String.format("CREATE TABLE test_catalog2 (id INT) USING delta LOCATION '%s'", path2));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_catalog");
+
+    // Create table1 and table2 with separately fetched CatalogTable objects (not same instance)
+    SparkTable table1 =
+        new SparkTable(
+            identifier,
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1")),
+            Collections.emptyMap());
+    SparkTable table2 =
+        new SparkTable(
+            identifier,
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog1")),
+            Collections.emptyMap());
+
+    // Same identifier, catalogTable, and options should be equal
+    assertEquals(table1, table2);
+    assertEquals(table1.hashCode(), table2.hashCode());
+
+    // Different catalogTable should not be equal
+    SparkTable table3 =
+        new SparkTable(
+            identifier,
+            spark.sessionState().catalog().getTableMetadata(new TableIdentifier("test_catalog2")),
+            Collections.emptyMap());
+    assertNotEquals(table1, table3);
+    assertNotEquals(table1.hashCode(), table3.hashCode());
+
+    // Path-based table (no catalogTable) should not equal catalog-based table
+    SparkTable table4 = new SparkTable(identifier, path1, Collections.emptyMap());
+    assertNotEquals(table1, table4);
+    assertNotEquals(table1.hashCode(), table4.hashCode());
+  }
+
+  @Test
+  public void testEqualsAndHashCodeWithDifferentSnapshotVersions(@TempDir File tempDir) {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(String.format("CREATE TABLE test_snapshot (id INT) USING delta LOCATION '%s'", path));
+
+    Identifier identifier = Identifier.of(new String[] {"default"}, "test_snapshot");
+
+    // Create first SparkTable instance at version 0
+    SparkTable table1 = new SparkTable(identifier, path);
+
+    // Modify the table to create a new version
+    spark.sql("INSERT INTO test_snapshot VALUES (1)");
+
+    // Create second SparkTable instance at version 1
+    SparkTable table2 = new SparkTable(identifier, path);
+
+    // Same identifier and path but different snapshot versions should not be equal
+    assertNotEquals(
+        table1,
+        table2,
+        "SparkTable instances with different snapshot versions should not be equal");
+    assertNotEquals(
+        table1.hashCode(),
+        table2.hashCode(),
+        "Hash codes should differ for different snapshot versions");
+  }
+
+  @Test
+  public void testNewWriteBuilderReturnsWriteBuilder(@TempDir File tempDir) throws Exception {
+    String path = tempDir.getAbsolutePath();
+    spark.sql(
+        String.format("CREATE TABLE test_write_builder (id INT) USING delta LOCATION '%s'", path));
+
+    SparkTable table =
+        new SparkTable(Identifier.of(new String[] {"default"}, "test_write_builder"), path);
+    LogicalWriteInfo writeInfo =
+        new LogicalWriteInfo() {
+          @Override
+          public String queryId() {
+            return "test-query-id";
+          }
+
+          @Override
+          public StructType schema() {
+            return new StructType().add("id", DataTypes.IntegerType);
+          }
+
+          @Override
+          public CaseInsensitiveStringMap options() {
+            return new CaseInsensitiveStringMap(Collections.emptyMap());
+          }
+        };
+
+    assertNotNull(table.newWriteBuilder(writeInfo), "newWriteBuilder should return non-null");
   }
 }

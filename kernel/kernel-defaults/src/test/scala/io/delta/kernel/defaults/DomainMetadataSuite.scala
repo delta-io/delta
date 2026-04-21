@@ -793,4 +793,50 @@ trait AbstractDomainMetadataSuite extends AnyFunSuite with AbstractWriteUtils
       }
     }
   }
+
+  test("all domain metadata batches are read when CRC exists at earlier version") {
+    withTempDirAndEngine { (tablePath, engine) =>
+      // Create table with domain metadata support
+      createTableWithDomainMetadataSupported(engine, tablePath)
+
+      // Commit initial domain metadata so that the CRC has domain metadata entries
+      val initDm = new DomainMetadata("init", """{"initial":"true"}""", false)
+      commitDomainMetadataAndVerify(
+        engine,
+        tablePath,
+        domainMetadatas = Seq(initDm),
+        expectedValue = Map("init" -> initDm))
+
+      // Commit 3 domain metadata actions in a single transaction.
+      // The commit JSON has 4 rows: commitInfo + 3 DomainMetadata actions.
+      // With a JSON reader batch size of 2, this produces 2 batches:
+      //   Batch 1: [commitInfo, d1]
+      //   Batch 2: [d2, d3]
+      val dm1 = new DomainMetadata("d1", """{"key":"v1"}""", false)
+      val dm2 = new DomainMetadata("d2", """{"key":"v2"}""", false)
+      val dm3 = new DomainMetadata("d3", """{"key":"v3"}""", false)
+      val dmTxn = createTxnWithDomainMetadatas(
+        engine,
+        tablePath,
+        Seq(dm1, dm2, dm3),
+        enableDomainMetadata = false)
+      val dmVersion = commitTransaction(dmTxn, engine, emptyIterable()).getVersion
+
+      // Delete CRC for the new version to force Case 3 in loadDomainMetadataMap:
+      // CRC at the earlier version (with "init" DM) exists, CRC at dmVersion is missing.
+      // This triggers incremental log replay from dmVersion with minLogVersion = dmVersion.
+      deleteChecksumFileForTable(tablePath, Seq(dmVersion.toInt))
+
+      // Load snapshot using an engine with batch size 2. Before the fix, the break
+      // condition (minLogVersion == version) would exit after the first batch of
+      // minLogVersion, missing d2 and d3 in the second batch.
+      val snapshot = getTableManagerAdapter.getSnapshotAtLatest(
+        defaultEngineBatchSize2,
+        tablePath)
+
+      assertDomainMetadata(
+        snapshot,
+        Map("init" -> initDm, "d1" -> dm1, "d2" -> dm2, "d3" -> dm3))
+    }
+  }
 }

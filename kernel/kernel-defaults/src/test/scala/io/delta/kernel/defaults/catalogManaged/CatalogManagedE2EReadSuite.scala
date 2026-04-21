@@ -237,12 +237,14 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
           tablePath,
           CommitBoundary.atTimestamp(timestamp, latestSnapshot))
           .withLogData(parsedLogData.asJava)
+          .withMaxCatalogVersion(2)
           .build(defaultEngine)
           .getStartVersion == expectedVersion)
       }
       def checkEndBoundary(timestamp: Long, expectedVersion: Long): Unit = {
         assert(TableManager.loadCommitRange(tablePath, CommitBoundary.atVersion(0))
           .withLogData(parsedLogData.asJava)
+          .withMaxCatalogVersion(2)
           .withEndBoundary(CommitBoundary.atTimestamp(timestamp, latestSnapshot))
           .build(defaultEngine)
           .getEndVersion == expectedVersion)
@@ -291,6 +293,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
       val commitRange = TableManager
         .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
         .withLogData(parsedLogData.asJava)
+        .withMaxCatalogVersion(2)
         .build(defaultEngine)
 
       val expectedFileList = Seq(
@@ -396,7 +399,7 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
   }
 
   test("for latest queries if we cannot load the maxRatifiedVersion we fail") {
-    withCatalogOwnedPreviewTestTable { (tablePath, logData) =>
+    withCatalogOwnedPreviewTestTable { (tablePath, _) =>
       // We can only test this when no logData is provided. Otherwise we require logData to end
       // with maxRatifiedVersion ==> it should be able to be read.
       val e = intercept[KernelException] {
@@ -422,6 +425,75 @@ class CatalogManagedE2EReadSuite extends AnyFunSuite
         .build(engine)
       assert(snapshot.getVersion == 2)
       assert(engine.getJsonHandler.getLastCheckpointMetadataReadCalls == 1)
+    }
+  }
+
+  test("for commitRange queries with no end boundary we do not load past the maxRatifiedVersion " +
+    "even if later versions exist on the file-system") {
+    withTempDir { tempDir =>
+      withCatalogOwnedPreviewTestTable { (resourceTablePath, resourceLogData) =>
+        // Copy the catalog-owned-preview test resource table to the temp directory
+        org.apache.commons.io.FileUtils.copyDirectory(
+          new java.io.File(resourceTablePath),
+          tempDir)
+
+        // "Publish" v1 and v2 (we do both to maintain ordered backfill)
+        val deltaLogPath = new Path(tempDir.getPath, "_delta_log")
+        val stagedCommitPath = new Path(deltaLogPath, "_staged_commits")
+        resourceLogData.foreach { stagedCommit =>
+          val stagedCommitFile = new java.io.File(
+            stagedCommitPath.toString,
+            new Path(stagedCommit.getFileStatus.getPath).getName)
+          val publishedCommitFile = new java.io.File(
+            FileNames.deltaFile(deltaLogPath.toString, stagedCommit.getVersion))
+          org.apache.commons.io.FileUtils.copyFile(stagedCommitFile, publishedCommitFile)
+        }
+
+        def convertResourceLogData(logData: ParsedLogData): ParsedLogData = {
+          val path = new Path(stagedCommitPath, new Path(logData.getFileStatus.getPath).getName)
+          ParsedLogData.forFileStatus(FileStatus.of(
+            defaultEngine.getFileSystemClient.resolvePath(path.toString)))
+        }
+
+        Seq(0, 1, 2).foreach { maxCatalogVersion =>
+          {
+            // Try to read the table with no parsedLogData
+            val commitRange = TableManager
+              .loadCommitRange(tempDir.getPath, CommitBoundary.atVersion(0))
+              .withMaxCatalogVersion(maxCatalogVersion)
+              .build(defaultEngine)
+            assert(commitRange.getEndVersion == maxCatalogVersion)
+          }
+          {
+            // Try to read the table with parsedLogData
+            val parsedLogData = resourceLogData
+              .filter(_.getVersion <= maxCatalogVersion)
+              .map(convertResourceLogData)
+            val commitRange = TableManager
+              .loadCommitRange(tempDir.getPath, CommitBoundary.atVersion(0))
+              .withMaxCatalogVersion(maxCatalogVersion)
+              .withLogData(parsedLogData.asJava)
+              .build(defaultEngine)
+            assert(commitRange.getEndVersion == maxCatalogVersion)
+          }
+        }
+      }
+    }
+  }
+
+  test("for commitRange queries with no end boundary if we cannot load the maxRatifiedVersion we " +
+    "fail") {
+    withCatalogOwnedPreviewTestTable { (tablePath, _) =>
+      // We can only test this when no logData is provided. Otherwise we require logData to end
+      // with maxRatifiedVersion ==> it should be able to be read.
+      val e = intercept[KernelException] {
+        TableManager
+          .loadCommitRange(tablePath, CommitBoundary.atVersion(0))
+          .withMaxCatalogVersion(2)
+          .build(defaultEngine)
+      }
+      assert(e.getMessage.contains(
+        "Requested table changes ending with endVersion=2 but no log file found for version 2"))
     }
   }
 }

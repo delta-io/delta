@@ -17,15 +17,22 @@
 package io.delta.kernel.unitycatalog;
 
 import static io.delta.kernel.commit.CatalogCommitterUtils.*;
+import static io.delta.kernel.internal.util.Preconditions.checkState;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.delta.kernel.commit.CommitMetadata;
 import io.delta.kernel.engine.Engine;
 import io.delta.kernel.expressions.Column;
 import io.delta.kernel.internal.SnapshotImpl;
+import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.Protocol;
+import io.delta.kernel.internal.clustering.ClusteringMetadataDomain;
+import io.delta.kernel.internal.types.DataTypeJsonSerDe;
 import io.delta.kernel.internal.util.ColumnMapping;
 import io.delta.kernel.internal.util.Tuple2;
-import io.delta.kernel.types.DataType;
+import io.delta.kernel.types.*;
+import io.delta.storage.commit.uccommitcoordinator.UCClient;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -60,24 +67,12 @@ public class UnityCatalogUtils {
               "Expected a snapshot at version 0, but got a snapshot at version %d",
               postCreateSnapshot.getVersion()));
     }
-
-    final Map<String, String> properties = new HashMap<>();
-
-    // Case 1: All table properties from metadata.configuration
-    properties.putAll(postCreateSnapshot.getTableProperties());
-
-    // Case 2: Protocol-derived properties
-    properties.putAll(extractProtocolProperties(postCreateSnapshot.getProtocol()));
-
-    // Case 3: UC-specific properties
-    properties.put(METASTORE_LAST_UPDATE_VERSION, String.valueOf(postCreateSnapshot.getVersion()));
-    properties.put(
-        METASTORE_LAST_COMMIT_TIMESTAMP, String.valueOf(postCreateSnapshot.getTimestamp(engine)));
-
-    // Case 4: Clustering properties if present
-    properties.putAll(extractClusteringProperties(postCreateSnapshot));
-
-    return properties;
+    return assembleCreateProperties(
+        postCreateSnapshot.getTableProperties(),
+        postCreateSnapshot.getProtocol(),
+        postCreateSnapshot.getVersion(),
+        postCreateSnapshot.getTimestamp(engine),
+        extractClusteringProperties(postCreateSnapshot));
   }
 
   /**
@@ -100,30 +95,148 @@ public class UnityCatalogUtils {
   private static Map<String, String> extractClusteringProperties(SnapshotImpl snapshot) {
     return snapshot
         .getPhysicalClusteringColumns()
-        .map(
-            physicalClusteringCols -> {
-              // Convert physical to logical column names
-              final List<List<String>> logicalClusteringCols =
-                  physicalClusteringCols.stream()
-                      .map(
-                          physicalCol -> {
-                            final Tuple2<Column, DataType> logicalColumnAndType =
-                                ColumnMapping.getLogicalColumnNameAndDataType(
-                                    snapshot.getSchema(), physicalCol);
-                            final Column logicalColumn = logicalColumnAndType._1;
-                            return Arrays.asList(logicalColumn.getNames());
-                          })
-                      .collect(Collectors.toList());
-
-              // Serialize to JSON
-              try {
-                final String clusteringColumnsJson =
-                    OBJECT_MAPPER.writeValueAsString(logicalClusteringCols);
-                return Map.of(UC_PROP_CLUSTERING_COLUMNS, clusteringColumnsJson);
-              } catch (JsonProcessingException ex) {
-                throw new RuntimeException("Failed to serialize clustering columns to JSON", ex);
-              }
-            })
+        .map(cols -> serializeClusteringColumns(cols, snapshot.getSchema()))
         .orElse(Collections.emptyMap());
+  }
+
+  /** Assembles the UC property map from already-extracted primitives. */
+  private static Map<String, String> assembleCreateProperties(
+      Map<String, String> tableConfig,
+      Protocol protocol,
+      long version,
+      long commitTimestamp,
+      Map<String, String> clusteringProperties) {
+    final Map<String, String> properties = new HashMap<>();
+
+    // Case 1: All table properties from metadata.configuration
+    properties.putAll(tableConfig);
+
+    // Case 2: Protocol-derived properties
+    properties.putAll(extractProtocolProperties(protocol));
+
+    // Case 3: UC-specific properties
+    properties.put(METASTORE_LAST_UPDATE_VERSION, String.valueOf(version));
+    properties.put(METASTORE_LAST_COMMIT_TIMESTAMP, String.valueOf(commitTimestamp));
+
+    // Case 4: Clustering properties if present
+    properties.putAll(clusteringProperties);
+
+    return properties;
+  }
+
+  /**
+   * Converts physical clustering columns to logical column names and serializes them as a JSON
+   * property map. Shared by both the SnapshotImpl and DomainMetadata extraction paths.
+   */
+  private static Map<String, String> serializeClusteringColumns(
+      List<Column> physicalClusteringCols, StructType schema) {
+    final List<List<String>> logicalClusteringCols =
+        physicalClusteringCols.stream()
+            .map(
+                physicalCol -> {
+                  final Tuple2<Column, DataType> logicalColumnAndType =
+                      ColumnMapping.getLogicalColumnNameAndDataType(schema, physicalCol);
+                  return Arrays.asList(logicalColumnAndType._1.getNames());
+                })
+            .collect(Collectors.toList());
+    try {
+      return Map.of(
+          UC_PROP_CLUSTERING_COLUMNS, OBJECT_MAPPER.writeValueAsString(logicalClusteringCols));
+    } catch (JsonProcessingException ex) {
+      throw new RuntimeException("Failed to serialize clustering columns to JSON", ex);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // CommitMetadata overload (used by the committer's createImpl path,
+  // which has no post-commit snapshot)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Same as {@link #getPropertiesForCreate(Engine, SnapshotImpl)} but reads from CommitMetadata.
+   */
+  public static Map<String, String> getPropertiesForCreate(CommitMetadata commitMetadata) {
+    if (commitMetadata.getVersion() != 0) {
+      throw new IllegalArgumentException(
+          String.format(
+              "Expected commit metadata at version 0, but got version %d",
+              commitMetadata.getVersion()));
+    }
+    // Defensive: CommitMetadata constructor already validates ICT is present for
+    // catalog-managed tables, but we guard here since this is a public method.
+    checkState(
+        commitMetadata.getCommitInfo().getInCommitTimestamp().isPresent(),
+        "InCommitTimestamp must be present for version 0 catalog-managed table creation");
+    return assembleCreateProperties(
+        commitMetadata.getEffectiveMetadata().getConfiguration(),
+        commitMetadata.getEffectiveProtocol(),
+        commitMetadata.getVersion(),
+        commitMetadata.getCommitInfo().getInCommitTimestamp().get(),
+        extractClusteringProperties(
+            commitMetadata.getCommitDomainMetadatas(),
+            commitMetadata.getEffectiveMetadata().getSchema()));
+  }
+
+  /** Extracts clustering columns from domain metadata (used when no snapshot is available). */
+  private static Map<String, String> extractClusteringProperties(
+      List<DomainMetadata> domainMetadatas, StructType schema) {
+    return domainMetadatas.stream()
+        .filter(dm -> ClusteringMetadataDomain.DOMAIN_NAME.equals(dm.getDomain()))
+        .filter(dm -> !dm.isRemoved())
+        .findFirst()
+        .map(dm -> ClusteringMetadataDomain.fromJsonConfiguration(dm.getConfiguration()))
+        .map(domain -> serializeClusteringColumns(domain.getClusteringColumns(), schema))
+        .orElse(Collections.emptyMap());
+  }
+
+  // ---------------------------------------------------------------------------
+  // UC column definition conversion from Kernel schema
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Converts a Kernel {@link StructType} schema to a list of UC {@link UCClient.ColumnDef}
+   * definitions suitable for the Unity Catalog createTable API.
+   */
+  public static List<UCClient.ColumnDef> toColumnDefs(StructType schema) {
+    List<StructField> fields = schema.fields();
+    List<UCClient.ColumnDef> defs = new ArrayList<>(fields.size());
+    for (int i = 0; i < fields.size(); i++) {
+      StructField f = fields.get(i);
+      defs.add(
+          new UCClient.ColumnDef(
+              f.getName(),
+              toUCTypeName(f.getDataType()),
+              f.getDataType().toString(),
+              DataTypeJsonSerDe.serializeDataType(f.getDataType()),
+              f.isNullable(),
+              i));
+    }
+    return defs;
+  }
+
+  /**
+   * Maps a Kernel {@link DataType} to the corresponding Unity Catalog {@code ColumnTypeName} string
+   * value.
+   */
+  static String toUCTypeName(DataType type) {
+    if (type instanceof BooleanType) return "BOOLEAN";
+    if (type instanceof ByteType) return "BYTE";
+    if (type instanceof ShortType) return "SHORT";
+    if (type instanceof IntegerType) return "INT";
+    if (type instanceof LongType) return "LONG";
+    if (type instanceof FloatType) return "FLOAT";
+    if (type instanceof DoubleType) return "DOUBLE";
+    if (type instanceof DateType) return "DATE";
+    if (type instanceof TimestampType) return "TIMESTAMP";
+    if (type instanceof TimestampNTZType) return "TIMESTAMP_NTZ";
+    if (type instanceof StringType) return "STRING";
+    if (type instanceof BinaryType) return "BINARY";
+    if (type instanceof VariantType) return "VARIANT";
+    if (type instanceof DecimalType) return "DECIMAL";
+    if (type instanceof ArrayType) return "ARRAY";
+    if (type instanceof MapType) return "MAP";
+    if (type instanceof StructType) return "STRUCT";
+    throw new UnsupportedOperationException(
+        "No UC ColumnTypeName mapping for Kernel type: " + type);
   }
 }

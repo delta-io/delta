@@ -1,5 +1,25 @@
 name: "Kernel Unity Catalog"
-on: [push, pull_request]
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'build.sbt'
+      - 'version.sbt'
+      - 'kernel/**/*.scala'
+      - 'kernel/**/*.java'
+      - 'storage/**/*.scala'
+      - 'storage/**/*.java'
+      - '.github/workflows/kernel_unitycatalog_test.yaml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'build.sbt'
+      - 'version.sbt'
+      - 'kernel/**/*.scala'
+      - 'kernel/**/*.java'
+      - 'storage/**/*.scala'
+      - 'storage/**/*.java'
+      - '.github/workflows/kernel_unitycatalog_test.yaml'
 jobs:
   test:
     name: "Kernel Unity Catalog Tests"
@@ -7,24 +27,13 @@ jobs:
     env:
       SCALA_VERSION: 2.13.16
     steps:
-      - uses: actions/checkout@v3
-      - uses: technote-space/get-diff-action@v4
-        id: git-diff
-        with:
-          PATTERNS: |
-            build.sbt
-            version.sbt
-            unity/**
-            kernel/**
-            storage/**
-            .github/workflows/unity_test.yaml
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       - name: install java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
           distribution: "zulu"
           java-version: "17"
-        if: steps.git-diff.outputs.diff
       - name: Run Unity tests with coverage
         run: |
           ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v
-        if: steps.git-diff.outputs.diff
+

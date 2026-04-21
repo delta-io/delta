@@ -109,22 +109,17 @@ class DelayedCommitProtocol(
     addedFiles = new ArrayBuffer[(Map[String, String], String)]
   }
 
-  /** Prefix added in testing mode to all filenames to test special chars that need URL-encoding. */
-  val FILE_NAME_PREFIX = SQLConf.get.getConf(DeltaSQLConf.TEST_FILE_NAME_PREFIX)
-
+  // The file name looks like part-r-00000-2dd664f9-d2c4-4ffe-878f-c6c70c1fb0cb_00003.gz.parquet
+  // Note that %05d does not truncate the split number, so if we have more than 100000 tasks,
+  // the file name is fine and won't overflow.
+  // CDC files (CDC_PARTITION_COL = true) are named with "cdc-..." instead of "part-...".
   protected def getFileName(
       taskContext: TaskAttemptContext,
       ext: String,
       partitionValues: Map[String, String]): String = {
-    // The file name looks like part-r-00000-2dd664f9-d2c4-4ffe-878f-c6c70c1fb0cb_00003.gz.parquet
-    // Note that %05d does not truncate the split number, so if we have more than 100000 tasks,
-    // the file name is fine and won't overflow.
     val split = taskContext.getTaskAttemptID.getTaskID.getId
-    val uuid = UUID.randomUUID.toString
-    // CDC files (CDC_PARTITION_COL = true) are named with "cdc-..." instead of "part-...".
-    val typePrefix =
-      if (partitionValues.get(CDC_PARTITION_COL).contains("true")) "cdc-" else "part-"
-    f"${FILE_NAME_PREFIX}${typePrefix}${split}%05d-${uuid}${ext}"
+    val isCdc = partitionValues.get(CDC_PARTITION_COL).contains("true")
+    DelayedCommitProtocol.buildFileName(split, ext, isCdc)
   }
 
   protected def parsePartitions(
@@ -143,16 +138,8 @@ class DelayedCommitProtocol(
         .filter(partitionCol => partitionCol._2 == TimestampType)
 
     val dateFormatter = DateFormatter()
-    // if adjusting to UTC make sure to interpret timezones using Spark
-    // config, otherwise fallback to JVM timezone
-    val timezone = {
-      if (useUtcNormalizedTimestamps) {
-        DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone)
-      } else {
-        java.util.TimeZone.getDefault
-      }
-    }
 
+    val timezone = DateTimeUtils.getTimeZone(SQLConf.get.sessionLocalTimeZone)
     val timestampFormatter = TimestampFormatter(PartitionUtils.timestampPartitionPattern, timezone)
 
     /**
@@ -174,7 +161,7 @@ class DelayedCommitProtocol(
           Set.empty,
           userSpecifiedDataTypes = partitionColumnToDataType,
           validatePartitionColumns = false,
-          java.util.TimeZone.getDefault,
+          timezone,
           dateFormatter,
           timestampFormatter,
           useUtcNormalizedTimestamps)
@@ -185,8 +172,10 @@ class DelayedCommitProtocol(
         .zip(
           parsedPartition
             .literals
-            .map(l => Cast(l, StringType).eval())
-            .map(Option(_).map(_.toString).orNull))
+            .map(PartitionUtils.literalToNormalizedString(
+              _,
+              Some(timezone.getID),
+              useUtcNormalizedTimestamps)))
         .toMap
   }
 
@@ -278,5 +267,25 @@ class DelayedCommitProtocol(
 
   override def abortTask(taskContext: TaskAttemptContext): Unit = {
     // TODO: we can also try delete the addedFiles as a best-effort cleanup.
+  }
+}
+
+object DelayedCommitProtocol {
+  /**
+   * Builds a Delta data file name following the standard naming convention:
+   * {testPrefix}{typePrefix}{splitId%05d}-{uuid}{ext}
+   *
+   * Shared between V1 (DelayedCommitProtocol.getFileName) and DSv2 (DataWriter).
+   *
+   * @param splitId the task split/partition ID
+   * @param ext file extension including dot (e.g. ".snappy.parquet")
+   * @param isCdc true for CDC files (uses "cdc-" prefix instead of "part-")
+   * @return the file name string
+   */
+  def buildFileName(splitId: Int, ext: String, isCdc: Boolean): String = {
+    val fileNamePrefix = SQLConf.get.getConf(DeltaSQLConf.TEST_FILE_NAME_PREFIX)
+    val uuid = UUID.randomUUID.toString
+    val typePrefix = if (isCdc) "cdc-" else "part-"
+    f"${fileNamePrefix}${typePrefix}${splitId}%05d-${uuid}${ext}"
   }
 }

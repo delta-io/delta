@@ -27,6 +27,7 @@ import scala.collection.mutable.ArrayBuffer
 import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsResponse}
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uccommitcoordinator.{InvalidTargetTableException, UCClient}
+import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 
 object InMemoryUCClient {
 
@@ -44,6 +45,7 @@ object InMemoryUCClient {
     // For test only, since UC doesn't store these as top-level entities.
     private var currentProtocolOpt: Option[AbstractProtocol] = None
     private var currentMetadataOpt: Option[AbstractMetadata] = None
+    private var currentIcebergOpt: Option[IcebergMetadata] = None
 
     /** @return the maximum ratified version. */
     def getMaxRatifiedVersion: Long = synchronized { maxRatifiedVersion }
@@ -68,6 +70,16 @@ object InMemoryUCClient {
 
     /** @return the current metadata. For test only. */
     def getCurrentMetadataOpt: Option[AbstractMetadata] = synchronized { currentMetadataOpt }
+
+    /** @return the current Iceberg metadata. For test only. */
+    def getCurrentIcebergOpt: Option[IcebergMetadata] = synchronized {
+      currentIcebergOpt
+    }
+
+    /** Updates the Iceberg metadata. */
+    def updateIcebergMetadata(icebergMetadata: IcebergMetadata): Unit = synchronized {
+      currentIcebergOpt = Some(icebergMetadata)
+    }
 
     /** Appends a new commit to this table and atomically updates protocol/metadata. */
     def appendCommit(
@@ -105,6 +117,15 @@ object InMemoryUCClient {
   object TableData {
     def afterCreate(): TableData = new TableData(0, ArrayBuffer.empty[Commit])
   }
+
+  /** Record of arguments passed to {@code finalizeCreate}. */
+  case class FinalizeCreateRecord(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String])
 }
 
 /**
@@ -143,7 +164,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       lastKnownBackfilledVersion,
       disown,
       newMetadata,
-      newProtocol)
+      newProtocol,
+      Optional.empty() /* uniform */ )
   }
 
   override def commit(
@@ -153,7 +175,8 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       lastKnownBackfilledVersionOpt: Optional[JLong],
       disown: Boolean,
       newMetadata: Optional[AbstractMetadata],
-      newProtocol: Optional[AbstractProtocol]): Unit = {
+      newProtocol: Optional[AbstractProtocol],
+      uniform: Optional[UniformMetadata]): Unit = {
     forceThrowInCommitMethod()
 
     if (disown) {
@@ -170,6 +193,13 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
       lastKnownBackfilledVersionOpt.ifPresent { lastKnownBackfilledVersion =>
         tableData.forceRemoveCommitsUpToVersion(lastKnownBackfilledVersion)
       }
+
+      // Update Iceberg metadata if provided in uniform
+      uniform.ifPresent { u =>
+        u.getIcebergMetadata.ifPresent { iceberg =>
+          tableData.updateIcebergMetadata(iceberg)
+        }
+      }
     }
   }
 
@@ -183,7 +213,37 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
   }
 
+  /** Captured arguments from the last {@code finalizeCreate} call, for test assertions. */
+  private var lastFinalizeCreateRecord: Option[InMemoryUCClient.FinalizeCreateRecord] = None
+
+  private[unitycatalog] def getLastFinalizeCreateRecord
+      : Option[InMemoryUCClient.FinalizeCreateRecord] =
+    lastFinalizeCreateRecord
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {
+    forceThrowInFinalizeCreateMethod()
+    lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
+      tableName,
+      catalogName,
+      schemaName,
+      storageLocation,
+      columns,
+      properties))
+    val fqn = s"$catalogName.$schemaName.$tableName"
+    Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))
+  }
+
   override def close(): Unit = {}
+
+  /** Can be overridden to force an exception in finalizeCreate. */
+  protected def forceThrowInFinalizeCreateMethod(): Unit = {}
 
   /** Visible for testing. Can be overridden to force an exception in commit method. */
   protected def forceThrowInCommitMethod(): Unit = {}
