@@ -183,25 +183,426 @@ class DeltaFormatSharingSourceSuite
     }
   }
 
-  test("DeltaFormatSharingSource do not support cdc") {
+  test("DeltaFormatSharingSource CDF streaming: initial snapshot tags all rows as insert") {
+    withTempDirs { (_, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_cdf_initial_snapshot"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b")""")
+
+        val sharedTableName = "shared_cdf_initial_snapshot"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        // No startingVersion: DeltaSource uses isInitialSnapshot=true at the latest version (1),
+        // so the server is queried via getFiles(versionAsOf=1), not getCDFFiles.
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName, versionAsOf = Some(1L))
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withTempDir { tempDir =>
+          val profileFile = prepareProfileFile(tempDir)
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            val q = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .load(tablePath)
+              .select("c1", "c2", "_change_type", "_commit_version", "_commit_timestamp")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q.processAllAvailable()
+            } finally {
+              q.stop()
+            }
+            val output = spark.read.format("delta").load(outputDir.getCanonicalPath)
+            val result = output.select("c1", "c2", "_change_type", "_commit_version").orderBy("c1")
+            checkAnswer(result, Seq(
+              Row(1, "a", "insert", 1L),
+              Row(2, "b", "insert", 1L)
+            ))
+            assert(
+              output.select("_commit_timestamp").collect().forall(r => !r.isNullAt(0)),
+              "_commit_timestamp should be non-null for all rows"
+            )
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaFormatSharingSource CDF streaming: incremental inserts updates and deletes") {
+    withTempDirs { (_, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_cdf_incremental"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b")""") // version 1
+        sql(s"""UPDATE $deltaTableName SET c2 = "updated" WHERE c1 = 1""") // version 2
+        sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""") // version 3
+
+        val sharedTableName = "shared_cdf_incremental"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        // initial snapshot at version 0 (empty)
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName, versionAsOf = Some(0L))
+        // incremental CDF from version 1 onwards
+        prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withTempDir { tempDir =>
+          val profileFile = prepareProfileFile(tempDir)
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            val q = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+              .select("c1", "c2", "_change_type", "_commit_version", "_commit_timestamp")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q.processAllAvailable()
+            } finally {
+              q.stop()
+            }
+            // Expect inserts from v1, update preimage/postimage from v2, delete from v3
+            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
+              .select("c1", "c2", "_change_type", "_commit_version", "_commit_timestamp")
+              .orderBy("c1", "_change_type")
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .table(deltaTableName)
+              .select("c1", "c2", "_change_type", "_commit_version", "_commit_timestamp")
+              .orderBy("c1", "_change_type")
+            checkAnswer(result, expected)
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaFormatSharingSource CDF streaming: DV-based delete produces delete change rows") {
+    // Verifies that when a CDF-enabled table also has deletion vectors enabled, a DELETE
+    // operation (which writes a DV file on the data file alongside the CDC file) is correctly
+    // processed by applyTableFileChanges and produces _change_type=delete rows in the output.
+    withTempDirs { (_, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_cdf_dv"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (
+               |  'delta.enableChangeDataFeed' = 'true',
+               |  'delta.enableDeletionVectors' = 'true'
+               |)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b"), (3, "c")""") // v1
+        sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""") // v2: DV-based delete
+
+        val sharedTableName = "shared_cdf_dv"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName, versionAsOf = Some(0L))
+        prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withTempDir { tempDir =>
+          val profileFile = prepareProfileFile(tempDir)
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            val q = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+              .select("c1", "c2", "_change_type", "_commit_version")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q.processAllAvailable()
+            } finally {
+              q.stop()
+            }
+            // v1 inserts + v2 DV-based delete should all appear as CDF rows
+            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
+              .select("c1", "c2", "_change_type", "_commit_version")
+              .orderBy("c1", "_change_type")
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .table(deltaTableName)
+              .select("c1", "c2", "_change_type", "_commit_version")
+              .orderBy("c1", "_change_type")
+            checkAnswer(result, expected)
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaFormatSharingSource CDF streaming: sourceSchema includes CDF columns") {
     withTempDir { tempDir =>
-      val sharedTableName = "shared_streaming_table_nocdc"
-      val profileFile = prepareProfileFile(tempDir)
-      withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
-        val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
-        val e = intercept[Exception] {
+      val deltaTableName = "delta_table_cdf_schema_check"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a")""")
+
+        val sharedTableName = "shared_cdf_schema_check"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+        val profileFile = prepareProfileFile(tempDir)
+        withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+          val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
           val df = spark.readStream
             .format("deltaSharing")
             .option("responseFormat", "delta")
             .option("readChangeFeed", "true")
             .load(tablePath)
-          testStream(df)(
-            AssertOnQuery { q =>
-              q.processAllAvailable(); true
-            }
-          )
+          val fieldTypes = df.schema.fields.map(f => f.name -> f.dataType).toMap
+          assert(fieldTypes.contains("c1") && fieldTypes.contains("c2"))
+          assert(fieldTypes.get("_change_type").contains(StringType),
+            s"_change_type should be StringType in schema: ${df.schema}")
+          assert(fieldTypes.get("_commit_version").contains(LongType),
+            s"_commit_version should be LongType in schema: ${df.schema}")
+          assert(fieldTypes.get("_commit_timestamp").contains(TimestampType),
+            s"_commit_timestamp should be TimestampType in schema: ${df.schema}")
         }
-        assert(e.getMessage.contains("Delta sharing cdc streaming is not supported"))
+      }
+    }
+  }
+
+  test("DeltaFormatSharingSource CDF streaming: checkpoint restart continues from correct offset") {
+    withTempDirs { (_, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_cdf_checkpoint_restart"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b")""") // version 1
+
+        val sharedTableName = "shared_cdf_checkpoint_restart"
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        // Initial snapshot at v0 (empty table before startingVersion)
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName, versionAsOf = Some(0L))
+        // CDF from v1 (only v1 exists at mock time, so only v1 data is included)
+        prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withTempDir { tempDir =>
+          val profileFile = prepareProfileFile(tempDir)
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+            // First run: process v1 inserts and checkpoint
+            val q1 = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+              .select("c1", "c2", "_change_type")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q1.processAllAvailable()
+            } finally {
+              q1.stop()
+            }
+            checkAnswer(
+              spark.read.format("delta").load(outputDir.getCanonicalPath)
+                .select("c1", "c2", "_change_type").orderBy("c1"),
+              Seq(Row(1, "a", "insert"), Row(2, "b", "insert"))
+            )
+
+            // Add more data after first run: v2 (update), v3 (delete)
+            sql(s"""UPDATE $deltaTableName SET c2 = "updated" WHERE c1 = 1""") // version 2
+            sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""") // version 3
+
+            // Re-mock getCDFFiles_1 with the full v1+v2+v3 history. On restart,
+            // getStartingOffset re-derives startVersion=1 and fetches getCDFFiles_1;
+            // DeltaSource then serves from the checkpoint (v2) onward.
+            prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+            // Update table version mock to v3
+            prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+            // Second run: restart from checkpoint, must process only v2+v3 changes
+            val q2 = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+              .select("c1", "c2", "_change_type")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q2.processAllAvailable()
+            } finally {
+              q2.stop()
+            }
+
+            // Total output = v1 inserts + v2 update (pre+post image) + v3 delete
+            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
+              .select("c1", "c2", "_change_type").orderBy("c1", "_change_type")
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .table(deltaTableName)
+              .select("c1", "c2", "_change_type").orderBy("c1", "_change_type")
+            checkAnswer(result, expected)
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaFormatSharingSource CDF streaming: schema change within CDF range") {
+    // Verifies that includeHistoricalMetadata=true causes Metadata actions for schema changes
+    // to be included in the getCDFFiles response, allowing DeltaSource to handle backward-
+    // compatible schema changes (e.g., ADD COLUMN) gracefully: the stream continues and the
+    // new column is null for rows written before the schema change.
+    // Non-backward-compatible changes (e.g., DROP COLUMN) instead fail the stream; see
+    // "non-backward-compatible schema change fails stream" below.
+    withTempDirs { (_, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_cdf_schema_change"
+      withTable(deltaTableName) {
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (delta.enableChangeDataFeed = true)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b")""") // version 1
+
+        // version 2: backward-compatible schema change - add nullable column
+        sql(s"""ALTER TABLE $deltaTableName ADD COLUMN c3 STRING""")
+
+        // version 3: insert with the new column present
+        sql(s"""INSERT INTO $deltaTableName VALUES (3, "c", "new_c3")""")
+
+        val sharedTableName = "shared_cdf_schema_change"
+        // prepareMockedClientMetadata uses the latest snapshot (schema c1, c2, c3).
+        // sourceSchema() for CDF streaming will return (c1, c2, c3, CDF cols).
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        // Initial empty snapshot used when DeltaSource initialises at v0.
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName, versionAsOf = Some(0L))
+        // CDF from v1: prepareMockedClientAndFileSystemResultForCdf includes
+        //   - Protocol + Metadata at v1 (schema c1, c2)
+        //   - Metadata at v2 (schema c1, c2, c3) - the mid-range schema change
+        //   - AddFile / AddCDCFile actions at v1 and v3
+        prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withTempDir { tempDir =>
+          val profileFile = prepareProfileFile(tempDir)
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+
+            // Run CDF stream with startingVersion=1
+            val q = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+              .select("c1", "c2", "_change_type")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q.processAllAvailable()
+            } finally {
+              q.stop()
+            }
+
+            // All rows from v1 (inserts before schema change) and v3 (inserts after schema change)
+            // should be present. c3 is projected away in the select. The stream must NOT fail even
+            // though a Metadata action for the schema change was in the CDF response.
+            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
+              .select("c1", "c2", "_change_type").orderBy("c1")
+            val expected = spark.read
+              .format("delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .table(deltaTableName)
+              .select("c1", "c2", "_change_type").orderBy("c1")
+            checkAnswer(result, expected)
+          }
+        }
+      }
+    }
+  }
+
+  test("DeltaFormatSharingSource CDF streaming: non-backward-compatible schema change fails") {
+    // Verifies that a non-backward-compatible Metadata action within the CDF range causes
+    // the stream to fail. The Metadata is delivered via includeHistoricalMetadata=true in
+    // getCDFFiles, and DeltaSource detects the incompatible change (DROP COLUMN) and fails.
+    // This is the counterpart to the backward-compatible ADD COLUMN test above.
+    withTempDirs { (_, outputDir, checkpointDir) =>
+      val deltaTableName = "delta_table_cdf_schema_break"
+      withTable(deltaTableName) {
+        // Column mapping (CM) mode is required for DROP COLUMN in Delta; regular Delta tables do
+        // not support dropping columns. minReaderVersion=2 and minWriterVersion=5 are the minimum
+        // protocol versions required by CM mode.
+        sql(s"""CREATE TABLE $deltaTableName (c1 INT, c2 STRING) USING DELTA
+               |TBLPROPERTIES (
+               |  'delta.enableChangeDataFeed' = 'true',
+               |  'delta.columnMapping.mode' = 'name',
+               |  'delta.minReaderVersion' = '2',
+               |  'delta.minWriterVersion' = '5'
+               |)""".stripMargin)
+        sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b")""") // version 1
+
+        // version 2: non-backward-compatible schema change - drop an existing column
+        sql(s"""ALTER TABLE $deltaTableName DROP COLUMN c2""")
+
+        // version 3: insert with the reduced schema
+        sql(s"""INSERT INTO $deltaTableName VALUES (3)""")
+
+        val sharedTableName = "shared_cdf_schema_break"
+        // prepareMockedClientMetadata reflects the latest schema (c1 only, after DROP COLUMN).
+        prepareMockedClientMetadata(deltaTableName, sharedTableName)
+        prepareMockedClientAndFileSystemResult(
+          deltaTableName, sharedTableName, versionAsOf = Some(0L))
+        // CDF from v1 includes: Metadata at v1 (c1, c2), Metadata at v2 (c1 only), data files.
+        prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+        prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+        withTempDir { tempDir =>
+          val profileFile = prepareProfileFile(tempDir)
+          withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
+            val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
+            val df = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+            val e = intercept[Exception] {
+              testStream(df)(
+                AssertOnQuery { q => q.processAllAvailable(); true }
+              )
+            }
+            assert(
+              e.getMessage.contains("DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"),
+              s"Expected schema change error, got: ${e.getMessage}")
+          }
+        }
       }
     }
   }
