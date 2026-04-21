@@ -550,10 +550,15 @@ class DeltaFormatSharingSourceSuite
 
   test("DeltaFormatSharingSource CDF streaming: non-backward-compatible schema change fails") {
     // Verifies that a non-backward-compatible Metadata action within the CDF range causes
-    // the stream to fail. The Metadata is delivered via includeHistoricalMetadata=true in
-    // getCDFFiles, and DeltaSource detects the incompatible change (DROP COLUMN) and fails.
-    // v1 rows (written before the schema change) are flushed to the sink before the stream
-    // throws at v2; v3 rows (after the schema change) remain unprocessed.
+    // the stream to fail on restart. Structure:
+    //   Run 1: process v1 inserts, checkpoint cleanly.
+    //   Then add v2 (DROP COLUMN) and v3 (insert with reduced schema) to the mocked server.
+    //   Run 2: restart from checkpoint; DeltaSource sees the Metadata action at v2 in the
+    //          getCDFFiles response (delivered via includeHistoricalMetadata=true) and fails.
+    // Verifies:
+    //   - Run 1 successfully writes v1 rows to the sink.
+    //   - Run 2 throws DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG.
+    //   - v1 rows remain in the sink after Run 2 (nothing new is committed).
     // This is the counterpart to the backward-compatible ADD COLUMN test above.
     withTempDirs { (_, outputDir, checkpointDir) =>
       val deltaTableName = "delta_table_cdf_schema_break"
@@ -570,18 +575,11 @@ class DeltaFormatSharingSourceSuite
                |)""".stripMargin)
         sql(s"""INSERT INTO $deltaTableName VALUES (1, "a"), (2, "b")""") // version 1
 
-        // version 2: non-backward-compatible schema change - drop an existing column
-        sql(s"""ALTER TABLE $deltaTableName DROP COLUMN c2""")
-
-        // version 3: insert with the reduced schema
-        sql(s"""INSERT INTO $deltaTableName VALUES (3)""")
-
         val sharedTableName = "shared_cdf_schema_break"
-        // prepareMockedClientMetadata reflects the latest schema (c1 only, after DROP COLUMN).
+        // Initial mocks reflect only v1 (pre-schema-change state).
         prepareMockedClientMetadata(deltaTableName, sharedTableName)
         prepareMockedClientAndFileSystemResult(
           deltaTableName, sharedTableName, versionAsOf = Some(0L))
-        // CDF from v1 includes: Metadata at v1 (c1, c2), Metadata at v2 (c1 only), data files.
         prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
         prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
 
@@ -589,7 +587,47 @@ class DeltaFormatSharingSourceSuite
           val profileFile = prepareProfileFile(tempDir)
           withSQLConf(getDeltaSharingClassesSQLConf.toSeq: _*) {
             val tablePath = profileFile.getCanonicalPath + s"#share1.default.$sharedTableName"
-            val q = spark.readStream
+
+            // Run 1: process v1 inserts and checkpoint cleanly (no schema change yet).
+            val q1 = spark.readStream
+              .format("deltaSharing")
+              .option("responseFormat", "delta")
+              .option("readChangeFeed", "true")
+              .option("startingVersion", "1")
+              .load(tablePath)
+              .select("c1", "_change_type", "_commit_version")
+              .writeStream
+              .format("delta")
+              .option("checkpointLocation", checkpointDir.toString)
+              .start(outputDir.toString)
+            try {
+              q1.processAllAvailable()
+            } finally {
+              q1.stop()
+            }
+
+            // Verify v1 rows were successfully written in Run 1.
+            checkAnswer(
+              spark.read.format("delta").load(outputDir.getCanonicalPath)
+                .select("c1", "_change_type", "_commit_version").orderBy("c1"),
+              Seq(Row(1, "insert", 1L), Row(2, "insert", 1L))
+            )
+
+            // Now introduce the non-backward-compatible schema change and a post-change insert.
+            sql(s"""ALTER TABLE $deltaTableName DROP COLUMN c2""") // version 2
+            sql(s"""INSERT INTO $deltaTableName VALUES (3)""") // version 3
+
+            // Re-mock so the server now reports v1+v2+v3. prepareMockedClientMetadata reflects
+            // the latest snapshot (c1 only, after DROP COLUMN). The CDF response at
+            // startingVersion=1 now includes Metadata at v1 (c1, c2) and Metadata at v2 (c1
+            // only) + data files.
+            prepareMockedClientMetadata(deltaTableName, sharedTableName)
+            prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
+            prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
+
+            // Run 2: restart from the same checkpoint. DeltaSource detects the v2 schema
+            // change as non-backward-compatible and fails the stream.
+            val q2 = spark.readStream
               .format("deltaSharing")
               .option("responseFormat", "delta")
               .option("readChangeFeed", "true")
@@ -602,23 +640,21 @@ class DeltaFormatSharingSourceSuite
               .start(outputDir.toString)
             val e = intercept[Exception] {
               try {
-                q.processAllAvailable()
+                q2.processAllAvailable()
               } finally {
-                q.stop()
+                q2.stop()
               }
             }
             assert(
               e.getMessage.contains("DELTA_STREAMING_INCOMPATIBLE_SCHEMA_CHANGE_USE_SCHEMA_LOG"),
               s"Expected schema change error, got: ${e.getMessage}")
 
-            // Verify v1 rows were flushed to the sink before the stream failed on the v2
-            // schema change. v3 rows are not processed since the stream stopped at v2.
-            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
-              .select("c1", "_change_type", "_commit_version").orderBy("c1")
-            checkAnswer(result, Seq(
-              Row(1, "insert", 1L),
-              Row(2, "insert", 1L)
-            ))
+            // v1 rows are still in the sink; no v3 rows (stream stopped at v2).
+            checkAnswer(
+              spark.read.format("delta").load(outputDir.getCanonicalPath)
+                .select("c1", "_change_type", "_commit_version").orderBy("c1"),
+              Seq(Row(1, "insert", 1L), Row(2, "insert", 1L))
+            )
           }
         }
       }
