@@ -2,11 +2,11 @@
 #
 # Helper to clone Unity Catalog at the pinned SHA (or `main` for the floating canary) and
 # publish its client/server/spark jars to ~/.ivy2/local (and ~/.m2) so sbt can resolve UC
-# dependencies locally. Used by the pinned-master arrangement below and by the floating-main
-# canary in disabled_spark_test_uc_master.yaml. UC_REF is restricted to `main` or the pinned
-# SHA; no other values are accepted.
+# dependencies locally. Used by the pinned arrangement below and by the floating-main canary
+# in disabled_spark_test_uc_master.yaml. UC_REF is restricted to `main` or the pinned SHA;
+# no other values are accepted.
 #
-# What the pinned-master usage adds on top of the generic flow - and which is temporary
+# What the pinned-SHA usage adds on top of the generic flow - and which is temporary
 # scaffolding to rip out when Delta can use a released UC version again (flip
 # `unityCatalogReleaseVersion` in build.sbt) - is:
 #   - the UC_PIN_SHA / UC_BASE_VERSION constants below,
@@ -20,8 +20,7 @@
 #   Ivy artifact already exists for the target coordinate, the slow sbt publish is skipped.
 #
 #   `--print-version` short-circuits before any filesystem work and just echoes the coordinate
-#   that would be published. That's how build.sbt discovers the version string in pinned-master
-#   mode.
+#   that would be published. That's how build.sbt discovers the version string in pinned mode.
 #
 # Why local publish:
 #   Delta master depends on UC APIs that aren't in any released UC yet. Encoding the pinned SHA
