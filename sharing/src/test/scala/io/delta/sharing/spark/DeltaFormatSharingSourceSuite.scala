@@ -428,13 +428,15 @@ class DeltaFormatSharingSourceSuite
               Seq(Row(1, "a", "insert"), Row(2, "b", "insert"))
             )
 
-            // Add more data after first run: v2 (update), v3 (delete)
-            sql(s"""UPDATE $deltaTableName SET c2 = "updated" WHERE c1 = 1""") // version 2
-            sql(s"""DELETE FROM $deltaTableName WHERE c1 = 2""") // version 3
+            // Add more data after first run. Use INSERTs so this test exercises only the
+            // checkpoint-restart path; UPDATE/DELETE CDF emission is covered by the
+            // "incremental inserts updates and deletes" test above.
+            sql(s"""INSERT INTO $deltaTableName VALUES (3, "c"), (4, "d")""") // version 2
+            sql(s"""INSERT INTO $deltaTableName VALUES (5, "e")""") // version 3
 
             // Re-mock getCDFFiles_1 with the full v1+v2+v3 history. On restart,
             // getStartingOffset re-derives startVersion=1 and fetches getCDFFiles_1;
-            // DeltaSource then serves from the checkpoint (v2) onward.
+            // DeltaSource then serves from the checkpoint onward.
             prepareMockedClientAndFileSystemResultForCdf(deltaTableName, sharedTableName, 1L)
             // Update table version mock to v3
             prepareMockedClientGetTableVersion(deltaTableName, sharedTableName)
@@ -457,16 +459,18 @@ class DeltaFormatSharingSourceSuite
               q2.stop()
             }
 
-            // Total output = v1 inserts + v2 update (pre+post image) + v3 delete
-            val result = spark.read.format("delta").load(outputDir.getCanonicalPath)
-              .select("c1", "c2", "_change_type").orderBy("c1", "_change_type")
-            val expected = spark.read
-              .format("delta")
-              .option("readChangeFeed", "true")
-              .option("startingVersion", "1")
-              .table(deltaTableName)
-              .select("c1", "c2", "_change_type").orderBy("c1", "_change_type")
-            checkAnswer(result, expected)
+            // Total output = all 5 inserts across v1 (1,2), v2 (3,4), v3 (5).
+            checkAnswer(
+              spark.read.format("delta").load(outputDir.getCanonicalPath)
+                .select("c1", "c2", "_change_type").orderBy("c1"),
+              Seq(
+                Row(1, "a", "insert"),
+                Row(2, "b", "insert"),
+                Row(3, "c", "insert"),
+                Row(4, "d", "insert"),
+                Row(5, "e", "insert")
+              )
+            )
           }
         }
       }
