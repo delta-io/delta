@@ -259,7 +259,7 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
         assert(storedIceberg.getMetadataLocation == "s3://bucket/metadata/v1.json")
         assert(storedIceberg.getConvertedDeltaVersion == 1L)
         assert(storedIceberg.getConvertedDeltaTimestamp == "2025-01-01")
-        assert(storedIceberg.getBaseConvertedDeltaVersion == baseConvertedDeltaVersion)
+        assert(storedIceberg.getBaseConvertedDeltaVersion == baseVersionInJava)
       }
     }
   }
