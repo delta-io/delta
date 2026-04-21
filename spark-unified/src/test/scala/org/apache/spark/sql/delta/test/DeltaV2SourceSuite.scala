@@ -51,7 +51,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "basic",
     "initial snapshot ends at base index of next version",
     "new commits arrive after stream initialization - with explicit startingVersion",
-    "SC-11561: can consume new data without update",
+    "can consume new data without update",
     "Delta sources don't write offsets with null json",
 
     // === Schema Evolution ===
@@ -114,7 +114,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxBytesPerTrigger: max bytes and max files together",
     "Trigger.AvailableNow with an empty table",
     "Rate limited Delta source advances with non-data inserts",
-    "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
+    "delta source should not hang or reprocess data when using AvailableNow",
     "startingVersion should work with rate time",
     "maxFilesPerTrigger: metadata checkpoint",
     "maxBytesPerTrigger: metadata checkpoint",

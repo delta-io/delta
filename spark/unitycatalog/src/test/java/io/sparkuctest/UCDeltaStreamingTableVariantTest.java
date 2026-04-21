@@ -137,7 +137,55 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
                   "INSERT INTO %s VALUES (1, 'a')",
                   "INSERT INTO %s VALUES (2, 'b'), (3, 'c')", "INSERT INTO %s VALUES (4, 'd')"),
               /* incrementalSqls */ List.of(
-                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")));
+                  "INSERT INTO %s VALUES (5, 'e'), (6, 'f')", "INSERT INTO %s VALUES (7, 'g')")),
+
+          // -- Regression: NULL values in columns trigger NPE on MANAGED tables --
+          // Before fix: ColumnVectorWithFilter.closeIfFreeable() inherited the default
+          // ColumnVector implementation which calls close() -> delegate.close() ->
+          // releaseMemory() -> sets nulls=null. When the Parquet reader reuses the vector
+          // for the next batch, putNotNulls() dereferences the null array -> NPE.
+          // Only MANAGED tables are affected because they enable deletion vectors by default,
+          // which is the only code path wrapping columns in ColumnVectorWithFilter.
+          new TableVariant(
+              /* name */ "NullsInColumns",
+              /* schema */ "id INT, value STRING, opt_int INT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES (1, null, null), (2, 'b', null), (null, null, null)"),
+              /* incrementalSqls */ List.of("INSERT INTO %s VALUES (3, 'c', 3), (null, 'x', 1)")),
+
+          // -- Regression: BOOLEAN columns with NULLs trigger NPE through bit-packing path --
+          // Same root cause as NullsInColumns but exercises the BOOLEAN-specific code path
+          // in OnHeapColumnVector where null flags interact with bit-packing.
+          new TableVariant(
+              /* name */ "BooleanNulls",
+              /* schema */ "id INT, flag BOOLEAN, val INT",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, true, 10), (2, null, 20), (3, false, null), (4, null, null)"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES (5, true, null), (6, null, 60)")),
+
+          // -- Regression: complex types (ARRAY/MAP/STRUCT) exercise getChild() path --
+          // Before fix: ColumnVectorWithFilter.getChild() unconditionally casts dataType()
+          // to StructType. For non-struct types like ARRAY and MAP, this cast fails with
+          // ClassCastException. The fix guards with an instanceof check and passes through
+          // to the delegate directly.
+          new TableVariant(
+              /* name */ "ComplexTypes",
+              /* schema */ "id INT, arr ARRAY<INT>, m MAP<STRING,INT>,"
+                  + " s STRUCT<a:INT,b:STRING>",
+              /* partitionCols */ null,
+              /* tableProperties */ null,
+              /* setupSqls */ List.of(
+                  "INSERT INTO %s VALUES"
+                      + " (1, array(1,2), map('k',1), named_struct('a',1,'b','x')),"
+                      + " (2, array(3), map('k1',2,'k2',3), named_struct('a',2,'b','y'))"),
+              /* incrementalSqls */ List.of(
+                  "INSERT INTO %s VALUES" + " (3, array(), map(), named_struct('a',3,'b','z'))")));
 
   @TestFactory
   Stream<DynamicContainer> streamingTableVariants() {
@@ -285,11 +333,29 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
     }
   }
 
-  /** Asserts streaming memory sink has same rows as batch SELECT * (both sorted by first col). */
+  /**
+   * Asserts streaming memory sink has same rows as batch SELECT *. Sorts both result sets in Java
+   * by all columns to avoid non-determinism when the first column has duplicate values (e.g.
+   * NULLs).
+   */
   private void assertStreamingEqualsBatch(String queryName, String tableName) {
-    List<List<String>> streaming = sql("SELECT * FROM %s ORDER BY 1", queryName);
-    List<List<String>> batch = sql("SELECT * FROM %s ORDER BY 1", tableName);
+    List<List<String>> streaming = sorted(sql("SELECT * FROM %s", queryName));
+    List<List<String>> batch = sorted(sql("SELECT * FROM %s", tableName));
     assertThat(streaming).as("Streaming should match batch for %s", tableName).isEqualTo(batch);
+  }
+
+  /** Returns a copy of the rows sorted lexicographically by all columns. */
+  private static List<List<String>> sorted(List<List<String>> rows) {
+    List<List<String>> copy = new ArrayList<>(rows);
+    copy.sort(
+        (a, b) -> {
+          for (int i = 0; i < Math.min(a.size(), b.size()); i++) {
+            int c = String.valueOf(a.get(i)).compareTo(String.valueOf(b.get(i)));
+            if (c != 0) return c;
+          }
+          return Integer.compare(a.size(), b.size());
+        });
+    return copy;
   }
 
   /**
