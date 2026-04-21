@@ -2667,6 +2667,17 @@ trait DeltaSQLConfBase {
       .bytesConf(ByteUnit.MiB)
       .createWithDefault(512)
 
+  val DELTA_OPTIMIZE_WRITE_SHUFFLE_HELPER =
+    buildConf("optimizeWrite.shuffleHelper")
+      .internal()
+      .doc("Fully qualified class name of an OptimizedWriteShuffleHelper implementation. " +
+        "External shuffle services (e.g., Celeborn, Uniffle) can provide their own " +
+        "implementation to customize bin-packing and shuffle read behavior for optimized writes. " +
+        "If not set, the default implementation is used when an external shuffle manager " +
+        "is detected.")
+      .stringConf
+      .createOptional
+
   val DELTA_OPTIMIZE_CLUSTERING_MIN_CUBE_SIZE =
   buildConf("optimize.clustering.mergeStrategy.minCubeSize.threshold")
     .internal()
