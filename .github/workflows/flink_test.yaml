@@ -2,14 +2,14 @@ name: "Delta Flink"
 
 on:
   push:
-    branches: [master]
+    branches: [master, branch-*]
     paths:
       - 'flink/**'
       - 'kernel/**'
       - '!**/*.md'
       - '!**/*.txt'
   pull_request:
-    branches: [master]
+    branches: [master, branch-*]
     paths:
       - 'flink/**'
       - 'kernel/**'

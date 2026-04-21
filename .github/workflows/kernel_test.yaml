@@ -2,12 +2,12 @@ name: "Delta Kernel"
 
 on:
   push:
-    branches: [master]
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'
   pull_request:
-    branches: [master]
+    branches: [master, branch-*]
     paths-ignore:
       - '**.md'
       - '**.txt'

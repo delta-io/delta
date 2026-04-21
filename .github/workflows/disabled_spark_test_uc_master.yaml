@@ -17,10 +17,12 @@ on:
   workflow_dispatch: # manual-only while disabled
   # Original triggers, restore when re-enabling:
   # push:
+  #   branches: [master, branch-*]
   #   paths-ignore:
   #     - '**.md'
   #     - '**.txt'
   # pull_request:
+  #   branches: [master, branch-*]
   #   paths-ignore:
   #     - '**.md'
   #     - '**.txt'
