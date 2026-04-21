@@ -697,7 +697,7 @@ lazy val hive2Tez = (project in file("connectors/hive2-tez"))
 lazy val standaloneCosmetic = project
   .dependsOn(storage) // this doesn't impact the output artifact (jar), only the pom.xml dependencies
   .settings(
-    name := "delta-standalone",
+    name := "delta-standalone-custom",
     commonSettings,
     releaseSettings,
     exportJars := true,

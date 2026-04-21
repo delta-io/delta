@@ -230,13 +230,9 @@ private[internal] object Checkpoints extends Logging {
     // Use the string in the closure as Path is not Serializable.
     val path = checkpointFileSingular(snapshot.path, snapshot.version).toString
 
-    // Exclude commitInfo, CDC
-    val actions: Seq[SingleAction] = (
-        Seq(snapshot.metadataScala, snapshot.protocolScala) ++
-        snapshot.setTransactionsScala ++
-        snapshot.allFilesScala ++
-        snapshot.tombstonesScala
-      ).map(_.wrap)
+    // Rebuild checkpoint contents using a temporary replay so that writing a checkpoint doesn't
+    // populate SnapshotImpl.state and retain all active files on the cached snapshot.
+    val checkpointState = snapshot.replayState()
 
     val writtenPath =
       if (useRename) {
@@ -258,13 +254,19 @@ private[internal] object Checkpoints extends Logging {
     val writer = ParquetWriter.writer[SingleAction](writtenPath, writerOptions)
 
     try {
-      actions.foreach { singleAction =>
+      def writeAction(singleAction: SingleAction): Unit = {
         writer.write(singleAction)
         checkpointSize += 1
         if (singleAction.add != null) {
           numOfFiles += 1
         }
       }
+
+      writeAction(snapshot.metadataScala.wrap)
+      writeAction(snapshot.protocolScala.wrap)
+      checkpointState.setTransactions.iterator.foreach(txn => writeAction(txn.wrap))
+      checkpointState.activeFiles.iterator.foreach(add => writeAction(add.wrap))
+      checkpointState.tombstones.iterator.foreach(remove => writeAction(remove.wrap))
     } catch {
       case e: org.apache.hadoop.fs.FileAlreadyExistsException if !useRename =>
         val p = new Path(writtenPath)
@@ -298,7 +300,7 @@ private[internal] object Checkpoints extends Logging {
       }
     }
 
-    if (numOfFiles != snapshot.numOfFiles) {
+    if (numOfFiles != checkpointState.numOfFiles) {
       throw new IllegalStateException(
         "State of the checkpoint doesn't match that of the snapshot.")
     }

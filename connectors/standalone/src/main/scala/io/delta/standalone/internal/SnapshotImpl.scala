@@ -312,7 +312,7 @@ private[internal] class SnapshotImpl(
   /**
    * Reconstruct the state by applying deltas in order to the checkpoint.
    */
-  protected lazy val state: State = {
+  private[internal] def replayState(): State = {
     val replay = new InMemoryLogReplay(hadoopConf, minFileRetentionTimestamp)
     val actions = loadInMemory(files).map(_.unwrap)
 
@@ -335,6 +335,11 @@ private[internal] class SnapshotImpl(
       replay.getSetTransactions.size
     )
   }
+
+  /**
+   * Lazily cache the replayed table state for callers that need full-file materialization.
+   */
+  protected lazy val state: State = replayState()
 
   private lazy val activeFilesJ =
     state.activeFiles.map(ConversionUtils.convertAddFile).toList.asJava
