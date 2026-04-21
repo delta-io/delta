@@ -114,7 +114,7 @@ cd "$UC_DIR"
 # on the history we just fetched - no GitHub API, no token needed. Only applies when UC_REF is
 # the pinned SHA; UC_REF=main is trivially on main.
 if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
-  if ! git merge-base --is-ancestor "$UC_PIN_SHA" FETCH_HEAD 2>/dev/null; then
+  if ! git merge-base --is-ancestor "$UC_PIN_SHA" origin/main 2>/dev/null; then
     echo "ERROR: UC_PIN_SHA=$UC_PIN_SHA is not reachable from unitycatalog/unitycatalog main." >&2
     echo "       Pin must reference a commit on https://github.com/unitycatalog/unitycatalog/commits/main" >&2
     exit 1
@@ -122,7 +122,7 @@ if [[ "$UC_REF" == "$UC_PIN_SHA" ]]; then
 fi
 
 if [[ "$UC_REF" == "main" ]]; then
-  git checkout --quiet FETCH_HEAD
+  git checkout --quiet origin/main
 else
   git checkout --quiet "$UC_PIN_SHA"
 fi
