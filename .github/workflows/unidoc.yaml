@@ -19,9 +19,5 @@
             distribution: "zulu"
             java-version: "17"
         - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-        # `++ <scala>` triggers cross-version resolution across every project (including
-        # sparkUnityCatalog / kernelUnityCatalog), so the pinned UC build must be published first.
-        - name: Set up pinned Unity Catalog
-          uses: ./.github/actions/setup-unitycatalog
         - name: generate unidoc
-          run: build/sbt "++ ${{ matrix.scala }}" unidoc
+          run: build/sbt -DuseDefaultUnityCatalogReleaseVersion=true "++ ${{ matrix.scala }}" unidoc

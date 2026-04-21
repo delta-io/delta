@@ -22,8 +22,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Point SBT to our cache directories for consistency
-  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
+  # Point SBT to our cache directories for consistency.
+  SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2 -DuseDefaultUnityCatalogReleaseVersion=true"
 
 jobs:
   test:

@@ -723,29 +723,39 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-// Unity Catalog version. Two modes, flipped by `unityCatalogReleaseVersion`:
+// Unity Catalog version. Three modes, in priority order:
 //
-//  - Release mode: set to `Some("0.5.0")` (or whatever released version the release branch
-//    ships against). sbt resolves the coordinate from Maven Central like any other dependency.
+//  1. `-DuseDefaultUnityCatalogReleaseVersion=true`: use `defaultUnityCatalogReleaseVersion`
+//     below -- the last released UC version on Maven Central. For workflows that don't actually
+//     need DRC APIs (e.g. unidoc, lint) and want to skip the pinned UC build. Shared across
+//     workflows by reading this single constant, so bumping is a one-line change here.
 //
-//  - Pinned mode (default): leave as `None`. The version string comes from
-//    `setup_unitycatalog_main.sh --print-version`, which encodes both the pinned UC main SHA
-//    and UC's declared base version; the script is the single source of truth. The same
-//    script (without the flag) publishes the matching jars to ~/.ivy2/local when
-//    `ensurePinnedUnityCatalog` decides they're missing.
+//  2. Release mode: set `unityCatalogReleaseVersion = Some("0.5.0")` (or whatever released
+//     version the release branch ships against). sbt resolves the coordinate from Maven Central
+//     like any other dependency.
+//
+//  3. Pinned mode (default): leave `unityCatalogReleaseVersion = None`. The version string
+//     comes from `setup_unitycatalog_main.sh --print-version`, which encodes both the pinned
+//     UC main SHA and UC's declared base version; the script is the single source of truth.
+//     The same script (without the flag) publishes the matching jars to ~/.ivy2/local when
+//     `ensurePinnedUnityCatalog` decides they're missing.
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments.
 val unityCatalogReleaseVersion: Option[String] = None
+val defaultUnityCatalogReleaseVersion = "0.4.1"
+val useDefaultUnityCatalogReleaseVersion: Boolean =
+  sys.props.getOrElse("useDefaultUnityCatalogReleaseVersion", "false").toBoolean
 val unityCatalogSetupScript = "project/scripts/setup_unitycatalog_main.sh"
 
-// Lazy so release-mode builds never shell out.
+// Lazy so release-mode / useDefaultUnityCatalogReleaseVersion builds never shell out.
 lazy val pinnedUnityCatalogVersion: String = {
   import scala.sys.process._
   Process(Seq("bash", unityCatalogSetupScript, "--print-version")).!!.trim
 }
 val unityCatalogVersion: String = sys.props.getOrElse(
   "unityCatalogVersion",
-  unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
+  if (useDefaultUnityCatalogReleaseVersion) defaultUnityCatalogReleaseVersion
+  else unityCatalogReleaseVersion.getOrElse(pinnedUnityCatalogVersion))
 
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
@@ -791,7 +801,11 @@ Global / ensurePinnedUnityCatalog := {
   // Resolve the .value dependencies eagerly - sbt's task macro warns when
   // `.value` appears inside conditional branches.
   val log = streams.value.log
-  if (unityCatalogReleaseVersion.isEmpty) {
+  // No-op whenever the effective version resolves to something Maven Central can serve:
+  // release mode, -DuseDefaultUnityCatalogReleaseVersion=true, or -DunityCatalogVersion=<released>.
+  val usingReleasedVersion = useDefaultUnityCatalogReleaseVersion ||
+    sys.props.contains("unityCatalogVersion")
+  if (unityCatalogReleaseVersion.isEmpty && !usingReleasedVersion) {
     val canary =
       file(sys.props("user.home")) / ".ivy2" / "local" / "io.unitycatalog" /
         "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"

@@ -49,9 +49,11 @@ jobs:
           key: delta-sbt-cache-uc-master
       - name: Build Unity Catalog from source
         id: uc-build
+        # UC_REF=main builds the floating-main canary instead of the pinned SHA, which is the
+        # point of this workflow -- early warning of upcoming UC incompatibilities.
         run: |
-          bash project/scripts/setup_unitycatalog_main.sh
-          UC_VERSION=$(cat /tmp/unitycatalog/.uc-version)
+          UC_REF=main bash project/scripts/setup_unitycatalog_main.sh
+          UC_VERSION=$(UC_REF=main bash project/scripts/setup_unitycatalog_main.sh --print-version)
           echo "uc_version=$UC_VERSION" >> $GITHUB_OUTPUT
           echo "UC version: $UC_VERSION"
       - name: Run UC integration tests
