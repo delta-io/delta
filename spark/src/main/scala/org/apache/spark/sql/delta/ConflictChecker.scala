@@ -1336,7 +1336,7 @@ private[delta] class ConflictChecker(
   /** A helper function for pretty printing a specific partition directory. */
   protected def getPrettyPartitionMessage(partitionValues: Map[String, String]): Option[String] = {
     val partitionColumns = currentTransactionInfo.partitionSchemaAtReadTime
-    if (partitionColumns.isEmpty || partitionValues == null) {
+    if (partitionColumns.isEmpty || partitionValues == null || partitionValues.isEmpty) {
       None
     } else {
       Some(

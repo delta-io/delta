@@ -851,11 +851,16 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
    */
   def validateFileListAgainstCRC(checksum: VersionChecksum, contextOpt: Option[String]): Boolean = {
     val fileSortKey = (f: AddFile) => (f.path, f.modificationTime, f.size)
-    val filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
+    // Jackson 2.19+ deserializes null collection values as empty collections.
+    // So we normalize null tags to empty maps before comparing file lists.
+    val filesFromCrc = checksum.allFiles
+      .map(_.sortBy(fileSortKey))
+      .getOrElse { return true }
+      .map(file => if (file.tags == null) file.copy(tags = Map.empty) else file)
     val filesFromStateReconstruction = recordFrameProfile(
         "Delta", "snapshot.allFiles") {
       allFilesViaStateReconstruction.collect().toSeq.sortBy(fileSortKey)
-    }
+    }.map(file => if (file.tags == null) file.copy(tags = Map.empty) else file)
     if (filesFromCrc == filesFromStateReconstruction) return true
 
     val filesFromCrcWithoutStats = filesFromCrc.map(_.copy(stats = ""))
