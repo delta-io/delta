@@ -97,8 +97,9 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
     )
 
 
-    // Adding new top-level columns with schema evolution is allowed for all inserts, but dataframe
-    // inserts by name don't support implicit casting and will fail due to the type mismatch.
+    // Adding new top-level columns with schema evolution is allowed for all inserts.
+    // save() and saveAsTable() overwrite don't support implicit casting and will fail.
+    // SQL inserts by-name have different error messages and are covered in a separate test below.
     testInserts(s"insert with extra top-level column and implicit cast," +
       s"schemaEvolution=$schemaEvolution")(
       initialData = TestData("a int, b int", Seq("""{ "a": 1, "b": 2 }""")),
@@ -116,7 +117,8 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsByPosition + StreamingInsert,
+      excludeInserts = insertsSQL.intersect(insertsByName) ++
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -135,7 +137,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "b"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -252,13 +254,13 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
           checkError(ex, "DELTA_METADATA_MISMATCH", "42KDG", Map.empty[String, String])
         })
       },
-      includeInserts = insertsSQL ++ insertsByPosition + StreamingInsert -- Seq(
+      excludeInserts = Set(
         // It's not possible to specify a column that doesn't exist in the target using SQL with an
         // explicit column list.
         SQLInsertColList(SaveMode.Append),
         SQLInsertColList(SaveMode.Overwrite),
-        SQLInsertOverwritePartitionColList
-      ),
+        SQLInsertOverwritePartitionColList) ++
+        insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
 
@@ -278,7 +280,7 @@ class DeltaInsertIntoSchemaEvolutionSuite extends DeltaInsertIntoTest {
             "updateField" -> "s"
           ))
       }),
-      includeInserts = insertsDataframe.intersect(insertsByName) - StreamingInsert,
+      includeInserts = insertsWithoutImplicitCastSupport,
       withSchemaEvolution = schemaEvolution
     )
   }

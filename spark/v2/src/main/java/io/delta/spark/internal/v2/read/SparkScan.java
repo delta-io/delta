@@ -76,19 +76,19 @@ public class SparkScan
               DeltaOptions.IGNORE_CHANGES_OPTION(),
               DeltaOptions.IGNORE_DELETES_OPTION(),
               DeltaOptions.SKIP_CHANGE_COMMITS_OPTION(),
-              DeltaOptions.EXCLUDE_REGEX_OPTION()));
+              DeltaOptions.EXCLUDE_REGEX_OPTION(),
+              DeltaOptions.FAIL_ON_DATA_LOSS_OPTION()));
 
   /**
    * Block list of DeltaOptions that are not supported for streaming in V2 connector. Only
    * startingVersion, startingTimestamp, maxFilesPerTrigger, maxBytesPerTrigger, ignoreFileDeletion,
-   * ignoreChanges, ignoreDeletes, skipChangeCommits, and excludeRegex are supported. User-defined
-   * custom options (not in DeltaOptions) are allowed to pass through.
+   * ignoreChanges, ignoreDeletes, skipChangeCommits, excludeRegex, and failOnDataLoss are
+   * supported. User-defined custom options (not in DeltaOptions) are allowed to pass through.
    */
   private static final Set<String> UNSUPPORTED_STREAMING_OPTIONS =
       Collections.unmodifiableSet(
           new HashSet<>(
               Arrays.asList(
-                  DeltaOptions.FAIL_ON_DATA_LOSS_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION().toLowerCase(),
                   DeltaOptions.CDC_READ_OPTION_LEGACY().toLowerCase(),
                   DeltaOptions.CDC_END_VERSION().toLowerCase(),

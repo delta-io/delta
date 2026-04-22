@@ -38,7 +38,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.JsonUtils
 import io.delta.sharing.client.{DeltaSharingClient, DeltaSharingRestClient}
 import io.delta.sharing.client.util.ConfUtils
-import io.delta.sharing.client.model.{Table => DeltaSharingTable}
+import io.delta.sharing.client.model.{DeltaTableFiles, Table => DeltaSharingTable}
 
 import org.apache.spark.delta.sharing.CachedTableManager
 import org.apache.spark.sql.{DataFrame, SparkSession}
@@ -59,7 +59,7 @@ import org.apache.spark.sql.types.StructType
  * When a new stream is started, delta sharing starts by fetching delta log from the server side,
  * constructing a local delta log, and call delta source apis to compute offset or read data.
  *
- * TODO: Support CDC Streaming and SupportsConcurrentExecution.
+ * TODO: Support SupportsConcurrentExecution.
  */
 case class DeltaFormatSharingSource(
     spark: SparkSession,
@@ -687,7 +687,9 @@ case class DeltaFormatSharingSource(
       if (startingOffset.isInitialSnapshot || !options.readChangeFeed) {
         getTableFileChanges(startingOffset, endingVersionForQuery, fileIdHash)
       } else {
-        throw new UnsupportedOperationException("CDF Streaming is not supported yet.")
+        // No flag check here: DELTA_SHARING_ENABLE_DELTA_FORMAT_CDF_STREAMING is already
+        // enforced in DeltaSharingDataSource.createSource before this source is instantiated.
+        getTableCDFFileChanges(startingOffset, endingVersionForQuery, fileIdHash)
       }
     }
   }
@@ -712,8 +714,8 @@ case class DeltaFormatSharingSource(
     logInfo(
       s"Fetching files with table version(${startingOffset.reservoirVersion}), " +
       s"index(${startingOffset.index}), isInitialSnapshot(${startingOffset.isInitialSnapshot})," +
-      s" endingVersionForQuery($endingVersionForQuery), server version" +
-      s"($latestTableVersionOnServer)," + getTableInfoForLogging
+      s" endingVersionForQuery($endingVersionForQuery), " +
+      s"server version($latestTableVersionOnServer)," + getTableInfoForLogging
     )
 
     val (tableFiles, refreshFunc) = if (startingOffset.isInitialSnapshot) {
@@ -769,6 +771,69 @@ case class DeltaFormatSharingSource(
       (tableFiles, refreshFunc)
     }
 
+    applyTableFileChanges(tableFiles, refreshFunc, startingOffset, endingVersionForQuery)
+  }
+
+  /**
+   * Fetch the CDF file changes from delta sharing server for the given version range,
+   * and store them in the locally constructed delta log.
+   *
+   * This is the CDF streaming counterpart to getTableFileChanges. It calls getCDFFiles
+   * instead of getFiles to retrieve AddCDCFile, AddFile, and RemoveFile actions that
+   * represent row-level changes. includeHistoricalMetadata=true ensures metadata actions
+   * are included so that mid-range schema changes break the stream correctly.
+   *
+   * @param startingOffset The starting offset with the reservoirVersion to fetch from.
+   * @param endingVersionForQuery The ending version (inclusive) for the query.
+   */
+  private def getTableCDFFileChanges(
+      startingOffset: DeltaSourceOffset,
+      endingVersionForQuery: Long,
+      fileIdHash: Option[String] = None): Unit = {
+    logInfo(
+      s"Fetching CDF files with table version(${startingOffset.reservoirVersion}), " +
+      s"index(${startingOffset.index}), " +
+      s"endingVersionForQuery($endingVersionForQuery), " +
+      s"server version($latestTableVersionOnServer)," + getTableInfoForLogging
+    )
+
+    val cdfOptions = Map(
+      DeltaSharingOptions.CDF_START_VERSION -> startingOffset.reservoirVersion.toString,
+      DeltaSharingOptions.CDF_END_VERSION -> endingVersionForQuery.toString
+    )
+    val tableFiles = client.getCDFFiles(
+      table = table,
+      cdfOptions = cdfOptions,
+      // Requests Metadata actions for schema-changing versions in the range so DeltaSource
+      // can detect both backward-compatible and non-backward-compatible schema changes.
+      includeHistoricalMetadata = true,
+      fileIdHash = fileIdHash
+    )
+    val refreshFunc = DeltaSharingUtils.getRefresherForGetCDFFiles(
+      client = client,
+      table = table,
+      cdfOptions = cdfOptions,
+      fileIdHash = fileIdHash
+    )
+    logInfo(
+      s"Fetched ${tableFiles.lines.size} CDF lines from startingVersion " +
+      s"${startingOffset.reservoirVersion} to endingVersion $endingVersionForQuery from " +
+      "delta sharing server," + getTableInfoForLogging + getQueryIdForLogging
+    )
+
+    applyTableFileChanges(tableFiles, refreshFunc, startingOffset, endingVersionForQuery)
+  }
+
+  /**
+   * Shared post-RPC logic for both getTableFileChanges and getTableCDFFileChanges.
+   * Constructs the local delta log from the server response, registers file URLs in
+   * CachedTableManager, and updates version tracking state.
+   */
+  private def applyTableFileChanges(
+      tableFiles: DeltaTableFiles,
+      refreshFunc: DeltaSharingUtils.RefresherFunction,
+      startingOffset: DeltaSourceOffset,
+      endingVersionForQuery: Long): Unit = {
     val deltaLogMetadata = DeltaSharingLogFileSystem.constructLocalDeltaLogAcrossVersions(
       lines = tableFiles.lines,
       customTablePath = customTablePathWithUUIDSuffix,
