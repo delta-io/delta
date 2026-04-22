@@ -40,7 +40,7 @@ When Variant Shredding is supported (`writerFeatures` field of a table's `protoc
 
 ## Reader Requirements for Variant Shredding
 
-When Variant type is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
+When Variant Shredding is supported (`readerFeatures` field of a table's `protocol` action contains `variantShredding`), readers:
 - must recognize and tolerate a `variant` data type in a Delta schema
 - must recognize and correctly process a parquet schema that is either unshredded (only `metadata` and `value` struct fields) or shredded (`metadata`, `value`, and `typed_value` struct fields) when reading a Variant data type from file.
 
