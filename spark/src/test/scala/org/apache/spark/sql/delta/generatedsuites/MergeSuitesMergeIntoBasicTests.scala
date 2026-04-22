@@ -32,6 +32,12 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
+class MergeIntoBasicSQLInMemoryTableNameBasedSuite
+  extends MergeIntoBasicTests
+  with MergeIntoSQLMixin
+  with MergeIntoSuiteInMemoryTestTableMixin
+  with DeltaDMLTestUtilsNameBased
+
 class MergeIntoBasicSQLNameBasedSuite
   extends MergeIntoBasicTests
   with MergeIntoSQLMixin
