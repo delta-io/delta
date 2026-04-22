@@ -18,7 +18,7 @@ This design is grounded in:
 - `delta_rest_catalog_provider_design.md`
 - the current generated UC SDK under `unitycatalog/clients/java/target/src/main/java/io/unitycatalog/client/delta/`
 
-The old Delta POC PR `delta-io/delta#6575` is used only for shape:
+The old Delta POC PR [`delta-io/delta#6575`](https://github.com/delta-io/delta/pull/6575) is used only for shape:
 
 - `UCDeltaClient`
 - `DRCMetadataAdapter`
