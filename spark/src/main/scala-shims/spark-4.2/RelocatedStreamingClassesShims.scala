@@ -71,7 +71,17 @@ object Relocated {
   }
 
   type StreamingRelation = StreamingRelationShim
-  val StreamingRelation: StreamingRelationShim.type = StreamingRelationShim
+  // In Spark 4.2, StreamingRelation gained a 4th param `sourceIdentifyingName`.
+  // Expose a 3-arg extractor so pattern matches in the main tree stay
+  // source-compatible with Spark 4.0/4.1 (where the companion's unapply
+  // naturally returns 3 fields).
+  object StreamingRelation {
+    def unapply(s: StreamingRelationShim): Option[(
+        org.apache.spark.sql.execution.datasources.DataSource,
+        String,
+        Seq[org.apache.spark.sql.catalyst.expressions.Attribute])] =
+      Some((s.dataSource, s.sourceName, s.output))
+  }
 
   type MetadataLogFileIndex = MetadataLogFileIndexShim
   def createMetadataLogFileIndex(
