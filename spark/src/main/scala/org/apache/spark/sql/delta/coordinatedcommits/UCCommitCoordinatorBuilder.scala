@@ -23,12 +23,14 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCDeltaClient, UCDeltaRestClient, UCTokenBasedRestClient}
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
+import org.apache.spark.sql.delta.uccatalog.DeltaRestProviderLookup
 
 import io.unitycatalog.client.auth.TokenProvider
+import io.unitycatalog.client.delta.DeltaRestClientProvider
 import org.apache.spark.internal.MDC
 import org.apache.spark.sql.SparkSession
 
@@ -77,7 +79,12 @@ object UCCommitCoordinatorBuilder
 
     commitCoordinatorClientCache.computeIfAbsent(
       metastoreId,
-      _ => new UCCommitCoordinatorClient(conf.asJava, getMatchingUCClient(spark, metastoreId)))
+      _ => {
+        val legacyClient = getMatchingUCClient(spark, metastoreId)
+        val drcClient = findDeltaRestClientForMetastore(spark, metastoreId)
+        val drcOpt = java.util.Optional.ofNullable(drcClient.orNull)
+        new UCCommitCoordinatorClient(conf.asJava, legacyClient, drcOpt)
+      })
   }
 
   override def buildForCatalog(
@@ -90,7 +97,54 @@ object UCCommitCoordinatorBuilder
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
     }
     val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
+    val drcClient = findDeltaRestClientForCatalog(spark, catalogName)
+    val drcOpt = java.util.Optional.ofNullable(drcClient.orNull)
+    new UCCommitCoordinatorClient(conf.asJava, client, drcOpt)
+  }
+
+  /**
+   * Looks up the Spark-registered catalog by name and walks its delegate chain for a
+   * DRC-enabled [[DeltaRestClientProvider]]. If found, builds a [[UCDeltaClient]] off the
+   * provider's shared [[ApiClient]]; otherwise [[None]]. Safe on failure (returns [[None]]
+   * and logs -- the legacy UC client still covers the commit path).
+   */
+  private def findDeltaRestClientForCatalog(
+      spark: SparkSession,
+      catalogName: String): Option[UCDeltaClient] = {
+    try {
+      val plugin = spark.sessionState.catalogManager.catalog(catalogName)
+      DeltaRestProviderLookup.findProvider(plugin).flatMap { provider =>
+        val apiOpt = provider.getDeltaTablesApi
+        if (apiOpt.isPresent) {
+          Some(new UCDeltaRestClient(provider.getApiClient): UCDeltaClient)
+        } else {
+          None
+        }
+      }
+    } catch {
+      case NonFatal(e) =>
+        logWarning(log"Failed to resolve DRC client for catalog " +
+          log"${MDC(DeltaLogKeys.CATALOG, catalogName)}", e)
+        None
+    }
+  }
+
+  /**
+   * Finds a DRC-capable provider whose metastoreId matches the given value. Iterates the
+   * UC-flavored catalogs in the SparkSession, asks each for its metastoreId, and returns the
+   * first whose provider has DRC enabled. Returns [[None]] when no match -- the commit path
+   * falls through to the legacy UC API.
+   */
+  private def findDeltaRestClientForMetastore(
+      spark: SparkSession,
+      metastoreId: String): Option[UCDeltaClient] = {
+    getCatalogConfigs(spark)
+      .map { case (name, uri, authConfig) => (name, uri, authConfig) }
+      .iterator
+      .find { case (_, uri, authConfig) =>
+        getMetastoreId(uri, authConfig).contains(metastoreId)
+      }
+      .flatMap { case (catalogName, _, _) => findDeltaRestClientForCatalog(spark, catalogName) }
   }
 
   /**

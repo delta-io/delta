@@ -53,6 +53,16 @@ private[delta] object DeltaRestTableLoader {
   val PROP_DRC_LATEST_VERSION: String = "io.unitycatalog.drc.latest-table-version"
 
   /**
+   * Catalog/schema/table names stashed on CatalogTable.properties so the commit coordinator
+   * can route POST /v1/catalogs/{catalog}/schemas/{schema}/tables/{table} without carrying
+   * the V1Table identifier through the tableConf plumbing. Commit-time detection of the
+   * DRC path relies on all three being present.
+   */
+  val PROP_DRC_CATALOG: String = "io.unitycatalog.drc.catalog"
+  val PROP_DRC_SCHEMA: String = "io.unitycatalog.drc.schema"
+  val PROP_DRC_TABLE: String = "io.unitycatalog.drc.table"
+
+  /**
    * Prefix for DRC-vended storage credential properties on `CatalogTable.storage.properties`.
    * The raw config keys from the DRC `StorageCredential.config` map (e.g. `s3.access-key-id`,
    * `azure.sas-token`) are written as `{PROP_DRC_CREDENTIAL_PREFIX}{raw-key}`. Downstream
@@ -130,7 +140,10 @@ private[delta] object DeltaRestTableLoader {
       PROP_DRC_ETAG -> Option(md.getEtag).getOrElse(""),
       PROP_DRC_TABLE_ID -> Option(md.getTableUuid).map(_.toString).getOrElse(""),
       PROP_DRC_LATEST_VERSION ->
-        Option(response.getLatestTableVersion).map(_.toString).getOrElse("")) ++ credentialProps
+        Option(response.getLatestTableVersion).map(_.toString).getOrElse(""),
+      PROP_DRC_CATALOG -> catalogName,
+      PROP_DRC_SCHEMA -> schemaName,
+      PROP_DRC_TABLE -> ident.name()) ++ credentialProps
 
     val tableType = md.getTableType match {
       case UCTableType.MANAGED => CatalogTableType.MANAGED

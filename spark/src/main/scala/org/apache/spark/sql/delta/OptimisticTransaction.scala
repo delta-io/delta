@@ -594,7 +594,10 @@ trait OptimisticTransactionImpl extends TransactionHelper
     // catches Delta-internal additions (e.g. table-feature flags). This is acceptable for
     // a temporary kill switch - once Delta supports propagating metadata updates to UC,
     // this check will be removed entirely.
-    if (!isCreatingNewTable) {
+    // Kill switch #1 (updateMetadata): skipped on the DRC path -- DRC propagates the change
+    // through the POST /v1/catalogs/.../tables/{name} update body. Still fires on legacy UC
+    // tables which cannot propagate metadata changes.
+    if (!isCreatingNewTable && !isDRCEnabledTable) {
       throwIfUCManagedMetadataChanged(snapshot.metadata, context = "updateMetadata")
     }
   }
@@ -640,6 +643,28 @@ trait OptimisticTransactionImpl extends TransactionHelper
           CatalogOwnedTableUtils.getCatalogName(spark, ct.identifier)
             .contains(UCCommitCoordinatorBuilder.COORDINATOR_NAME)
       }
+  }
+
+  /**
+   * True if this transaction targets a UC-managed table that was loaded via the Delta REST
+   * Catalog (DRC) path. The marker is `io.unitycatalog.drc.table-id` written by
+   * `DeltaRestTableLoader` during loadTable; its presence (and non-empty value) means the
+   * table's metadata came from the DRC endpoint and so metadata updates can be propagated
+   * through the DRC commit path.
+   *
+   * Used to soften the three UC-managed kill switches (property/schema/description updates,
+   * REPLACE-in-metadata, clustering domain metadata) per the clarifications-doc direction:
+   * "weakened, not lifted". In this PR the softening is binary -- when DRC is enabled on the
+   * table, each kill switch is bypassed so legitimate DRC metadata updates flow through. This
+   * is acceptable because the DRC commit carries the corresponding structured update actions,
+   * and the `assert-etag` requirement (when emitted) is the server-side safeguard against
+   * concurrent bypass-the-Delta-log writers.
+   */
+  protected[delta] lazy val isDRCEnabledTable: Boolean = {
+    isUCManagedTable &&
+      snapshot.metadata.configuration
+        .get("io.unitycatalog.drc.table-id")
+        .exists(_.nonEmpty)
   }
 
   /**
@@ -992,9 +1017,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
       newConfs = newConfsWithoutICT ++ existingICTConfs
     }
     newMetadata = Some(newMetadata.get.copy(configuration = newConfs))
-    throwIfUCManagedMetadataChanged(
-      snapshot.metadata,
-      context = "updateMetadataForNewTableInReplace")
+    // Kill switch #2 (REPLACE TABLE metadata): skipped on the DRC path; DRC's
+    // REPLACE-equivalent bundles set-schema + set-protocol + set-properties in a single RPC.
+    if (!isDRCEnabledTable) {
+      throwIfUCManagedMetadataChanged(
+        snapshot.metadata,
+        context = "updateMetadataForNewTableInReplace")
+    }
   }
 
   /**
@@ -2070,13 +2099,13 @@ trait OptimisticTransactionImpl extends TransactionHelper
           newProtocol.toIterator
       allActions = allActions.map { action =>
         action match {
-          case dm: DomainMetadata if isClusteringChangedOnUCManagedTable(dm) =>
-            // Temporary: block clustering changes on UC-managed tables (commitLarge() path).
-            // commitLarge() bypasses prepareCommit(), so this guard is needed separately.
-            // The check is intentionally inside the lazy map: commitLarge streams actions to
-            // avoid materialising large sets, so an eager pre-scan is not practical. The
-            // exception is thrown before any data is written to the commit coordinator because
-            // the iterator is consumed first during serialisation.
+          case dm: DomainMetadata
+              if isClusteringChangedOnUCManagedTable(dm) && !isDRCEnabledTable =>
+            // Kill switch #3 (commitLarge clustering): block clustering changes on UC-managed
+            // tables that are NOT on the DRC path. commitLarge bypasses prepareCommit, so this
+            // guard is separate from the first two. On the DRC path the clustering change is
+            // emitted as a set-domain-metadata update in the POST /tables/{name} body, so the
+            // block does not apply.
             throw DeltaErrors.operationNotSupportedException(
               "Clustering column changes on Unity Catalog managed tables")
           case a: AddFile =>

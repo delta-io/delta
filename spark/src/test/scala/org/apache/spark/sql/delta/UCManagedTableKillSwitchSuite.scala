@@ -48,6 +48,16 @@ class UCManagedTableKillSwitchSuite
     override protected[delta] lazy val isUCManagedTable: Boolean = true
   }
 
+  /**
+   * Test subclass that pretends it targets a UC-managed table on the DRC path. Used to
+   * verify the kill-switch softening rules in [[OptimisticTransaction]].
+   */
+  private class UCManagedDRCTxn(log: DeltaLog, snap: Snapshot)
+      extends OptimisticTransaction(log, None, snap) {
+    override protected[delta] lazy val isUCManagedTable: Boolean = true
+    override protected[delta] lazy val isDRCEnabledTable: Boolean = true
+  }
+
   private val clusteringOnId: Seq[DomainMetadata] =
     Seq(ClusteredTableUtils.createDomainMetadata(Seq(ClusteringColumn(Seq("id")))))
 
@@ -86,6 +96,22 @@ class UCManagedTableKillSwitchSuite
       val (log, snap) = createClusteredTable("tbl")
       // Commit the same clustering DomainMetadata that the snapshot already has - must not throw.
       new UCManagedTxn(log, snap).commit(clusteringOnId, DeltaOperations.ManualUpdate)
+    }
+  }
+
+  test("commitLarge allows clustering change when DRC is enabled on the table") {
+    withTable("tbl") {
+      val (log, snap) = createClusteredTable("tbl")
+      // Same clustering change that throws in the UC-managed case above; on the DRC path the
+      // kill switch is softened so commitLarge proceeds (the change is propagated via the
+      // DRC commit's set-domain-metadata update instead).
+      new UCManagedDRCTxn(log, snap).commitLarge(
+        spark,
+        clusteringOnName.iterator,
+        newProtocolOpt = None,
+        op = DeltaOperations.Restore(Some(0L), None),
+        context = Map.empty,
+        metrics = Map.empty)
     }
   }
 }

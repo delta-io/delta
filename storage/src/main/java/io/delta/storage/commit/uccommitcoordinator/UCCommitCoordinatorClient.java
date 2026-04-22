@@ -38,6 +38,10 @@ import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
+import io.unitycatalog.client.delta.model.DeltaCommit;
+import io.unitycatalog.client.delta.model.DeltaProtocol;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.TableUpdate;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
@@ -51,9 +55,32 @@ import org.slf4j.LoggerFactory;
  */
 public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   public UCCommitCoordinatorClient(Map<String, String> conf, UCClient ucClient) {
+    this(conf, ucClient, Optional.empty());
+  }
+
+  /**
+   * Constructor with an optional {@link UCDeltaClient}. When present, commits for tables that
+   * were loaded via DRC (tableConf carries the DRC catalog/schema/table markers) are routed to
+   * {@link UCDeltaClient#commit} instead of the legacy {@link UCClient#commit} path.
+   */
+  public UCCommitCoordinatorClient(
+      Map<String, String> conf,
+      UCClient ucClient,
+      Optional<UCDeltaClient> ucDeltaClient) {
     this.conf = conf;
     this.ucClient = ucClient;
+    this.ucDeltaClient = ucDeltaClient;
   }
+
+  /**
+   * Tableconf markers written by {@code DeltaRestTableLoader} during loadTable; reading them
+   * here is how the commit coordinator routes a commit to DRC vs the legacy UC API without
+   * a second catalog lookup. All three must be present for DRC routing to kick in.
+   */
+  public static final String DRC_CATALOG_KEY = "io.unitycatalog.drc.catalog";
+  public static final String DRC_SCHEMA_KEY = "io.unitycatalog.drc.schema";
+  public static final String DRC_TABLE_KEY = "io.unitycatalog.drc.table";
+  public static final String DRC_ETAG_KEY = "io.unitycatalog.drc.etag";
 
   /**
    * Logger for UCCommitCoordinatorClient class operations and diagnostics.
@@ -146,6 +173,15 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   /** Unity Catalog client instance for interacting with UC services. */
   public final UCClient ucClient;
 
+  /**
+   * Delta REST Catalog client; present only when the catalog plugin backing this coordinator
+   * is a DRC-enabled {@code DeltaRestClientProvider}. Commits for tables that carry DRC
+   * tableConf markers route through this client; all other commits fall through to
+   * {@link #ucClient}. Owned by the provider (the ApiClient lifecycle is the provider's
+   * responsibility) -- this class must NOT close it.
+   */
+  public final Optional<UCDeltaClient> ucDeltaClient;
+
   /** Configuration map containing settings for the coordinator client. */
   public final Map<String, String> conf;
 
@@ -165,6 +201,156 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       throw new IllegalStateException("UC Table ID not found in " + tableConf);
     }
     return tableConf.get(UC_TABLE_ID_KEY);
+  }
+
+  /**
+   * Returns true iff this coordinator has a DRC client AND the table was loaded via DRC
+   * (tableConf carries the DRC catalog/schema/table markers written by DeltaRestTableLoader).
+   * If any of the three markers is missing or empty, the table falls through to the legacy
+   * UC commit path.
+   *
+   * Package-private for testing.
+   */
+  boolean isDRCTable(TableDescriptor tableDesc) {
+    if (!ucDeltaClient.isPresent()) return false;
+    Map<String, String> tableConf = tableDesc.getTableConf();
+    String catalog = tableConf.get(DRC_CATALOG_KEY);
+    String schema = tableConf.get(DRC_SCHEMA_KEY);
+    String table = tableConf.get(DRC_TABLE_KEY);
+    return catalog != null && !catalog.isEmpty()
+        && schema != null && !schema.isEmpty()
+        && table != null && !table.isEmpty();
+  }
+
+  /**
+   * DRC commit flow: writes the staged commit file, builds the {@link DeltaCommit},
+   * synthesizes metadata-update diffs that the storage module can compute without Spark
+   * types (property + protocol), and calls {@link UCDeltaClient#commit}. Schema and
+   * partition-column diffs require a Spark-side reverse converter and are threaded through
+   * via the {@code catalogTrackedInfo} plumbing in a separate PR against the
+   * OptimisticTransaction.
+   *
+   * <p>The resulting {@link CommitResponse} has the same shape as the legacy path; the DRC
+   * {@code LoadTableResponse}'s refreshed etag is discarded in v1 (etag is optional per
+   * clarifications §3; Epic 7 hardens this).
+   */
+  protected CommitResponse commitViaDRC(
+      LogStore logStore,
+      Configuration hadoopConf,
+      TableDescriptor tableDesc,
+      long commitVersion,
+      Iterator<String> actions,
+      UpdatedActions updatedActions) throws CommitFailedException {
+    Path logPath = tableDesc.getLogPath();
+    if (commitVersion == 0) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          "Commit version 0 must go via filesystem.");
+    }
+    Map<String, String> tableConf = tableDesc.getTableConf();
+    String tableId = extractUCTableId(tableDesc);
+    String catalog = tableConf.get(DRC_CATALOG_KEY);
+    String schema = tableConf.get(DRC_SCHEMA_KEY);
+    String table = tableConf.get(DRC_TABLE_KEY);
+    String etagRaw = tableConf.get(DRC_ETAG_KEY);
+    Optional<String> etag = (etagRaw != null && !etagRaw.isEmpty())
+        ? Optional.of(etagRaw) : Optional.empty();
+    UUID tableUuid;
+    try {
+      tableUuid = UUID.fromString(tableId);
+    } catch (IllegalArgumentException e) {
+      throw new CommitFailedException(
+          false /* retryable */,
+          false /* conflict */,
+          "DRC commit: table ID in tableConf is not a valid UUID: " + tableId,
+          e);
+    }
+
+    // Write the staged commit file first so its (fileName, fileSize, fileModTime) are known.
+    FileStatus commitFile;
+    try {
+      commitFile = CoordinatedCommitsUtils.writeUnbackfilledCommitFile(
+          logStore,
+          hadoopConf,
+          logPath.toString(),
+          commitVersion,
+          actions,
+          UUID.randomUUID().toString());
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          "DRC commit: failed to write commit file: " + e.getMessage(),
+          e);
+    }
+    long commitTimestamp = updatedActions.getCommitInfo().getCommitTimestamp();
+
+    DeltaCommit deltaCommit = new DeltaCommit()
+        .version(commitVersion)
+        .timestamp(commitTimestamp)
+        .fileName(commitFile.getPath().getName())
+        .fileSize(commitFile.getLen())
+        .fileModificationTimestamp(commitFile.getModificationTime());
+
+    // Property + protocol diffs: computed purely from storage-level types.
+    // Schema + partition-column diffs require Spark types and are NOT emitted by the storage
+    // commit coordinator; OptimisticTransaction emits them separately on top of this commit
+    // via the catalog catalog-managed path (tracked in a follow-on PR).
+    List<TableUpdate> metadataUpdates = new ArrayList<>();
+    AbstractMetadata oldMeta = updatedActions.getOldMetadata();
+    AbstractMetadata newMeta = updatedActions.getNewMetadata();
+    if (oldMeta != newMeta) {
+      metadataUpdates.addAll(DeltaRestMetadataDiff.propertyUpdates(
+          oldMeta == null ? null : oldMeta.getConfiguration(),
+          newMeta == null ? null : newMeta.getConfiguration()));
+    }
+    AbstractProtocol oldProto = updatedActions.getOldProtocol();
+    AbstractProtocol newProto = updatedActions.getNewProtocol();
+    if (oldProto != newProto && newProto != null) {
+      DeltaRestMetadataDiff.protocolUpdate(
+              Optional.ofNullable(oldProto).map(UCCommitCoordinatorClient::toDRCProtocol),
+              toDRCProtocol(newProto))
+          .ifPresent(metadataUpdates::add);
+    }
+
+    LOG.info("DRC commit: {}.{}.{} version={} tableId={} updates={}",
+        catalog, schema, table, commitVersion, tableId, metadataUpdates.size());
+
+    try {
+      LoadTableResponse resp = ucDeltaClient.get().commit(
+          catalog, schema, table, deltaCommit, tableUuid, etag, metadataUpdates);
+      // Best-effort: log the refreshed etag so operators can observe advancement even though
+      // we don't currently plumb it back into SnapshotManagement.
+      if (resp != null && resp.getMetadata() != null && resp.getMetadata().getEtag() != null) {
+        LOG.debug("DRC commit refreshed etag for {}.{}.{}: {}",
+            catalog, schema, table, resp.getMetadata().getEtag());
+      }
+    } catch (IOException e) {
+      throw new CommitFailedException(
+          true /* retryable */,
+          false /* conflict */,
+          "DRC commit failed: " + e.getMessage(),
+          e);
+    }
+    return new CommitResponse(new Commit(commitVersion, commitFile, commitTimestamp));
+  }
+
+  /**
+   * Translates Delta's storage-level {@link AbstractProtocol} into the UC DRC
+   * {@link DeltaProtocol} POJO. The field shapes align 1:1.
+   */
+  private static DeltaProtocol toDRCProtocol(AbstractProtocol proto) {
+    DeltaProtocol out = new DeltaProtocol()
+        .minReaderVersion(proto.getMinReaderVersion())
+        .minWriterVersion(proto.getMinWriterVersion());
+    if (proto.getReaderFeatures() != null) {
+      out.readerFeatures(new ArrayList<>(proto.getReaderFeatures()));
+    }
+    if (proto.getWriterFeatures() != null) {
+      out.writerFeatures(new ArrayList<>(proto.getWriterFeatures()));
+    }
+    return out;
   }
 
   /**
@@ -336,6 +522,13 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Iterator<String> actions,
       CatalogTrackedInfo catalogTrackedInfo,
       UpdatedActions updatedActions) throws CommitFailedException {
+    // DRC branch: when a UCDeltaClient is available and the table's tableConf carries the
+    // DRC markers written by DeltaRestTableLoader, route the commit to the DRC endpoint
+    // POST /v1/catalogs/.../tables/{name} instead of the legacy UC commit path.
+    if (isDRCTable(tableDesc)) {
+      return commitViaDRC(
+          logStore, hadoopConf, tableDesc, commitVersion, actions, updatedActions);
+    }
     Path logPath = tableDesc.getLogPath();
     Map<String, String> coordinatedCommitsTableConf = tableDesc.getTableConf();
     checkVersionSupported(coordinatedCommitsTableConf, false /* compareRead */);
