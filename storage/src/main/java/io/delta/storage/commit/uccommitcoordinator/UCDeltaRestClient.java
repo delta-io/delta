@@ -20,6 +20,9 @@ import io.delta.storage.annotation.Unstable;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.delta.api.TablesApi;
+import io.unitycatalog.client.delta.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.delta.model.CredentialOperation;
+import io.unitycatalog.client.delta.model.CredentialsResponse;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
 
 import java.io.IOException;
@@ -42,6 +45,7 @@ public class UCDeltaRestClient implements UCDeltaClient {
   private static final Logger LOG = LoggerFactory.getLogger(UCDeltaRestClient.class);
 
   private final TablesApi tablesApi;
+  private final TemporaryCredentialsApi credentialsApi;
 
   /**
    * Constructs a client wrapping a shared {@link ApiClient}. The caller (typically
@@ -52,6 +56,7 @@ public class UCDeltaRestClient implements UCDeltaClient {
   public UCDeltaRestClient(ApiClient apiClient) {
     Objects.requireNonNull(apiClient, "apiClient must not be null");
     this.tablesApi = new TablesApi(apiClient);
+    this.credentialsApi = new TemporaryCredentialsApi(apiClient);
     // Load-bearing invariant: this class does not own the ApiClient. A leak of the shared
     // HTTP pool is the single worst failure mode here; this log exists so that mystery
     // leaks can be triaged by matching identity hashes across the lifetime of the JVM.
@@ -72,6 +77,27 @@ public class UCDeltaRestClient implements UCDeltaClient {
           String.format(
               "Failed to load DRC table %s.%s.%s (HTTP %d): %s",
               catalog, schema, table, e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  @Override
+  public CredentialsResponse getTableCredentials(
+      String catalog,
+      String schema,
+      String table,
+      CredentialOperation operation) throws IOException {
+    Objects.requireNonNull(catalog, "catalog must not be null");
+    Objects.requireNonNull(schema, "schema must not be null");
+    Objects.requireNonNull(table, "table must not be null");
+    Objects.requireNonNull(operation, "operation must not be null");
+    try {
+      return credentialsApi.getTableCredentials(operation, catalog, schema, table);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format(
+              "Failed to fetch DRC credentials for %s.%s.%s op=%s (HTTP %d): %s",
+              catalog, schema, table, operation, e.getCode(), e.getResponseBody()),
           e);
     }
   }

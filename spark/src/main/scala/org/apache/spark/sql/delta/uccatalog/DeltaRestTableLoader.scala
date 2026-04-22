@@ -19,7 +19,13 @@ package org.apache.spark.sql.delta.uccatalog
 import scala.collection.JavaConverters._
 
 import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient
-import io.unitycatalog.client.delta.model.{LoadTableResponse, TableType => UCTableType}
+import io.unitycatalog.client.delta.model.{
+  CredentialOperation,
+  CredentialsResponse,
+  LoadTableResponse,
+  StorageCredential,
+  TableType => UCTableType
+}
 
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils}
@@ -31,8 +37,11 @@ import org.apache.spark.sql.connector.catalog.{Identifier, V1Table}
  * `AbstractDeltaCatalog.loadTable` (`DeltaTableUtils.isDeltaTable`, `loadCatalogTable`, ...)
  * does not need to change.
  *
- * Pure function of (catalog name, identifier, DRC client). Credential vending is introduced
- * in a subsequent PR and will layer onto the same call path without changing this signature.
+ * On the read path, vended storage credentials are fetched with READ scope and injected into
+ * `CatalogTable.storage.properties` under the `io.unitycatalog.drc.cred.` prefix so that
+ * downstream file IO uses the per-table, per-operation principal. They are intentionally NOT
+ * written to the `SparkSession.conf`, so concurrent queries with different principals do not
+ * clobber each other in a shared cluster -- a known footgun called out in review.
  */
 private[delta] object DeltaRestTableLoader {
 
@@ -44,7 +53,19 @@ private[delta] object DeltaRestTableLoader {
   val PROP_DRC_LATEST_VERSION: String = "io.unitycatalog.drc.latest-table-version"
 
   /**
-   * Loads a table via the DRC client and assembles a `V1Table`.
+   * Prefix for DRC-vended storage credential properties on `CatalogTable.storage.properties`.
+   * The raw config keys from the DRC `StorageCredential.config` map (e.g. `s3.access-key-id`,
+   * `azure.sas-token`) are written as `{PROP_DRC_CREDENTIAL_PREFIX}{raw-key}`. Downstream
+   * Hadoop FS binding (converting these to `fs.s3a.access.key` etc.) is handled by the layer
+   * that materializes the options into a Hadoop Configuration for table-scoped IO.
+   */
+  val PROP_DRC_CREDENTIAL_PREFIX: String = "io.unitycatalog.drc.cred."
+
+  /**
+   * Loads a table via the DRC client and assembles a `V1Table`. Also fetches READ-scope
+   * credentials and injects them into `CatalogTable.storage.properties`. If the credentials
+   * endpoint errors, the table still loads without credentials (the server-side implementation
+   * can lag the client in v1).
    *
    * @param catalogName the Spark-side catalog name (e.g. "unity"); becomes the catalog segment
    *                    of the returned `TableIdentifier`.
@@ -61,14 +82,27 @@ private[delta] object DeltaRestTableLoader {
     val schemaName = ident.namespace()(0)
     val tableName = ident.name()
     val response: LoadTableResponse = client.loadTable(catalogName, schemaName, tableName)
-    buildV1Table(catalogName, ident, response)
+
+    // Fetch vended READ-scope credentials. If the server-side creds endpoint errors (the
+    // DRC server implementation lags the client in v1), the table still loads without
+    // creds -- file IO falls back to whatever the executor's Hadoop conf already provides.
+    // We do NOT fall back silently on loadTable errors above: only credentials.
+    val credentials: Option[CredentialsResponse] =
+      try Some(client.getTableCredentials(
+        catalogName, schemaName, tableName, CredentialOperation.READ))
+      catch {
+        case _: java.io.IOException => None
+      }
+
+    buildV1Table(catalogName, ident, response, credentials)
   }
 
   /** Visible for testing. */
   private[uccatalog] def buildV1Table(
       catalogName: String,
       ident: Identifier,
-      response: LoadTableResponse): V1Table = {
+      response: LoadTableResponse,
+      credentials: Option[CredentialsResponse] = None): V1Table = {
     require(response != null, "DRC loadTable response must not be null")
     val md = Option(response.getMetadata).getOrElse(
       throw new IllegalStateException("DRC loadTable response is missing metadata"))
@@ -86,11 +120,17 @@ private[delta] object DeltaRestTableLoader {
       .map(_.asScala.toMap)
       .getOrElse(Map.empty[String, String])
 
+    val credentialProps = credentials
+      .flatMap(r => Option(r.getStorageCredentials).map(_.asScala.toSeq))
+      .flatMap(selectLongestPrefixMatch(_, Option(md.getLocation).getOrElse("")))
+      .map(credentialToStorageProps)
+      .getOrElse(Map.empty[String, String])
+
     val enrichedProps = properties ++ Map(
       PROP_DRC_ETAG -> Option(md.getEtag).getOrElse(""),
       PROP_DRC_TABLE_ID -> Option(md.getTableUuid).map(_.toString).getOrElse(""),
       PROP_DRC_LATEST_VERSION ->
-        Option(response.getLatestTableVersion).map(_.toString).getOrElse(""))
+        Option(response.getLatestTableVersion).map(_.toString).getOrElse("")) ++ credentialProps
 
     val tableType = md.getTableType match {
       case UCTableType.MANAGED => CatalogTableType.MANAGED
@@ -111,5 +151,81 @@ private[delta] object DeltaRestTableLoader {
       properties = enrichedProps
     )
     V1Table(catalogTable)
+  }
+
+  /**
+   * Picks the single best-matching `StorageCredential` for the given table location. The match
+   * rule is "longest prefix wins" among credentials whose normalized prefix is a prefix of the
+   * normalized table location. Scheme aliasing (`s3a://` <-> `s3://`, `abfss://` <-> `abfs://`)
+   * is handled by `normalizeLocation`. Returns `None` if no credential applies.
+   *
+   * This is the guard against the scope-leak silent failure: a future regression that uses a
+   * raw `startsWith` with first-match-wins iteration order would attach an overly broad
+   * `s3://bucket/` credential to a `s3://bucket/tenant-a/secret/` table.
+   */
+  private[uccatalog] def selectLongestPrefixMatch(
+      creds: Seq[StorageCredential],
+      tableLocation: String): Option[StorageCredential] = {
+    if (creds.isEmpty) return None
+    val normLoc = normalizeLocation(tableLocation)
+    creds
+      .flatMap { cred =>
+        val raw = Option(cred.getPrefix).getOrElse("")
+        val normPrefix = normalizeLocation(raw)
+        if (normPrefix.isEmpty || normLoc.isEmpty) {
+          // An empty prefix credential matches everything; an empty location means no table
+          // location, so loosen to match. The .length tiebreak still prefers specific
+          // credentials when multiple apply.
+          Some((cred, normPrefix.length))
+        } else if (normLoc == normPrefix
+            || normLoc.startsWith(normPrefix + "/")
+            || normLoc.startsWith(normPrefix)) {
+          Some((cred, normPrefix.length))
+        } else {
+          None
+        }
+      }
+      .sortBy(-_._2) // longest prefix first
+      .headOption
+      .map(_._1)
+  }
+
+  /**
+   * Normalizes a cloud storage location for prefix comparison: lower-cases the scheme,
+   * collapses alias schemes (`s3a`, `s3n` -> `s3`; `abfss` -> `abfs`), strips a single trailing
+   * slash. Returns the empty string when the input is null/empty.
+   */
+  private[uccatalog] def normalizeLocation(raw: String): String = {
+    if (raw == null || raw.isEmpty) return ""
+    val schemeIdx = raw.indexOf("://")
+    val (scheme, rest) = if (schemeIdx > 0) {
+      (raw.substring(0, schemeIdx).toLowerCase(java.util.Locale.ROOT),
+        raw.substring(schemeIdx + "://".length))
+    } else {
+      ("", raw)
+    }
+    val canonicalScheme = scheme match {
+      case "s3a" | "s3n" => "s3"
+      case "abfss" => "abfs"
+      case other => other
+    }
+    val trimmedRest = if (rest.endsWith("/")) rest.dropRight(1) else rest
+    if (canonicalScheme.isEmpty) trimmedRest
+    else canonicalScheme + "://" + trimmedRest
+  }
+
+  /**
+   * Converts a `StorageCredential.config` map into Delta-side property entries prefixed with
+   * `io.unitycatalog.drc.cred.`. A credential with null/empty config emits nothing.
+   *
+   * <b>Security note:</b> these properties carry raw cloud credentials. Downstream consumers
+   * are responsible for redacting them from log output, `EXPLAIN` output, and event logs. The
+   * `io.unitycatalog.drc.cred.` prefix is a grep anchor for a future Spark-side redaction list.
+   */
+  private def credentialToStorageProps(
+      cred: StorageCredential): Map[String, String] = {
+    Option(cred.getConfig)
+      .map(_.asScala.map { case (k, v) => (PROP_DRC_CREDENTIAL_PREFIX + k) -> v }.toMap)
+      .getOrElse(Map.empty[String, String])
   }
 }

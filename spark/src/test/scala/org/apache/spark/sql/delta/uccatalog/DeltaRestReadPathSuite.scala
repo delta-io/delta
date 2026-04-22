@@ -23,6 +23,8 @@ import io.unitycatalog.client.ApiClient
 import io.unitycatalog.client.delta.DeltaRestClientProvider
 import io.unitycatalog.client.delta.api.TablesApi
 import io.unitycatalog.client.delta.model.{
+  CredentialOperation,
+  CredentialsResponse,
   LoadTableResponse,
   PrimitiveType => UCPrimitiveType,
   StructField => UCStructField,
@@ -134,11 +136,17 @@ object DeltaRestReadPathSuite {
 
   class CannedClient(response: LoadTableResponse) extends UCDeltaClient {
     override def loadTable(c: String, s: String, t: String): LoadTableResponse = response
+    override def getTableCredentials(
+        c: String, s: String, t: String, op: CredentialOperation): CredentialsResponse =
+      new CredentialsResponse()
   }
 
   class FailingClient extends UCDeltaClient {
     override def loadTable(c: String, s: String, t: String): LoadTableResponse = {
       throw new RuntimeException("forced failure")
     }
+    override def getTableCredentials(
+        c: String, s: String, t: String, op: CredentialOperation): CredentialsResponse =
+      new CredentialsResponse()
   }
 }

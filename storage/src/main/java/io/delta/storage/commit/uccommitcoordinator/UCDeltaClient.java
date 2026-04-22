@@ -17,6 +17,8 @@
 package io.delta.storage.commit.uccommitcoordinator;
 
 import io.delta.storage.annotation.Unstable;
+import io.unitycatalog.client.delta.model.CredentialOperation;
+import io.unitycatalog.client.delta.model.CredentialsResponse;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
 
 import java.io.IOException;
@@ -55,4 +57,29 @@ public interface UCDeltaClient {
    * @throws IOException on network error or a non-success HTTP response from the server
    */
   LoadTableResponse loadTable(String catalog, String schema, String table) throws IOException;
+
+  /**
+   * Vends temporary cloud-storage credentials for a table via DRC
+   * {@code GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials}.
+   *
+   * <p>The returned {@link CredentialsResponse#getStorageCredentials() storage-credentials} list
+   * carries one or more {@link io.unitycatalog.client.delta.model.StorageCredential} entries,
+   * each keyed by a storage path prefix and operation scope. Callers pick the most specific
+   * credential (longest-matching prefix) and inject its config into per-query Hadoop/Spark
+   * properties -- never into the session-global config, so concurrent queries with different
+   * principals do not clobber each other.
+   *
+   * @param catalog catalog name
+   * @param schema schema name
+   * @param table table name
+   * @param operation {@link CredentialOperation#READ} for queries, {@link
+   *     CredentialOperation#READ_WRITE} for writes
+   * @return the credentials response
+   * @throws IOException on network error or a non-success HTTP response
+   */
+  CredentialsResponse getTableCredentials(
+      String catalog,
+      String schema,
+      String table,
+      CredentialOperation operation) throws IOException;
 }
