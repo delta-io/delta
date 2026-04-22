@@ -60,7 +60,7 @@ class MergeIntoEmptySchemaTargetSuite
     withEmptyTargetAndSource {
       withSQLConf("spark.databricks.delta.schema.autoMerge.enabled" -> "true") {
         sql(
-          s"""MERGE INTO $target USING $source AS s ON false
+          s"""MERGE WITH SCHEMA EVOLUTION INTO $target USING $source AS s ON false
              |WHEN NOT MATCHED THEN INSERT *""".stripMargin)
         assert(spark.table(target).schema === spark.table(source).schema)
         checkAnswer(spark.table(target), spark.table(source))

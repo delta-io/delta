@@ -2151,7 +2151,8 @@ class DeltaTableCreationSuite
             },
             "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET",
             sqlState = "428GU",
-            parameters = Map.empty[String, String])
+            parameters = Map.empty[String, String]
+          )
         }
       }
 
