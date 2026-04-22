@@ -20,7 +20,7 @@ package org.apache.spark.sql.catalyst.plans.logical
  * trait was removed because `CacheManager` now automatically skips any
  * `Command`-derived plan during cache replacement. This empty marker trait
  * keeps Delta commands source-compatible across Spark versions without
- * affecting behavior on 4.2+ — all Delta commands that previously mixed in
+ * affecting behavior on 4.2+: all Delta commands that previously mixed in
  * `IgnoreCachedData` already extend `RunnableCommand`/`Command` and are
  * therefore handled by the new automatic path.
  */
