@@ -723,7 +723,13 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.1")
+// Bumped to 0.5.0-SNAPSHOT for the DeltaRestClientProvider interface landed in UC at SHA
+// ae4bcf6 (UC PR #1509). The Delta REST Catalog (DRC) integration on the Delta side
+// requires this provider interface. Until UC 0.5.0 is published to Maven Central, the
+// snapshot is resolved from ~/.ivy2/local -- run UC's `sbt client/publishLocal server/publishLocal
+// spark/publishLocal` to populate. CI coverage is unblocked by the UC-SHA pin scaffolding in
+// delta-io/delta#6616 (setup_unitycatalog_main.sh + ensurePinnedUnityCatalog).
+val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.5.0-SNAPSHOT")
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
