@@ -33,6 +33,7 @@ import org.apache.spark.sql.delta.test.DeltaTestImplicits._
 import org.apache.spark.sql.delta.test.shims.StreamingTestShims.MemoryStream
 import org.apache.spark.sql.delta.util.FileNames
 
+import org.apache.spark.SparkException
 import org.apache.spark.sql.{AnalysisException, Column, DataFrame, Dataset, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.util.quietly
@@ -1878,6 +1879,85 @@ trait GeneratedColumnSuiteBase
           sql(s"SELECT * FROM ${tgt}"),
           Seq(Row(1, 2, null), Row(2, 3, 4))
         )
+      }
+    }
+  }
+
+  test("MERGE INSERT with duplicate columns differing only in case") {
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} values (2, 4);")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + c2"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+
+        val e = intercept[AnalysisException] {
+          sql(s"""
+                 |MERGE INTO ${tgt}
+                 |USING ${src}
+                 |on ${tgt}.c1 = ${src}.c1
+                 |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+                 |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+                 |""".stripMargin)
+        }
+        assert(e.getMessage.contains("Duplicate column names in INSERT clause"))
+      }
+    }
+  }
+
+  test("MERGE INSERT with case-variant duplicate columns and fix disabled") {
+    // When the safer flag is disabled, case-variant duplicates bypass the duplicate check
+    // and hit the internal AssertionError on tables with generated columns.
+    withTableName("source") { src =>
+      withTableName("target") { tgt =>
+        createTable(
+          tableName = src,
+          path = None,
+          schemaString = "c1 INT, c2 INT",
+          generatedColumns = Map.empty,
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${src} values (2, 4);")
+        createTable(
+          tableName = tgt,
+          path = None,
+          schemaString = "c1 INT, c2 INT, c3 INT",
+          generatedColumns = Map("c3" -> "c1 + c2"),
+          partitionColumns = Seq.empty
+        )
+        sql(s"INSERT INTO ${tgt} values (1, 2, 3);")
+
+        withSQLConf(
+          DeltaSQLConf.DELTA_MERGE_INSERT_FIX_CASE_SENSITIVE_DUPLICATE_COLUMNS.key -> "false"
+        ) {
+          // With the fix disabled, case-variant duplicates are not caught
+          // by the duplicate check and instead trigger an internal
+          // AssertionError downstream, wrapped in a SparkException.
+          val e = intercept[SparkException] {
+            sql(s"""
+                   |MERGE INTO ${tgt}
+                   |USING ${src}
+                   |on ${tgt}.c1 = ${src}.c1
+                   |WHEN NOT MATCHED THEN INSERT (c1, c2, C2)
+                   |VALUES (${src}.c1, ${src}.c2, ${src}.c2)
+                   |""".stripMargin)
+          }
+          assert(e.getCause.isInstanceOf[AssertionError])
+          assert(e.getCause.getMessage.contains(
+            "Invalid number of columns in INSERT clause"))
+        }
       }
     }
   }
