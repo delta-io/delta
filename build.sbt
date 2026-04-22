@@ -723,7 +723,11 @@ lazy val contribs = (project in file("contribs"))
   ).configureUnidoc()
 
 
-val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.1")
+// UC version is a SNAPSHOT because the Delta REST Catalog (DRC) API surface lives on UC master
+// ahead of any released UC version. Resolves from ~/.ivy2/local after running
+// dev/publish-uc-snapshot.sh, which pins an exact UC commit SHA (do not edit the version string
+// here without bumping the SHA in that script).
+val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.5.0-SNAPSHOT")
 val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
