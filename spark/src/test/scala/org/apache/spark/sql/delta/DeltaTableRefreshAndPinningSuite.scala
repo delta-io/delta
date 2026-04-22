@@ -37,34 +37,41 @@ import org.apache.spark.sql.test.SharedSparkSession
  *   5. CACHE TABLE impact on reads
  *
  * Each scenario is tested with and without column mapping where applicable.
+ *
+ * The base trait is parameterized by V2_ENABLE_MODE (NONE, AUTO, STRICT) to verify
+ * behavior across all Delta connector modes.
  */
-class DeltaTableRefreshAndPinningSuite
+trait DeltaTableRefreshAndPinningSuiteBase
   extends QueryTest
   with SharedSparkSession
   with DeltaSQLCommandTest {
 
   import testImplicits._
 
+  /** Override in subclasses to set the V2 enable mode. */
+  protected def v2EnableMode: String = "NONE"
+
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
+      .set(DeltaSQLConf.V2_ENABLE_MODE.key, v2EnableMode)
   }
 
-  private def createSimpleTable(tableName: String): Unit = {
+  protected def createSimpleTable(tableName: String): Unit = {
     sql(s"CREATE TABLE $tableName (id INT, salary INT) USING delta")
   }
 
-  private def createColumnMappingTable(tableName: String): Unit = {
+  protected def createColumnMappingTable(tableName: String): Unit = {
     sql(
       s"""CREATE TABLE $tableName (id INT, salary INT) USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
   }
 
-  private def insertInitialData(tableName: String): Unit = {
+  protected def insertInitialData(tableName: String): Unit = {
     sql(s"INSERT INTO $tableName VALUES (1, 100)")
   }
 
-  private def getTablePath(tableName: String): String = {
+  protected def getTablePath(tableName: String): String = {
     DeltaLog.forTable(spark, TableIdentifier(tableName)).dataPath.toString
   }
 
@@ -730,4 +737,21 @@ class DeltaTableRefreshAndPinningSuite
       sql("UNCACHE TABLE IF EXISTS t")
     }
   }
+}
+
+/** Runs the refresh and pinning tests with V2_ENABLE_MODE = NONE (v1 connector only). */
+class DeltaTableRefreshAndPinningSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "NONE"
+}
+
+/**
+ * Runs the refresh and pinning tests with V2_ENABLE_MODE = AUTO (default production mode).
+ * In AUTO mode, the v2 kernel connector is used for supported operations while the v1
+ * connector handles everything else. This verifies refresh behavior is consistent regardless
+ * of which connector handles the read path.
+ */
+class DeltaTableRefreshAndPinningAutoModeSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "AUTO"
 }
