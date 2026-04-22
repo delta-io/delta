@@ -109,6 +109,36 @@ class DeltaTableRefreshAndPinningConnectSuite
     }
   }
 
+  test("[1] connect scenario 7: temp view after ALTER COLUMN TYPE INT to BIGINT") {
+    withTable("t") {
+      spark.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES (
+          |  'delta.columnMapping.mode' = 'name',
+          |  'delta.enableTypeWidening' = 'true'
+          |)""".stripMargin)
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
+
+      spark.sql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+
+      // Same as classic: type change is detected as incompatible schema change.
+      // In Connect, Delta errors are wrapped in SparkException via gRPC.
+      val caught = try {
+        spark.sql("SELECT * FROM v").collect()
+        false
+      } catch {
+        case e: Exception =>
+          assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
+            e.getMessage.contains("schema"))
+          true
+      }
+      assert(caught, "Expected exception for type widening schema change")
+    }
+  }
+
   test("[1] connect scenario 4: temp view after DROP and recreate table") {
     withTable("t") {
       createSimpleTable("t")
