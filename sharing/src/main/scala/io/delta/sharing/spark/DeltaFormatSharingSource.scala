@@ -157,7 +157,9 @@ case class DeltaFormatSharingSource(
   // DeltaSharingSource (sort by file ID) and DeltaSource (sort by modificationTime and path).
   // We delegate to a DeltaSharingSource instance during the snapshot phase, then switch
   // back to normal DeltaFormatSharingSource logic once the snapshot completes.
-  private var legacyDeltaSharingSourceOpt: Option[DeltaSharingSource] = None
+  //
+  // (snapshotVersion, DeltaSharingSource)
+  private var legacyDeltaSharingSourceOpt: Option[(Long, DeltaSharingSource)] = None
 
   /**
    * Create the legacy DeltaSharingSource for snapshot delegation.
@@ -167,7 +169,16 @@ case class DeltaFormatSharingSource(
    *                        initialized with the correct schema.
    */
   private def getOrCreateLegacySource(snapshotVersion: Long): DeltaSharingSource = {
-    legacyDeltaSharingSourceOpt.getOrElse {
+    // Safeguard: this error should never happen, as we only delegate to the legacy
+    // source for the initial snapshot.
+    legacyDeltaSharingSourceOpt.foreach { case (existingVersion, _) =>
+      if (existingVersion != snapshotVersion) {
+        throw new IllegalStateException(
+          s"Legacy DeltaSharingSource was created for snapshot version $existingVersion " +
+            s"but is now requested for version $snapshotVersion")
+      }
+    }
+    legacyDeltaSharingSourceOpt.map(_._2).getOrElse {
       logInfo(s"Initializing legacy DeltaSharingSource for snapshot delegation at " +
         s"version $snapshotVersion," + getTableInfoForLogging)
       // Create a parquet-format client to fetch metadata, since RemoteDeltaLog
@@ -198,7 +209,7 @@ case class DeltaFormatSharingSource(
         callerOrg = options.callerOrg
       )
       val source = DeltaSharingSource(spark, deltaLog, options)
-      legacyDeltaSharingSourceOpt = Some(source)
+      legacyDeltaSharingSourceOpt = Some((snapshotVersion, source))
       source
     }
   }
@@ -988,7 +999,7 @@ case class DeltaFormatSharingSource(
   }
 
   override def stop(): Unit = {
-    legacyDeltaSharingSourceOpt.foreach(_.stop())
+    legacyDeltaSharingSourceOpt.foreach(_._2.stop())
     deltaSource.stop()
 
     DeltaSharingLogFileSystem.tryToCleanUpDeltaLog(deltaLogPath)
@@ -1003,7 +1014,7 @@ case class DeltaFormatSharingSource(
       // During legacy snapshot delegation, the batch was produced by DeltaSharingSource,
       // so delegate commit to the legacy source and return. DeltaSharingSource doesn't
       // implement commit(), so this is a no-op for now.
-      legacyDeltaSharingSourceOpt.foreach(_.commit(end))
+      legacyDeltaSharingSourceOpt.foreach(_._2.commit(end))
       return
     }
 
