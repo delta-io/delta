@@ -412,7 +412,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
   }
 
   // Regression for #6578: ColumnVectorWithFilter.closeIfFreeable must not release the
-  // underlying Parquet vector's `nulls` array — the reader reuses it for the next batch.
+  // underlying Parquet vector's `nulls` array - the reader reuses it for the next batch.
   test("streaming read with nulls and deletion vectors does not NPE") {
     withTempDir { inputDir =>
       val path = inputDir.getAbsolutePath
@@ -439,7 +439,7 @@ trait DeltaSourceDeletionVectorTests extends StreamTest
   }
 
   // Regression for #6578: ColumnVectorWithFilter.getChild must not assume dataType() is a
-  // StructType — Spark's ColumnVector.getVariant calls getChild(0) on VARIANT vectors.
+  // StructType - Spark's ColumnVector.getVariant calls getChild(0) on VARIANT vectors.
   test("streaming read with variant column and deletion vectors does not ClassCastException") {
     withTempDir { inputDir =>
       val path = inputDir.getAbsolutePath
