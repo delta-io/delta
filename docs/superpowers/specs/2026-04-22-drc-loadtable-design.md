@@ -118,15 +118,13 @@ If any part of that DRC path fails, log:
 
 and continue via the existing legacy `super.loadTable(...)` path.
 
-Fallback conditions include:
+Fallback policy should stay simple:
 
-- DRC runtime flag off
-- delegate does not implement `DeltaRestClientProvider`
-- provider returns no DRC support
-- `loadTable` call fails
-- `getTableCredentials` call fails
-- schema conversion fails
-- metadata adaptation fails
+- if the runtime DRC flag is off, use the legacy path
+- if DRC is not available through `DeltaRestClientProvider`, use the legacy path
+- if the attempted DRC load path fails, log the WARN and use the legacy path
+
+The implementation should not try to encode a large taxonomy of fallback cases in the design or in control flow.
 
 ## Metadata and Schema Adaptation
 
