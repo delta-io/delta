@@ -129,6 +129,19 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
+   * Package-private constructor for DRC-aware subclasses that share a pre-built
+   * {@link ApiClient} with the UC catalog plugin (see
+   * {@code io.unitycatalog.client.delta.DeltaRestClientProvider#getApiClient()}). Avoids a
+   * duplicate HTTP pool for Delta vs UC.
+   */
+  UCTokenBasedRestClient(ApiClient apiClient) {
+    Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
+    this.metastoresApi = new MetastoresApi(apiClient);
+    this.tablesApi = new TablesApi(apiClient);
+  }
+
+  /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
