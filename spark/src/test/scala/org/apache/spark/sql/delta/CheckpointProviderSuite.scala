@@ -70,17 +70,12 @@ class CheckpointProviderSuite
           .underlyingCheckpointProvider
           .asInstanceOf[V2CheckpointProvider]
 
-        // Jackson 2.19+ deserializes null collection values as empty collections
-        // and we need to normalize to empty maps for comparison.
-        val compatSidecarFiles = compatCheckpoint.sidecarFiles
-          .map(sidecar => if (sidecar.tags == null) sidecar.copy(tags = Map.empty) else sidecar)
-        assert(compatSidecarFiles.toSet === origCheckpoint.sidecarFiles.toSet)
-        val compatCheckpointMetadata = if (compatCheckpoint.checkpointMetadata.tags == null) {
-          compatCheckpoint.checkpointMetadata.copy(tags = Map.empty)
-        } else {
-          compatCheckpoint.checkpointMetadata
-        }
-        assert(compatCheckpointMetadata === origCheckpoint.checkpointMetadata)
+        // Normalize null tags so reconstructed sidecar/metadata compare equal to freshly built
+        // instances that default to empty maps after the Jackson upgrade.
+        assert(compatCheckpoint.sidecarFiles.map(_.withNormalizedTags).toSet ===
+          origCheckpoint.sidecarFiles.toSet)
+        assert(compatCheckpoint.checkpointMetadata.withNormalizedTags ===
+          origCheckpoint.checkpointMetadata)
 
         val compatDf =
             deltaLog.loadIndex(compatCheckpoint.topLevelFileIndex.get, Action.logSchema)

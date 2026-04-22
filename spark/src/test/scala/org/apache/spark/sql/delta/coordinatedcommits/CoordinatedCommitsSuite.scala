@@ -1067,10 +1067,8 @@ abstract class CommitCoordinatorSuiteBase
         assert(log.unsafeVolatileSnapshot.metadata === newMetadata2)
         // State reconstruction should give correct results
         var expectedFileNames = Set("1", "2", "post-upgrade-file")
-        // Jackson 2.19+ deserializes null collection values as empty collections.
-        // So we convert null tags to empty maps before comparison.
         val unsafeVolatileSnapshotFiles = log.unsafeVolatileSnapshot.allFiles
-          .map(file => if (file.tags == null) file.copy(tags = Map.empty) else file)
+          .map(_.withNormalizedTags)
           .collect()
           .toSet
         assert(unsafeVolatileSnapshotFiles ===
@@ -1105,10 +1103,8 @@ abstract class CommitCoordinatorSuiteBase
         assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsCoordinatorConf === Map.empty)
         assert(log.unsafeVolatileSnapshot.metadata.coordinatedCommitsTableConf === Map.empty)
         expectedFileNames = Set("1", "2", "post-upgrade-file", "upgrade-2-file")
-        // Jackson 2.19+ deserializes null collection values as empty collections.
-        // So we convert null tags to empty maps before comparison.
         val unsafeVolatileSnapshotFiles2 = log.unsafeVolatileSnapshot.allFiles
-          .map(file => if (file.tags == null) file.copy(tags = Map.empty) else file)
+          .map(_.withNormalizedTags)
           .collect()
           .toSet
         assert(unsafeVolatileSnapshotFiles2 ===
@@ -1124,10 +1120,8 @@ abstract class CommitCoordinatorSuiteBase
         // Make 1 more commit, this should go to new owner
         log.startTransaction().commitManually(newMetadata3, createTestAddFile("4"))
         expectedFileNames = Set("1", "2", "post-upgrade-file", "upgrade-2-file", "4")
-        // Jackson 2.19+ deserializes null collection values as empty collections.
-        // So we convert null tags to empty maps before comparison.
         val unsafeVolatileSnapshotFiles3 = log.unsafeVolatileSnapshot.allFiles
-          .map(file => if (file.tags == null) file.copy(tags = Map.empty) else file)
+          .map(_.withNormalizedTags)
           .collect()
           .toSet
         assert(unsafeVolatileSnapshotFiles3 ===

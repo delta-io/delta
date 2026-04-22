@@ -210,6 +210,10 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
+ * @param jacksonVersion Jackson core/databind/module-scala version that Spark ships with.
+ * @param jacksonAnnotationsVersion Jackson annotations version. Tracked independently of
+ *                                  `jacksonVersion` because jackson-annotations is released on a
+ *                                  separate cadence (often trailing databind by a patch).
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -355,6 +359,26 @@ object CrossSparkVersions extends AutoPlugin {
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
 
   /**
+   * Dependency-override entries that pin every Jackson artifact to the given versions.
+   *
+   * The list is the superset of Jackson artifacts used across any project in this repo. Sbt's
+   * `dependencyOverrides` are a no-op for artifacts not already present in the resolution graph,
+   * so it's safe to apply this full list uniformly from any project that wants a consistent
+   * Jackson line on its (compile or test) classpath.
+   */
+  def jacksonOverridesFor(
+      jacksonVersion: String,
+      jacksonAnnotationsVersion: String): Seq[ModuleID] = Seq(
+    "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+    "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationsVersion,
+    "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+    "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion,
+    "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+    "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
+    "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion
+  )
+
+  /**
    * Returns module name with Spark version suffix.
    * 
    * By default, ALL Spark-dependent modules include the Spark version suffix:
@@ -418,15 +442,7 @@ object CrossSparkVersions extends AutoPlugin {
         val sparkVer = sparkVersionKey.value
         val sparkSpec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
           .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-        val jacksonVer = sparkSpec.jacksonVersion
-        val jacksonAnnotationsVer = sparkSpec.jacksonAnnotationsVersion
-        Seq(
-          "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationsVer,
-          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
-          "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
-        )
+        jacksonOverridesFor(sparkSpec.jacksonVersion, sparkSpec.jacksonAnnotationsVersion)
       }
     )
 

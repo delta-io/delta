@@ -887,6 +887,15 @@ case class AddFile(
 
   override def wrap: SingleAction = SingleAction(add = this)
 
+  /**
+   * Returns a copy of this file with `tags` normalized to `Map.empty` when null.
+   * State reconstruction from Parquet checkpoint files can still produce null tags
+   * even after the Jackson default shifted to empty maps, so this is needed wherever
+   * reconstructed files are compared for equality against freshly-constructed ones.
+   */
+  @JsonIgnore
+  def withNormalizedTags: AddFile = if (tags == null) copy(tags = Map.empty) else this
+
   def remove: RemoveFile = removeWithTimestamp()
 
   def removeWithTimestamp(
@@ -1556,6 +1565,10 @@ case class SidecarFile(
 
   override def wrap: SingleAction = SingleAction(sidecar = this)
 
+  /** See [[AddFile.withNormalizedTags]]. */
+  @JsonIgnore
+  def withNormalizedTags: SidecarFile = if (tags == null) copy(tags = Map.empty) else this
+
   def toFileStatus(logPath: Path): FileStatus = {
     val partFilePath = new Path(FileNames.sidecarDirPath(logPath), path)
     new FileStatus(sizeInBytes, false, 0, 0, modificationTime, partFilePath)
@@ -1586,6 +1599,11 @@ case class CheckpointMetadata(
   extends CheckpointOnlyAction {
 
   override def wrap: SingleAction = SingleAction(checkpointMetadata = this)
+
+  /** See [[AddFile.withNormalizedTags]]. */
+  @JsonIgnore
+  def withNormalizedTags: CheckpointMetadata =
+    if (tags == null) copy(tags = Map.empty) else this
 }
 
 
