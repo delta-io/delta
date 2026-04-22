@@ -24,6 +24,7 @@ import io.delta.storage.commit.uccommitcoordinator.UCDeltaClient
 import io.unitycatalog.client.delta.model.{
   CredentialOperation,
   CredentialsResponse,
+  DeltaCommit,
   LoadTableResponse,
   PrimitiveType => UCPrimitiveType,
   StorageCredential,
@@ -31,7 +32,8 @@ import io.unitycatalog.client.delta.model.{
   StructField => UCStructField,
   StructType => UCStructType,
   TableMetadata,
-  TableType => UCTableType
+  TableType => UCTableType,
+  TableUpdate
 }
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -334,5 +336,17 @@ private class StubClient(
     credCalls += ((catalog, schema, table, operation))
     credentialsError.foreach(throw _)
     credentials.getOrElse(new CredentialsResponse())
+  }
+
+  override def commit(
+      catalog: String,
+      schema: String,
+      table: String,
+      commit: DeltaCommit,
+      tableUuid: java.util.UUID,
+      etag: java.util.Optional[String],
+      metadataUpdates: java.util.List[TableUpdate]): LoadTableResponse = {
+    throw new UnsupportedOperationException(
+      "commit is exercised by UCDeltaRestClientCommitSuite, not this stub")
   }
 }

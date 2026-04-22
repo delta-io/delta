@@ -21,12 +21,23 @@ import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiException;
 import io.unitycatalog.client.delta.api.TablesApi;
 import io.unitycatalog.client.delta.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.delta.model.AddCommitUpdate;
+import io.unitycatalog.client.delta.model.AssertEtag;
+import io.unitycatalog.client.delta.model.AssertTableUUID;
 import io.unitycatalog.client.delta.model.CredentialOperation;
 import io.unitycatalog.client.delta.model.CredentialsResponse;
+import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.TableRequirement;
+import io.unitycatalog.client.delta.model.TableUpdate;
+import io.unitycatalog.client.delta.model.UpdateTableRequest;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -100,5 +111,60 @@ public class UCDeltaRestClient implements UCDeltaClient {
               catalog, schema, table, operation, e.getCode(), e.getResponseBody()),
           e);
     }
+  }
+
+  @Override
+  public LoadTableResponse commit(
+      String catalog,
+      String schema,
+      String table,
+      DeltaCommit commit,
+      UUID tableUuid,
+      Optional<String> etag,
+      List<TableUpdate> metadataUpdates) throws IOException {
+    Objects.requireNonNull(catalog, "catalog must not be null");
+    Objects.requireNonNull(schema, "schema must not be null");
+    Objects.requireNonNull(table, "table must not be null");
+    Objects.requireNonNull(commit, "commit must not be null");
+    Objects.requireNonNull(tableUuid, "tableUuid must not be null");
+    Objects.requireNonNull(etag, "etag Optional must not be null (use Optional.empty())");
+    Objects.requireNonNull(metadataUpdates, "metadataUpdates must not be null (use empty list)");
+
+    UpdateTableRequest request = buildCommitRequest(commit, tableUuid, etag, metadataUpdates);
+    try {
+      return tablesApi.updateTable(catalog, schema, table, request);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format(
+              "DRC commit failed for %s.%s.%s (HTTP %d): %s",
+              catalog, schema, table, e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  /**
+   * Package-private for tests: assembles the {@link UpdateTableRequest} body used by
+   * {@link #commit}. Exposed separately so tests can assert {@code requirements} and
+   * {@code updates} list composition without standing up an HTTP server.
+   */
+  static UpdateTableRequest buildCommitRequest(
+      DeltaCommit commit,
+      UUID tableUuid,
+      Optional<String> etag,
+      List<TableUpdate> metadataUpdates) {
+    Objects.requireNonNull(commit, "commit must not be null");
+    Objects.requireNonNull(tableUuid, "tableUuid must not be null");
+    Objects.requireNonNull(etag, "etag Optional must not be null (use Optional.empty())");
+    Objects.requireNonNull(metadataUpdates, "metadataUpdates must not be null (use empty list)");
+
+    List<TableRequirement> requirements = new ArrayList<>();
+    requirements.add(new AssertTableUUID().uuid(tableUuid));
+    etag.ifPresent(e -> requirements.add(new AssertEtag().etag(e)));
+
+    List<TableUpdate> updates = new ArrayList<>();
+    updates.add(new AddCommitUpdate().commit(commit));
+    updates.addAll(metadataUpdates);
+
+    return new UpdateTableRequest().requirements(requirements).updates(updates);
   }
 }

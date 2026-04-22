@@ -19,9 +19,14 @@ package io.delta.storage.commit.uccommitcoordinator;
 import io.delta.storage.annotation.Unstable;
 import io.unitycatalog.client.delta.model.CredentialOperation;
 import io.unitycatalog.client.delta.model.CredentialsResponse;
+import io.unitycatalog.client.delta.model.DeltaCommit;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.TableUpdate;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Client interface for the Unity Catalog Delta REST Catalog (DRC) API. The DRC endpoints live
@@ -82,4 +87,45 @@ public interface UCDeltaClient {
       String schema,
       String table,
       CredentialOperation operation) throws IOException;
+
+  /**
+   * Submits a CCv2 commit via DRC
+   * {@code POST /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}}.
+   *
+   * <p>The request body carries:
+   * <ul>
+   *   <li>{@code requirements}: always an {@code AssertTableUUID} with {@code tableUuid}, and
+   *       an {@code AssertEtag} when {@code etag.isPresent()}; etag is optional in v1 per the
+   *       Apr-17 clarifications and the concurrency gap is a known tradeoff until Epic 7;</li>
+   *   <li>{@code updates}: a single {@code AddCommitUpdate} wrapping {@link DeltaCommit},
+   *       followed by the caller-supplied {@code metadataUpdates} in order. The
+   *       {@code AddCommitUpdate} always comes first so the server processes the commit before
+   *       applying the metadata mutations within the same atomic RPC.</li>
+   * </ul>
+   *
+   * <p>{@link DeltaRestMetadataDiff} produces the {@code metadataUpdates} list from old/new
+   * metadata, protocol, schema, and partition-column snapshots. Pass
+   * {@link java.util.Collections#emptyList()} for a pure data commit.
+   *
+   * @param catalog catalog name
+   * @param schema schema name
+   * @param table table name
+   * @param commit the Delta commit to append
+   * @param tableUuid table UUID from an earlier {@link #loadTable}; used as the
+   *     {@code AssertTableUUID} requirement
+   * @param etag optional etag from an earlier load; when present the server rejects the commit
+   *     if the table's etag has advanced between load and commit
+   * @param metadataUpdates additional {@code TableUpdate}s to include in the same request
+   * @return the DRC update-table response carrying the refreshed metadata and etag
+   * @throws IOException on network error, HTTP non-success, or UC rejection (etag or UUID
+   *     mismatch, rate limit, resource exhaustion, etc.)
+   */
+  LoadTableResponse commit(
+      String catalog,
+      String schema,
+      String table,
+      DeltaCommit commit,
+      UUID tableUuid,
+      Optional<String> etag,
+      List<TableUpdate> metadataUpdates) throws IOException;
 }

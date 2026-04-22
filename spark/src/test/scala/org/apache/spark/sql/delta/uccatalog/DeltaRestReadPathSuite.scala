@@ -25,12 +25,14 @@ import io.unitycatalog.client.delta.api.TablesApi
 import io.unitycatalog.client.delta.model.{
   CredentialOperation,
   CredentialsResponse,
+  DeltaCommit,
   LoadTableResponse,
   PrimitiveType => UCPrimitiveType,
   StructField => UCStructField,
   StructType => UCStructType,
   TableMetadata,
-  TableType => UCTableType
+  TableType => UCTableType,
+  TableUpdate
 }
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, DelegatingCatalogExtension, Identifier}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
@@ -139,6 +141,11 @@ object DeltaRestReadPathSuite {
     override def getTableCredentials(
         c: String, s: String, t: String, op: CredentialOperation): CredentialsResponse =
       new CredentialsResponse()
+    override def commit(
+        c: String, s: String, t: String, commit: DeltaCommit, uuid: java.util.UUID,
+        etag: java.util.Optional[String],
+        updates: java.util.List[TableUpdate]): LoadTableResponse =
+      throw new UnsupportedOperationException
   }
 
   class FailingClient extends UCDeltaClient {
@@ -148,5 +155,10 @@ object DeltaRestReadPathSuite {
     override def getTableCredentials(
         c: String, s: String, t: String, op: CredentialOperation): CredentialsResponse =
       new CredentialsResponse()
+    override def commit(
+        c: String, s: String, t: String, commit: DeltaCommit, uuid: java.util.UUID,
+        etag: java.util.Optional[String],
+        updates: java.util.List[TableUpdate]): LoadTableResponse =
+      throw new UnsupportedOperationException
   }
 }
