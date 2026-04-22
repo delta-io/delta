@@ -157,16 +157,19 @@ public class SparkScan
   }
 
   /**
-   * Read schema for the scan, which is the projection of data columns followed by partition
-   * columns.
+   * Read schema for the scan, returned in the table's original DDL column order (partition columns
+   * in their declared positions, not appended at the end).
+   *
+   * <p>Spark's streaming plan binds output attributes to {@code SparkTable.schema()} which
+   * preserves DDL order. If this method instead returned {@code readDataSchema ++ partitionSchema}
+   * (partitions-at-end), downstream ordinal-based consumers could land on a type-mismatched {@link
+   * org.apache.spark.sql.vectorized.ColumnVector} and NPE. See {@link ColumnReorderReadFunction}
+   * for the corresponding batch-level reorder that keeps the reader's output aligned with this
+   * advertised order.
    */
   @Override
   public StructType readSchema() {
-    final List<StructField> fields =
-        new ArrayList<>(readDataSchema.fields().length + partitionSchema.fields().length);
-    Collections.addAll(fields, readDataSchema.fields());
-    Collections.addAll(fields, partitionSchema.fields());
-    return new StructType(fields.toArray(new StructField[0]));
+    return PartitionUtils.ddlOrderedOutputSchema(initialSnapshot, readDataSchema, partitionSchema);
   }
 
   /**
