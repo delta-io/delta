@@ -472,6 +472,29 @@ class DeltaTableRefreshAndPinningSuite
     }
   }
 
+  test("[4] scenario 1.2b: count then collect inconsistency on same DataFrame") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df = spark.sql("SELECT * FROM t")
+      // First collect caches QueryExecution
+      assert(df.collect().length == 1)
+
+      sql("INSERT INTO t VALUES (2, 200)")
+
+      // count() creates a new QueryExecution, so it sees the new data
+      assert(df.count() == 2)
+
+      // collect() on the same df reuses the cached QueryExecution.
+      // This is the documented OSS classic inconsistency from the design doc:
+      // count() returns 2 but collect() returns only 1 row because
+      // Dataset remembers and reuses QueryExecution for collect but not for
+      // show, count, and other actions.
+      assert(df.collect().length == 1)
+    }
+  }
+
   test("[4] scenario 2: df.show and collect after ADD COLUMN keeps original schema") {
     withTable("t") {
       createSimpleTable("t")
@@ -517,7 +540,7 @@ class DeltaTableRefreshAndPinningSuite
     }
   }
 
-  test("[4] scenario 4: df after DROP and recreate table (column mapping)") {
+  test("[4] scenario 4.1: df.show after DROP and recreate table (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -528,6 +551,9 @@ class DeltaTableRefreshAndPinningSuite
       sql("DROP TABLE t")
       createColumnMappingTable("t")
 
+      // Fresh SQL re-analyzes and sees the new empty table
+      checkAnswer(sql("SELECT * FROM t"), Seq.empty)
+
       // collect() on the same df references the old table's data files which no longer exist.
       // This results in a runtime error (file not found), not a schema change error.
       intercept[Exception] {
@@ -536,7 +562,7 @@ class DeltaTableRefreshAndPinningSuite
     }
   }
 
-  test("[4] scenario 5: df after DROP/ADD column same name same type (column mapping)") {
+  test("[4] scenario 5.1: df.show after DROP/ADD column same name same type (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -547,6 +573,10 @@ class DeltaTableRefreshAndPinningSuite
       sql("ALTER TABLE t DROP COLUMN salary")
       sql("ALTER TABLE t ADD COLUMN salary INT")
 
+      // Fresh SQL re-analyzes with the new schema (new column IDs).
+      // The old salary data is gone since it's a different physical column.
+      checkAnswer(sql("SELECT * FROM t"), Row(1, null))
+
       // collect() on the same DataFrame reuses the cached QueryExecution.
       // The old QueryExecution still references the original physical column,
       // so it returns old data with the original schema.
@@ -554,7 +584,8 @@ class DeltaTableRefreshAndPinningSuite
     }
   }
 
-  test("[4] scenario 6: df after DROP/ADD column same name different type (column mapping)") {
+  test("[4] scenario 6.1: df.show after DROP/ADD column same name different type " +
+      "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -564,6 +595,9 @@ class DeltaTableRefreshAndPinningSuite
 
       sql("ALTER TABLE t DROP COLUMN salary")
       sql("ALTER TABLE t ADD COLUMN salary STRING")
+
+      // Fresh SQL re-analyzes with the new schema (salary is now STRING).
+      checkAnswer(sql("SELECT * FROM t"), Row(1, null))
 
       // collect() on the same DataFrame reuses the cached QueryExecution.
       // The old QueryExecution still references the original physical column,
