@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
@@ -83,12 +84,14 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Function2;
 import scala.Option;
 import scala.Some;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
+import scala.runtime.AbstractFunction2;
 import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
@@ -269,7 +272,15 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
-    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    boolean shouldValidateSchemaOnRestart =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.STREAMING_SCHEMA_VALIDATION_ON_RESTART());
+    if (shouldValidateSchemaOnRestart) {
+      validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    }
   }
 
   @Override
@@ -1456,7 +1467,8 @@ public class SparkMicroBatchStream
    * @param partitionSchema partition columns from analysis time
    * @param snapshotSchema full table schema from the latest snapshot at stream start
    */
-  private void validateSchemaCompatibilityOnStartup(
+  @VisibleForTesting
+  static void validateSchemaCompatibilityOnStartup(
       StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
     // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
     // StructType is immutable — add() returns a new instance without modifying the original.
@@ -1464,11 +1476,37 @@ public class SparkMicroBatchStream
     for (StructField field : partitionSchema.fields()) {
       querySchema = querySchema.add(field);
     }
-
-    // Compare the structural schema of the analysis-time schema and snapshot schema.
-    if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
+    // Sort both sides so a partition column declared in the middle of the table doesn't
+    // trip the check.
+    StructType sortedQuery = sortFieldsByName(querySchema);
+    StructType sortedSnapshot = sortFieldsByName(snapshotSchema);
+    // equalsStructurally checks types + nullability but ignores field names;
+    // equalsStructurallyByName checks names but ignores types/nullability.
+    boolean typesAndNullabilityMatch =
+        DataType.equalsStructurally(sortedQuery, sortedSnapshot, /* ignoreNullability= */ false);
+    boolean namesMatch =
+        DataType.equalsStructurallyByName(sortedQuery, sortedSnapshot, CASE_INSENSITIVE_RESOLVER);
+    if (!typesAndNullabilityMatch || !namesMatch) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
     }
+  }
+
+  private static final Function2<String, String, Object> CASE_INSENSITIVE_RESOLVER =
+      new AbstractFunction2<String, String, Object>() {
+        @Override
+        public Object apply(String a, String b) {
+          return a.equalsIgnoreCase(b);
+        }
+      };
+
+  private static StructType sortFieldsByName(StructType schema) {
+    StructField[] fields = Arrays.copyOf(schema.fields(), schema.fields().length);
+    Arrays.sort(fields, Comparator.comparing(StructField::name));
+    StructType result = new StructType();
+    for (StructField f : fields) {
+      result = result.add(f);
+    }
+    return result;
   }
 
   /**
