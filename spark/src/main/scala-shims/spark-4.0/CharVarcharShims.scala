@@ -19,8 +19,8 @@ package org.apache.spark.sql.types
  * Pattern extractors for `CharType` / `VarcharType` that stay source-compatible
  * across Spark versions. In Spark 4.2 the case classes gained a `collation:
  * Option[Int]` parameter, which breaks single-arg extractor patterns like
- * `CharType(_)`. These extractors expose only the length — the Delta callsites
- * ignore collation.
+ * `CharType(_)`. These extractors expose only the length; Delta's callsites
+ * do not care about collation.
  */
 object CharTypeShim {
   def unapply(t: CharType): Option[Int] = Some(t.length)
