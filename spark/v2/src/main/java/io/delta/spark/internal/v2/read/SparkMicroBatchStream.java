@@ -117,6 +117,15 @@ public class SparkMicroBatchStream
                   DeltaAction.CDC,
                   DeltaAction.COMMITINFO)));
 
+  /**
+   * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
+   * try with the user's startVersion (surfaces the StartVersionNotFoundException that triggers the
+   * failOnDataLoss check). Attempt 2 retries with the earliest available version to recover when
+   * failOnDataLoss=false. Attempt 3 guards against a concurrent log-retention prune in the tiny
+   * window between attempt 2's exception and its retry.
+   */
+  private static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
+
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
   private final DeltaOptions options;
@@ -931,13 +940,34 @@ public class SparkMicroBatchStream
       }
     }
 
-    CommitRange commitRange;
-    try {
-      commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
-    } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
-      // If the requested version range doesn't exist (e.g., we're asking for version 6 when
-      // the table only has versions 0-5).
-      return Utils.toCloseableIterator(Collections.emptyIterator());
+    // Start commit may be missing (e.g. due to log retention). When failOnDataLoss=false, skip
+    // to the earliest available version. Mid-log gaps still throw regardless of failOnDataLoss —
+    // stricter than DSv1.
+    CommitRange commitRange = null;
+    long earliestVersionToFetch = startVersion;
+    for (int attempt = 1; attempt <= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS; attempt++) {
+      try {
+        commitRange =
+            snapshotManager.getTableChanges(engine, earliestVersionToFetch, endVersionOpt);
+        break;
+      } catch (io.delta.kernel.exceptions.StartVersionNotFoundException e) {
+        if (options.failOnDataLoss()
+            || !e.getEarliestAvailableVersion().isPresent()
+            || attempt >= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS) {
+          throw e;
+        }
+        earliestVersionToFetch = e.getEarliestAvailableVersion().get();
+        logger.warn(
+            "Start version commit {} no longer exists for table {} (attempt {}/{}). "
+                + "Skipping to earliest available version {} because failOnDataLoss is false.",
+            startVersion,
+            tablePath,
+            attempt,
+            FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS,
+            earliestVersionToFetch);
+      } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
@@ -1335,8 +1365,8 @@ public class SparkMicroBatchStream
   /**
    * Check read-incompatible schema changes during stream (re)start so we could fail fast.
    *
-   * <p>This is called ONCE during the first latestOffset call to catch edge cases that normal
-   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
+   * <p>This is called ONCE during the first latestOffset call to catch cases that normal per-commit
+   * validation (checkReadIncompatibleSchemaChanges) misses.
    *
    * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
    * starts at version 1 with the latest version is version 3 and there is a schema change at
