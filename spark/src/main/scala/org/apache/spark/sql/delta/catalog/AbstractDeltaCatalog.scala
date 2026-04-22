@@ -43,6 +43,7 @@ import org.apache.spark.sql.delta.serverSidePlanning.ServerSidePlannedTable
 import org.apache.spark.sql.delta.sources.{DeltaDataSource, DeltaSourceUtils, DeltaSQLConf}
 import org.apache.spark.sql.delta.stats.StatisticsCollection
 import org.apache.spark.sql.delta.tablefeatures.DropFeature
+import org.apache.spark.sql.delta.uccatalog.DeltaRestReadPath
 import org.apache.spark.sql.delta.util.{Utils => DeltaUtils}
 import org.apache.spark.sql.delta.util.PartitionUtils
 import org.apache.hadoop.fs.Path
@@ -87,6 +88,39 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     val delegateField = classOf[DelegatingCatalogExtension].getDeclaredField("delegate")
     delegateField.setAccessible(true)
     delegateField.get(this).getClass.getCanonicalName.startsWith("io.unitycatalog.")
+  }
+
+  /**
+   * Delta REST Catalog (DRC) read path. Returns `Some(V1Table)` when the delegate chain
+   * contains a DRC-enabled provider; otherwise `None` so the caller falls through to
+   * `super.loadTable`. Exceptions from the DRC call propagate -- we do not silently fall
+   * back to legacy on DRC errors, which would mask real bugs after the user opted in.
+   *
+   * Emits `delta.drc.loadTable` on entry and `delta.drc.loadTable.error` on failure so the
+   * A/B rollout can distinguish DRC-path failures from legacy-path failures.
+   */
+  private def drcLoadTable(ident: Identifier): Option[Table] = {
+    try {
+      val result = DeltaRestReadPath.tryLoad(this, name(), ident)
+      if (result.isDefined) {
+        recordDeltaEvent(
+          deltaLog = null,
+          opType = "delta.drc.loadTable",
+          data = Map("catalog" -> name(), "table" -> ident.toString))
+      }
+      result
+    } catch {
+      case e: Throwable =>
+        recordDeltaEvent(
+          deltaLog = null,
+          opType = "delta.drc.loadTable.error",
+          data = Map(
+            "catalog" -> name(),
+            "table" -> ident.toString,
+            "errorClass" -> e.getClass.getName,
+            "errorMessage" -> Option(e.getMessage).getOrElse("")))
+        throw e
+    }
   }
 
   /**
@@ -290,7 +324,12 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
     try {
-      val table = super.loadTable(ident)
+      // DRC branch: when the UC catalog plugin on the delegate chain advertises a DRC
+      // TablesApi (provider.getDeltaTablesApi present), load metadata directly from the
+      // Delta REST Catalog endpoints. Otherwise fall through to the legacy UC API via
+      // super.loadTable. The Optional gate in DeltaRestReadPath.tryLoad guarantees that
+      // no HTTP client is constructed on the flag-off path.
+      val table = drcLoadTable(ident).getOrElse(super.loadTable(ident))
 
       ServerSidePlannedTable.tryCreate(spark, ident, table, isUnityCatalog).foreach { sspt =>
         return sspt
