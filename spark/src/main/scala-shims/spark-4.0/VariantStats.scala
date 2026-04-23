@@ -21,9 +21,8 @@ import org.apache.spark.sql.catalyst.expressions.aggregate.DeclarativeAggregate
 import org.apache.spark.sql.catalyst.trees.UnaryLike
 import org.apache.spark.sql.types.{DataType, VariantType}
 
-// Stubs for Spark 4.0. Variant fixed-precision stats collection requires Spark 4.2+, so on
-// older Spark versions these aggregates always evaluate to null, matching Delta's pre-existing
-// behavior for variant columns.
+// Stubs for Spark 4.0. Variant stats collection requires 4.1+, so these expressions evaluate to
+// null in Spark 4.0.
 case class MinVariantStats(child: Expression) extends DeclarativeAggregate
   with UnaryLike[Expression] {
   override def nullable: Boolean = true
