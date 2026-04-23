@@ -16,6 +16,7 @@
 
 package io.delta.storage.commit.uccommitcoordinator;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import io.delta.storage.commit.Commit;
 import io.delta.storage.commit.CommitFailedException;
 import io.delta.storage.commit.CoordinatedCommitsUtils;
@@ -54,6 +55,7 @@ import org.apache.hadoop.fs.Path;
 import java.io.IOException;
 import java.net.URI;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * A REST client implementation of {@link UCClient} for interacting with Unity Catalog's commit
@@ -87,6 +89,8 @@ import java.util.*;
  */
 public class UCTokenBasedRestClient implements UCDeltaClient {
 
+  private final ApiClient apiClient;
+  private final boolean deltaRestCatalogAvailable;
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
@@ -127,7 +131,8 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
       }
     });
 
-    ApiClient apiClient = builder.build();
+    this.apiClient = builder.build();
+    this.deltaRestCatalogAvailable = true;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
@@ -137,21 +142,33 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
   }
 
   public UCTokenBasedRestClient(ApiClient apiClient) {
+    this(apiClient, true);
+  }
+
+  public UCTokenBasedRestClient(ApiClient apiClient, boolean deltaRestCatalogAvailable) {
     Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.apiClient = apiClient;
+    this.deltaRestCatalogAvailable = deltaRestCatalogAvailable;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
-    this.deltaTablesApi = new io.unitycatalog.client.delta.api.TablesApi(apiClient);
-    this.deltaTemporaryCredentialsApi =
-        new io.unitycatalog.client.delta.api.TemporaryCredentialsApi(apiClient);
+    this.deltaTablesApi = deltaRestCatalogAvailable
+        ? new io.unitycatalog.client.delta.api.TablesApi(apiClient)
+        : null;
+    this.deltaTemporaryCredentialsApi = deltaRestCatalogAvailable
+        ? new io.unitycatalog.client.delta.api.TemporaryCredentialsApi(apiClient)
+        : null;
   }
 
   /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
-    if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null ||
-        deltaTablesApi == null || deltaTemporaryCredentialsApi == null) {
+    if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null) {
+      throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
+    }
+    if (deltaRestCatalogAvailable &&
+        (deltaTablesApi == null || deltaTemporaryCredentialsApi == null)) {
       throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
     }
   }
@@ -257,6 +274,10 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(schema, "schema must not be null.");
     Objects.requireNonNull(table, "table must not be null.");
 
+    if (!deltaRestCatalogAvailable) {
+      return loadTableViaLegacyApi(catalog, schema, table);
+    }
+
     try {
       return deltaTablesApi.loadTable(catalog, schema, table);
     } catch (ApiException e) {
@@ -265,6 +286,108 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
               e.getCode(), e.getResponseBody()),
           e);
     }
+  }
+
+  private LoadTableResponse loadTableViaLegacyApi(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    final String fullName = String.format("%s.%s.%s", catalog, schema, table);
+    try {
+      io.unitycatalog.client.model.TableInfo tableInfo =
+          tablesApi.getTable(fullName, true, true);
+      LoadTableResponse response = new LoadTableResponse();
+      response.setMetadata(toDeltaTableMetadata(tableInfo));
+      response.setCommits(Collections.emptyList());
+      return response;
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to load table via legacy UC API (HTTP %s): %s",
+              e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  private io.unitycatalog.client.delta.model.TableMetadata toDeltaTableMetadata(
+      io.unitycatalog.client.model.TableInfo tableInfo) throws IOException {
+    io.unitycatalog.client.delta.model.TableMetadata metadata =
+        new io.unitycatalog.client.delta.model.TableMetadata();
+    metadata.setEtag("");
+    metadata.setDataSourceFormat(io.unitycatalog.client.delta.model.DataSourceFormat.fromValue(
+        tableInfo.getDataSourceFormat() != null ? tableInfo.getDataSourceFormat().getValue() : null));
+    metadata.setTableType(io.unitycatalog.client.delta.model.TableType.fromValue(
+        tableInfo.getTableType() != null ? tableInfo.getTableType().getValue() : null));
+    metadata.setTableUuid(UUID.fromString(tableInfo.getTableId()));
+    metadata.setLocation(tableInfo.getStorageLocation());
+    metadata.setCreatedTime(tableInfo.getCreatedAt() != null ? tableInfo.getCreatedAt() : 0L);
+    metadata.setUpdatedTime(tableInfo.getUpdatedAt() != null ? tableInfo.getUpdatedAt() : 0L);
+    metadata.setSecurableType(io.unitycatalog.client.delta.model.SecurableType.TABLE);
+    metadata.setColumns(toDeltaStructType(tableInfo.getColumns()));
+    metadata.setPartitionColumns(toPartitionColumns(tableInfo.getColumns()));
+    metadata.setProperties(
+        tableInfo.getProperties() != null ? tableInfo.getProperties() : Collections.emptyMap());
+    return metadata;
+  }
+
+  private io.unitycatalog.client.delta.model.StructType toDeltaStructType(
+      List<ColumnInfo> columns) throws IOException {
+    io.unitycatalog.client.delta.model.StructType structType =
+        new io.unitycatalog.client.delta.model.StructType();
+    if (columns == null) {
+      structType.setFields(Collections.emptyList());
+      return structType;
+    }
+
+    List<io.unitycatalog.client.delta.model.StructField> fields = new ArrayList<>();
+    for (ColumnInfo column : columns) {
+      io.unitycatalog.client.delta.model.StructField field =
+          new io.unitycatalog.client.delta.model.StructField();
+      field.setName(column.getName());
+      field.setNullable(column.getNullable() == null || column.getNullable());
+      field.setMetadata(Collections.emptyMap());
+      field.setType(toDeltaType(column));
+      fields.add(field);
+    }
+    structType.setFields(fields);
+    return structType;
+  }
+
+  private io.unitycatalog.client.delta.model.DeltaType toDeltaType(
+      ColumnInfo column) throws IOException {
+    if (column.getTypeJson() != null && !column.getTypeJson().isEmpty()) {
+      try {
+        return apiClient.getObjectMapper().readValue(
+            column.getTypeJson(),
+            io.unitycatalog.client.delta.model.DeltaType.class);
+      } catch (JsonProcessingException e) {
+        throw new IOException(
+            String.format("Failed to parse legacy column type JSON for column %s: %s",
+                column.getName(), column.getTypeJson()),
+            e);
+      }
+    }
+
+    if (column.getTypeText() != null && !column.getTypeText().isEmpty()) {
+      io.unitycatalog.client.delta.model.PrimitiveType primitiveType =
+          new io.unitycatalog.client.delta.model.PrimitiveType();
+      primitiveType.setType(column.getTypeText());
+      return primitiveType;
+    }
+
+    throw new IOException(
+        String.format("Legacy column %s is missing both type_json and type_text.", column.getName()));
+  }
+
+  private List<String> toPartitionColumns(List<ColumnInfo> columns) {
+    if (columns == null) {
+      return Collections.emptyList();
+    }
+
+    return columns.stream()
+        .filter(column -> column.getPartitionIndex() != null)
+        .sorted(Comparator.comparingInt(ColumnInfo::getPartitionIndex))
+        .map(ColumnInfo::getName)
+        .collect(Collectors.toList());
   }
 
   @Override
@@ -278,6 +401,10 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(catalog, "catalog must not be null.");
     Objects.requireNonNull(schema, "schema must not be null.");
     Objects.requireNonNull(table, "table must not be null.");
+
+    if (!deltaRestCatalogAvailable) {
+      throw new IOException("Legacy UC table credential vending is not implemented yet.");
+    }
 
     try {
       return deltaTemporaryCredentialsApi.getTableCredentials(operation, catalog, schema, table);

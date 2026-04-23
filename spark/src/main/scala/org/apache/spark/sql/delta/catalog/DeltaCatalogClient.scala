@@ -27,7 +27,6 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils}
 import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, Table, TableCatalog, V1Table}
-import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 
 private class DeltaCatalogClient private (
@@ -38,20 +37,13 @@ private class DeltaCatalogClient private (
   def loadTable(ident: Identifier): Table = {
     ucDeltaClient match {
       case Some(client) if ident.namespace().length == 1 =>
-        try {
-          val metadata = client
-            .loadTable(catalogName, ident.namespace().head, ident.name())
-            .getMetadata
-          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA) {
-            V1Table(toCatalogTable(ident, metadata))
-          } else {
-            delegate.loadTable(ident)
-          }
-        } catch {
-          case e: Exception =>
-            logWarning(s"Falling back to legacy UC API for " +
-              s"${DeltaLogKeys.TABLE_NAME}=$ident.", e)
-            delegate.loadTable(ident)
+        val metadata = client
+          .loadTable(catalogName, ident.namespace().head, ident.name())
+          .getMetadata
+        if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA) {
+          V1Table(toCatalogTable(ident, metadata))
+        } else {
+          delegate.loadTable(ident)
         }
       case _ =>
         delegate.loadTable(ident)
@@ -90,11 +82,13 @@ private object DeltaCatalogClient {
   def apply(delegatePlugin: CatalogPlugin): DeltaCatalogClient = {
     val delegate = delegatePlugin.asInstanceOf[TableCatalog]
     val ucDeltaClient = delegatePlugin match {
-      case provider: DeltaRestClientProvider if provider.getDeltaTablesApi.isPresent =>
-        Some(new UCTokenBasedRestClient(provider.getApiClient()))
+      case provider: DeltaRestClientProvider =>
+        Some(new UCTokenBasedRestClient(
+          provider.getApiClient(),
+          provider.getDeltaTablesApi.isPresent))
       case _ =>
         None
     }
-    new DeltaCatalogClient(ucDeltaClient, delegate, delegate.name())
+    new DeltaCatalogClient(ucDeltaClient, delegate, delegatePlugin.name())
   }
 }
