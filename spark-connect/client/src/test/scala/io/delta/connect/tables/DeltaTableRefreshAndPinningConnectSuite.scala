@@ -568,9 +568,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
   // ---------------------------------------------------------------------------
   // Section [5]: CACHE TABLE impact on reads (Connect)
+  //
+  // Note on external writes: In Connect, all writes go through the same
+  // server-side DeltaLog (shared singleton cache). We cannot simulate true
+  // external writes (bypassing DeltaLog) from the Connect client. These tests
+  // document the same-JVM behavior where all writes update DeltaLog.currentSnapshot,
+  // causing Delta's PrepareDeltaScan to discover changes and break the cache.
+  //
+  // For true external write behavior (cache pinning), see the classic suite's
+  // scenarios 6b-6e which use writeExternalCommit via LogStore.
   // ---------------------------------------------------------------------------
 
-  test("[5] connect scenario 1: CACHE TABLE with writes") {
+  test("[5] connect scenario 1: CACHE TABLE with same-JVM writes") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -578,10 +587,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
+      // Same-JVM write updates DeltaLog.currentSnapshot, so Delta's
+      // PrepareDeltaScan discovers the change and breaks the cache.
+      // Doc says: (1,100) only for true external writes, but same-JVM
+      // writes bypass the cache pinning mechanism.
       writerSql("INSERT INTO t VALUES (2, 200)")
 
-      // In Connect, cache behavior follows the same pattern as classic.
-      // Delta aggressively refreshes, so writes are visible.
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
@@ -590,7 +601,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
-  test("[5] connect scenario 2: session write then external write") {
+  test("[5] connect scenario 2: session write then same-JVM external write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -598,13 +609,14 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      // Session write invalidates the cache
+      // Session write invalidates cache (via SPARK-55631 refreshCache)
       spark.sql("INSERT INTO t VALUES (2, 200)")
 
-      // External writer adds (3, 300)
+      // Same-JVM "external" write also updates DeltaLog.currentSnapshot
       writerSql("INSERT INTO t VALUES (3, 300)")
 
-      // Both session and external writes are visible
+      // Both writes visible because both go through same-JVM DeltaLog.
+      // Doc says: (1,100),(2,200) only for true external writes.
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
@@ -621,9 +633,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
+      // Schema change via same-JVM SQL goes through AlterTableExec which
+      // triggers refreshCache (SPARK-55631), invalidating the cache.
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
+      // Doc says: schema changes break table state pinning.
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -640,12 +655,15 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      // Session schema change
+      // Session schema change invalidates cache (SPARK-55631)
       spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
 
-      // External write
+      // Same-JVM "external" write
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
+      // Both visible because session ALTER TABLE broke the cache and
+      // same-JVM write updated DeltaLog.currentSnapshot.
+      // Doc says same for stalenessLimit=0.
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -665,6 +683,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
+      // Doc says: empty table after drop and recreate.
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
 
       spark.sql("UNCACHE TABLE IF EXISTS t")
