@@ -31,6 +31,9 @@ import io.unitycatalog.client.api.DeltaCommitsApi;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.delta.model.CredentialOperation;
+import io.unitycatalog.client.delta.model.CredentialsResponse;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
 import io.unitycatalog.client.model.DeltaCommit;
 import io.unitycatalog.client.model.DeltaCommitInfo;
 import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
@@ -82,11 +85,13 @@ import java.util.*;
  * @see GetCommitsResponse
  * @see TokenProvider
  */
-public class UCTokenBasedRestClient implements UCClient {
+public class UCTokenBasedRestClient implements UCDeltaClient {
 
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
+  private io.unitycatalog.client.delta.api.TablesApi deltaTablesApi;
+  private io.unitycatalog.client.delta.api.TemporaryCredentialsApi deltaTemporaryCredentialsApi;
 
   // HTTP status codes for error handling
   private static final int HTTP_BAD_REQUEST = 400;
@@ -126,13 +131,27 @@ public class UCTokenBasedRestClient implements UCClient {
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
+    this.deltaTablesApi = new io.unitycatalog.client.delta.api.TablesApi(apiClient);
+    this.deltaTemporaryCredentialsApi =
+        new io.unitycatalog.client.delta.api.TemporaryCredentialsApi(apiClient);
+  }
+
+  public UCTokenBasedRestClient(ApiClient apiClient) {
+    Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
+    this.metastoresApi = new MetastoresApi(apiClient);
+    this.tablesApi = new TablesApi(apiClient);
+    this.deltaTablesApi = new io.unitycatalog.client.delta.api.TablesApi(apiClient);
+    this.deltaTemporaryCredentialsApi =
+        new io.unitycatalog.client.delta.api.TemporaryCredentialsApi(apiClient);
   }
 
   /**
    * Ensures the client has not been closed. Must be called before any API operation.
    */
   private void ensureOpen() {
-    if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null) {
+    if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null ||
+        deltaTablesApi == null || deltaTemporaryCredentialsApi == null) {
       throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
     }
   }
@@ -229,12 +248,56 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   @Override
+  public LoadTableResponse loadTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(table, "table must not be null.");
+
+    try {
+      return deltaTablesApi.loadTable(catalog, schema, table);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to load table via DRC (HTTP %s): %s",
+              e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  @Override
+  public CredentialsResponse getTableCredentials(
+      CredentialOperation operation,
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(operation, "operation must not be null.");
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(table, "table must not be null.");
+
+    try {
+      return deltaTemporaryCredentialsApi.getTableCredentials(operation, catalog, schema, table);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format("Failed to get table credentials via DRC (HTTP %s): %s",
+              e.getCode(), e.getResponseBody()),
+          e);
+    }
+  }
+
+  @Override
   public void close() throws IOException {
     // Nulling out the API instances makes them eligible for GC. Once garbage collected,
     // the underlying connection pool is freed and destroyed.
     this.deltaCommitsApi = null;
     this.metastoresApi = null;
     this.tablesApi = null;
+    this.deltaTablesApi = null;
+    this.deltaTemporaryCredentialsApi = null;
   }
 
   /**

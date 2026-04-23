@@ -27,6 +27,10 @@ import scala.collection.mutable
 
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
+import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient
+import io.unitycatalog.client.delta.DeltaRestClientProvider
+import io.unitycatalog.client.delta.model.CredentialOperation
+import io.unitycatalog.client.delta.model.{DataSourceFormat => DeltaDataSourceFormat, TableType => DeltaTableType}
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterByTransform => TempClusterByTransform}
@@ -52,7 +56,7 @@ import org.apache.spark.internal.MDC
 import org.apache.spark.sql.{AnalysisException, DataFrame, SparkSession}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.analysis.{NoSuchDatabaseException, NoSuchNamespaceException, NoSuchTableException, UnresolvedAttribute, UnresolvedFieldName, UnresolvedFieldPosition}
-import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
+import org.apache.spark.sql.catalyst.catalog.{BucketSpec, CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils, SessionCatalog}
 import org.apache.spark.sql.catalyst.plans.logical.{LogicalPlan, QualifiedColType, QualifiedColTypeShims, SyncIdentity}
 import org.apache.spark.sql.connector.catalog.{DelegatingCatalogExtension, Identifier, StagedTable, StagingTableCatalog, SupportsWrite, Table, TableCapability, TableCatalog, TableChange, V1Table}
 import org.apache.spark.sql.connector.catalog.TableCapability._
@@ -289,6 +293,65 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
   override def loadTable(ident: Identifier): Table = recordFrameProfile(
       "DeltaCatalog", "loadTable") {
     setVariantBlockingConfigIfUC()
+    delegate match {
+      case provider: DeltaRestClientProvider
+          if provider.getDeltaTablesApi.isPresent && ident.namespace().length == 1 =>
+        val client = new UCTokenBasedRestClient(provider.getApiClient())
+        try {
+          val catalogName = delegate.name()
+          val response = client.loadTable(catalogName, ident.namespace().head, ident.name())
+          val metadata = response.getMetadata
+          val locationUri = CatalogUtils.stringToURI(metadata.getLocation)
+          val isLocalLocation =
+            locationUri.getScheme == null || locationUri.getScheme.equalsIgnoreCase("file")
+
+          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && isLocalLocation) {
+            // Credential vending is a separate DRC RPC. PR1 only handles local-file tables,
+            // so the response is validated here but not yet threaded into Spark storage props.
+            client.getTableCredentials(
+              CredentialOperation.READ,
+              catalogName,
+              ident.namespace().head,
+              ident.name())
+
+            val catalogTable = CatalogTable(
+              identifier =
+                TableIdentifier(ident.name(), ident.namespace().lastOption, Some(catalogName)),
+              tableType = metadata.getTableType match {
+                case DeltaTableType.MANAGED => CatalogTableType.MANAGED
+                case _ => CatalogTableType.EXTERNAL
+              },
+              storage = CatalogStorageFormat(
+                locationUri = Some(locationUri),
+                inputFormat = None,
+                outputFormat = None,
+                serde = None,
+                compressed = false,
+                properties = Map(UC_TABLE_ID_KEY -> metadata.getTableUuid.toString)),
+              schema = DeltaRestSchemaConverter.toSparkSchema(metadata.getColumns),
+              provider = Some(DeltaSourceUtils.ALT_NAME),
+              partitionColumnNames = Option(metadata.getPartitionColumns)
+                .map(_.asScala.toSeq)
+                .getOrElse(Nil),
+              properties = Option(metadata.getProperties)
+                .map(_.asScala.toMap)
+                .getOrElse(Map.empty))
+            return loadCatalogTable(ident, catalogTable)
+          }
+
+          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && !isLocalLocation) {
+            throw new UnsupportedOperationException(
+              s"DRC loadTable currently only supports local-file tables: ${metadata.getLocation}")
+          }
+        } catch {
+          case e: Exception =>
+            logWarning(log"Falling back to legacy UC API for " +
+              log"${MDC(DeltaLogKeys.TABLE_NAME, ident)}.", e)
+        } finally {
+          client.close()
+        }
+      case _ =>
+    }
     try {
       val table = super.loadTable(ident)
 
