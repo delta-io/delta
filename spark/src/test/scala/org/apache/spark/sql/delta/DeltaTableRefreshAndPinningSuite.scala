@@ -25,7 +25,7 @@ import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
 
 /**
- * Tests that document and verify the existing Delta OSS (classic) behavior for table refresh,
+ * Tests that document and verify existing Delta behavior for table refresh,
  * version pinning, and schema change detection. These tests cover scenarios from the
  * "Refreshing and pinning tables in Spark" design doc.
  *
@@ -36,10 +36,10 @@ import org.apache.spark.sql.test.SharedSparkSession
  *   4. Version pinning and refresh in Dataset (show vs collect)
  *   5. CACHE TABLE impact on reads
  *
- * Each scenario is tested with and without column mapping where applicable.
- *
- * The base trait is parameterized by V2_ENABLE_MODE (NONE, AUTO, STRICT) to verify
- * behavior across all Delta connector modes.
+ * The base trait is parameterized by:
+ *   - V2_ENABLE_MODE (NONE, AUTO) for connector mode coverage
+ *   - useExternalSession: when true, writes go through spark.newSession()
+ *   - stalenessLimitMs: configures the staleness time limit for async updates
  */
 trait DeltaTableRefreshAndPinningSuiteBase
   extends QueryTest
@@ -51,10 +51,31 @@ trait DeltaTableRefreshAndPinningSuiteBase
   /** Override in subclasses to set the V2 enable mode. */
   protected def v2EnableMode: String = "NONE"
 
+  /** Override in subclasses to use a separate session for writes. */
+  protected def useExternalSession: Boolean = false
+
+  /** Override in subclasses to test with a non-zero staleness limit. */
+  protected def stalenessLimitMs: Long = 0L
+
   override protected def sparkConf: SparkConf = {
     super.sparkConf
       .set(DeltaSQLConf.DELTA_ALTER_TABLE_DROP_COLUMN_ENABLED.key, "true")
       .set(DeltaSQLConf.V2_ENABLE_MODE.key, v2EnableMode)
+      .set(DeltaSQLConf.DELTA_ASYNC_UPDATE_STALENESS_TIME_LIMIT.key,
+        s"${stalenessLimitMs}ms")
+  }
+
+  /**
+   * Returns a session for performing writes. When [[useExternalSession]] is true,
+   * returns a new session to simulate external writers.
+   */
+  protected def writerSession: org.apache.spark.sql.SparkSession = {
+    if (useExternalSession) spark.newSession() else spark
+  }
+
+  /** Execute SQL using the writer session. */
+  protected def writerSql(sqlText: String): Unit = {
+    writerSession.sql(sqlText)
   }
 
   protected def createSimpleTable(tableName: String): Unit = {
@@ -79,7 +100,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
   // Section [1]: Temp views with stored plans
   // ---------------------------------------------------------------------------
 
-  test("[1.1] temp view picks up session writes") {
+  test("[1.1] temp view picks up writes") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -87,24 +108,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("INSERT INTO t VALUES (2, 200)")
-
-      checkAnswer(
-        sql("SELECT * FROM v ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
-    }
-  }
-
-  test("[1.2] temp view picks up writes after view creation") {
-    withTable("t") {
-      createSimpleTable("t")
-      insertInitialData("t")
-
-      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
-      checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
-
-      // Write happens after view creation (simulates external write)
-      sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       checkAnswer(
         sql("SELECT * FROM v ORDER BY id"),
@@ -120,8 +124,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("ALTER TABLE t ADD COLUMN new_column INT")
-      sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       // View preserves original schema (id, salary) but picks up new data
       checkAnswer(
@@ -138,7 +142,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
 
       val e = intercept[DeltaAnalysisException] {
         sql("SELECT * FROM v").collect()
@@ -155,8 +159,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("DROP TABLE t")
-      createColumnMappingTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
 
       // Column IDs changed, so reading the view should fail
       val e = intercept[DeltaAnalysisException] {
@@ -174,8 +180,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       // Without column mapping, no column ID check. New table is empty.
       checkAnswer(sql("SELECT * FROM v"), Seq.empty)
@@ -190,8 +196,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("ALTER TABLE t DROP COLUMN salary")
-      sql("ALTER TABLE t ADD COLUMN salary INT")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       val e = intercept[DeltaAnalysisException] {
         sql("SELECT * FROM v").collect()
@@ -209,8 +215,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("ALTER TABLE t DROP COLUMN salary")
-      sql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       val e = intercept[DeltaAnalysisException] {
         sql("SELECT * FROM v").collect()
@@ -232,7 +238,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
-      sql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
 
       val e = intercept[DeltaAnalysisException] {
         sql("SELECT * FROM v").collect()
@@ -252,7 +258,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
@@ -267,8 +273,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      sql("ALTER TABLE t ADD COLUMN new_column INT")
-      sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
@@ -283,8 +289,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
     }
@@ -294,14 +300,14 @@ trait DeltaTableRefreshAndPinningSuiteBase
   // Section [3]: Incrementally constructed queries
   // ---------------------------------------------------------------------------
 
-  test("[3] scenario 1: join after external write uses consistent version") {
+  test("[3] scenario 1: join after write uses consistent version") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
 
       val df1 = spark.table("t")
 
-      sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       val df2 = spark.table("t")
 
@@ -320,8 +326,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df1 = spark.table("t")
 
-      sql("ALTER TABLE t ADD COLUMN new_column INT")
-      sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       val df2 = spark.table("t")
 
@@ -352,7 +358,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df1 = spark.table("t")
 
-      sql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
 
       val df2 = spark.table("t")
 
@@ -370,8 +376,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df1 = spark.table("t")
 
-      sql("DROP TABLE t")
-      createColumnMappingTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
 
       val df2 = spark.table("t")
 
@@ -389,8 +397,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df1 = spark.table("t")
 
-      sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       val df2 = spark.table("t")
 
@@ -407,8 +415,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df1 = spark.table("t")
 
-      sql("ALTER TABLE t DROP COLUMN salary")
-      sql("ALTER TABLE t ADD COLUMN salary INT")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       val df2 = spark.table("t")
 
@@ -426,8 +434,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df1 = spark.table("t")
 
-      sql("ALTER TABLE t DROP COLUMN salary")
-      sql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       val df2 = spark.table("t")
 
@@ -442,7 +450,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
   // Section [4]: Version pinning and refresh in Dataset
   // ---------------------------------------------------------------------------
 
-  test("[4] scenario 1.1: df.show picks up new data after external write") {
+  test("[4] scenario 1.1: df.show picks up new data after write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -450,7 +458,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       // Fresh SQL always picks up new data
       checkAnswer(
@@ -459,7 +467,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
-  test("[4] scenario 1.2: df.collect on same DataFrame after external write") {
+  test("[4] scenario 1.2: df.collect on same DataFrame after write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -468,9 +476,9 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // First collect triggers QueryExecution
       checkAnswer(df, Row(1, 100))
 
-      sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
-      // In OSS classic, collect() on the same df reuses QueryExecution,
+      // collect() on the same df reuses QueryExecution,
       // but TahoeFileIndex.getSnapshot() still calls deltaLog.update()
       // during physical execution. For data-only changes, new data is visible.
       checkAnswer(
@@ -488,13 +496,13 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // First collect caches QueryExecution
       assert(df.collect().length == 1)
 
-      sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       // count() creates a new QueryExecution, so it sees the new data
       assert(df.count() == 2)
 
       // collect() on the same df reuses the cached QueryExecution.
-      // This is the documented OSS classic inconsistency from the design doc:
+      // This is the documented inconsistency from the design doc:
       // count() returns 2 but collect() returns only 1 row because
       // Dataset remembers and reuses QueryExecution for collect but not for
       // show, count, and other actions.
@@ -510,8 +518,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      sql("ALTER TABLE t ADD COLUMN new_column INT")
-      sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       // df pins original schema (id, salary) but picks up latest version data
       checkAnswer(
@@ -533,7 +541,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      sql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
 
       // Fresh SQL re-analyzes with the new schema and succeeds.
       // The table now only has column "id".
@@ -541,7 +549,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       // collect() on the same DataFrame reuses the cached QueryExecution,
       // so it still returns old data with the original (id, salary) schema.
-      // This is the documented OSS classic behavior:
       // Dataset remembers and reuses QueryExecution for collect.
       checkAnswer(df, Row(1, 100))
     }
@@ -555,8 +562,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      sql("DROP TABLE t")
-      createColumnMappingTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
 
       // Fresh SQL re-analyzes and sees the new empty table
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
@@ -577,8 +586,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      sql("ALTER TABLE t DROP COLUMN salary")
-      sql("ALTER TABLE t ADD COLUMN salary INT")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       // Fresh SQL re-analyzes with the new schema (new column IDs).
       // The old salary data is gone since it's a different physical column.
@@ -600,8 +609,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      sql("ALTER TABLE t DROP COLUMN salary")
-      sql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       // Fresh SQL re-analyzes with the new schema (salary is now STRING).
       checkAnswer(sql("SELECT * FROM t"), Row(1, null))
@@ -630,11 +639,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200)).toDF("id", "salary")
         .write.format("delta").mode("append").save(path)
 
-      // In OSS Delta (classic), Delta aggressively refreshes table versions via
-      // FinishAnalysis/PrepareDeltaScan, which updates the snapshot. The schema change
-      // caused by the new snapshot version breaks the plan shape match in CacheManager,
-      // so the cache entry is effectively not reused and fresh data is returned.
-      // This means CACHE TABLE does not truly pin data in Delta OSS (classic).
+      // Delta aggressively refreshes table versions via PrepareDeltaScan,
+      // which updates the snapshot. The version change breaks the plan shape
+      // match in CacheManager, so the cache entry is effectively not reused
+      // and fresh data is returned.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
@@ -643,7 +651,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
-  test("[5] scenario 2: session write invalidates cache but external write does not") {
+  test("[5] scenario 2: session write invalidates cache") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -659,7 +667,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((3, 300)).toDF("id", "salary")
         .write.format("delta").mode("append").save(path)
 
-      // Session write is visible, but we need to check if external is too.
       // After a session write, the cache is invalidated so re-reading fetches fresh data.
       // Delta with stalenessLimit=0 will pick up all data from the log.
       checkAnswer(
@@ -680,7 +687,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       // External schema change via path-based metadata update
       val path = getTablePath("t")
-      val deltaLog = DeltaLog.forTable(spark, path)
       sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
       Seq((2, 200, -1)).toDF("id", "salary", "new_column")
         .write.format("delta").mode("append").save(path)
@@ -728,8 +734,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       // After drop and recreate, the table is empty
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
@@ -739,19 +745,44 @@ trait DeltaTableRefreshAndPinningSuiteBase
   }
 }
 
-/** Runs the refresh and pinning tests with V2_ENABLE_MODE = NONE (v1 connector only). */
+// ---------------------------------------------------------------------------
+// Concrete test suites parameterized by V2 mode, session type, staleness
+// ---------------------------------------------------------------------------
+
+/** V2_ENABLE_MODE = NONE, same-session writes, stalenessLimit = 0. */
 class DeltaTableRefreshAndPinningSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "NONE"
 }
 
-/**
- * Runs the refresh and pinning tests with V2_ENABLE_MODE = AUTO (default production mode).
- * In AUTO mode, the v2 kernel connector is used for supported operations while the v1
- * connector handles everything else. This verifies refresh behavior is consistent regardless
- * of which connector handles the read path.
- */
+/** V2_ENABLE_MODE = AUTO (default), same-session writes, stalenessLimit = 0. */
 class DeltaTableRefreshAndPinningAutoModeSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
+}
+
+/** V2_ENABLE_MODE = NONE, external session writes via spark.newSession(). */
+class DeltaTableRefreshAndPinningExternalSessionSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def useExternalSession: Boolean = true
+}
+
+/** V2_ENABLE_MODE = AUTO, external session writes via spark.newSession(). */
+class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def v2EnableMode: String = "AUTO"
+  override protected def useExternalSession: Boolean = true
+}
+
+/** V2_ENABLE_MODE = NONE, stalenessLimit = 1 hour. */
+class DeltaTableRefreshAndPinningStaleSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def stalenessLimitMs: Long = 3600000L
+}
+
+/** V2_ENABLE_MODE = NONE, external session writes, stalenessLimit = 1 hour. */
+class DeltaTableRefreshAndPinningStaleExternalSessionSuite
+  extends DeltaTableRefreshAndPinningSuiteBase {
+  override protected def useExternalSession: Boolean = true
+  override protected def stalenessLimitMs: Long = 3600000L
 }
