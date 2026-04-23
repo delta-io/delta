@@ -529,7 +529,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       val df = spark.sql("SELECT * FROM t")
       // First collect caches QueryExecution
-      assert(df.collect().length == 1)
+      checkAnswer(df, Row(1, 100))
 
       writerSql("INSERT INTO t VALUES (2, 200)")
 
@@ -541,7 +541,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // count() returns 2 but collect() returns only 1 row because
       // Dataset remembers and reuses QueryExecution for collect but not for
       // show, count, and other actions.
-      assert(df.collect().length == 1)
+      checkAnswer(df, Row(1, 100))
     }
   }
 

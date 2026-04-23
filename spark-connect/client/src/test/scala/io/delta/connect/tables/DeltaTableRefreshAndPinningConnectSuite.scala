@@ -445,7 +445,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       insertInitialData("t")
 
       val df = spark.sql("SELECT * FROM t")
-      assert(df.collect().length == 1)
+      checkAnswer(df, Row(1, 100))
 
       writerSql("INSERT INTO t VALUES (2, 200)")
 
