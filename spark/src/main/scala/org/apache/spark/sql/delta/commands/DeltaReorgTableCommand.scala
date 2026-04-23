@@ -20,7 +20,7 @@ import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaErrors, Snapshot}
 import org.apache.spark.sql.delta.actions.AddFile
 
 import org.apache.spark.sql.{Row, SparkSession}
-import org.apache.spark.sql.catalyst.plans.logical.{IgnoreCachedData, LeafCommand, LogicalPlan, UnaryCommand}
+import org.apache.spark.sql.catalyst.plans.logical.{LeafCommand, LogicalPlan, UnaryCommand}
 
 object DeltaReorgTableMode extends Enumeration {
   val PURGE, UNIFORM_ICEBERG, REWRITE_TYPE_WIDENING = Value
@@ -53,8 +53,7 @@ case class DeltaReorgTableCommand(
     val predicates: Seq[String])
   extends OptimizeTableCommandBase
   with ReorgTableForUpgradeUniformHelper
-  with LeafCommand
-  with IgnoreCachedData {
+  with LeafCommand {
 
   override val otherCopyArgs: Seq[AnyRef] = predicates :: Nil
 

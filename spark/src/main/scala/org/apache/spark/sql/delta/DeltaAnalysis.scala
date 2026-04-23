@@ -1536,7 +1536,7 @@ class DeltaAnalysis(session: SparkSession)
     val allowSchemaLocationOutsideOfCheckpoint = session.sessionState.conf.getConf(
       DeltaSQLConf.DELTA_STREAMING_ALLOW_SCHEMA_LOCATION_OUTSIDE_CHECKPOINT_LOCATION)
     inputQuery.foreach {
-      case streamingRelation @ StreamingRelation(dataSourceV1, sourceName, _)
+      case streamingRelation @ StreamingRelation(dataSourceV1, sourceName, _, _)
         if DeltaSourceUtils.isDeltaDataSourceName(sourceName) =>
           DeltaDataSource.extractSchemaTrackingLocationConfig(
             session, dataSourceV1.options

@@ -45,7 +45,7 @@ class ApplyV2StreamingSuite extends DeltaSQLCommandTest {
 
   private def assertV2(result: LogicalPlan): Unit = {
     result match {
-      case StreamingRelationV2(_, _, _: SparkTable, _, _, _, _, v1Relation) =>
+      case StreamingRelationV2(_, _, _: SparkTable, _, _, _, _, v1Relation, _) =>
         assert(v1Relation.isEmpty)
       case other =>
         fail(s"Expected StreamingRelationV2, got $other")

@@ -72,6 +72,7 @@ if [[ -n "$MAVEN_PROXY_URL" ]]; then
   cat > "$SBT_REPOSITORIES_CONFIG" <<EOF
 [repositories]
   local
+  maven-local
   maven-proxy: $MAVEN_PROXY_URL
   maven-proxy-ivy: $MAVEN_PROXY_URL, [organization]/[module]/(scala_[scalaVersion]/)(sbt_[sbtVersion]/)[revision]/[type]s/[artifact](-[classifier]).[ext]
 EOF

@@ -170,27 +170,27 @@ class AutoCompactExecutionSuite extends
         val path = dir.getCanonicalPath
         // Append 1 file to each partition: record runOnModifiedPartitions event, as is first write
         var usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
-          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 1, path)
+          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 1, path)(spark)
         }
         var log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
         assert(log("status") == "runOnModifiedPartitions" && log("partitions") == "3")
         // Append 10 more file to each partition: record skipInsufficientFilesInModifiedPartitions
         // event.
         usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
-          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 10, path)
+          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 10, path)(spark)
         }
         log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
         assert(log("status") == "skipInsufficientFilesInModifiedPartitions")
         // Append 20 more files to each partition: record runOnModifiedPartitions on all 3
         // partitions.
         usageLogs = captureOptimizeLogs(AutoCompact.OP_TYPE) {
-          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 20, path)
+          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 20, path)(spark)
         }
         log = JsonUtils.mapper.readValue[Map[String, String]](usageLogs.head.blob)
         assert(log("status") == "runOnModifiedPartitions" && log("partitions") == "3")
         // Append 30 more file to each partition and check OptimizeMetrics.
         usageLogs = captureOptimizeLogs(metrics = s"${AutoCompact.OP_TYPE}.execute.metrics") {
-          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 30, path)
+          createFilesToPartitions(numFilePartitions = 3, numFilesPerPartition = 30, path)(spark)
         }
         val metricsLog = JsonUtils.mapper.readValue[OptimizeMetrics](usageLogs.head.blob)
         assert(metricsLog.numBytesSkippedToReduceWriteAmplification === 0)
