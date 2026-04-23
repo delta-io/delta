@@ -189,9 +189,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
       // Column IDs changed, so reading the view should fail
       val e = intercept[DeltaAnalysisException] {
@@ -210,7 +209,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(sql("SELECT * FROM v"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       // Without column mapping, no column ID check. New table is empty.
       checkAnswer(sql("SELECT * FROM v"), Seq.empty)
@@ -319,7 +318,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
     }
@@ -406,9 +405,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df1 = spark.table("t")
 
       writerSql("DROP TABLE t")
-      writerSession.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
       val df2 = spark.table("t")
 
@@ -427,7 +425,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       val df1 = spark.table("t")
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       val df2 = spark.table("t")
 
@@ -592,9 +590,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(df, Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
       // Fresh SQL re-analyzes and sees the new empty table
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
@@ -765,7 +762,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       // After drop and recreate, the table is empty
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
