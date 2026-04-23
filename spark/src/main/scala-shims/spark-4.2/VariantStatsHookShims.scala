@@ -1,0 +1,53 @@
+/*
+ * Copyright (2026) The Delta Lake Project Authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.spark.sql.delta.shims
+
+import org.apache.spark.sql.delta.stats.{DeltaTaskStatisticsTracker, VariantStatsData}
+import org.apache.spark.sql.execution.datasources.{DataSourceUtils, OutputWriter, WriteTaskStatsTracker}
+import org.apache.spark.sql.execution.datasources.parquet.ParquetOutputWriterWithVariantShredding
+
+object VariantStatsHookShims {
+  def extractAndInjectVariantStats(
+      writer: OutputWriter,
+      trackers: Seq[WriteTaskStatsTracker],
+      parquetRebaseModeInRead: String): Unit = {
+    writer match {
+      case shreddedWriter: ParquetOutputWriterWithVariantShredding
+          if shreddedWriter.collectVariantStats =>
+        shreddedWriter.getLatestFooterOpt.foreach { footer =>
+          val keyValueMetadata = footer.getFileMetaData.getKeyValueMetaData
+          val rebaseSpec = DataSourceUtils.datetimeRebaseSpec(
+            k => keyValueMetadata.get(k),
+            parquetRebaseModeInRead)
+          val dateRebaseFunc =
+            DataSourceUtils.createDateRebaseFuncInRead(rebaseSpec.mode, "Parquet")
+          val timestampRebaseFunc =
+            DataSourceUtils.createTimestampRebaseFuncInRead(rebaseSpec, "Parquet")
+          val variantStatsData = VariantStatsData(footer, dateRebaseFunc, timestampRebaseFunc)
+          trackers.foreach {
+            case tracker: DeltaTaskStatisticsTracker =>
+              tracker.minVariantStatsExpressions.foreach(
+                _.addVariantStatsData(variantStatsData))
+              tracker.maxVariantStatsExpressions.foreach(
+                _.addVariantStatsData(variantStatsData))
+            case _ =>
+          }
+        }
+      case _ =>
+    }
+  }
+}

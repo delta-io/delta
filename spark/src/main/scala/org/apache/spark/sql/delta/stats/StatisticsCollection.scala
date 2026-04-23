@@ -264,6 +264,8 @@ trait StatisticsCollection extends DeltaLogging {
    */
   lazy val statsCollector: Column = {
     val stringPrefix = getDataSkippingStringPrefixLength
+    val variantFieldsLimit =
+      spark.sessionState.conf.getConf(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT)
 
     // On file initialization/stat recomputation TIGHT_BOUNDS is always set to true
     val tightBoundsColOpt =
@@ -279,10 +281,10 @@ trait StatisticsCollection extends DeltaLogging {
         case (c, SkippingEligibleDataType(StringType), true) =>
           substring(min(c), 0, stringPrefix)
 
-        // Write null for min/max Variant stats because collecting variant stats is not supported
-        // yet.
         case (c, SkippingEligibleDataType(_: VariantType), true) =>
-          lit(null).cast(VariantType)
+          val variantUdf = DeltaUDF.variantFromVariant(
+            VariantStatsHelper.trimVariant(variantFieldsLimit))
+          variantUdf(Column(MinVariantStats(c.expr)))
 
         // Collect all numeric min values
         case (c, SkippingEligibleDataType(_), true) =>
@@ -295,10 +297,10 @@ trait StatisticsCollection extends DeltaLogging {
             DeltaUDF.stringFromString(StatisticsCollection.truncateMaxStringAgg(stringPrefix)_)
           udfTruncateMax(max(c))
 
-        // Write null for min/max Variant stats because collecting variant stats is not supported
-        // yet.
         case (c, SkippingEligibleDataType(_: VariantType), true) =>
-          lit(null).cast(VariantType)
+          val variantUdf = DeltaUDF.variantFromVariant(
+            VariantStatsHelper.trimVariant(variantFieldsLimit))
+          variantUdf(Column(MaxVariantStats(c.expr)))
 
         // Collect all numeric max values
         case (c, SkippingEligibleDataType(_), true) =>

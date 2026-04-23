@@ -19,9 +19,11 @@ package org.apache.spark.sql.delta.files
 import scala.collection.mutable.ListBuffer
 
 import org.apache.spark.sql.delta._
+import org.apache.spark.sql.delta.ClassicColumnConversions._
 import org.apache.spark.sql.delta.actions._
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.constraints.{Constraint, Constraints, DeltaInvariantCheckerExec}
+import org.apache.spark.sql.delta.expressions.EncodeNestedVariantAsZ85String
 import org.apache.spark.sql.delta.hooks.AutoCompact
 import org.apache.spark.sql.delta.metering.DeltaLogging
 import org.apache.spark.sql.delta.perf.DeltaOptimizedWriterExec
@@ -37,7 +39,7 @@ import org.apache.spark.sql.delta.stats.{
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
-import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
+import org.apache.spark.sql.{Column, DataFrame, Dataset, SparkSession}
 import org.apache.spark.sql.catalyst.expressions._
 import org.apache.spark.sql.catalyst.plans.logical.LocalRelation
 import org.apache.spark.sql.catalyst.types.DataTypeUtils.toAttributes
@@ -328,7 +330,8 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
       statsDataSchema: Seq[Attribute],
       statsCollection: StatisticsCollection): (Expression, Seq[Attribute]) = {
     val resolvedPlan = DataFrameUtils.ofRows(spark, LocalRelation(statsDataSchema))
-      .select(to_json(statsCollection.statsCollector))
+      .select(to_json(Column(
+        EncodeNestedVariantAsZ85String(statsCollection.statsCollector.expr))))
       .queryExecution.analyzed
 
     // We have to use the new attributes with regenerated attribute IDs, because the Analyzer
