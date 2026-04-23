@@ -233,16 +233,22 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   protected def getDefaultSchemaLocation(implicit log: DeltaLog): Path =
     new Path(getDefaultCheckpoint, "_schema_location")
 
+  /**
+   * Executes a DDL/DML SQL statement. Overridable so that V2 suites can route it through the V1
+   * connector, since SparkTable (V2) is read-only and does not support writes/DDL.
+   */
+  protected def executeDml(sqlText: String): Unit = sql(sqlText)
+
   protected def addColumn(column: String, dt: String = "STRING")(implicit log: DeltaLog): Unit = {
-    sql(s"ALTER TABLE delta.`${log.dataPath}` ADD COLUMN ($column $dt)")
+    executeDml(s"ALTER TABLE delta.`${log.dataPath}` ADD COLUMN ($column $dt)")
   }
 
   protected def renameColumn(oldColumn: String, newColumn: String)(implicit log: DeltaLog): Unit = {
-    sql(s"ALTER TABLE delta.`${log.dataPath}` RENAME COLUMN $oldColumn TO $newColumn")
+    executeDml(s"ALTER TABLE delta.`${log.dataPath}` RENAME COLUMN $oldColumn TO $newColumn")
   }
 
   protected def dropColumn(column: String)(implicit log: DeltaLog): Unit = {
-    sql(s"ALTER TABLE delta.`${log.dataPath}` DROP COLUMN $column")
+    executeDml(s"ALTER TABLE delta.`${log.dataPath}` DROP COLUMN $column")
   }
 
   protected def overwriteSchema(
@@ -257,7 +263,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   }
 
   protected def upgradeToNameMode(implicit log: DeltaLog): Unit = {
-    sql(
+    executeDml(
       s"""ALTER TABLE delta.`${log.dataPath}` SET TBLPROPERTIES (
          |'delta.columnMapping.mode' = "name",
          |'delta.minReaderVersion' = '2',
@@ -838,7 +844,7 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   test("identity columns shouldn't cause schema mismatches") {
     withTable("source") {
-      sql(
+      executeDml(
         s"""
           |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
           |USING DELTA
@@ -2292,11 +2298,11 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
             .toDF("id").withColumn("age", lit("string"))
             .createOrReplaceTempView("data")
 
-          spark.sql(s"CREATE TABLE merge_source USING delta AS SELECT * FROM data")
+          executeDml(s"CREATE TABLE merge_source USING delta AS SELECT * FROM data")
 
           // Use merge to trigger schema evolution as well (add column age)
           withSQLConf(DeltaSQLConf.DELTA_SCHEMA_AUTO_MIGRATE.key -> "true") {
-            spark.sql(
+            executeDml(
               s"""
                  |MERGE INTO delta.`${log.dataPath}` t
                  |USING merge_source s
@@ -2351,7 +2357,7 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
   testSchemaEvolution(
     "protocol and configuration evolution", columnMapping = false) { implicit log =>
     // Updates table properties / protocol
-    spark.sql(
+    executeDml(
       s"""
          |ALTER TABLE delta.`${log.dataPath}`
          |SET TBLPROPERTIES (
@@ -2363,7 +2369,7 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
 
     addData(5 until 10)
     // Update just delta table property
-    spark.sql(
+    executeDml(
       s"""
          |ALTER TABLE delta.`${log.dataPath}`
          |SET TBLPROPERTIES (
@@ -2375,7 +2381,7 @@ trait CDCStreamingSchemaEvolutionSuiteBase extends StreamingSchemaEvolutionSuite
 
     addData(10 until 13)
     // Update non-delta property won't need stream stop
-    spark.sql(
+    executeDml(
       s"""
          |ALTER TABLE delta.`${log.dataPath}`
          |SET TBLPROPERTIES (

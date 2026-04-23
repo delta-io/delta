@@ -17,7 +17,6 @@
 package org.apache.spark.sql.delta.test.columnmapping
 
 import org.apache.spark.sql.delta.columnmapping.RemoveColumnMappingStreamingReadSuite
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.V2ForceTest
 
 /**
@@ -25,21 +24,17 @@ import org.apache.spark.sql.delta.test.V2ForceTest
  * (V2_ENABLE_MODE=STRICT).
  *
  * SparkTable (V2) is read-only and does not support DDL, so DDL/DML operations are routed
- * through the V1 connector via `executeSql`. Only streaming reads use the V2 connector.
+ * through the V1 connector via `executeDml`. Only streaming reads use the V2 connector.
  */
 class RemoveColumnMappingStreamingReadV2Suite
   extends RemoveColumnMappingStreamingReadSuite
     with V2ForceTest {
 
-  override protected def executeSql(sqlText: String): Unit = {
-    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-      sql(sqlText)
-    }
-  }
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
 
   // Tests that run without schema tracking. These exercise non-additive column-mapping schema
   // change detection, which is supported on the V2 connector.
-  protected def shouldPassTests: Set[String] = Set(
+  override protected def shouldPassTests: Set[String] = Set(
     "Upgrade, StartStreamRead, Downgrade, FailNonAdditiveChange",
     "Upgrade, Downgrade, StartStreamRead, Success",
     "StartStreamRead, Upgrade, Rename, Downgrade, FailNonAdditiveChange",
@@ -60,7 +55,7 @@ class RemoveColumnMappingStreamingReadV2Suite
 
   // Tests that run with schema tracking enabled. The schema tracking log is not yet supported
   // on the V2 connector.
-  protected def shouldFailTests: Set[String] = Set(
+  override protected def shouldFailTests: Set[String] = Set(
     // TODO(#5319): the three tests are not supported in v2 yet due to the gap of columnMapping
     //  check util.
     "StartStreamRead, Upgrade, Downgrade, SuccessAndFailSchemaTracking",
@@ -95,16 +90,4 @@ class RemoveColumnMappingStreamingReadV2Suite
     "Upgrade, Drop, Downgrade, StartStreamRead, Upgrade, SuccessAndFailSchemaTracking" +
       " with schema tracking"
   )
-
-  override protected def shouldFail(testName: String): Boolean = {
-    val inPassList = shouldPassTests.contains(testName)
-    val inFailList = shouldFailTests.contains(testName)
-
-    assert(inPassList || inFailList,
-      s"Test '$testName' not in shouldPassTests or shouldFailTests")
-    assert(!(inPassList && inFailList),
-      s"Test '$testName' in both shouldPassTests and shouldFailTests")
-
-    inFailList
-  }
 }

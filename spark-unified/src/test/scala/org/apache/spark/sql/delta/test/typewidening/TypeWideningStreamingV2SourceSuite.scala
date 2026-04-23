@@ -16,7 +16,6 @@
 
 package org.apache.spark.sql.delta.test.typewidening
 
-import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.V2ForceTest
 import org.apache.spark.sql.delta.typewidening.{
   TypeWideningStreamingSourceSchemaTrackingSuite,
@@ -33,23 +32,14 @@ trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
 
   override protected def useDsv2: Boolean = true
 
-  /**
-   * Override executeSql to temporarily use V1 connector for DDL operations.
-   * SparkTable (V2) is read-only and does not support DDL, so DDL must
-   * go through the V1 path. Only streaming reads use the V2 connector.
-   */
-  override protected def executeSql(sqlText: String): Unit = {
-    withSQLConf(DeltaSQLConf.V2_ENABLE_MODE.key -> "NONE") {
-      sql(sqlText)
-    }
-  }
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
 
   // TODO(#5319): Move tests to shouldPassTests as V2 schema tracking log support is implemented.
-  protected def shouldPassTests: Set[String] = Set.empty[String]
+  override protected def shouldPassTests: Set[String] = Set.empty[String]
 
   // Tests from TypeWideningStreamingSourceTests, shared by both suites.
   // Override in subclasses to add suite-specific tests.
-  protected def shouldFailTests: Set[String] = Set(
+  override protected def shouldFailTests: Set[String] = Set(
     "type change - filter",
     "type change - projection",
     "type change - projection partition column",
@@ -69,18 +59,6 @@ trait TypeWideningStreamingV2SourceSuiteBase extends V2ForceTest {
     "arbitrary type changes are not supported",
     "type change in delta source writing to a delta sink"
   )
-
-  override protected def shouldFail(testName: String): Boolean = {
-    val inPassList = shouldPassTests.contains(testName)
-    val inFailList = shouldFailTests.contains(testName)
-
-    assert(inPassList || inFailList,
-      s"Test '$testName' not in shouldPassTests or shouldFailTests")
-    assert(!(inPassList && inFailList),
-      s"Test '$testName' in both shouldPassTests and shouldFailTests")
-
-    inFailList
-  }
 }
 
 class TypeWideningStreamingV2SourceSuite

@@ -39,6 +39,8 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
 
   override protected def useDsv2: Boolean = true
 
+  override protected def executeDml(sqlText: String): Unit = executeInV1Mode(sqlText)
+
   // V2ForceTest handles test selection via shouldFail/shouldPass,
   // so disable DeltaColumnMappingSelectedTestMixin's runOnlyTests filter.
   override protected def runAllTests: Boolean = true
@@ -69,11 +71,11 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
   }
 
   // TODO(#5319): Move tests to shouldPassTests as V2 schema tracking log support is implemented.
-  protected def shouldPassTests: Set[String] = Set.empty[String]
+  override protected def shouldPassTests: Set[String] = Set.empty[String]
 
   // All tests from StreamingSchemaEvolutionSuiteBase.
   // Override in CDC suites to add CDC-specific tests.
-  protected def shouldFailTests: Set[String] = Set(
+  override protected def shouldFailTests: Set[String] = Set(
     // ========== Schema location validation ==========
     "schema location not under checkpoint",
     "schema location same as checkpoint",
@@ -128,18 +130,6 @@ trait DeltaV2SourceSchemaEvolutionSuiteBase extends V2ForceTest {
     "backward-compat: latest version can read back older JSON",
     "forward-compat: older version can read back newer JSON"
   )
-
-  override protected def shouldFail(testName: String): Boolean = {
-    val inPassList = shouldPassTests.contains(testName)
-    val inFailList = shouldFailTests.contains(testName)
-
-    assert(inPassList || inFailList,
-      s"Test '$testName' not in shouldPassTests or shouldFailTests")
-    assert(!(inPassList && inFailList),
-      s"Test '$testName' in both shouldPassTests and shouldFailTests")
-
-    inFailList
-  }
 }
 
 // Non-CDC suites
