@@ -32,20 +32,33 @@ import org.apache.spark.sql.test.DeltaQueryTest
  * These tests document the "OSS Delta (connect)" column from the
  * "Refreshing and pinning tables in Spark" design doc.
  */
-class DeltaTableRefreshAndPinningConnectSuite
+trait DeltaTableRefreshAndPinningConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession {
 
-  private def createSimpleTable(tableName: String): Unit = {
+  /** Override in subclasses to use a separate session for writes. */
+  protected def useExternalSession: Boolean = false
+
+  /** Returns a session for performing writes. */
+  protected def writerSession: org.apache.spark.sql.SparkSession = {
+    if (useExternalSession) spark.newSession() else spark
+  }
+
+  /** Execute SQL using the writer session. */
+  protected def writerSql(sqlText: String): Unit = {
+    writerSession.sql(sqlText)
+  }
+
+  protected def createSimpleTable(tableName: String): Unit = {
     spark.sql(s"CREATE TABLE $tableName (id INT, salary INT) USING delta")
   }
 
-  private def createColumnMappingTable(tableName: String): Unit = {
+  protected def createColumnMappingTable(tableName: String): Unit = {
     spark.sql(
       s"""CREATE TABLE $tableName (id INT, salary INT) USING delta
          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
   }
 
-  private def insertInitialData(tableName: String): Unit = {
+  protected def insertInitialData(tableName: String): Unit = {
     spark.sql(s"INSERT INTO $tableName VALUES (1, 100)")
   }
 
@@ -63,7 +76,7 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       checkAnswer(
         spark.sql("SELECT * FROM v ORDER BY id"),
@@ -79,8 +92,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
-      spark.sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       // Same as classic: temp view preserves original schema (id, salary) but picks up new data
       checkAnswer(
@@ -98,7 +111,7 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
 
       // Same as classic: column mapping schema change throws
       val e = intercept[Exception] {
@@ -122,7 +135,7 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
+      writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
 
       // Same as classic: type change is detected as incompatible schema change.
       // In Connect, Delta errors are wrapped in SparkException via gRPC.
@@ -147,8 +160,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       // Same as classic without column mapping: resolves to new empty table
       checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
@@ -164,8 +177,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
-      spark.sql("ALTER TABLE t ADD COLUMN salary INT")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       // Same as classic: column mapping schema change (column IDs changed) throws
       val e = intercept[Exception] {
@@ -185,8 +198,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       spark.table("t").filter("id < 999").createOrReplaceTempView("v")
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
-      spark.sql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       // Same as classic: column mapping schema change throws
       val e = intercept[Exception] {
@@ -208,7 +221,7 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
@@ -223,8 +236,8 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
-      spark.sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
@@ -239,8 +252,8 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
     }
@@ -258,7 +271,7 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df1 = spark.table("t")
 
-      spark.sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       val df2 = spark.table("t")
 
@@ -281,8 +294,8 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df1 = spark.table("t")
 
-      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
-      spark.sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       val df2 = spark.table("t")
 
@@ -299,7 +312,7 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df1 = spark.table("t")
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
 
       val df2 = spark.table("t")
 
@@ -318,8 +331,10 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df1 = spark.table("t")
 
-      spark.sql("DROP TABLE t")
-      createColumnMappingTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
 
       val df2 = spark.table("t")
 
@@ -337,8 +352,8 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df1 = spark.table("t")
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
-      spark.sql("ALTER TABLE t ADD COLUMN salary INT")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       val df2 = spark.table("t")
 
@@ -356,8 +371,8 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df1 = spark.table("t")
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
-      spark.sql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       val df2 = spark.table("t")
 
@@ -381,7 +396,7 @@ class DeltaTableRefreshAndPinningConnectSuite
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      spark.sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       // In Connect, the df is re-analyzed on each execution
       checkAnswer(
@@ -398,8 +413,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
-      spark.sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       // In Connect, df is re-analyzed and picks up the new schema
       checkAnswer(
@@ -416,7 +431,7 @@ class DeltaTableRefreshAndPinningConnectSuite
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
 
       // In Connect, df is re-analyzed with the new schema
       checkAnswer(df, Row(1))
@@ -431,8 +446,10 @@ class DeltaTableRefreshAndPinningConnectSuite
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      spark.sql("DROP TABLE t")
-      createColumnMappingTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql(
+        """CREATE TABLE t (id INT, salary INT) USING delta
+          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
 
       // In Connect, df re-analyzes to the new empty table
       checkAnswer(df, Seq.empty)
@@ -448,8 +465,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
-      spark.sql("ALTER TABLE t ADD COLUMN salary INT")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       // In Connect, df re-analyzes. The old salary data is gone.
       checkAnswer(df, Row(1, null))
@@ -465,8 +482,8 @@ class DeltaTableRefreshAndPinningConnectSuite
       val df = spark.sql("SELECT * FROM t")
       checkAnswer(df, Row(1, 100))
 
-      spark.sql("ALTER TABLE t DROP COLUMN salary")
-      spark.sql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       // In Connect, df re-analyzes with new schema (salary is now STRING)
       checkAnswer(df, Row(1, null))
@@ -485,7 +502,7 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       // In Connect, cache behavior follows the same pattern as classic.
       // Delta aggressively refreshes, so writes are visible.
@@ -505,7 +522,7 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("INSERT INTO t VALUES (2, 200)")
+      writerSql("INSERT INTO t VALUES (2, 200)")
 
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
@@ -523,8 +540,8 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
-      spark.sql("INSERT INTO t VALUES (2, 200, -1)")
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
@@ -542,12 +559,22 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      spark.sql("DROP TABLE t")
-      createSimpleTable("t")
+      writerSql("DROP TABLE t")
+      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
 
       spark.sql("UNCACHE TABLE IF EXISTS t")
     }
   }
+}
+
+/** Same-session writes (default). */
+class DeltaTableRefreshAndPinningConnectSuite
+  extends DeltaTableRefreshAndPinningConnectSuiteBase
+
+/** External session writes via spark.newSession(). */
+class DeltaTableRefreshAndPinningConnectExternalSessionSuite
+  extends DeltaTableRefreshAndPinningConnectSuiteBase {
+  override protected def useExternalSession: Boolean = true
 }
