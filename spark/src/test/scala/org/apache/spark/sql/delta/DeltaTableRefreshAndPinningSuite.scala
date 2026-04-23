@@ -16,7 +16,7 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.sql.delta.actions.AddFile
+import org.apache.spark.sql.delta.actions.{AddFile, Metadata => DeltaMetadata}
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
 import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
@@ -131,6 +131,65 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
   protected def getTablePath(tableName: String): String = {
     DeltaLog.forTable(spark, TableIdentifier(tableName)).dataPath.toString
+  }
+
+  /**
+   * Simulates an external write to a named table by writing commit files
+   * directly via LogStore, bypassing the DeltaLog commit path entirely.
+   *
+   * This is the Delta equivalent of Spark's
+   * catalog("testcat").loadTable(ident).truncateTable() pattern
+   * from DataSourceV2DataFrameSuite (SPARK-54022). It modifies the table
+   * at the storage layer without notifying the CacheManager.
+   *
+   * The session catalog's DeltaTableV2 and its lazy val snapshot are NOT
+   * updated. The DeltaLog.currentSnapshot is NOT updated (the commit
+   * bypasses DeltaLog.commit()). This means:
+   * - CacheManager plan matching still uses the old snapshot → cache hit
+   * - deltaLog.update(stalenessAcceptable=true) respects stalenessLimit
+   */
+  protected def writeExternalCommit(
+      tableName: String,
+      data: DataFrame,
+      newMetadata: Option[DeltaMetadata] = None): Unit = {
+    val deltaLog = DeltaLog.forTable(spark, TableIdentifier(tableName))
+    val currentVersion = deltaLog.snapshot.version
+    val tablePath = deltaLog.dataPath
+
+    val tempDir = Utils.createTempDir()
+    try {
+      data.coalesce(1).write.parquet(s"${tempDir.getAbsolutePath}/out")
+      val parquetFile = new java.io.File(tempDir, "out").listFiles()
+        .filter(_.getName.endsWith(".parquet")).head
+      val targetName = s"ext-commit-v${currentVersion + 1}.snappy.parquet"
+      java.nio.file.Files.copy(
+        parquetFile.toPath,
+        java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
+
+      val addFile = AddFile(
+        path = targetName,
+        partitionValues = Map.empty,
+        size = parquetFile.length(),
+        modificationTime = System.currentTimeMillis(),
+        dataChange = true)
+
+      // Build actions: optional metadata change + data file
+      val actions = newMetadata.map(m => Iterator(
+        JsonUtils.toJson(m.wrap),
+        JsonUtils.toJson(addFile.wrap)
+      )).getOrElse(Iterator(
+        JsonUtils.toJson(addFile.wrap)
+      ))
+
+      // Write commit file directly via LogStore, bypassing DeltaLog.commit()
+      deltaLog.store.write(
+        FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
+        actions,
+        overwrite = false,
+        deltaLog.newDeltaHadoopConf())
+    } finally {
+      Utils.deleteRecursively(tempDir)
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -847,181 +906,78 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
-  test("[5] scenario 6b: named table + direct filesystem commit + SQL query") {
-    // Tests the doc's exact scenario: CACHE TABLE on a named managed table,
-    // then external write via direct filesystem commit, then SQL query.
-    // The hypothesis: the session catalog caches the DeltaTableV2 instance
-    // whose lazy val snapshot pins the version. If the catalog reuses it,
-    // the analyzed plan matches the cached plan → cache hit → stale data.
+  test("[5] scenario 6b: CACHE TABLE pins data against external writes") {
+    // Doc scenario 1 with true external write simulation.
+    // Uses writeExternalCommit (Delta equivalent of SPARK-54022's
+    // catalog.loadTable().truncateTable() pattern).
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
       sql("CACHE TABLE t")
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      // Direct filesystem write bypassing DeltaLog
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
-      val currentVersion = deltaLog.snapshot.version
-      val tablePath = deltaLog.dataPath
+      // External write bypassing the session catalog
+      writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      val tempParquetDir = Utils.createTempDir()
-      try {
-        Seq((2, 200)).toDF("id", "salary").coalesce(1)
-          .write.parquet(s"${tempParquetDir.getAbsolutePath}/out")
-        val parquetFile = new java.io.File(tempParquetDir, "out").listFiles()
-          .filter(_.getName.endsWith(".parquet")).head
-        val targetName = s"direct-write-v${currentVersion + 1}.snappy.parquet"
-        java.nio.file.Files.copy(
-          parquetFile.toPath,
-          java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
-
-        val addFile = AddFile(
-          path = targetName,
-          partitionValues = Map.empty,
-          size = parquetFile.length(),
-          modificationTime = System.currentTimeMillis(),
-          dataChange = true)
-        deltaLog.store.write(
-          FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
-          Iterator(JsonUtils.toJson(addFile.wrap)),
-          overwrite = false,
-          deltaLog.newDeltaHadoopConf())
-      } finally {
-        Utils.deleteRecursively(tempParquetDir)
-      }
-
-      // Query via SQL on the named table. This goes through the session catalog.
-      // If the catalog returns the same DeltaTableV2 instance with its pinned
-      // lazy val snapshot, the analyzed plan matches the cached plan → cache hit.
-      val result = sql("SELECT * FROM t ORDER BY id").collect()
-
-      // The doc says OSS Delta (classic) returns (1,100) only (cache pins data).
-      // This test verifies the actual behavior with a named managed table
-      // and direct filesystem commit (true external write simulation).
+      // Doc says: (1,100) only — cache pins data against external writes
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
       sql("UNCACHE TABLE IF EXISTS t")
-      DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(tablePath.toString))
     }
   }
 
   test("[5] scenario 6c: session write invalidates cache, external write not visible") {
-    // Doc scenario 2: session write (2,200), then external write (3,300).
-    // Session write invalidates the cache. After invalidation, the next query
-    // re-analyzes and picks up the session write but NOT the external write
-    // (because the catalog's DeltaTableV2 was refreshed by the session write
-    // to include version with (2,200), but the direct filesystem commit for
-    // (3,300) bypasses the DeltaLog entirely).
+    // Doc scenario 2: session INSERT invalidates cache, then external write.
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
       sql("CACHE TABLE t")
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      // Session write invalidates the cache
+      // Session write invalidates the cache (via SPARK-55631 refreshCache)
       sql("INSERT INTO t VALUES (2, 200)")
 
-      // External write via direct filesystem commit
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
-      val currentVersion = deltaLog.snapshot.version
-      val tablePath = deltaLog.dataPath
-      val tempParquetDir = Utils.createTempDir()
-      try {
-        Seq((3, 300)).toDF("id", "salary").coalesce(1)
-          .write.parquet(s"${tempParquetDir.getAbsolutePath}/out")
-        val parquetFile = new java.io.File(tempParquetDir, "out").listFiles()
-          .filter(_.getName.endsWith(".parquet")).head
-        val targetName = s"direct-write-v${currentVersion + 1}.snappy.parquet"
-        java.nio.file.Files.copy(
-          parquetFile.toPath,
-          java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
-        val addFile = AddFile(
-          path = targetName,
-          partitionValues = Map.empty,
-          size = parquetFile.length(),
-          modificationTime = System.currentTimeMillis(),
-          dataChange = true)
-        deltaLog.store.write(
-          FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
-          Iterator(JsonUtils.toJson(addFile.wrap)),
-          overwrite = false,
-          deltaLog.newDeltaHadoopConf())
-      } finally {
-        Utils.deleteRecursively(tempParquetDir)
-      }
+      // External write bypassing the session catalog
+      writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
-      // Doc says: (1,100),(2,200) — session write visible, external not.
+      // Doc says: (1,100),(2,200) — session write visible, external not
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
 
       sql("UNCACHE TABLE IF EXISTS t")
-      DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(tablePath.toString))
     }
   }
 
-  test("[5] scenario 6d: external schema change not visible with CACHE") {
-    // Doc scenario 3: external writer adds a column and inserts data.
-    // With named table + direct filesystem commit including a Metadata action
-    // (schema change), the cache should still pin because the catalog's
-    // DeltaTableV2 is never refreshed (no AlterTableExec.refreshCache triggered).
+  test("[5] scenario 6d: external schema change with CACHE") {
+    // Doc scenario 3: external writer adds a column and data.
+    // Writes both a Metadata action (schema change) and AddFile via
+    // writeExternalCommit, bypassing AlterTableExec.refreshCache (SPARK-55631).
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
       sql("CACHE TABLE t")
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
+      // Build new schema with added column
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
-      val currentVersion = deltaLog.snapshot.version
-      val tablePath = deltaLog.dataPath
       val currentMetadata = deltaLog.snapshot.metadata
-
-      // Build a new schema with the added column
       val newSchema = currentMetadata.schema
         .add("new_column", org.apache.spark.sql.types.IntegerType, nullable = true)
       val newMetadata = currentMetadata.copy(schemaString = newSchema.json)
 
-      // Write a parquet file with the new schema
-      val tempParquetDir = Utils.createTempDir()
-      try {
-        Seq((2, 200, -1)).toDF("id", "salary", "new_column").coalesce(1)
-          .write.parquet(s"${tempParquetDir.getAbsolutePath}/out")
-        val parquetFile = new java.io.File(tempParquetDir, "out").listFiles()
-          .filter(_.getName.endsWith(".parquet")).head
-        val targetName = s"direct-write-v${currentVersion + 1}.snappy.parquet"
-        java.nio.file.Files.copy(
-          parquetFile.toPath,
-          java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
+      // External schema change + data write
+      writeExternalCommit(
+        "t",
+        Seq((2, 200, -1)).toDF("id", "salary", "new_column"),
+        newMetadata = Some(newMetadata))
 
-        val addFile = AddFile(
-          path = targetName,
-          partitionValues = Map.empty,
-          size = parquetFile.length(),
-          modificationTime = System.currentTimeMillis(),
-          dataChange = true)
-
-        // Write commit with BOTH Metadata (schema change) and AddFile
-        deltaLog.store.write(
-          FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
-          Iterator(
-            JsonUtils.toJson(newMetadata.wrap),
-            JsonUtils.toJson(addFile.wrap)),
-          overwrite = false,
-          deltaLog.newDeltaHadoopConf())
-      } finally {
-        Utils.deleteRecursively(tempParquetDir)
-      }
-
-      // With stalenessLimit=0: deltaLog.update() does a listing, discovers the
-      //   schema change commit. The DeltaTableV2.snapshot lazy val is bypassed
-      //   because the DeltaLog's currentSnapshot is updated by the listing.
-      //   The new schema in the analyzed plan doesn't match the cached plan
-      //   → cache miss → fresh data with new schema visible.
-      //   This matches the doc's existing behavior: schema changes break cache.
+      // With stalenessLimit=0: deltaLog.update() lists filesystem, discovers
+      //   the schema change. New schema in analyzed plan doesn't match cached
+      //   plan → cache miss → fresh data visible.
+      //   Matches doc: schema changes break table state pinning.
       //
-      // With stalenessLimit>0: deltaLog.update() returns the stale snapshot.
-      //   The catalog's DeltaTableV2 still uses the old snapshot.
-      //   CacheManager matches → returns cached data. External changes invisible.
+      // With stalenessLimit>0: stale snapshot returned, cache holds.
       if (stalenessLimitMs == 0L) {
         checkAnswer(
           sql("SELECT * FROM t ORDER BY id"),
@@ -1031,60 +987,29 @@ trait DeltaTableRefreshAndPinningSuiteBase
       }
 
       sql("UNCACHE TABLE IF EXISTS t")
-      DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(tablePath.toString))
     }
   }
 
-  test("[5] scenario 6e: session schema change invalidates cache") {
-    // Doc scenario 4: session schema change + external data write.
-    // Session ALTER TABLE invalidates the cache. After invalidation, the
-    // session's schema change is visible but external write is not.
+  test("[5] scenario 6e: session schema change then external write") {
+    // Doc scenario 4: session ALTER TABLE invalidates cache (SPARK-55631),
+    // then external data write.
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
       sql("CACHE TABLE t")
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
-      // Session schema change (invalidates cache)
+      // Session schema change invalidates cache via AlterTableExec.refreshCache
       sql("ALTER TABLE t ADD COLUMN new_column INT")
 
-      // External data write via direct filesystem commit
-      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
-      val currentVersion = deltaLog.snapshot.version
-      val tablePath = deltaLog.dataPath
-      val tempParquetDir = Utils.createTempDir()
-      try {
-        Seq((2, 200, -1)).toDF("id", "salary", "new_column").coalesce(1)
-          .write.parquet(s"${tempParquetDir.getAbsolutePath}/out")
-        val parquetFile = new java.io.File(tempParquetDir, "out").listFiles()
-          .filter(_.getName.endsWith(".parquet")).head
-        val targetName = s"direct-write-v${currentVersion + 1}.snappy.parquet"
-        java.nio.file.Files.copy(
-          parquetFile.toPath,
-          java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
-        val addFile = AddFile(
-          path = targetName,
-          partitionValues = Map.empty,
-          size = parquetFile.length(),
-          modificationTime = System.currentTimeMillis(),
-          dataChange = true)
-        deltaLog.store.write(
-          FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
-          Iterator(JsonUtils.toJson(addFile.wrap)),
-          overwrite = false,
-          deltaLog.newDeltaHadoopConf())
-      } finally {
-        Utils.deleteRecursively(tempParquetDir)
-      }
+      // External data write
+      writeExternalCommit("t", Seq((2, 200, -1)).toDF("id", "salary", "new_column"))
 
-      // Session schema change breaks the cache. The next query re-analyzes.
-      // With stalenessLimit=0: listing discovers the external write too.
-      // With stalenessLimit>0: the session's ALTER TABLE updated the DeltaLog,
-      //   but the external commit may or may not be discovered depending on timing.
-      //   The DeltaLog was updated by ALTER TABLE (session write), setting
-      //   updateTimestamp to now. The external commit happened after that.
-      //   Since updateTimestamp is fresh, stalenessAcceptable returns the cached
-      //   snapshot which includes the ALTER TABLE but not the external data.
+      // Session schema change breaks cache. Next query re-analyzes.
+      // With stalenessLimit=0: listing discovers external write too.
+      //   Matches doc: (1,100,null),(2,200,-1)
+      // With stalenessLimit>0: external write not discovered.
+      //   Session change visible: (1,100,null) only.
       if (stalenessLimitMs == 0L) {
         checkAnswer(
           sql("SELECT * FROM t ORDER BY id"),
@@ -1096,7 +1021,6 @@ trait DeltaTableRefreshAndPinningSuiteBase
       }
 
       sql("UNCACHE TABLE IF EXISTS t")
-      DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(tablePath.toString))
     }
   }
 
