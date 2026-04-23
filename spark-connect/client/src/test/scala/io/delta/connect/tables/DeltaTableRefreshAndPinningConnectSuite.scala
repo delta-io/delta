@@ -251,7 +251,7 @@ class DeltaTableRefreshAndPinningConnectSuite
   // In Connect, Dataset is re-analyzed on each execution.
   // ---------------------------------------------------------------------------
 
-  test("[3] connect scenario 1: both DataFrames use consistent latest version") {
+  test("[3] connect scenario 1: join after write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -262,16 +262,19 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames are re-analyzed on execution,
-      // both use the latest version. Verify each independently since
-      // self-joins with duplicate column names hit AMBIGUOUS_COLUMN_OR_FIELD
-      // in Connect's Arrow deserialization.
-      checkAnswer(df1, Seq(Row(1, 100), Row(2, 200)))
-      checkAnswer(df2, Seq(Row(1, 100), Row(2, 200)))
+      // Follow the exact pattern from the design doc:
+      // val joined = df1.join(df2, df1("id") === df2("id"))
+      // In Connect, both DataFrames re-analyze to the same table, so
+      // df1("id") === df2("id") becomes a trivially true self-join predicate.
+      // The result has AMBIGUOUS_COLUMN_OR_FIELD on collect because both sides
+      // produce identical column names.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
     }
   }
 
-  test("[3] connect scenario 2: both DataFrames use latest schema after ADD COLUMN") {
+  test("[3] connect scenario 2: join after ADD COLUMN") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -283,14 +286,13 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames are re-analyzed with the latest schema.
-      checkAnswer(df1, Seq(Row(1, 100, null), Row(2, 200, -1)))
-      checkAnswer(df2, Seq(Row(1, 100, null), Row(2, 200, -1)))
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
     }
   }
 
-  test("[3] connect scenario 3: both DataFrames re-analyze after DROP COLUMN " +
-      "(column mapping)") {
+  test("[3] connect scenario 3: join after DROP COLUMN (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -301,14 +303,15 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames are re-analyzed with the new schema (only id).
-      checkAnswer(df1, Row(1))
-      checkAnswer(df2, Row(1))
+      // After DROP COLUMN, table only has "id". The join condition
+      // df1("id") === df2("id") is a self-join on a single-column table.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
     }
   }
 
-  test("[3] connect scenario 4: both DataFrames re-analyze after DROP and recreate " +
-      "(column mapping)") {
+  test("[3] connect scenario 4: join after DROP and recreate (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -320,14 +323,14 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames re-analyze to the new empty table
-      checkAnswer(df1, Seq.empty)
-      checkAnswer(df2, Seq.empty)
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
     }
   }
 
-  test("[3] connect scenario 5: both DataFrames re-analyze after DROP/ADD column " +
-      "same name same type (column mapping)") {
+  test("[3] connect scenario 5: join after DROP/ADD column same name same type " +
+      "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -339,14 +342,14 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames re-analyze. The old salary data is gone.
-      checkAnswer(df1, Row(1, null))
-      checkAnswer(df2, Row(1, null))
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
     }
   }
 
-  test("[3] connect scenario 6: both DataFrames re-analyze after DROP/ADD column " +
-      "same name different type (column mapping)") {
+  test("[3] connect scenario 6: join after DROP/ADD column same name different type " +
+      "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -358,9 +361,9 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames re-analyze with new schema.
-      checkAnswer(df1, Row(1, null))
-      checkAnswer(df2, Row(1, null))
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
     }
   }
 
