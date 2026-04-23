@@ -17,6 +17,9 @@
 package io.sparkuctest;
 
 import java.util.List;
+import java.util.stream.Stream;
+import org.junit.jupiter.api.DynamicContainer;
+import org.junit.jupiter.api.TestFactory;
 
 /**
  * DML test suite for Delta Table operations through Unity Catalog.
@@ -26,6 +29,13 @@ import java.util.List;
  * not support MANAGED catalog-owned tables).
  */
 public class UCDeltaTableDMLTest extends UCDeltaTableIntegrationBaseTest {
+
+  @Override
+  @TestFactory
+  Stream<DynamicContainer> allTableTypesTestsFactory() {
+    assumeUcSparkMasterCompatible("Unity Catalog DML tests");
+    return super.allTableTypesTestsFactory();
+  }
 
   @TestAllTableTypes
   public void testBasicInsertOperations(TableType tableType) throws Exception {

@@ -189,6 +189,7 @@ public class UCDeltaStreamingTableVariantTest extends UCDeltaTableIntegrationBas
 
   @TestFactory
   Stream<DynamicContainer> streamingTableVariants() {
+    assumeUcSparkMasterCompatible("Unity Catalog streaming variant tests");
     return TABLE_VARIANTS.stream()
         .map(
             variant -> {
