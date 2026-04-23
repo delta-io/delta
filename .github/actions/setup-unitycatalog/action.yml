@@ -2,13 +2,7 @@ name: "Set up pinned Unity Catalog build"
 description: >-
   Publishes Unity Catalog jars from the commit pinned in project/scripts/setup_unitycatalog_main.sh
   (the UC_PIN_SHA= line) to the runner's local Ivy / Maven caches, using GitHub Actions cache so the
-  slow UC build only runs the first time a pin is seen. Produces the UC version as an output for
-  callers that want to pass -DunityCatalogVersion.
-
-outputs:
-  uc_version:
-    description: "The Unity Catalog version that was published (e.g. 0.5.0-SNAPSHOT-<sha>)."
-    value: ${{ steps.resolve.outputs.uc_version }}
+  slow UC build only runs the first time a pin is seen.
 
 runs:
   using: "composite"
@@ -40,10 +34,3 @@ runs:
           ~/.ivy2/local
           ~/.m2/repository/io/unitycatalog
         key: uc-jars-${{ runner.os }}-${{ hashFiles('project/scripts/setup_unitycatalog_main.sh') }}
-    - name: Resolve UC version
-      id: resolve
-      shell: bash
-      run: |
-        UC_VERSION=$(bash project/scripts/setup_unitycatalog_main.sh --print-version)
-        echo "uc_version=$UC_VERSION" >> "$GITHUB_OUTPUT"
-        echo "UC version: $UC_VERSION"
