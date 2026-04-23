@@ -106,11 +106,17 @@ These settings accept the following options:
 
 <Aside type="note">
   This feature is available in Delta Lake 1.2.0 and above.
+  Support for the table property `delta.dataSkippingStatsColumns` is available in Delta Lake 3.0.0 and above.
 </Aside>
 
 Data skipping information is collected automatically when you write data into a Delta Lake table. Delta Lake takes advantage of this information (minimum and maximum values for each column) at query time to provide faster queries. You do not need to configure data skipping; the feature is activated whenever applicable. However, its effectiveness depends on the layout of your data. For best results, apply [Z-Ordering](#z-ordering-multi-dimensional-clustering).
 
-Collecting statistics on a column containing long values such as `string` or `binary` is an expensive operation. To avoid collecting statistics on such columns you can configure the [table property](/delta-batch/#table-properties) `delta.dataSkippingNumIndexedCols`. This property indicates the position index of a column in the table's schema. All columns with a position index less than the `delta.dataSkippingNumIndexedCols` property will have statistics collected. For the purposes of collecting statistics, each field within a nested column is considered as an individual column. To avoid collecting statistics on columns containing long values, either set the `delta.dataSkippingNumIndexedCols` property so that the long value columns are after this index in the table's schema, or move columns containing long strings to an index position greater than the `delta.dataSkippingNumIndexedCols` property by using [ALTER TABLE ALTER COLUMN](https://spark.apache.org/docs/latest/sql-ref-syntax-ddl-alter-table.html#alter-or-change-column).
+
+Collecting statistics on a column containing long values such as `string` or `binary` is an expensive operation. To avoid collecting statistics on such columns you can configure table properties that control which columns have statistics collected.
+
+- The position-based property `delta.dataSkippingNumIndexedCols` indicates the position index in the table schema: all columns with a position index less than `delta.dataSkippingNumIndexedCols` will have statistics collected. For the purposes of collecting statistics, each field within a nested column is considered an individual column. To avoid collecting statistics on long-value columns, either set `delta.dataSkippingNumIndexedCols` so that those columns appear after the index in the table schema, or move long-value columns to a later index using [ALTER TABLE ALTER COLUMN](https://spark.apache.org/docs/latest/sql-ref-syntax-ddl-alter-table.html#alter-or-change-column).
+
+- Alternatively, use the `delta.dataSkippingStatsColumns` table property to explicitly specify which columns should have statistics collected. This property accepts a comma-separated list of column names and provides finer-grained control compared with the position-based setting. Use `delta.dataSkippingStatsColumns` when you want to pick specific columns by name rather than by schema position.
 
 ## Z-Ordering (multi-dimensional clustering)
 
