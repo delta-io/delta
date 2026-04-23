@@ -847,6 +847,64 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
+  test("[5] scenario 6b: named table + direct filesystem commit + SQL query") {
+    // Tests the doc's exact scenario: CACHE TABLE on a named managed table,
+    // then external write via direct filesystem commit, then SQL query.
+    // The hypothesis: the session catalog caches the DeltaTableV2 instance
+    // whose lazy val snapshot pins the version. If the catalog reuses it,
+    // the analyzed plan matches the cached plan → cache hit → stale data.
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+      sql("CACHE TABLE t")
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+
+      // Direct filesystem write bypassing DeltaLog
+      val deltaLog = DeltaLog.forTable(spark, TableIdentifier("t"))
+      val currentVersion = deltaLog.snapshot.version
+      val tablePath = deltaLog.dataPath
+
+      val tempParquetDir = Utils.createTempDir()
+      try {
+        Seq((2, 200)).toDF("id", "salary").coalesce(1)
+          .write.parquet(s"${tempParquetDir.getAbsolutePath}/out")
+        val parquetFile = new java.io.File(tempParquetDir, "out").listFiles()
+          .filter(_.getName.endsWith(".parquet")).head
+        val targetName = s"direct-write-v${currentVersion + 1}.snappy.parquet"
+        java.nio.file.Files.copy(
+          parquetFile.toPath,
+          java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
+
+        val addFile = AddFile(
+          path = targetName,
+          partitionValues = Map.empty,
+          size = parquetFile.length(),
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true)
+        deltaLog.store.write(
+          FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
+          Iterator(JsonUtils.toJson(addFile.wrap)),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
+      } finally {
+        Utils.deleteRecursively(tempParquetDir)
+      }
+
+      // Query via SQL on the named table. This goes through the session catalog.
+      // If the catalog returns the same DeltaTableV2 instance with its pinned
+      // lazy val snapshot, the analyzed plan matches the cached plan → cache hit.
+      val result = sql("SELECT * FROM t ORDER BY id").collect()
+
+      // The doc says OSS Delta (classic) returns (1,100) only (cache pins data).
+      // This test verifies the actual behavior with a named managed table
+      // and direct filesystem commit (true external write simulation).
+      checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+
+      sql("UNCACHE TABLE IF EXISTS t")
+      DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(tablePath.toString))
+    }
+  }
+
   test("[5] scenario 7: staleLog pattern verifies staleness at DeltaLog API level") {
     // Uses the staleLog + clearCache pattern from SnapshotManagementSuite (lines 216-260)
     // to simulate an external write at the DeltaLog level.
