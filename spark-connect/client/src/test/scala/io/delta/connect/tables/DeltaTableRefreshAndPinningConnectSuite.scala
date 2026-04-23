@@ -35,7 +35,14 @@ import org.apache.spark.sql.test.DeltaQueryTest
 trait DeltaTableRefreshAndPinningConnectSuiteBase
   extends DeltaQueryTest with RemoteSparkSession {
 
-  /** Override in subclasses to use a separate session for writes. */
+  /**
+   * Override in subclasses to use spark.newSession() for writes. In Connect, newSession()
+   * creates a new client session that connects to the same server. The server-side DeltaLog
+   * is shared (singleton cache per JVM), so writes from either session update the same
+   * DeltaLog.currentSnapshot. This means newSession() is NOT a true external writer.
+   * We parameterize with it to verify behavior is identical, documenting that the refresh
+   * mechanism is driven by the shared DeltaLog, not by session-level state.
+   */
   protected def useExternalSession: Boolean = false
 
   /** Returns a session for performing writes. */
@@ -573,7 +580,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 class DeltaTableRefreshAndPinningConnectSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase
 
-/** External session writes via spark.newSession(). */
+/**
+ * Writes go through spark.newSession(). In Connect, this creates a new client session
+ * to the same server. The server shares a single DeltaLog instance cache, so writes
+ * from either session update the same snapshot. Verifies behavior is identical to
+ * same-session writes. See trait scaladoc for details.
+ */
 class DeltaTableRefreshAndPinningConnectExternalSessionSuite
   extends DeltaTableRefreshAndPinningConnectSuiteBase {
   override protected def useExternalSession: Boolean = true

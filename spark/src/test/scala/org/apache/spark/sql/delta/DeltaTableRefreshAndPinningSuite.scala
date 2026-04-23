@@ -40,6 +40,25 @@ import org.apache.spark.sql.test.SharedSparkSession
  *   - V2_ENABLE_MODE (NONE, AUTO) for connector mode coverage
  *   - useExternalSession: when true, writes go through spark.newSession()
  *   - stalenessLimitMs: configures the staleness time limit for async updates
+ *
+ * Important notes on parameterization:
+ *
+ * External session (spark.newSession()): In a single JVM, all SparkSessions share the same
+ * DeltaLog instance cache (a static Guava Cache on the DeltaLog companion object). When any
+ * session commits a write, the DeltaLog.currentSnapshot is updated in place and all other
+ * sessions immediately see the new version. This means spark.newSession() is NOT equivalent
+ * to a true external writer (separate JVM/cluster). We parameterize with it anyway to verify
+ * that the behavior is indeed identical, which documents that Delta's refresh mechanism is
+ * driven by the shared DeltaLog, not by Spark's session-level catalog state.
+ *
+ * Staleness limit (stalenessLimitMs): The delta.stalenessLimit config controls whether
+ * deltaLog.update() returns a cached snapshot without doing a filesystem listing. However,
+ * since all writes in the same JVM go through the shared DeltaLog and update currentSnapshot
+ * as a side effect of committing, the staleness limit has no observable effect in single-JVM
+ * tests. The snapshot is always already fresh by the time the reader queries it. To truly
+ * observe staleness, the write must come from a separate process/cluster that commits directly
+ * to storage without the local DeltaLog knowing. We parameterize with a high staleness limit
+ * anyway to verify that the behavior is identical, documenting this JVM-level constraint.
  */
 trait DeltaTableRefreshAndPinningSuiteBase
   extends QueryTest
@@ -51,10 +70,20 @@ trait DeltaTableRefreshAndPinningSuiteBase
   /** Override in subclasses to set the V2 enable mode. */
   protected def v2EnableMode: String = "NONE"
 
-  /** Override in subclasses to use a separate session for writes. */
+  /**
+   * Override in subclasses to use spark.newSession() for writes. Note that in a single JVM,
+   * newSession() shares the same DeltaLog instance cache, so the DeltaLog.currentSnapshot
+   * is updated immediately by the writer. This does NOT simulate a true external writer
+   * (separate JVM). See class scaladoc for details.
+   */
   protected def useExternalSession: Boolean = false
 
-  /** Override in subclasses to test with a non-zero staleness limit. */
+  /**
+   * Override in subclasses to set a non-zero staleness limit. Note that in a single JVM,
+   * writes update DeltaLog.currentSnapshot in place, so the staleness limit has no observable
+   * effect: the snapshot is already fresh before the reader queries it. To observe staleness,
+   * writes must come from a separate process. See class scaladoc for details.
+   */
   protected def stalenessLimitMs: Long = 0L
 
   override protected def sparkConf: SparkConf = {
@@ -639,10 +668,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200)).toDF("id", "salary")
         .write.format("delta").mode("append").save(path)
 
-      // Delta aggressively refreshes table versions via PrepareDeltaScan,
-      // which updates the snapshot. The version change breaks the plan shape
-      // match in CacheManager, so the cache entry is effectively not reused
-      // and fresh data is returned.
+      // Delta refreshes table versions via PrepareDeltaScan regardless of
+      // stalenessLimit. The version change breaks the plan shape match in
+      // CacheManager, so the cache entry is not reused and fresh data is returned.
+      // This means CACHE TABLE does not truly pin data in Delta.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
@@ -651,7 +680,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
-  test("[5] scenario 2: session write invalidates cache") {
+  test("[5] scenario 2: session write invalidates cache then external write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -667,8 +696,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((3, 300)).toDF("id", "salary")
         .write.format("delta").mode("append").save(path)
 
-      // After a session write, the cache is invalidated so re-reading fetches fresh data.
-      // Delta with stalenessLimit=0 will pick up all data from the log.
+      // After a session write invalidates the cache, Delta picks up all data
+      // from the log regardless of stalenessLimit.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
@@ -677,7 +706,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
     }
   }
 
-  test("[5] scenario 3: external schema change breaks cache") {
+  test("[5] scenario 3: external schema change") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -692,7 +721,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
         .write.format("delta").mode("append").save(path)
 
       // Schema change breaks the plan-shape match in CacheManager,
-      // so the cache is effectively invalidated
+      // so the cache is effectively invalidated regardless of stalenessLimit.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -717,7 +746,8 @@ trait DeltaTableRefreshAndPinningSuiteBase
       Seq((2, 200, -1)).toDF("id", "salary", "new_column")
         .write.format("delta").mode("append").save(path)
 
-      // Schema change from the session invalidates the cache
+      // Schema change from the session invalidates the cache.
+      // Delta picks up all data regardless of stalenessLimit.
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100, null), Row(2, 200, -1)))
@@ -761,26 +791,46 @@ class DeltaTableRefreshAndPinningAutoModeSuite
   override protected def v2EnableMode: String = "AUTO"
 }
 
-/** V2_ENABLE_MODE = NONE, external session writes via spark.newSession(). */
+/**
+ * Writes go through spark.newSession(). Verifies that behavior is identical to
+ * same-session writes because all sessions in a single JVM share the same DeltaLog
+ * instance cache. The DeltaLog.currentSnapshot is updated in place by the writer,
+ * so the reader always sees fresh data regardless of which session performed the write.
+ */
 class DeltaTableRefreshAndPinningExternalSessionSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def useExternalSession: Boolean = true
 }
 
-/** V2_ENABLE_MODE = AUTO, external session writes via spark.newSession(). */
+/**
+ * AUTO mode with external session writes. Combines both parameterization axes to
+ * verify the v2 kernel connector also behaves identically with newSession() writes.
+ */
 class DeltaTableRefreshAndPinningAutoModeExternalSessionSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def v2EnableMode: String = "AUTO"
   override protected def useExternalSession: Boolean = true
 }
 
-/** V2_ENABLE_MODE = NONE, stalenessLimit = 1 hour. */
+/**
+ * Sets stalenessLimit to 1 hour. Verifies that behavior is identical to stalenessLimit=0
+ * because in a single JVM, writes update DeltaLog.currentSnapshot as a side effect of
+ * committing. By the time the reader calls deltaLog.update(stalenessAcceptable = true),
+ * the snapshot is already at the latest version, so the staleness check
+ * (isCurrentlyStale returns false, doAsync = true, returns cached snapshot) returns
+ * a snapshot that already includes the write. To observe different behavior, the write
+ * must come from a separate JVM that commits directly to storage.
+ */
 class DeltaTableRefreshAndPinningStaleSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def stalenessLimitMs: Long = 3600000L
 }
 
-/** V2_ENABLE_MODE = NONE, external session writes, stalenessLimit = 1 hour. */
+/**
+ * Combines external session + high staleness limit. Both parameters have no observable
+ * effect in a single JVM (see class-level scaladoc), so this suite verifies that the
+ * combination also produces identical results.
+ */
 class DeltaTableRefreshAndPinningStaleExternalSessionSuite
   extends DeltaTableRefreshAndPinningSuiteBase {
   override protected def useExternalSession: Boolean = true
