@@ -378,6 +378,26 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  test("[3] connect scenario 4: join after DROP and recreate (no column mapping)") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
+
+      val df2 = spark.table("t")
+
+      // In Connect, both DataFrames re-analyze. Without column mapping,
+      // the new empty table is resolved by both.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      val caught = try { joined.collect(); false } catch { case _: Exception => true }
+      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+    }
+  }
+
   test("[3] connect scenario 5: join after DROP/ADD column same name same type " +
       "(column mapping)") {
     withTable("t") {
@@ -612,7 +632,29 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
-  test("[5] connect scenario 4: drop and recreate table") {
+  test("[5] connect scenario 4: session schema change with external write") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+      spark.sql("CACHE TABLE t")
+
+      checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
+
+      // Session schema change
+      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
+
+      // External write
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
+
+      spark.sql("UNCACHE TABLE t")
+    }
+  }
+
+  test("[5] connect scenario 5: drop and recreate table") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
