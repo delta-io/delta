@@ -256,21 +256,18 @@ class DeltaTableRefreshAndPinningConnectSuite
       createSimpleTable("t")
       insertInitialData("t")
 
-      val df1 = spark.table("t").as("t1")
+      val df1 = spark.table("t")
 
       spark.sql("INSERT INTO t VALUES (2, 200)")
 
-      val df2 = spark.table("t").as("t2")
+      val df2 = spark.table("t")
 
       // In Connect, both DataFrames are re-analyzed on execution,
-      // both use the latest version
-      checkAnswer(
-        df1.orderBy("id"),
-        Seq(Row(1, 100), Row(2, 200)))
-
-      checkAnswer(
-        df2.orderBy("id"),
-        Seq(Row(1, 100), Row(2, 200)))
+      // both use the latest version. Verify each independently since
+      // self-joins with duplicate column names hit AMBIGUOUS_COLUMN_OR_FIELD
+      // in Connect's Arrow deserialization.
+      checkAnswer(df1, Seq(Row(1, 100), Row(2, 200)))
+      checkAnswer(df2, Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -286,14 +283,9 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       val df2 = spark.table("t")
 
-      // In Connect, Dataset is re-analyzed. Both df1 and df2 use the latest schema.
-      checkAnswer(
-        df2.orderBy("id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
-
-      checkAnswer(
-        df1.orderBy("id"),
-        Seq(Row(1, 100, null), Row(2, 200, -1)))
+      // In Connect, both DataFrames are re-analyzed with the latest schema.
+      checkAnswer(df1, Seq(Row(1, 100, null), Row(2, 200, -1)))
+      checkAnswer(df2, Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -475,6 +467,84 @@ class DeltaTableRefreshAndPinningConnectSuite
 
       // In Connect, df re-analyzes with new schema (salary is now STRING)
       checkAnswer(df, Row(1, null))
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section [5]: CACHE TABLE impact on reads (Connect)
+  // ---------------------------------------------------------------------------
+
+  test("[5] connect scenario 1: CACHE TABLE with writes") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+      spark.sql("CACHE TABLE t")
+
+      checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
+
+      spark.sql("INSERT INTO t VALUES (2, 200)")
+
+      // In Connect, cache behavior follows the same pattern as classic.
+      // Delta aggressively refreshes, so writes are visible.
+      checkAnswer(
+        spark.sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
+
+      spark.sql("UNCACHE TABLE t")
+    }
+  }
+
+  test("[5] connect scenario 2: session write invalidates cache") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+      spark.sql("CACHE TABLE t")
+
+      checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
+
+      spark.sql("INSERT INTO t VALUES (2, 200)")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
+
+      spark.sql("UNCACHE TABLE t")
+    }
+  }
+
+  test("[5] connect scenario 3: schema change breaks cache") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+      spark.sql("CACHE TABLE t")
+
+      checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
+
+      spark.sql("ALTER TABLE t ADD COLUMN new_column INT")
+      spark.sql("INSERT INTO t VALUES (2, 200, -1)")
+
+      checkAnswer(
+        spark.sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
+
+      spark.sql("UNCACHE TABLE t")
+    }
+  }
+
+  test("[5] connect scenario 4: drop and recreate table") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+      spark.sql("CACHE TABLE t")
+
+      checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
+
+      spark.sql("DROP TABLE t")
+      createSimpleTable("t")
+
+      checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
+
+      spark.sql("UNCACHE TABLE IF EXISTS t")
     }
   }
 }
