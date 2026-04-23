@@ -10,6 +10,12 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   # SECURITY: Temporal lockdown — refuse any package version published after this date.
   # This date is a pre-attack baseline (before the active PyPI supply chain attack).

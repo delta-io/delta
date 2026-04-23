@@ -10,6 +10,12 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This workflow tests against released versions only (no snapshots)

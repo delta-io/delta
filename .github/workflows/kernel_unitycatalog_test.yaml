@@ -20,6 +20,12 @@ on:
       - 'storage/**/*.scala'
       - 'storage/**/*.java'
       - '.github/workflows/kernel_unitycatalog_test.yaml'
+
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: "Kernel Unity Catalog Tests"

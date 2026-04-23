@@ -18,6 +18,11 @@ on:
       - '**.md'
       - '**.txt'
 
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test-uc-master:
     name: "[Non Blocking] UC Integration Tests (UC Main)"

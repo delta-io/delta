@@ -10,6 +10,10 @@ on:
     paths-ignore:
       - '**.md'
       - '**.txt'
+# Cancel previous runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   # Generate Spark versions matrix from CrossSparkVersions.scala
   # This ensures the workflow always uses the versions defined in the build
@@ -18,8 +22,30 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       spark_versions: ${{ steps.generate.outputs.spark_versions }}
+      use_faster_tests: ${{ steps.check-faster-tests.outputs.use_faster_tests || 'false' }}
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      - name: Check faster-tests label authorization
+        id: check-faster-tests
+        if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'faster-tests')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ALLOWED_USERS: '["tdas"]'
+        run: |
+          PR_NUMBER=${{ github.event.pull_request.number }}
+          LABELER=$(gh api "repos/${{ github.repository }}/issues/${PR_NUMBER}/timeline" \
+            --jq '[.[] | select(.event == "labeled" and .label.name == "faster-tests")] | last | .actor.login' || true)
+          echo "faster-tests label was added by: $LABELER"
+          if [ -z "$LABELER" ] || [ "$LABELER" = "null" ]; then
+            echo "::warning::Could not determine who added faster-tests label. Falling back to standard runners."
+            echo "use_faster_tests=false" >> $GITHUB_OUTPUT
+          elif echo "$ALLOWED_USERS" | jq -e --arg user "$LABELER" 'index($user) != null' > /dev/null 2>&1; then
+            echo "User $LABELER is authorized to use faster-tests"
+            echo "use_faster_tests=true" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::User $LABELER is not authorized to use faster-tests. Falling back to standard runners."
+            echo "use_faster_tests=false" >> $GITHUB_OUTPUT
+          fi
       - name: install java
         uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
@@ -35,7 +61,7 @@ jobs:
 
   test:
     name: "DS: Spark ${{ matrix.spark_version }}, Scala ${{ matrix.scala }}, Shard ${{ matrix.shard }}"
-    runs-on: ubuntu-24.04
+    runs-on: ${{ needs.generate-matrix.outputs.use_faster_tests == 'true' && fromJson('{"group":"delta-spark-tests-runner-group","labels":["delta-spark-tests-16-core-runners"]}') || 'ubuntu-24.04' }}
     needs: generate-matrix
     strategy:
       fail-fast: false
@@ -81,7 +107,7 @@ jobs:
           fi
       - name: Run Scala/Java tests
         run: |
-          TEST_PARALLELISM_COUNT=4 python3 run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
+          TEST_PARALLELISM_COUNT=${{ needs.generate-matrix.outputs.use_faster_tests == 'true' && 8 || 4 }} python3 run-tests.py --group spark --shard ${{ matrix.shard }} --spark-version ${{ matrix.spark_version }}
       - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
