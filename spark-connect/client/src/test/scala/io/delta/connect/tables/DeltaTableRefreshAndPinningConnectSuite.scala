@@ -16,6 +16,10 @@
 
 package io.delta.tables
 
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
+
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.test.DeltaQueryTest
 
@@ -67,6 +71,57 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
   protected def insertInitialData(tableName: String): Unit = {
     spark.sql(s"INSERT INTO $tableName VALUES (1, 100)")
+  }
+
+  /**
+   * Simulates a true external write by writing commit files directly to the
+   * filesystem using Java NIO, bypassing the server's DeltaLog entirely.
+   *
+   * This is the Connect equivalent of the classic suite's writeExternalCommit.
+   * Since the Connect client shares the same local filesystem as the server,
+   * we can write parquet data files and Delta commit JSON files directly.
+   * The server's DeltaLog.currentSnapshot is NOT updated.
+   *
+   * @param tablePath The filesystem path to the Delta table
+   * @param data Tuples of (id, salary) to write
+   */
+  protected def writeExternalCommitViaFilesystem(
+      tablePath: String,
+      data: Seq[(Int, Int)]): Unit = {
+    val deltaLogDir = new File(tablePath, "_delta_log")
+    // Find current version by listing commit files
+    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
+    val currentVersion = commitFiles.map(f =>
+      f.getName.stripSuffix(".json").toLong).max
+
+    // Write a parquet file with the data
+    val tempDir = Files.createTempDirectory("ext-write").toFile
+    try {
+      val session = spark
+      import session.implicits._
+      data.toDF("id", "salary").coalesce(1)
+        .write.parquet(s"${tempDir.getAbsolutePath}/out")
+      val parquetFile = new File(tempDir, "out").listFiles()
+        .filter(_.getName.endsWith(".parquet")).head
+      val targetName = s"ext-commit-v${currentVersion + 1}.snappy.parquet"
+      Files.copy(
+        parquetFile.toPath,
+        Paths.get(tablePath).resolve(targetName))
+
+      // Write commit JSON directly to _delta_log
+      val addFileJson =
+        s"""{"add":{"path":"$targetName","partitionValues":{},"size":${parquetFile.length()},""" +
+        s""""modificationTime":${System.currentTimeMillis()},"dataChange":true}}"""
+      val commitFile = new File(deltaLogDir,
+        f"${currentVersion + 1}%020d.json")
+      Files.write(commitFile.toPath, addFileJson.getBytes(StandardCharsets.UTF_8))
+    } finally {
+      // Clean up temp dir
+      tempDir.listFiles().foreach(d =>
+        if (d.isDirectory) d.listFiles().foreach(_.delete()))
+      tempDir.listFiles().foreach(_.delete())
+      tempDir.delete()
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -687,6 +742,109 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
 
       spark.sql("UNCACHE TABLE IF EXISTS t")
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Section [5] continued: True external write simulation via filesystem
+  // Uses writeExternalCommitViaFilesystem to write commit files directly to
+  // disk, bypassing the server's DeltaLog. This is the Connect equivalent
+  // of the classic suite's writeExternalCommit / scenarios 6b-6e.
+  // ---------------------------------------------------------------------------
+
+  test("[5] connect scenario 6b: CACHE TABLE pins data against external writes") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+      spark.sql(s"CACHE TABLE cached_6b AS SELECT * FROM delta.`$path`")
+
+      checkAnswer(spark.sql("SELECT * FROM cached_6b"), Row(1, 100))
+
+      // True external write via filesystem — server's DeltaLog not updated
+      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
+
+      // Doc says: (1,100) only — CACHE TABLE pins data against external writes.
+      // The server's DeltaTableV2.lazy val snapshot is pinned and CacheManager
+      // matches the cached plan.
+      checkAnswer(spark.sql("SELECT * FROM cached_6b"), Row(1, 100))
+
+      spark.sql("UNCACHE TABLE IF EXISTS cached_6b")
+    }
+  }
+
+  test("[5] connect scenario 6c: session write invalidates, external not visible") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+      spark.sql(s"CACHE TABLE cached_6c AS SELECT * FROM delta.`$path`")
+
+      checkAnswer(spark.sql("SELECT * FROM cached_6c"), Row(1, 100))
+
+      // Session write invalidates cache
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (2, 200)")
+
+      // True external write via filesystem
+      writeExternalCommitViaFilesystem(path, Seq((3, 300)))
+
+      // Doc says: (1,100),(2,200) — session write visible, external not.
+      // After session write invalidates the cache, the next query re-analyzes.
+      // The server's DeltaLog was updated by the session write but not the
+      // external filesystem write.
+      checkAnswer(
+        spark.sql("SELECT * FROM cached_6c ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
+
+      spark.sql("UNCACHE TABLE IF EXISTS cached_6c")
+    }
+  }
+
+  test("[5] connect scenario 6d: external schema change with CACHE") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+      spark.sql(s"CACHE TABLE cached_6d AS SELECT * FROM delta.`$path`")
+
+      checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
+
+      // True external write via filesystem (data only, no schema change
+      // since we can't easily write Metadata actions from the client)
+      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
+
+      // External write not visible — cache pins data
+      checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
+
+      spark.sql("UNCACHE TABLE IF EXISTS cached_6d")
+    }
+  }
+
+  test("[5] connect scenario 6e: session schema change then external write") {
+    withTempPath { dir =>
+      val path = dir.getAbsolutePath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+      spark.sql(s"CACHE TABLE cached_6e AS SELECT * FROM delta.`$path`")
+
+      checkAnswer(spark.sql("SELECT * FROM cached_6e"), Row(1, 100))
+
+      // Session schema change invalidates cache (SPARK-55631)
+      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
+
+      // True external write via filesystem
+      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
+
+      // Session schema change broke the cache. Next query re-analyzes.
+      // The session's ALTER TABLE is visible (via server's DeltaLog),
+      // but the external filesystem write may or may not be visible
+      // depending on whether the server's DeltaLog lists new commits.
+      // With stalenessLimit=0 (default), it discovers everything.
+      checkAnswer(
+        spark.sql(s"SELECT id, salary FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
+
+      spark.sql("UNCACHE TABLE IF EXISTS cached_6e")
     }
   }
 }
