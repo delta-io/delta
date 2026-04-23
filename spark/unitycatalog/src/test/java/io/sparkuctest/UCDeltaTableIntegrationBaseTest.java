@@ -129,6 +129,8 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
   /** Create the SparkSession before all tests. */
   @BeforeAll
   public void setUpSpark() {
+    assumeUcSparkMasterCompatible("Unity Catalog integration tests");
+
     // UC server is started by UnityCatalogSupport.setupServer()
     // And the BeforeAll of parent class UnityCatalogSupport will be called before this method.
 
