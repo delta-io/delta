@@ -846,6 +846,67 @@ trait DeltaTableRefreshAndPinningSuiteBase
       DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(path))
     }
   }
+
+  test("[5] scenario 7: staleLog pattern verifies staleness at DeltaLog API level") {
+    // Uses the staleLog + clearCache pattern from SnapshotManagementSuite (lines 216-260)
+    // to simulate an external write at the DeltaLog level.
+    //
+    // The pattern: hold a DeltaLog reference, clear the cache, write via a new
+    // DeltaLog instance, then verify the held reference's update() behavior
+    // depends on stalenessLimit.
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+
+      // Create table with initial data via normal APIs
+      Seq((1, 100)).toDF("id", "salary")
+        .write.format("delta").save(path)
+
+      // Get a DeltaLog reference (the "reader" that will become stale)
+      val readerLog = DeltaLog.forTable(spark, path)
+      val initialSnapshot = readerLog.update()
+      assert(initialSnapshot.version === 0)
+
+      // Clear the cache so the next forTable call creates a separate instance
+      DeltaLog.clearCache()
+
+      // "External" write through a new DeltaLog instance (simulates another process)
+      Seq((2, 200)).toDF("id", "salary")
+        .write.format("delta").mode("append").save(path)
+
+      // Clear cache again to prevent the writer's instance from polluting future reads
+      DeltaLog.clearCache()
+
+      // Now readerLog still has currentSnapshot at version 0, updateTimestamp from
+      // when it was first created. Call update with stalenessAcceptable = true:
+      //
+      // staleness = 0: isCurrentlyStale always returns true (cutoffOpt = None),
+      //   so doAsync = false, synchronous listing discovers version 1.
+      //
+      // staleness > 0: isCurrentlyStale checks if updateTimestamp < now - limit.
+      //   Since readerLog was recently created (within the staleness window),
+      //   isCurrentlyStale returns false, doAsync = true, returns cached version 0.
+      val snapshot = readerLog.update(stalenessAcceptable = true)
+
+      // Read data using the snapshot's DataFrame
+      val df = spark.read.format("delta")
+        .option("versionAsOf", snapshot.version)
+        .load(path)
+
+      if (stalenessLimitMs == 0L) {
+        // Synchronous listing discovers the external write
+        assert(snapshot.version === 1)
+        checkAnswer(
+          df.orderBy("id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        // Returns stale cached snapshot (version 0)
+        assert(snapshot.version === 0)
+        checkAnswer(df, Row(1, 100))
+      }
+
+      DeltaLog.clearCache()
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
