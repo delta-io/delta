@@ -45,15 +45,28 @@ trait V2ForceTest extends DeltaSQLCommandTest {
 
   /**
    * Override `test` to apply the `shouldFail` logic.
-   * Tests that are expected to fail are converted to ignored tests.
+   * Tests that are expected to fail are run and asserted to actually fail.
+   * If a test expected to fail actually passes, the test fails with a message
+   * indicating the test should be removed from the shouldFail list.
    */
   abstract override protected def test(
       testName: String,
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
     if (shouldFail(testName)) {
-      // TODO(#5754): Assert on test failure instead of ignoring
-      super.ignore(
-        s"$testName - expected to fail with Kernel-based V2 connector (not yet supported)")(testFun)
+      super.test(
+          s"$testName - expected to fail with Kernel-based V2 connector (not yet supported)",
+          testTags: _*) {
+        val testPassed = try {
+          testFun
+          true
+        } catch {
+          case _: Throwable => false
+        }
+        if (testPassed) {
+          fail(s"Expected test '$testName' to fail with V2 connector, but it passed. " +
+            s"Please remove this test from the shouldFail list.")
+        }
+      }
     } else {
       super.test(testName, testTags: _*) {
         testsRun.add(testName)
