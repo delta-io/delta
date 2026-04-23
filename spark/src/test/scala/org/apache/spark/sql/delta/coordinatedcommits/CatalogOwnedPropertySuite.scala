@@ -513,7 +513,8 @@ class CatalogOwnedPropertySuite extends QueryTest
             checkError(deltaError, "DELTA_CANNOT_MODIFY_TABLE_PROPERTY", "42939",
               Map("prop" -> "io.unitycatalog.tableId"))
           case sparkError =>
-            assert(sparkError.getMessage.contains("spark_catalog does not support CREATE TABLE LIKE"))
+            assert(
+              sparkError.getMessage.contains("spark_catalog does not support CREATE TABLE LIKE"))
         }
       }
     }
