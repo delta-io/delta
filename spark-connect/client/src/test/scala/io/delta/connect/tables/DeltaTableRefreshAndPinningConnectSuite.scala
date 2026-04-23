@@ -439,6 +439,25 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  test("[4] connect scenario 1b: count then collect consistency") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df = spark.sql("SELECT * FROM t")
+      assert(df.collect().length == 1)
+
+      writerSql("INSERT INTO t VALUES (2, 200)")
+
+      // In Connect, both count() and collect() re-analyze the plan,
+      // so both see the new data. No inconsistency unlike classic mode.
+      assert(df.count() == 2)
+      checkAnswer(
+        df.orderBy("id"),
+        Seq(Row(1, 100), Row(2, 200)))
+    }
+  }
+
   test("[4] connect scenario 2: df picks up ADD COLUMN with new schema") {
     withTable("t") {
       createSimpleTable("t")
@@ -517,9 +536,13 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+      writerSql("INSERT INTO t VALUES (2, 'BBB')")
 
-      // In Connect, df re-analyzes with new schema (salary is now STRING)
-      checkAnswer(df, Row(1, null))
+      // In Connect, df re-analyzes with new schema (salary is now STRING).
+      // The doc shows both rows with the new STRING schema.
+      checkAnswer(
+        df.orderBy("id"),
+        Seq(Row(1, null), Row(2, "BBB")))
     }
   }
 
