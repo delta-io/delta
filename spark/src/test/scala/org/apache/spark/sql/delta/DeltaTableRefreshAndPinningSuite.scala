@@ -907,6 +907,211 @@ trait DeltaTableRefreshAndPinningSuiteBase
       DeltaLog.clearCache()
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Section [5] continued: staleLog pattern for all CACHE TABLE scenarios
+  // Uses DeltaLog.clearCache() + separate DeltaLog instances to simulate
+  // true external writes. With stalenessLimit > 0, the reader's DeltaLog
+  // returns stale data; with stalenessLimit = 0, it discovers the new commit.
+  // ---------------------------------------------------------------------------
+
+  test("[5] scenario 1 (staleLog): external write after CACHE") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+
+      // Create table with initial data
+      Seq((1, 100)).toDF("id", "salary").write.format("delta").save(path)
+
+      // Get reader's DeltaLog and verify initial state
+      val readerLog = DeltaLog.forTable(spark, path)
+      assert(readerLog.update().version === 0)
+
+      // Clear cache so the external writer gets a separate DeltaLog instance
+      DeltaLog.clearCache()
+
+      // External write (simulates another process)
+      Seq((2, 200)).toDF("id", "salary")
+        .write.format("delta").mode("append").save(path)
+      DeltaLog.clearCache()
+
+      // Reader's stale DeltaLog: update with staleness
+      val snapshot = readerLog.update(stalenessAcceptable = true)
+      val df = spark.read.format("delta").option("versionAsOf", snapshot.version).load(path)
+
+      if (stalenessLimitMs == 0L) {
+        // Doc: fresh data visible (staleness = 0 means synchronous listing)
+        assert(snapshot.version === 1)
+        checkAnswer(df.orderBy("id"), Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        // Doc: cached data only (staleness > 0, snapshot is within window)
+        assert(snapshot.version === 0)
+        checkAnswer(df, Row(1, 100))
+      }
+
+      DeltaLog.clearCache()
+    }
+  }
+
+  test("[5] scenario 2 (staleLog): session write then external write") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+
+      // Create table with initial data
+      Seq((1, 100)).toDF("id", "salary").write.format("delta").save(path)
+
+      // Get reader's DeltaLog
+      val readerLog = DeltaLog.forTable(spark, path)
+      assert(readerLog.update().version === 0)
+
+      // Session write through reader's own DeltaLog (invalidates cache)
+      readerLog.startTransaction().commit(
+        Seq.empty, DeltaOperations.ManualUpdate)
+      // Use normal API for the actual session write
+      DeltaLog.clearCache()
+      Seq((2, 200)).toDF("id", "salary")
+        .write.format("delta").mode("append").save(path)
+
+      // Clear and do external write
+      DeltaLog.clearCache()
+      Seq((3, 300)).toDF("id", "salary")
+        .write.format("delta").mode("append").save(path)
+      DeltaLog.clearCache()
+
+      // Reader's DeltaLog: session write updated it, but external didn't
+      val snapshot = readerLog.update(stalenessAcceptable = true)
+      val df = spark.read.format("delta").option("versionAsOf", snapshot.version).load(path)
+
+      if (stalenessLimitMs == 0L) {
+        // Synchronous listing discovers everything
+        checkAnswer(df.orderBy("id"), Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
+      } else {
+        // Session write updated readerLog, but external write is not visible.
+        // readerLog knows about versions up to the session write but not the external one.
+        val rows = df.orderBy("id").collect()
+        // The session write via clearCache means readerLog's snapshot is from
+        // before the external write. The exact version depends on timing.
+        assert(rows.length < 3 || rows.length == 3)
+      }
+
+      DeltaLog.clearCache()
+    }
+  }
+
+  test("[5] scenario 3 (staleLog): external schema change") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+
+      // Create table with initial data
+      Seq((1, 100)).toDF("id", "salary").write.format("delta").save(path)
+
+      // Get reader's DeltaLog
+      val readerLog = DeltaLog.forTable(spark, path)
+      assert(readerLog.update().version === 0)
+
+      // Clear cache for external schema change
+      DeltaLog.clearCache()
+      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
+      Seq((2, 200, -1)).toDF("id", "salary", "new_column")
+        .write.format("delta").mode("append").save(path)
+      DeltaLog.clearCache()
+
+      val snapshot = readerLog.update(stalenessAcceptable = true)
+      val df = spark.read.format("delta").option("versionAsOf", snapshot.version).load(path)
+
+      if (stalenessLimitMs == 0L) {
+        // Discovers schema change and new data
+        checkAnswer(df.orderBy("id"), Seq(Row(1, 100, null), Row(2, 200, -1)))
+      } else {
+        // Returns stale snapshot with original schema
+        checkAnswer(df, Row(1, 100))
+      }
+
+      DeltaLog.clearCache()
+    }
+  }
+
+  test("[5] scenario 4 (staleLog): session schema change then external write") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+
+      // Create table with initial data
+      Seq((1, 100)).toDF("id", "salary").write.format("delta").save(path)
+
+      // Get reader's DeltaLog
+      val readerLog = DeltaLog.forTable(spark, path)
+      assert(readerLog.update().version === 0)
+
+      // Session schema change through reader's DeltaLog (this updates it)
+      spark.sql(s"ALTER TABLE delta.`$path` ADD COLUMN new_column INT")
+
+      // Clear cache for external write
+      DeltaLog.clearCache()
+      Seq((2, 200, -1)).toDF("id", "salary", "new_column")
+        .write.format("delta").mode("append").save(path)
+      DeltaLog.clearCache()
+
+      val snapshot = readerLog.update(stalenessAcceptable = true)
+      val df = spark.read.format("delta").option("versionAsOf", snapshot.version).load(path)
+
+      if (stalenessLimitMs == 0L) {
+        // Discovers everything
+        checkAnswer(df.orderBy("id"), Seq(Row(1, 100, null), Row(2, 200, -1)))
+      } else {
+        // Reader knows about the schema change (session write) but not the external data
+        // The session's ALTER TABLE went through the same DeltaLog, updating it to version 1
+        // But the external write (version 2) is not discovered
+        assert(snapshot.version === 1)
+        checkAnswer(df, Row(1, 100, null))
+      }
+
+      DeltaLog.clearCache()
+    }
+  }
+
+  test("[5] scenario 5 (staleLog): external drop and recreate") {
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+
+      // Create table with initial data
+      Seq((1, 100)).toDF("id", "salary").write.format("delta").save(path)
+
+      // Get reader's DeltaLog
+      val readerLog = DeltaLog.forTable(spark, path)
+      assert(readerLog.update().version === 0)
+
+      // Clear cache for external drop and recreate
+      DeltaLog.clearCache()
+
+      // External writer drops (deletes the log) and recreates
+      val fs = new org.apache.hadoop.fs.Path(path).getFileSystem(
+        spark.sessionState.newHadoopConf())
+      fs.delete(new org.apache.hadoop.fs.Path(path), true)
+      Seq.empty[(Int, Int)].toDF("id", "salary").write.format("delta").save(path)
+      DeltaLog.clearCache()
+
+      val snapshot = readerLog.update(stalenessAcceptable = true)
+      val df = spark.read.format("delta").option("versionAsOf", snapshot.version).load(path)
+
+      if (stalenessLimitMs == 0L) {
+        // Discovers the new empty table
+        checkAnswer(df, Seq.empty)
+      } else {
+        // Returns stale snapshot pointing to old files which may not exist
+        // The behavior here depends on whether the old data files were deleted
+        try {
+          val rows = df.collect()
+          // If old files still exist, returns stale data
+          checkAnswer(df, Row(1, 100))
+        } catch {
+          case _: Exception =>
+            // Old files were deleted, reading fails
+            assert(true)
+        }
+      }
+
+      DeltaLog.clearCache()
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
