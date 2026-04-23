@@ -210,6 +210,10 @@ import Unidoc._
  * @param additionalSourceDir Optional version-specific source directory suffix (e.g., "scala-spark-3.5")
  * @param antlr4Version ANTLR version to use (e.g., "4.9.3", "4.13.1")
  * @param additionalJavaOptions Additional JVM options for tests (e.g., Java 17 --add-opens flags)
+ * @param jacksonVersion Jackson core/databind/module-scala version that Spark ships with.
+ * @param jacksonAnnotationsVersion Jackson annotations version. Tracked independently of
+ *                                  `jacksonVersion` because jackson-annotations is released on a
+ *                                  separate cadence (often trailing databind by a patch).
  */
 case class SparkVersionSpec(
   fullVersion: String,
@@ -220,6 +224,7 @@ case class SparkVersionSpec(
   antlr4Version: String,
   additionalJavaOptions: Seq[String] = Seq.empty,
   jacksonVersion: String = "2.15.2",
+  jacksonAnnotationsVersion: String = "2.15.2",
   additionalResolvers: Seq[Resolver] = Seq.empty
 ) {
   /** Returns the Spark short version (e.g., "3.5", "4.0") */
@@ -269,7 +274,8 @@ object SparkVersionSpec {
     supportIceberg = true,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.18.2",
+    jacksonAnnotationsVersion = "2.18.2"
   )
 
   private val spark41 = SparkVersionSpec(
@@ -280,7 +286,8 @@ object SparkVersionSpec {
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2"
+    jacksonVersion = "2.20.0",
+    jacksonAnnotationsVersion = "2.20"
   )
 
   private val spark42Snapshot = SparkVersionSpec(
@@ -291,7 +298,8 @@ object SparkVersionSpec {
     supportHudi = false,
     antlr4Version = "4.13.1",
     additionalJavaOptions = java17TestSettings,
-    jacksonVersion = "2.18.2",
+    jacksonVersion = "2.21.2",
+    jacksonAnnotationsVersion = "2.21",
     // Artifact updates in maven central for roaringbitmap stopped after 1.3.0.
     // Spark master uses 1.5.3. Relevant Spark PR here https://github.com/apache/spark/pull/52892
     additionalResolvers = Seq("jitpack" at "https://jitpack.io")
@@ -349,6 +357,26 @@ object CrossSparkVersions extends AutoPlugin {
    * Returns the current configured Spark version based on the `sparkVersion` property.
    */
   def getSparkVersion(): String = getSparkVersionSpec().fullVersion
+
+  /**
+   * Dependency-override entries that pin every Jackson artifact to the given versions.
+   *
+   * The list is the superset of Jackson artifacts used across any project in this repo. Sbt's
+   * `dependencyOverrides` are a no-op for artifacts not already present in the resolution graph,
+   * so it's safe to apply this full list uniformly from any project that wants a consistent
+   * Jackson line on its (compile or test) classpath.
+   */
+  def jacksonOverridesFor(
+      jacksonVersion: String,
+      jacksonAnnotationsVersion: String): Seq[ModuleID] = Seq(
+    "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
+    "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonAnnotationsVersion,
+    "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
+    "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion,
+    "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
+    "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
+    "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion
+  )
 
   /**
    * Returns module name with Spark version suffix.
@@ -412,16 +440,9 @@ object CrossSparkVersions extends AutoPlugin {
     val jacksonOverrides = Seq(
       dependencyOverrides ++= {
         val sparkVer = sparkVersionKey.value
-        val jacksonVer = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
+        val sparkSpec = SparkVersionSpec.ALL_SPECS.find(_.fullVersion == sparkVer)
           .getOrElse(throw new IllegalArgumentException(s"Unknown Spark version: $sparkVer"))
-          .jacksonVersion
-        Seq(
-          "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-core" % jacksonVer,
-          "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVer,
-          "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVer,
-          "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVer
-        )
+        jacksonOverridesFor(sparkSpec.jacksonVersion, sparkSpec.jacksonAnnotationsVersion)
       }
     )
 

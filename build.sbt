@@ -56,6 +56,12 @@ val sparkVersion = settingKey[String]("Spark version")
 val defaultSparkVersion = SparkVersionSpec.DEFAULT.fullVersion // Spark version to use for testing in non-delta-spark related modules
 val hadoopVersion = "3.4.2"
 val sparkVersionForKernelTest = "4.0.0"
+// Jackson versions used by Spark `sparkVersionForKernelTest` (see Spark 4.0 line in
+// `project/CrossSparkVersions.scala`). Kernel tests also pull a published
+// `io.delta:delta-spark:4.0.0` JAR, which can introduce Jackson artifacts aligned with
+// the default (Spark 4.1) build line, so we align test classpaths in kernel modules.
+val kernelTestSparkLineJacksonVersion = "2.18.2"
+val kernelTestSparkLineJacksonAnnotationsVersion = "2.18.2"
 val scalaTestVersion = "3.2.15"
 val scalaTestVersionForConnectors = "3.0.8"
 val parquet4sVersion = "1.9.4"
@@ -724,7 +730,6 @@ lazy val contribs = (project in file("contribs"))
 
 
 val unityCatalogVersion = sys.props.getOrElse("unityCatalogVersion", "0.4.1")
-val sparkUnityCatalogJacksonVersion = "2.15.4" // We are using Spark 4.0's Jackson version 2.15.x, to override Unity Catalog 0.3.0's version 2.18.x
 
 lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
   .dependsOn(spark % "compile->compile;test->test;provided->provided")
@@ -747,17 +752,12 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
     // Don't execute in parallel since we can't have multiple Sparks in the same JVM
     Test / parallelExecution := false,
 
-    // Force ALL Jackson dependencies to match Spark's Jackson version
-    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria)
-    dependencyOverrides ++= Seq(
-      "com.fasterxml.jackson.core" % "jackson-core" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-annotations" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % sparkUnityCatalogJacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % sparkUnityCatalogJacksonVersion
-    ),
+    // Force ALL Jackson dependencies to match the selected Spark line.
+    // This overrides Jackson from Unity Catalog's transitive dependencies (e.g., Armeria).
+    dependencyOverrides ++= {
+      val spec = CrossSparkVersions.getSparkVersionSpec()
+      CrossSparkVersions.jacksonOverridesFor(spec.jacksonVersion, spec.jacksonAnnotationsVersion)
+    },
 
     libraryDependencies ++= Seq(
       "org.assertj" % "assertj-core" % "3.26.3" % "test",
@@ -769,7 +769,7 @@ lazy val sparkUnityCatalog = (project in file("spark/unitycatalog"))
       // Lombok for generating boilerplate code
       "org.projectlombok" % "lombok" % "1.18.34" % "test",
 
-      // Unity Catalog dependencies - exclude Jackson to use Spark's Jackson 2.15.x
+      // Unity Catalog dependencies - exclude Jackson to use the selected Spark line's Jackson.
       "io.unitycatalog" %% "unitycatalog-spark" % unityCatalogVersion % "test" excludeAll(
         ExclusionRule(organization = "com.fasterxml.jackson.core"),
         ExclusionRule(organization = "com.fasterxml.jackson.module"),
@@ -960,6 +960,15 @@ lazy val kernelDefaults = (project in file("kernel/kernel-defaults"))
     // This allows generating tables with unsupported test table features in delta-spark
     Test / envVars += ("DELTA_TESTING", "1"),
 
+    // Align Jackson to the Spark line used in kernel tests (4.0.x). Without this, tests can
+    // mix a newer `jackson-databind` (from a published `delta-spark` test dependency) with a
+    // `jackson-module-scala` pulled from Spark 4.0, which fails at runtime with
+    // `JsonMappingException: Scala module ... requires Jackson Databind version ...`.
+    Test / dependencyOverrides ++= CrossSparkVersions.jacksonOverridesFor(
+      kernelTestSparkLineJacksonVersion,
+      kernelTestSparkLineJacksonAnnotationsVersion
+    ),
+
     // Put the shaded kernel-api JAR on the classpath (compile & test)
     Compile / unmanagedJars += (kernelApi / Compile / packageBin).value,
     Test / unmanagedJars += (kernelApi / Compile / packageBin).value,
@@ -1081,8 +1090,13 @@ lazy val storage = (project in file("storage"))
 
       // Test Deps
       "org.scalatest" %% "scalatest" % scalaTestVersion % "test",
-      // Jackson datatype module needed for UC SDK tests (excluded from main compile scope)
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % "2.15.4" % "test",
+      // Jackson datatype module needed for UC SDK tests (excluded from main compile scope).
+      // `storage` is consumed by `kernelDefaults` via `test->test`, so its test classpath must
+      // be compatible with the Spark line kernel tests pin against (4.0 -> Jackson 2.18.2).
+      // Using the default (Spark 4.1 / 2.20.0) here breaks `jackson-module-scala:2.18.2` at
+      // runtime in kernel tests with a strict databind-version check.
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" %
+        kernelTestSparkLineJacksonVersion % "test",
     ),
 
     // Unidoc settings

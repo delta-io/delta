@@ -21,7 +21,20 @@ organizationName := "example"
 val scala213 = "2.13.17"
 val icebergVersion = "1.4.1"
 val unityCatalogVersion = "0.4.1"
-val jacksonVersion = "2.15.4"
+
+def resolveJacksonVersionForSpark(sparkVersion: String): String = sparkVersion match {
+  case v if v.startsWith("4.2") => "2.21.2"
+  case v if v.startsWith("4.1") => "2.20.0"
+  case v if v.startsWith("4.0") => "2.18.2"
+  case _ => "2.15.4"
+}
+
+def resolveJacksonAnnotationsVersionForSpark(sparkVersion: String): String = sparkVersion match {
+  case v if v.startsWith("4.2") => "2.21"
+  case v if v.startsWith("4.1") => "2.20"
+  case v if v.startsWith("4.0") => "2.18.2"
+  case _ => resolveJacksonVersionForSpark(sparkVersion)
+}
 
 val defaultDeltaVersion = {
   val versionFileContent = IO.read(file("../../version.sbt"))
@@ -80,6 +93,12 @@ val getDeltaVersion = settingKey[String](
 val getDeltaArtifactName = settingKey[String](
   s"get delta artifact name based on the delta version. either `delta-core` or `delta-spark`."
 )
+val getJacksonVersion = settingKey[String](
+  "get the Jackson version compatible with the resolved Spark version."
+)
+val getJacksonAnnotationsVersion = settingKey[String](
+  "get the jackson-annotations version compatible with the resolved Spark version."
+)
 val getIcebergSparkRuntimeArtifactName = settingKey[String](
   s"get iceberg-spark-runtime name based on the delta version."
 )
@@ -115,6 +134,14 @@ getDeltaVersion := {
 getDeltaArtifactName := {
   val deltaVersion = getDeltaVersion.value
   if (deltaVersion.charAt(0).asDigit >= 3) "delta-spark" else "delta-core"
+}
+
+getJacksonVersion := {
+  resolveJacksonVersionForSpark(resolveSparkVersion(getDeltaVersion.value))
+}
+
+getJacksonAnnotationsVersion := {
+  resolveJacksonAnnotationsVersionForSpark(resolveSparkVersion(getDeltaVersion.value))
 }
 
 val getSparkPackageSuffix = settingKey[String](
@@ -227,13 +254,14 @@ lazy val root = (project in file("."))
       )
     ),
     dependencyOverrides ++= Seq(
-      "com.fasterxml.jackson.core" % "jackson-core" % jacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-annotations" % jacksonVersion,
-      "com.fasterxml.jackson.core" % "jackson-databind" % jacksonVersion,
-      "com.fasterxml.jackson.module" %% "jackson-module-scala" % jacksonVersion,
-      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % jacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % jacksonVersion,
-      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % jacksonVersion
+      "com.fasterxml.jackson.core" % "jackson-core" % getJacksonVersion.value,
+      "com.fasterxml.jackson.core" % "jackson-annotations" %
+        getJacksonAnnotationsVersion.value,
+      "com.fasterxml.jackson.core" % "jackson-databind" % getJacksonVersion.value,
+      "com.fasterxml.jackson.module" %% "jackson-module-scala" % getJacksonVersion.value,
+      "com.fasterxml.jackson.dataformat" % "jackson-dataformat-yaml" % getJacksonVersion.value,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jsr310" % getJacksonVersion.value,
+      "com.fasterxml.jackson.datatype" % "jackson-datatype-jdk8" % getJacksonVersion.value
     ),
     extraMavenRepo,
     resolvers += Resolver.mavenLocal,

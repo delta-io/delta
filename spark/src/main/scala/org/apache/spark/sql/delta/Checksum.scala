@@ -851,11 +851,17 @@ trait ValidateChecksum extends DeltaLogging { self: Snapshot =>
    */
   def validateFileListAgainstCRC(checksum: VersionChecksum, contextOpt: Option[String]): Boolean = {
     val fileSortKey = (f: AddFile) => (f.path, f.modificationTime, f.size)
-    val filesFromCrc = checksum.allFiles.map(_.sortBy(fileSortKey)).getOrElse { return true }
+    // Normalize null tags so state-reconstructed files (which can still surface null tags from
+    // Parquet) compare equal to CRC-deserialized files (which default to empty maps after the
+    // Jackson upgrade).
+    val filesFromCrc = checksum.allFiles
+      .map(_.sortBy(fileSortKey))
+      .getOrElse { return true }
+      .map(_.withNormalizedTags)
     val filesFromStateReconstruction = recordFrameProfile(
         "Delta", "snapshot.allFiles") {
       allFilesViaStateReconstruction.collect().toSeq.sortBy(fileSortKey)
-    }
+    }.map(_.withNormalizedTags)
     if (filesFromCrc == filesFromStateReconstruction) return true
 
     val filesFromCrcWithoutStats = filesFromCrc.map(_.copy(stats = ""))

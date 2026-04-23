@@ -132,12 +132,9 @@ class DeltaPurgeOperation extends DeltaReorgOperation with ReorgTableHelper {
 class DeltaUpgradeUniformOperation(icebergCompatVersion: Int) extends DeltaReorgOperation {
   override def filterFilesToReorg(spark: SparkSession, snapshot: Snapshot, files: Seq[AddFile])
     : Seq[AddFile] = {
-    def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean = {
-      if (file.tags == null) return true
-      val fileIcebergCompatVersion =
-        file.tags.getOrElse(AddFile.Tags.ICEBERG_COMPAT_VERSION.name, "0")
-      fileIcebergCompatVersion != icebergCompatVersion.toString
-    }
+    def shouldRewriteToBeIcebergCompatible(file: AddFile): Boolean =
+      !file.tagsOrEmpty.get(AddFile.Tags.ICEBERG_COMPAT_VERSION.name)
+        .contains(icebergCompatVersion.toString)
     files.filter(shouldRewriteToBeIcebergCompatible)
   }
 }
