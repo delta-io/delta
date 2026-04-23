@@ -98,8 +98,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
-  private final Predicate[] pushedToKernelFilters;
-  private final Filter[] dataFilters;
+  // Stored as Sets so equals/hashCode are order-independent: the filters are AND-ed at
+  // evaluation time, so list order has no semantic meaning.
+  private final Set<Predicate> pushedToKernelFilters;
+  private final Set<Filter> dataFilters;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
@@ -126,8 +128,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
-      Predicate[] pushedToKernelFilters,
-      Filter[] dataFilters,
+      Set<Predicate> pushedToKernelFilters,
+      Set<Filter> dataFilters,
       io.delta.kernel.Scan kernelScan,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
@@ -138,8 +140,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
     this.pushedToKernelFilters =
-        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
-    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+        pushedToKernelFilters == null ? Set.of() : Set.copyOf(pushedToKernelFilters);
+    this.dataFilters = dataFilters == null ? Set.of() : Set.copyOf(dataFilters);
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
@@ -237,18 +239,21 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
-        dataFilters != null ? dataFilters : new Filter[0],
+        dataFilters.toArray(new Filter[0]),
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }
 
   @Override
   public String description() {
+    // Sort by toString so the EXPLAIN output is deterministic: the Set backing the filter fields
+    // (Set.copyOf) uses salted hashing, so iteration order otherwise varies across JVM runs.
     final String pushed =
-        Arrays.stream(pushedToKernelFilters)
+        pushedToKernelFilters.stream()
             .map(Object::toString)
+            .sorted()
             .collect(Collectors.joining(", "));
     final String data =
-        Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", "));
+        dataFilters.stream().map(Object::toString).sorted().collect(Collectors.joining(", "));
     return String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data);
   }
 
@@ -588,8 +593,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && Arrays.equals(pushedToKernelFilters, that.pushedToKernelFilters)
-        && Arrays.equals(dataFilters, that.dataFilters)
+        && Objects.equals(pushedToKernelFilters, that.pushedToKernelFilters)
+        && Objects.equals(dataFilters, that.dataFilters)
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
@@ -599,19 +604,17 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
   @Override
   public int hashCode() {
-    int result =
-        Objects.hash(
-            catalogStats,
-            initialSnapshot.getPath(),
-            initialSnapshot.getVersion(),
-            dataSchema,
-            partitionSchema,
-            readDataSchema,
-            options,
-            appliedRuntimePredicates);
-    result = 31 * result + Arrays.hashCode(pushedToKernelFilters);
-    result = 31 * result + Arrays.hashCode(dataFilters);
-    return result;
+    return Objects.hash(
+        catalogStats,
+        initialSnapshot.getPath(),
+        initialSnapshot.getVersion(),
+        dataSchema,
+        partitionSchema,
+        readDataSchema,
+        options,
+        appliedRuntimePredicates,
+        pushedToKernelFilters,
+        dataFilters);
   }
 
   /**

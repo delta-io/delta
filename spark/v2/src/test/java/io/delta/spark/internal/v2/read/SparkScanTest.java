@@ -679,6 +679,25 @@ public class SparkScanTest extends DeltaV2TestBase {
     assertNotEquals(scan1.hashCode(), scan2.hashCode());
   }
 
+  @Test
+  public void testEqualsWithPushedFiltersInDifferentOrder() {
+    org.apache.spark.sql.sources.Filter cityEq =
+        new org.apache.spark.sql.sources.EqualTo("city", "hz");
+    org.apache.spark.sql.sources.Filter dateEq =
+        new org.apache.spark.sql.sources.EqualTo("date", "20180520");
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new org.apache.spark.sql.sources.Filter[] {cityEq, dateEq});
+    SparkScan scan1 = (SparkScan) builder1.build();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new org.apache.spark.sql.sources.Filter[] {dateEq, cityEq});
+    SparkScan scan2 = (SparkScan) builder2.build();
+
+    assertEquals(scan1, scan2);
+    assertEquals(scan1.hashCode(), scan2.hashCode());
+  }
+
   // ================================================================================================
   // Tests for estimated size with column projection
   // ================================================================================================
