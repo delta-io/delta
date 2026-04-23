@@ -16,13 +16,16 @@
 
 package org.apache.spark.sql.delta
 
+import org.apache.spark.sql.delta.actions.AddFile
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.delta.util.{FileNames, JsonUtils}
 
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{AnalysisException, DataFrame, QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.test.SharedSparkSession
+import org.apache.spark.util.Utils
 
 /**
  * Tests that document and verify existing Delta behavior for table refresh,
@@ -55,10 +58,15 @@ import org.apache.spark.sql.test.SharedSparkSession
  * deltaLog.update() returns a cached snapshot without doing a filesystem listing. However,
  * since all writes in the same JVM go through the shared DeltaLog and update currentSnapshot
  * as a side effect of committing, the staleness limit has no observable effect in single-JVM
- * tests. The snapshot is always already fresh by the time the reader queries it. To truly
- * observe staleness, the write must come from a separate process/cluster that commits directly
- * to storage without the local DeltaLog knowing. We parameterize with a high staleness limit
- * anyway to verify that the behavior is identical, documenting this JVM-level constraint.
+ * tests for normal writes. The snapshot is always already fresh by the time the reader queries
+ * it. We parameterize with a high staleness limit to verify that most behaviors are identical,
+ * documenting this JVM-level constraint.
+ *
+ * The exception is Section [5] scenario 6, which writes a commit directly to the filesystem
+ * via [[org.apache.spark.sql.delta.storage.LogStore]], bypassing the DeltaLog API entirely.
+ * This simulates an external process/cluster and is the only scenario where staleness limit
+ * produces observably different results: with staleness = 0 the reader discovers the new
+ * commit immediately, while with a high staleness limit the reader returns the cached snapshot.
  */
 trait DeltaTableRefreshAndPinningSuiteBase
   extends QueryTest
@@ -768,6 +776,74 @@ trait DeltaTableRefreshAndPinningSuiteBase
       checkAnswer(sql("SELECT * FROM t"), Seq.empty)
 
       sql("UNCACHE TABLE IF EXISTS t")
+    }
+  }
+
+  test("[5] scenario 6: direct filesystem commit respects staleness limit") {
+    // Use withTempDir + path-based table to avoid poisoning the shared warehouse
+    // with orphaned files from the direct filesystem write.
+    withTempDir { dir =>
+      val path = dir.getCanonicalPath
+      spark.sql(s"CREATE TABLE delta.`$path` (id INT, salary INT) USING delta")
+      spark.sql(s"INSERT INTO delta.`$path` VALUES (1, 100)")
+
+      checkAnswer(sql(s"SELECT * FROM delta.`$path`"), Row(1, 100))
+
+      // Write a new commit directly to the filesystem, bypassing DeltaLog.
+      // This simulates an external process/cluster writing to the table.
+      // The local DeltaLog.currentSnapshot stays at its current version
+      // and its updateTimestamp remains recent.
+      val deltaLog = DeltaLog.forTable(spark, path)
+      val currentVersion = deltaLog.snapshot.version
+      val tablePath = deltaLog.dataPath
+
+      val tempParquetDir = Utils.createTempDir()
+      try {
+        Seq((2, 200)).toDF("id", "salary").coalesce(1)
+          .write.parquet(s"${tempParquetDir.getAbsolutePath}/out")
+        val parquetFile = new java.io.File(tempParquetDir, "out").listFiles()
+          .filter(_.getName.endsWith(".parquet")).head
+        val targetName = s"direct-write-v${currentVersion + 1}.snappy.parquet"
+        java.nio.file.Files.copy(
+          parquetFile.toPath,
+          java.nio.file.Paths.get(tablePath.toUri).resolve(targetName))
+
+        val addFile = AddFile(
+          path = targetName,
+          partitionValues = Map.empty,
+          size = parquetFile.length(),
+          modificationTime = System.currentTimeMillis(),
+          dataChange = true)
+        deltaLog.store.write(
+          FileNames.unsafeDeltaFile(deltaLog.logPath, currentVersion + 1),
+          Iterator(JsonUtils.toJson(addFile.wrap)),
+          overwrite = false,
+          deltaLog.newDeltaHadoopConf())
+      } finally {
+        Utils.deleteRecursively(tempParquetDir)
+      }
+
+      // Query the table. The behavior depends on stalenessLimit:
+      //
+      // staleness = 0: deltaLog.update(stalenessAcceptable = true) always does a
+      //   synchronous filesystem listing (isCurrentlyStale = true because
+      //   cutoffOpt = None). It discovers the new commit and returns fresh data.
+      //
+      // staleness > 0: deltaLog.update(stalenessAcceptable = true) sees that the
+      //   snapshot was recently updated (updateTimestamp is within the staleness
+      //   window), so isCurrentlyStale = false, doAsync = true. It returns the
+      //   cached snapshot. Result: sees only the original row.
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+          Seq(Row(1, 100), Row(2, 200)))
+      } else {
+        checkAnswer(
+          sql(s"SELECT * FROM delta.`$path`"),
+          Row(1, 100))
+      }
+
+      DeltaLog.invalidateCache(spark, new org.apache.hadoop.fs.Path(path))
     }
   }
 }
