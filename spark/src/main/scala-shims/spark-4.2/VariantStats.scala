@@ -187,7 +187,7 @@ class VariantStatsData(
                   case stat: IntStatistics if stat.hasNonNullValue =>
                     addKey(pathString)
                     val statVal = genericGet(stat, statType).toInt
-                    vb.appendIntFixedPrecision(statVal, 8)
+                    VariantStatsHelper.appendIntFixedPrecision(vb, statVal, 8)
                   case _ =>
                 }
               case i: IntLogicalTypeAnnotation if i.getBitWidth == 16 && i.isSigned =>
@@ -197,7 +197,7 @@ class VariantStatsData(
                   case stat: IntStatistics if stat.hasNonNullValue =>
                     addKey(pathString)
                     val statVal = genericGet(stat, statType)
-                    vb.appendIntFixedPrecision(statVal.toInt, 16)
+                    VariantStatsHelper.appendIntFixedPrecision(vb, statVal.toInt, 16)
                   case _ =>
                 }
               case null =>
@@ -207,7 +207,7 @@ class VariantStatsData(
                   case stat: IntStatistics if stat.hasNonNullValue =>
                     addKey(pathString)
                     val statVal = genericGet(stat, statType)
-                    vb.appendIntFixedPrecision(statVal.toInt, 32)
+                    VariantStatsHelper.appendIntFixedPrecision(vb, statVal.toInt, 32)
                   case _ =>
                 }
               case i: IntLogicalTypeAnnotation if i.getBitWidth == 32 && i.isSigned =>
@@ -217,7 +217,7 @@ class VariantStatsData(
                   case stat: IntStatistics if stat.hasNonNullValue =>
                     addKey(pathString)
                     val statVal = genericGet(stat, statType)
-                    vb.appendIntFixedPrecision(statVal.toInt, 32)
+                    VariantStatsHelper.appendIntFixedPrecision(vb, statVal.toInt, 32)
                   case _ =>
                 }
               case _: DateLogicalTypeAnnotation =>
@@ -241,7 +241,7 @@ class VariantStatsData(
                       .toJavaBigDecimal
                     if (decimal != null) {
                       addKey(pathString)
-                      vb.appendDecimalFixedPrecision(decimal, 32)
+                      VariantStatsHelper.appendDecimalFixedPrecision(vb, decimal, 32)
                     }
                   case _ =>
                 }
@@ -256,7 +256,7 @@ class VariantStatsData(
                   case stat: LongStatistics if stat.hasNonNullValue =>
                     addKey(pathString)
                     val statVal = genericGet(stat, statType)
-                    vb.appendIntFixedPrecision(statVal, 64)
+                    VariantStatsHelper.appendIntFixedPrecision(vb, statVal, 64)
                   case _ =>
                 }
               case i: IntLogicalTypeAnnotation if i.getBitWidth == 64 && i.isSigned =>
@@ -265,7 +265,7 @@ class VariantStatsData(
                   case stat: LongStatistics if stat.hasNonNullValue =>
                     addKey(pathString)
                     val statVal = genericGet(stat, statType)
-                    vb.appendIntFixedPrecision(statVal, 64)
+                    VariantStatsHelper.appendIntFixedPrecision(vb, statVal, 64)
                   case _ =>
                 }
               case t: TimestampLogicalTypeAnnotation if t.isAdjustedToUTC &&
@@ -299,7 +299,7 @@ class VariantStatsData(
                       .toJavaBigDecimal
                     if (decimal != null) {
                       addKey(pathString)
-                      vb.appendDecimalFixedPrecision(decimal, 64)
+                      VariantStatsHelper.appendDecimalFixedPrecision(vb, decimal, 64)
                     }
                   case _ =>
                 }
@@ -369,7 +369,7 @@ class VariantStatsData(
                     val decimal = new JBigDecimal(unscaled, scale)
                     if (decimal != null) {
                       addKey(pathString)
-                      vb.appendDecimalFixedPrecision(decimal, 128)
+                      VariantStatsHelper.appendDecimalFixedPrecision(vb, decimal, 128)
                     }
                   case _ =>
                 }

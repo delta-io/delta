@@ -16,10 +16,80 @@
 
 package org.apache.spark.sql.delta.stats
 
+import java.math.{BigDecimal => JBigDecimal}
+
 import org.apache.spark.types.variant.{Variant, VariantBuilder, VariantUtil}
 import org.apache.spark.unsafe.types.VariantVal
 
 object VariantStatsHelper {
+
+  private val EMPTY_METADATA: Array[Byte] = Array(VariantUtil.VERSION.toByte, 0, 0)
+
+  def appendIntFixedPrecision(vb: VariantBuilder, l: Long, bitWidth: Int): Unit = {
+    vb.appendVariant(new Variant(encodeIntFixedPrecision(l, bitWidth), EMPTY_METADATA))
+  }
+
+  def appendDecimalFixedPrecision(vb: VariantBuilder, d: JBigDecimal, bitWidth: Int): Unit = {
+    vb.appendVariant(new Variant(encodeDecimalFixedPrecision(d, bitWidth), EMPTY_METADATA))
+  }
+
+  private def encodeIntFixedPrecision(l: Long, bitWidth: Int): Array[Byte] = {
+    val (primType, numBytes) = bitWidth match {
+      case 8 => (VariantUtil.INT1, 1)
+      case 16 => (VariantUtil.INT2, 2)
+      case 32 => (VariantUtil.INT4, 4)
+      case 64 => (VariantUtil.INT8, 8)
+      case _ => throw new IllegalArgumentException("Unexpected bit width of: " + bitWidth)
+    }
+    val buf = new Array[Byte](1 + numBytes)
+    buf(0) = VariantUtil.primitiveHeader(primType)
+    writeLittleEndian(buf, 1, l, numBytes)
+    buf
+  }
+
+  private def encodeDecimalFixedPrecision(d: JBigDecimal, bitWidth: Int): Array[Byte] = {
+    val unscaled = d.unscaledValue
+    bitWidth match {
+      case 32 =>
+        val buf = new Array[Byte](2 + 4)
+        buf(0) = VariantUtil.primitiveHeader(VariantUtil.DECIMAL4)
+        buf(1) = d.scale.toByte
+        writeLittleEndian(buf, 2, unscaled.intValueExact.toLong, 4)
+        buf
+      case 64 =>
+        val buf = new Array[Byte](2 + 8)
+        buf(0) = VariantUtil.primitiveHeader(VariantUtil.DECIMAL8)
+        buf(1) = d.scale.toByte
+        writeLittleEndian(buf, 2, unscaled.longValueExact, 8)
+        buf
+      case 128 =>
+        val buf = new Array[Byte](2 + 16)
+        buf(0) = VariantUtil.primitiveHeader(VariantUtil.DECIMAL16)
+        buf(1) = d.scale.toByte
+        val bytes = unscaled.toByteArray
+        var i = 0
+        while (i < bytes.length) {
+          buf(2 + i) = bytes(bytes.length - 1 - i)
+          i += 1
+        }
+        val sign = if (bytes(0) < 0) (-1).toByte else 0.toByte
+        while (i < 16) {
+          buf(2 + i) = sign
+          i += 1
+        }
+        buf
+      case _ =>
+        throw new IllegalArgumentException("Unexpected bit width of: " + bitWidth)
+    }
+  }
+
+  private def writeLittleEndian(buf: Array[Byte], pos: Int, value: Long, numBytes: Int): Unit = {
+    var i = 0
+    while (i < numBytes) {
+      buf(pos + i) = ((value >>> (i * 8)) & 0xFF).toByte
+      i += 1
+    }
+  }
 
   def trimVariant(maxFields: Int)(variantVal: VariantVal): VariantVal = {
     if (variantVal == null) {

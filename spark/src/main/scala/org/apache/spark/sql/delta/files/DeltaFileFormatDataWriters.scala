@@ -16,6 +16,7 @@
 
 package org.apache.spark.sql.delta.files
 
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.mapreduce.TaskAttemptContext
 
 import org.apache.spark.internal.io.FileCommitProtocol
@@ -24,15 +25,9 @@ import org.apache.spark.sql.execution.datasources.{DynamicPartitionDataConcurren
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
 
-/**
- * Mixes in a `releaseCurrentWriter` override that, after closing the current output writer and
- * before `closeFile` on stats trackers, invokes [[VariantStatsHookShims]] to extract variant
- * data-skipping stats from the parquet footer and inject them into any Delta stats tracker.
- *
- * On Spark 4.2 the shim does the real extraction; on older Spark versions it is a no-op, so the
- * override is behaviorally identical to the super-class on those versions.
- */
 trait VariantStatsReleaseCurrentWriter { self: FileFormatDataWriter =>
+  protected def deltaHadoopConf: Configuration
+
   override protected def releaseCurrentWriter(): Unit = {
     if (currentWriter != null) {
       try {
@@ -41,7 +36,8 @@ trait VariantStatsReleaseCurrentWriter { self: FileFormatDataWriter =>
         VariantStatsHookShims.extractAndInjectVariantStats(
           currentWriter,
           statsTrackers,
-          parquetRebaseModeInRead = conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString)
+          parquetRebaseModeInRead = conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString,
+          hadoopConf = deltaHadoopConf)
         statsTrackers.foreach(_.closeFile(currentWriter.path()))
       } finally {
         currentWriter = null
@@ -56,7 +52,9 @@ class DeltaEmptyDirectoryDataWriter(
     committer: FileCommitProtocol,
     customMetrics: Map[String, SQLMetric] = Map.empty)
   extends EmptyDirectoryDataWriter(description, taskAttemptContext, committer, customMetrics)
-  with VariantStatsReleaseCurrentWriter
+  with VariantStatsReleaseCurrentWriter {
+  override protected val deltaHadoopConf: Configuration = taskAttemptContext.getConfiguration
+}
 
 class DeltaSingleDirectoryDataWriter(
     description: WriteJobDescription,
@@ -64,7 +62,9 @@ class DeltaSingleDirectoryDataWriter(
     committer: FileCommitProtocol,
     customMetrics: Map[String, SQLMetric] = Map.empty)
   extends SingleDirectoryDataWriter(description, taskAttemptContext, committer, customMetrics)
-  with VariantStatsReleaseCurrentWriter
+  with VariantStatsReleaseCurrentWriter {
+  override protected val deltaHadoopConf: Configuration = taskAttemptContext.getConfiguration
+}
 
 class DeltaDynamicPartitionDataSingleWriter(
     description: WriteJobDescription,
@@ -73,7 +73,9 @@ class DeltaDynamicPartitionDataSingleWriter(
     customMetrics: Map[String, SQLMetric] = Map.empty)
   extends DynamicPartitionDataSingleWriter(
     description, taskAttemptContext, committer, customMetrics)
-  with VariantStatsReleaseCurrentWriter
+  with VariantStatsReleaseCurrentWriter {
+  override protected val deltaHadoopConf: Configuration = taskAttemptContext.getConfiguration
+}
 
 class DeltaDynamicPartitionDataConcurrentWriter(
     description: WriteJobDescription,
@@ -83,4 +85,6 @@ class DeltaDynamicPartitionDataConcurrentWriter(
     customMetrics: Map[String, SQLMetric] = Map.empty)
   extends DynamicPartitionDataConcurrentWriter(
     description, taskAttemptContext, committer, concurrentOutputWriterSpec, customMetrics)
-  with VariantStatsReleaseCurrentWriter
+  with VariantStatsReleaseCurrentWriter {
+  override protected val deltaHadoopConf: Configuration = taskAttemptContext.getConfiguration
+}

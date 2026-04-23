@@ -16,37 +16,51 @@
 
 package org.apache.spark.sql.delta.shims
 
+import scala.util.control.NonFatal
+
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.Path
+import org.apache.parquet.format.converter.ParquetMetadataConverter
+import org.apache.parquet.hadoop.util.HadoopInputFile
+
 import org.apache.spark.sql.delta.stats.{DeltaTaskStatisticsTracker, VariantStatsData}
 import org.apache.spark.sql.execution.datasources.{DataSourceUtils, OutputWriter, WriteTaskStatsTracker}
-import org.apache.spark.sql.execution.datasources.parquet.ParquetOutputWriterWithVariantShredding
+import org.apache.spark.sql.execution.datasources.parquet.ParquetFooterReader
 
 object VariantStatsHookShims {
   def extractAndInjectVariantStats(
       writer: OutputWriter,
       trackers: Seq[WriteTaskStatsTracker],
-      parquetRebaseModeInRead: String): Unit = {
-    writer match {
-      case shreddedWriter: ParquetOutputWriterWithVariantShredding
-          if shreddedWriter.collectVariantStats =>
-        shreddedWriter.getLatestFooterOpt.foreach { footer =>
-          val keyValueMetadata = footer.getFileMetaData.getKeyValueMetaData
-          val rebaseSpec = DataSourceUtils.datetimeRebaseSpec(
-            k => keyValueMetadata.get(k),
-            parquetRebaseModeInRead)
-          val dateRebaseFunc =
-            DataSourceUtils.createDateRebaseFuncInRead(rebaseSpec.mode, "Parquet")
-          val timestampRebaseFunc =
-            DataSourceUtils.createTimestampRebaseFuncInRead(rebaseSpec, "Parquet")
-          val variantStatsData = VariantStatsData(footer, dateRebaseFunc, timestampRebaseFunc)
-          trackers.foreach {
-            case tracker: DeltaTaskStatisticsTracker =>
-              tracker.minVariantStatsExpressions.foreach(
-                _.addVariantStatsData(variantStatsData))
-              tracker.maxVariantStatsExpressions.foreach(
-                _.addVariantStatsData(variantStatsData))
-            case _ =>
-          }
-        }
+      parquetRebaseModeInRead: String,
+      hadoopConf: Configuration): Unit = {
+    val hasVariantTrackers = trackers.exists {
+      case t: DeltaTaskStatisticsTracker =>
+        t.minVariantStatsExpressions.nonEmpty || t.maxVariantStatsExpressions.nonEmpty
+      case _ => false
+    }
+    if (!hasVariantTrackers) return
+    val footer = try {
+      ParquetFooterReader.readFooter(
+        HadoopInputFile.fromPath(new Path(writer.path()), hadoopConf),
+        ParquetMetadataConverter.NO_FILTER)
+    } catch {
+      case NonFatal(_) => return
+    }
+    val keyValueMetadata = footer.getFileMetaData.getKeyValueMetaData
+    val rebaseSpec = DataSourceUtils.datetimeRebaseSpec(
+      k => keyValueMetadata.get(k),
+      parquetRebaseModeInRead)
+    val dateRebaseFunc =
+      DataSourceUtils.createDateRebaseFuncInRead(rebaseSpec.mode, "Parquet")
+    val timestampRebaseFunc =
+      DataSourceUtils.createTimestampRebaseFuncInRead(rebaseSpec, "Parquet")
+    val variantStatsData = VariantStatsData(footer, dateRebaseFunc, timestampRebaseFunc)
+    trackers.foreach {
+      case tracker: DeltaTaskStatisticsTracker =>
+        tracker.minVariantStatsExpressions.foreach(
+          _.addVariantStatsData(variantStatsData))
+        tracker.maxVariantStatsExpressions.foreach(
+          _.addVariantStatsData(variantStatsData))
       case _ =>
     }
   }

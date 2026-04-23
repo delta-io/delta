@@ -16,11 +16,14 @@
 
 package org.apache.spark.sql.delta.shims
 
+import org.apache.hadoop.conf.Configuration
+
 import org.apache.spark.sql.execution.datasources.{OutputWriter, WriteTaskStatsTracker}
 
 object VariantStatsHookShims {
   def extractAndInjectVariantStats(
       writer: OutputWriter,
       trackers: Seq[WriteTaskStatsTracker],
-      parquetRebaseModeInRead: String): Unit = {}
+      parquetRebaseModeInRead: String,
+      hadoopConf: Configuration): Unit = {}
 }
