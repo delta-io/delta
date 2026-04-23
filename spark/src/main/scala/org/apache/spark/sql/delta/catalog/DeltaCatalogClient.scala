@@ -42,12 +42,8 @@ private class DeltaCatalogClient private (
           val metadata = client
             .loadTable(catalogName, ident.namespace().head, ident.name())
             .getMetadata
-          val locationUri = CatalogUtils.stringToURI(metadata.getLocation)
-          val isLocalLocation =
-            locationUri.getScheme == null || locationUri.getScheme.equalsIgnoreCase("file")
-
-          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && isLocalLocation) {
-            V1Table(toCatalogTable(ident, metadata, locationUri))
+          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA) {
+            V1Table(toCatalogTable(ident, metadata))
           } else {
             delegate.loadTable(ident)
           }
@@ -64,8 +60,7 @@ private class DeltaCatalogClient private (
 
   private def toCatalogTable(
       ident: Identifier,
-      metadata: io.unitycatalog.client.delta.model.TableMetadata,
-      locationUri: java.net.URI): CatalogTable = {
+      metadata: io.unitycatalog.client.delta.model.TableMetadata): CatalogTable = {
     CatalogTable(
       identifier =
         TableIdentifier(ident.name(), ident.namespace().lastOption, Some(catalogName)),
@@ -74,7 +69,7 @@ private class DeltaCatalogClient private (
         case _ => CatalogTableType.EXTERNAL
       },
       storage = CatalogStorageFormat(
-        locationUri = Some(locationUri),
+        locationUri = Some(CatalogUtils.stringToURI(metadata.getLocation)),
         inputFormat = None,
         outputFormat = None,
         serde = None,
