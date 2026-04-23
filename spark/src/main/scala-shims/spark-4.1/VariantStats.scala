@@ -83,7 +83,7 @@ abstract class VariantStatsExpression(child: Expression) extends DeclarativeAggr
   }
 
   // Get the VariantVal representing the stats from the footer corresponding to the Variant column
-  // corresponding to the stats expression
+  // in the stats expression
   def getStats: VariantVal = {
     variantStatsData match {
       case Some(data) => data.forPrefixAndStatType(path, statType)
@@ -466,8 +466,6 @@ object VariantStatsData {
               if (typedValueColumn.getPrimitiveType == leafPathTypes(leafPath)) {
                 // If the rescue `value` column has non-null values, we cannot collect stats on this
                 // shredded column.
-                // TODO (VARIANT-85): Support collect stats when the min/max values of the `value`
-                // column are variant nulls.
                 leafPathValidity(leafPath) &= valueNullCount == initialNumRecords
                 leafPathStatistics(leafPath).mergeStatistics(leafStats)
               } else {
@@ -533,7 +531,6 @@ object VariantStatsUtils {
   }
 
   // RFC 9535-style JSON path: escapes single-quote, backslash, and control chars below 0x20.
-  // Inlined here because Spark master does not expose `VariantGet.normalizedJsonPath`.
   private[stats] def normalizedJsonPath(fieldNames: Seq[String]): String = {
     val sb = new StringBuilder("$")
     fieldNames.foreach { field =>

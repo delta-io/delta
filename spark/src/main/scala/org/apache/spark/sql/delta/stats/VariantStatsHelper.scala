@@ -43,7 +43,7 @@ object VariantStatsHelper {
     }
     val buf = new Array[Byte](1 + numBytes)
     buf(0) = VariantUtil.primitiveHeader(primType)
-    writeLittleEndian(buf, 1, l, numBytes)
+    VariantUtil.writeLong(buf, 1, l, numBytes)
     buf
   }
 
@@ -54,13 +54,13 @@ object VariantStatsHelper {
         val buf = new Array[Byte](2 + 4)
         buf(0) = VariantUtil.primitiveHeader(VariantUtil.DECIMAL4)
         buf(1) = d.scale.toByte
-        writeLittleEndian(buf, 2, unscaled.intValueExact.toLong, 4)
+        VariantUtil.writeLong(buf, 2, unscaled.intValueExact.toLong, 4)
         buf
       case 64 =>
         val buf = new Array[Byte](2 + 8)
         buf(0) = VariantUtil.primitiveHeader(VariantUtil.DECIMAL8)
         buf(1) = d.scale.toByte
-        writeLittleEndian(buf, 2, unscaled.longValueExact, 8)
+        VariantUtil.writeLong(buf, 2, unscaled.longValueExact, 8)
         buf
       case 128 =>
         val buf = new Array[Byte](2 + 16)
@@ -80,14 +80,6 @@ object VariantStatsHelper {
         buf
       case _ =>
         throw new IllegalArgumentException("Unexpected bit width of: " + bitWidth)
-    }
-  }
-
-  private def writeLittleEndian(buf: Array[Byte], pos: Int, value: Long, numBytes: Int): Unit = {
-    var i = 0
-    while (i < numBytes) {
-      buf(pos + i) = ((value >>> (i * 8)) & 0xFF).toByte
-      i += 1
     }
   }
 
