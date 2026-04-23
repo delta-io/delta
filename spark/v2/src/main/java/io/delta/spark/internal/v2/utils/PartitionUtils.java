@@ -110,12 +110,6 @@ public class PartitionUtils {
    * <p>Note: Partition values in AddFile use physical column names as keys when column mapping is
    * enabled. This method uses DeltaColumnMapping.getPhysicalName to map from logical schema fields
    * to physical partition value keys.
-   *
-   * @implNote The returned {@link InternalRow} is a {@code GenericInternalRow} (via {@code
-   *     InternalRow.fromSeq}), which has value-based {@code equals()}/{@code hashCode()}. Callers
-   *     such as {@code SparkBatch.planPartitionedInputPartitions} rely on this for grouping files
-   *     by partition key. Changing the return type to a different InternalRow subtype (e.g. {@code
-   *     UnsafeRow}) may break that contract.
    */
   public static InternalRow getPartitionRow(
       MapValue partitionValues, StructType partitionSchema, ZoneId zoneId) {
