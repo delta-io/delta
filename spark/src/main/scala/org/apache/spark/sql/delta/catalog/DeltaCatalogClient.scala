@@ -38,53 +38,56 @@ private class DeltaCatalogClient private (
   def loadTable(ident: Identifier): Table = {
     ucDeltaClient match {
       case Some(client) if ident.namespace().length == 1 =>
-        tryLoadViaDeltaRest(client, ident).getOrElse(delegate.loadTable(ident))
+        try {
+          val metadata = client
+            .loadTable(catalogName, ident.namespace().head, ident.name())
+            .getMetadata
+          val locationUri = CatalogUtils.stringToURI(metadata.getLocation)
+          val isLocalLocation =
+            locationUri.getScheme == null || locationUri.getScheme.equalsIgnoreCase("file")
+
+          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && isLocalLocation) {
+            V1Table(toCatalogTable(ident, metadata, locationUri))
+          } else {
+            delegate.loadTable(ident)
+          }
+        } catch {
+          case e: Exception =>
+            logWarning(s"Falling back to legacy UC API for " +
+              s"${DeltaLogKeys.TABLE_NAME}=$ident.", e)
+            delegate.loadTable(ident)
+        }
       case _ =>
         delegate.loadTable(ident)
     }
   }
 
-  private def tryLoadViaDeltaRest(
-      client: UCDeltaClient,
-      ident: Identifier): Option[Table] = {
-    try {
-      val metadata = client.loadTable(catalogName, ident.namespace().head, ident.name()).getMetadata
-      val locationUri = CatalogUtils.stringToURI(metadata.getLocation)
-      val isLocalLocation =
-        locationUri.getScheme == null || locationUri.getScheme.equalsIgnoreCase("file")
-
-      if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && isLocalLocation) {
-        Some(V1Table(CatalogTable(
-          identifier =
-            TableIdentifier(ident.name(), ident.namespace().lastOption, Some(catalogName)),
-          tableType = metadata.getTableType match {
-            case DeltaTableType.MANAGED => CatalogTableType.MANAGED
-            case _ => CatalogTableType.EXTERNAL
-          },
-          storage = CatalogStorageFormat(
-            locationUri = Some(locationUri),
-            inputFormat = None,
-            outputFormat = None,
-            serde = None,
-            compressed = false,
-            properties = Map(UC_TABLE_ID_KEY -> metadata.getTableUuid.toString)),
-          schema = DeltaRestSchemaConverter.toSparkSchema(metadata.getColumns),
-          provider = Some(DeltaSourceUtils.ALT_NAME),
-          partitionColumnNames = Option(metadata.getPartitionColumns)
-            .map(_.asScala.toSeq)
-            .getOrElse(Nil),
-          properties = Option(metadata.getProperties)
-            .map(_.asScala.toMap)
-            .getOrElse(Map.empty))))
-      } else {
-        None
-      }
-    } catch {
-      case e: Exception =>
-        logWarning(s"Falling back to legacy UC API for " +
-          s"${DeltaLogKeys.TABLE_NAME}=$ident.", e)
-        None
-    }
+  private def toCatalogTable(
+      ident: Identifier,
+      metadata: io.unitycatalog.client.delta.model.TableMetadata,
+      locationUri: java.net.URI): CatalogTable = {
+    CatalogTable(
+      identifier =
+        TableIdentifier(ident.name(), ident.namespace().lastOption, Some(catalogName)),
+      tableType = metadata.getTableType match {
+        case DeltaTableType.MANAGED => CatalogTableType.MANAGED
+        case _ => CatalogTableType.EXTERNAL
+      },
+      storage = CatalogStorageFormat(
+        locationUri = Some(locationUri),
+        inputFormat = None,
+        outputFormat = None,
+        serde = None,
+        compressed = false,
+        properties = Map(UC_TABLE_ID_KEY -> metadata.getTableUuid.toString)),
+      schema = DeltaRestSchemaConverter.toSparkSchema(metadata.getColumns),
+      provider = Some(DeltaSourceUtils.ALT_NAME),
+      partitionColumnNames = Option(metadata.getPartitionColumns)
+        .map(_.asScala.toSeq)
+        .getOrElse(Nil),
+      properties = Option(metadata.getProperties)
+        .map(_.asScala.toMap)
+        .getOrElse(Map.empty))
   }
 }
 
