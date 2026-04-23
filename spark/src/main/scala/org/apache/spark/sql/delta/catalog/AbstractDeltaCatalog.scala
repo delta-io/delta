@@ -29,7 +29,6 @@ import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY_OLD
 import io.delta.storage.commit.uccommitcoordinator.UCTokenBasedRestClient
 import io.unitycatalog.client.delta.DeltaRestClientProvider
-import io.unitycatalog.client.delta.model.CredentialOperation
 import io.unitycatalog.client.delta.model.{DataSourceFormat => DeltaDataSourceFormat, TableType => DeltaTableType}
 import org.apache.spark.sql.delta.skipping.clustering.ClusteredTableUtils
 import org.apache.spark.sql.delta.skipping.clustering.temp.{ClusterBy, ClusterBySpec}
@@ -306,14 +305,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
             locationUri.getScheme == null || locationUri.getScheme.equalsIgnoreCase("file")
 
           if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && isLocalLocation) {
-            // Credential vending is a separate DRC RPC. PR1 only handles local-file tables,
-            // so the response is validated here but not yet threaded into Spark storage props.
-            client.getTableCredentials(
-              CredentialOperation.READ,
-              catalogName,
-              ident.namespace().head,
-              ident.name())
-
             val catalogTable = CatalogTable(
               identifier =
                 TableIdentifier(ident.name(), ident.namespace().lastOption, Some(catalogName)),
@@ -337,11 +328,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
                 .map(_.asScala.toMap)
                 .getOrElse(Map.empty))
             return loadCatalogTable(ident, catalogTable)
-          }
-
-          if (metadata.getDataSourceFormat == DeltaDataSourceFormat.DELTA && !isLocalLocation) {
-            throw new UnsupportedOperationException(
-              s"DRC loadTable currently only supports local-file tables: ${metadata.getLocation}")
           }
         } catch {
           case e: Exception =>
