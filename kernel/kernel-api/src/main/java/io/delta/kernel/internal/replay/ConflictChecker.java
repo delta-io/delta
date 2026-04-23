@@ -33,6 +33,7 @@ import io.delta.kernel.exceptions.ConcurrentWriteException;
 import io.delta.kernel.internal.*;
 import io.delta.kernel.internal.actions.CommitInfo;
 import io.delta.kernel.internal.actions.DomainMetadata;
+import io.delta.kernel.internal.actions.RemoveFile;
 import io.delta.kernel.internal.actions.SetTransaction;
 import io.delta.kernel.internal.checksum.CRCInfo;
 import io.delta.kernel.internal.checksum.ChecksumReader;
@@ -61,6 +62,7 @@ public class ConflictChecker {
   private static final int COMMITINFO_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("commitInfo");
   private static final int DOMAIN_METADATA_ORDINAL =
       CONFLICT_RESOLUTION_SCHEMA.indexOf("domainMetadata");
+  private static final int CR_REMOVE_ORDINAL = CONFLICT_RESOLUTION_SCHEMA.indexOf("remove");
 
   // Snapshot of the table read by the transaction that encountered the conflict
   // (a.k.a the losing transaction)
@@ -74,6 +76,8 @@ public class ConflictChecker {
 
   // Helper states during conflict resolution
   private Optional<Long> lastWinningRowIdHighWatermark = Optional.empty();
+  private final Set<String> winningRemovedFilePaths = new HashSet<>();
+  private long lastWinningVersionWithRemoves = -1;
 
   private ConflictChecker(
       Optional<SnapshotImpl> snapshotOpt,
@@ -147,9 +151,16 @@ public class ConflictChecker {
             handleMetadata(batch.getColumnVector(METADATA_ORDINAL));
             handleTxn(batch.getColumnVector(TXN_ORDINAL));
             handleDomainMetadata(batch.getColumnVector(DOMAIN_METADATA_ORDINAL));
+            handleRemoveFile(batch.getColumnVector(CR_REMOVE_ORDINAL), actionBatch.getVersion());
           });
     } catch (IOException ioe) {
       throw new UncheckedIOException("Error reading actions from winning commits.", ioe);
+    }
+
+    // File-level conflict checks: detect delete-read and delete-delete conflicts
+    if (!winningRemovedFilePaths.isEmpty()) {
+      Set<String> currentTxnRemovedFilePaths = extractCurrentTxnRemovedFilePaths();
+      checkForDeletedFilesAgainstCurrentTxnDeletedFiles(currentTxnRemovedFilePaths);
     }
 
     // Initialize updated actions for the next commit attempt with the current attempt's actions
@@ -365,6 +376,57 @@ public class ConflictChecker {
             }
           }
         });
+  }
+
+  /**
+   * Collects paths of files removed by winning commits. Used later for delete-read and
+   * delete-delete conflict checks.
+   */
+  private void handleRemoveFile(ColumnVector removeVector, long winningVersion) {
+    int pathOrd = RemoveFile.FULL_SCHEMA.indexOf("path");
+    ColumnVector pathCol = removeVector.getChild(pathOrd);
+    for (int rowId = 0; rowId < removeVector.getSize(); rowId++) {
+      if (!removeVector.isNullAt(rowId)) {
+        winningRemovedFilePaths.add(pathCol.getString(rowId));
+        lastWinningVersionWithRemoves = winningVersion;
+      }
+    }
+  }
+
+  /**
+   * Extracts the set of file paths that the current (losing) transaction is trying to remove. For
+   * OPTIMIZE, these are the files being compacted; they also represent the "read set" since
+   * OPTIMIZE reads every file it removes.
+   */
+  private Set<String> extractCurrentTxnRemovedFilePaths() {
+    Set<String> paths = new HashSet<>();
+    int removeOrd = REMOVE_FILE_ORDINAL;
+    try (CloseableIterator<Row> iter = attemptDataActions.iterator()) {
+      while (iter.hasNext()) {
+        Row action = iter.next();
+        if (!action.isNullAt(removeOrd)) {
+          RemoveFile rf = new RemoveFile(action.getStruct(removeOrd));
+          paths.add(rf.getPath());
+        }
+      }
+    } catch (IOException e) {
+      throw new UncheckedIOException("Error reading attempt data actions.", e);
+    }
+    return paths;
+  }
+
+  /**
+   * Checks if any file that the current transaction is trying to delete was also deleted by a
+   * winning commit. This covers both the delete-read case (a file we read was concurrently removed)
+   * and the delete-delete case (two writers both removing the same file).
+   */
+  private void checkForDeletedFilesAgainstCurrentTxnDeletedFiles(
+      Set<String> currentTxnRemovedFilePaths) {
+    for (String winningRemovedPath : winningRemovedFilePaths) {
+      if (currentTxnRemovedFilePaths.contains(winningRemovedPath)) {
+        throw DeltaErrors.concurrentDeleteDeleteException(lastWinningVersionWithRemoves);
+      }
+    }
   }
 
   private List<FileStatus> getWinningCommitFiles(Engine engine) {

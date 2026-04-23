@@ -449,6 +449,23 @@ public final class DeltaErrors {
     return new ProtocolChangedException(attemptVersion);
   }
 
+  public static ConcurrentWriteException concurrentDeleteReadException(long winningVersion) {
+    return new ConcurrentWriteException(
+        format(
+            "This transaction attempted to read one or more files that were deleted "
+                + "by a concurrent update (version %d). Please try the operation again.",
+            winningVersion));
+  }
+
+  public static ConcurrentWriteException concurrentDeleteDeleteException(long winningVersion) {
+    return new ConcurrentWriteException(
+        format(
+            "This transaction attempted to delete one or more files that were already "
+                + "deleted by a concurrent update (version %d). "
+                + "Please try the operation again.",
+            winningVersion));
+  }
+
   public static KernelException voidTypeEncountered() {
     return new KernelException(
         "Failed to parse the schema. Encountered unsupported Delta data type: VOID");

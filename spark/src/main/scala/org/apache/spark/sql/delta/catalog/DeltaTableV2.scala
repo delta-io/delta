@@ -545,11 +545,31 @@ object DeltaTableV2 {
    * Extracts the DeltaTableV2 from a resolved Delta table plan node, returning None if the node
    * does not actually represent a resolved Delta table.
    */
+  // scalastyle:off line.size.limit
+  private val SPARK_TABLE_CLASS = "io.delta.spark.internal.v2.catalog.SparkTable"
+  // scalastyle:on line.size.limit
+
   def maybeExtractFrom(plan: LogicalPlan): Option[DeltaTableV2] = plan match {
     case ResolvedTable(_, _, d: DeltaTableV2, _) => Some(d)
     case ResolvedTable(_, _, t: V1Table, _) if DeltaTableUtils.isDeltaTable(t.catalogTable) =>
       Some(DeltaTableV2(SparkSession.active, new Path(t.v1Table.location), Some(t.v1Table)))
+    case ResolvedTable(_, _, t, _) if t.getClass.getName == SPARK_TABLE_CLASS =>
+      extractFromSparkTable(t)
     case _ => None
+  }
+
+  private def extractFromSparkTable(
+      t: org.apache.spark.sql.connector.catalog.Table): Option[DeltaTableV2] = {
+    try {
+      val cls = t.getClass
+      val path = cls.getMethod("getTablePath").invoke(t).asInstanceOf[Path]
+      val catalogOpt = cls.getMethod("getCatalogTable").invoke(t)
+        .asInstanceOf[java.util.Optional[org.apache.spark.sql.catalyst.catalog.CatalogTable]]
+      import scala.jdk.OptionConverters._
+      Some(DeltaTableV2(SparkSession.active, path, catalogTable = catalogOpt.toScala))
+    } catch {
+      case _: Exception => None
+    }
   }
 
   /**
