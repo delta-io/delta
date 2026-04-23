@@ -76,6 +76,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
         ICEBERG_COMPAT_V3_W_FEATURE,
         DELETION_VECTORS_RW_FEATURE,
         VARIANT_RW_FEATURE,
+        VARIANT_SHREDDING_RW_FEATURE,
         VARIANT_SHREDDING_PREVIEW_RW_FEATURE,
         VARIANT_RW_PREVIEW_FEATURE,
         ROW_TRACKING_W_FEATURE,
@@ -100,6 +101,7 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
         "rowTracking",
         "variantType",
         "variantType-preview",
+        "variantShredding",
         "variantShredding-preview",
         tableFeature).asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
@@ -398,8 +400,13 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
   /* --- UNSUPPORTED_FEATURES_CHECK tests --- */
 
   test("all supported features are allowed") {
-    val readerFeatures =
-      Set("columnMapping", "timestampNtz", "v2Checkpoint", "vacuumProtocolCheck", "rowTracking")
+    val readerFeatures = Set(
+      "columnMapping",
+      "timestampNtz",
+      "v2Checkpoint",
+      "vacuumProtocolCheck",
+      "rowTracking",
+      "geospatial")
     val writerFeatures = Set(
       // Legacy incompatible features (allowed as long as they are inactive)
       "invariants",
@@ -425,26 +432,17 @@ class IcebergWriterCompatV3MetadataValidatorAndUpdaterSuite
       "rowTracking",
       "variantType",
       "variantType-preview",
+      "variantShredding",
       "variantShredding-preview",
+      "geospatial",
       "icebergCompatV2",
       "icebergWriterCompatV1",
+      "allowColumnDefaults",
       "catalogManaged")
     val protocol = new Protocol(3, 7, readerFeatures.asJava, writerFeatures.asJava)
     val metadata = getCompatEnabledMetadata(cmTestSchema())
     validateAndUpdateIcebergWriterCompatV3Metadata(true, metadata, protocol, Optional.empty())
     validateAndUpdateIcebergWriterCompatV3Metadata(false, metadata, protocol, Optional.empty())
-  }
-
-  Seq("collations", "defaultColumns").foreach { unsupportedIncompatibleFeature =>
-    test(s"cannot enable with incompatible UNSUPPORTED feature $unsupportedIncompatibleFeature") {
-      // We add this test here so that it will fail when we add Kernel support for these features
-      // When this happens -> add the feature to the test above
-      checkUnsupportedOrIncompatibleFeature(
-        unsupportedIncompatibleFeature,
-        "Unsupported Delta table feature: table requires feature " +
-          s""""$unsupportedIncompatibleFeature" which is unsupported by this version of """ +
-          "Delta Kernel")
-    }
   }
 
   /* --- INVARIANTS_INACTIVE_CHECK tests --- */

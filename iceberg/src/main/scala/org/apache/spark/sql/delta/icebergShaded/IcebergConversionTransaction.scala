@@ -452,20 +452,6 @@ class IcebergConversionTransaction(
       )
     }
     try {
-      // Iceberg CREATE_TABLE reassigns the field id in schema, which
-      // is overwritten by setting Delta schema with Delta generated field id to ensure
-      // consistency between field id in Iceberg schema after conversion and field id in
-      // parquet files written by Delta.
-      if (tableOp == CREATE_TABLE) {
-        metadataUpdates.add(
-          new AddSchema(icebergSchema, postCommitSnapshot.metadata.columnMappingMaxId.toInt)
-        )
-        if (postCommitSnapshot.metadata.partitionColumns.nonEmpty) {
-          metadataUpdates.add(
-            new AddPartitionSpec(partitionSpec)
-          )
-        }
-      }
       txn.commitTransaction()
       recordIcebergCommit()
     } catch {
@@ -566,6 +552,15 @@ class IcebergConversionTransaction(
         } else {
           throw new IllegalStateException(s"Cannot replace table $tablePath. Table doesn't exist.")
         }
+    }
+    // Iceberg CREATE_TABLE reassigns the field id in schema, which
+    // is not consistent with Delta in edge cases (For nested schemas)
+    // As data files written in the txn will rely on it, we need to
+    // overwrite the schema and partitionSpec in the txn to keep
+    // it consistent with Delta again
+    if (tableOpOpt.getOrElse(tableOp) == CREATE_TABLE) {
+      IcebergTransactionUtils.setIcebergTxnSchema(txn, icebergSchema)
+      IcebergTransactionUtils.setIcebergTxnPartitionSpec(txn, partitionSpec)
     }
     txn
   }

@@ -18,10 +18,12 @@ package org.apache.spark.sql.delta
 
 import java.io.File
 import java.lang.{Integer => JInt}
+import java.net.URI
 
 import scala.language.implicitConversions
 
 import com.databricks.spark.util.{Log4jUsageLogger, MetricDefinitions, UsageRecord}
+import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
 import org.apache.spark.sql.delta.commands.MergeIntoCommand
 import org.apache.spark.sql.delta.commands.merge.MergeStats
 import org.apache.spark.sql.delta.sources.DeltaSQLConf
@@ -32,7 +34,7 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.QueryContext
 import org.apache.spark.sql.{functions, AnalysisException, DataFrame, QueryTest, Row}
-import org.apache.spark.sql.catalyst.InternalRow
+import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.catalyst.expressions.{GenericInternalRow, UnsafeArrayData}
 import org.apache.spark.sql.catalyst.plans.logical.{SubqueryAlias, View}
 import org.apache.spark.sql.execution.adaptive.DisableAdaptiveExecution
@@ -3463,6 +3465,136 @@ trait MergeIntoSuiteBaseMiscTests extends MergeIntoSuiteBaseMixin {
           Row(-1, part3) :: Row(-1, part3) :: Row(-1, part3) ::
           Row(0, part4) ::
           Nil)
+    }
+  }
+}
+
+/**
+ * Overrides [[DeltaDMLTestUtils]] methods to route writes through the V2 in-memory path.
+ */
+trait DeltaDMLInMemoryTestUtils
+    extends DeltaDMLTestUtils
+    with InMemoryTestTableMixin {
+
+  /**
+   * Appends [[df]] into the test table.
+   */
+  override protected def append(df: DataFrame, partitionBy: Seq[String] = Nil): Unit = {
+    if (!spark.sessionState.catalog.tableExists(tableIdentifier)) {
+      val partitioning = if (partitionBy.nonEmpty) {
+        s"PARTITIONED BY (${partitionBy.mkString(", ")})"
+      } else {
+        ""
+      }
+      spark.sql(
+        s"CREATE TABLE $tableSQLIdentifier (${df.schema.toDDL}) USING delta $partitioning")
+    }
+    df.writeTo(tableSQLIdentifier).append()
+    assertNoParquetFiles(tableSQLIdentifier)
+  }
+
+  /**
+   * Override for [[withTable]] that asserts no leftover physical parquet as a sanity-check
+   * for V2 paths.
+   */
+  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
+    try {
+      super.withTable(tableNames: _*) {
+        f
+        tableNames.foreach(assertNoParquetFiles)
+      }
+    } finally {
+      tableNames.foreach(tableName => assert(!InMemoryDeltaCatalog.contains(tableName)))
+    }
+  }
+
+  /**
+   * Overrides for [[afterEach]], cleans the [[InMemoryDeltaCatalog]] after each test.
+   */
+  override protected def afterEach(): Unit = {
+    try {
+      InMemoryDeltaCatalog.reset()
+    } finally {
+      super.afterEach()
+    }
+  }
+
+  /**
+   * Assert no parquet files are contain within the data directory for [[tableName]].
+   * Used to sanity-check our V2-only write paths.
+   */
+  private def assertNoParquetFiles(tableName: String): Unit = {
+    import java.nio.file.{Files, Path}
+
+    val ident = TableIdentifier(tableName)
+
+    // Temp views don't create anything on the disk, but still use `withTable`.
+    // Either way, something that doesn't have a catalog entry, but is used in `withTable` should
+    // not be checked on disk.
+    if (!spark.sessionState.catalog.tableExists(ident)) {
+      return
+    }
+
+    val catalogTable = spark.sessionState.catalog.getTableMetadata(ident)
+    val dataPath = new File(new URI(catalogTable.location.toString))
+    if (dataPath.exists()) {
+      val stream = Files.walk(dataPath.toPath)
+      try {
+        val parquetFiles = stream
+          .filter(Files.isRegularFile(_))
+          .filter(_.toString.endsWith(".parquet"))
+          .toArray.map(_.asInstanceOf[Path].toString).toSeq
+        assert(parquetFiles.isEmpty,
+          s"Physical parquet files found while V2 in-memory mode is enabled. " +
+          s"DML may have fallen back to V1. Files: $parquetFiles")
+      } finally {
+        stream.close()
+      }
+    }
+  }
+}
+
+/**
+ * Merge-specific V2-DML mixin.
+ * Remaps known error conditions between V1 and V2.
+ */
+trait MergeIntoSuiteInMemoryTestTableMixin
+    extends DeltaDMLInMemoryTestUtils {
+
+  /**
+   * Override that checks for known-different [[condition]]s between V1 and V2.
+   * When a matching [[condition]] is found, the [[exception]] is only asserted to match the mapped
+   * condition.
+   */
+  override def checkError(
+      exception: org.apache.spark.SparkThrowable,
+      condition: String,
+      sqlState: Option[String] = None,
+      parameters: Map[String, String] = Map.empty,
+      matchPVals: Boolean = false,
+      queryContext: Array[ExpectedContext] = Array.empty): Unit = {
+    def assertV2(v2Condition: String): Unit = {
+      assert(exception.getCondition == v2Condition,
+        s"Expected V2 condition '$v2Condition' (mapped from '$condition'), " +
+        s"got '${exception.getCondition}'")
+    }
+    condition match {
+      case "DELTA_AGGREGATION_NOT_SUPPORTED" =>
+        assertV2("UNSUPPORTED_MERGE_CONDITION.AGGREGATE")
+      case "DELTA_NON_DETERMINISTIC_FUNCTION_NOT_SUPPORTED" =>
+        assertV2("UNSUPPORTED_MERGE_CONDITION.NON_DETERMINISTIC")
+      case "DELTA_MERGE_UNRESOLVED_EXPRESSION" =>
+        assertV2("UNRESOLVED_COLUMN.WITH_SUGGESTION")
+      case "DELTA_SUBQUERY_NOT_SUPPORTED" =>
+        assertV2("UNSUPPORTED_MERGE_CONDITION.SUBQUERY")
+      case _ =>
+        super.checkError(
+          exception = exception,
+          condition = condition,
+          sqlState = sqlState,
+          parameters = parameters,
+          matchPVals = matchPVals,
+          queryContext = queryContext)
     }
   }
 }

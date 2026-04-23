@@ -29,11 +29,13 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 import javax.annotation.Nonnull;
 
+import org.apache.spark.sql.delta.coordinatedcommits.CatalogTrackedInfo;
 import io.delta.storage.CloseableIterator;
 import io.delta.storage.LogStore;
 import io.delta.storage.commit.*;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
+import io.delta.storage.commit.uniform.UniformMetadata;
 import io.delta.storage.internal.FileNameUtils;
 import io.delta.storage.internal.LogStoreErrors;
 import org.apache.hadoop.conf.Configuration;
@@ -291,8 +293,27 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       tableDesc,
       commitVersion,
       actions,
-      updatedActions);
+      CatalogTrackedInfo.EMPTY
+      , updatedActions);
   }
+
+  public CommitResponse commit(
+      LogStore logStore,
+      Configuration hadoopConf,
+      TableDescriptor tableDesc,
+      long commitVersion,
+      Iterator<String> actions,
+      CatalogTrackedInfo catalogTrackedInfo,
+      UpdatedActions updatedActions) throws CommitFailedException {
+        return commitImpl(
+          logStore,
+          hadoopConf,
+          tableDesc,
+          commitVersion,
+          actions,
+          catalogTrackedInfo,
+          updatedActions);
+    }
 
   /**
    * Commits the provided actions as the specified version. The steps are as follows.
@@ -313,6 +334,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       TableDescriptor tableDesc,
       long commitVersion,
       Iterator<String> actions,
+      CatalogTrackedInfo catalogTrackedInfo,
       UpdatedActions updatedActions) throws CommitFailedException {
     Path logPath = tableDesc.getLogPath();
     Map<String, String> coordinatedCommitsTableConf = tableDesc.getTableConf();
@@ -434,6 +456,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
           Optional.of(commitVersion),
           Optional.of(commitTimestamp),
           Optional.of(lastKnownBackfilledVersion.get()),
+          catalogTrackedInfo,
           disown,
           updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
             Optional.empty() :
@@ -643,7 +666,8 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional.empty() /* commitVersion */,
       Optional.empty() /* commitTimestamp */,
       Optional.of(updatedLastKnownBackfilledVersion),
-      true /* disown */,
+      CatalogTrackedInfo.EMPTY
+      , true /* disown */,
       Optional.empty() /* newMetadata */,
       Optional.empty() /* newProtocol */
     );
@@ -672,6 +696,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> commitVersion,
       Optional<Long> commitTimestamp,
       Optional<Long> lastKnownBackfilledVersion,
+      CatalogTrackedInfo catalogTrackedInfo,
       boolean disown,
       Optional<AbstractMetadata> newMetadata,
       Optional<AbstractProtocol> newProtocol
@@ -692,7 +717,7 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       disown,
       newMetadata,
       newProtocol,
-      Optional.empty() /* uniform */
+        catalogTrackedInfo.deltaUniformIceberg()
     );
   }
 

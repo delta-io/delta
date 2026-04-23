@@ -18,6 +18,7 @@ package io.sparkuctest;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
+import io.unitycatalog.client.api.TablesApi;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -264,6 +265,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
       withTempDir(
           (Path dir) -> {
             Path tablePath = new Path(dir, tableName);
+            sql("DROP TABLE IF EXISTS %s", fullTableName);
             sql(
                 "CREATE TABLE %s (%s) USING DELTA %s %s LOCATION '%s'",
                 fullTableName,
@@ -281,6 +283,7 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     } else {
       // Managed table - Spark manages the location
       // Unity Catalog requires 'delta.feature.catalogManaged'='supported' for managed tables
+      sql("DROP TABLE IF EXISTS %s", fullTableName);
       sql(
           "CREATE TABLE %s (%s) USING DELTA %s %s",
           fullTableName, tableSchema, partitionCause.toString(), tblPropertiesSql);
@@ -332,6 +335,12 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
     return uc.catalogName() + "." + uc.schemaName() + "." + simpleName;
   }
 
+  /** Returns the UC table ID for the given table. */
+  protected String currentUcTableId(String fullTableName) throws Exception {
+    TablesApi tablesApi = new TablesApi(unityCatalogInfo().createApiClient());
+    return tablesApi.getTable(fullTableName, false, false).getTableId();
+  }
+
   /** Returns the current (latest) version of the table. */
   protected long currentVersion(String tableName) {
     return Long.parseLong(sql("DESCRIBE HISTORY %s LIMIT 1", tableName).get(0).get(0));
@@ -362,6 +371,33 @@ public abstract class UCDeltaTableIntegrationBaseTest extends UnityCatalogSuppor
                   "Expected exception containing '"
                       + expectedMessage
                       + "' in cause chain, but none found. Top-level: "
+                      + e,
+                  e);
+            });
+  }
+
+  /**
+   * Asserts that the given operation throws an exception whose cause chain contains at least one of
+   * the provided messages.
+   */
+  protected void assertThrowsWithCauseContainingAny(
+      List<String> expectedMessages, ThrowingCallable operation) {
+    assertThatThrownBy(operation)
+        .satisfies(
+            e -> {
+              Throwable t = e;
+              while (t != null) {
+                String message = t.getMessage();
+                if (message != null
+                    && expectedMessages.stream().anyMatch(expected -> message.contains(expected))) {
+                  return;
+                }
+                t = t.getCause();
+              }
+              throw new AssertionError(
+                  "Expected exception containing one of "
+                      + expectedMessages
+                      + " in cause chain, but none found. Top-level: "
                       + e,
                   e);
             });

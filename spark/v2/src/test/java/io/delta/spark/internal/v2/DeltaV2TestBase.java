@@ -36,6 +36,8 @@ public abstract class DeltaV2TestBase {
             .config(
                 "spark.sql.catalog.spark_catalog",
                 "org.apache.spark.sql.delta.catalog.DeltaCatalogV1")
+            .config("spark.sql.catalog.dsv2", "io.delta.spark.internal.v2.catalog.TestCatalog")
+            .config("spark.sql.catalog.dsv2.base_path", System.getProperty("java.io.tmpdir"))
             .getOrCreate();
     defaultEngine = DefaultEngine.create(spark.sessionState().newHadoopConf());
   }
@@ -110,6 +112,20 @@ public abstract class DeltaV2TestBase {
         spark.conf().set(key, original.get());
       } else {
         spark.conf().unset(key);
+      }
+    }
+  }
+
+  /**
+   * Runs the given action and drops the specified tables afterwards, similar to Scala's {@code
+   * withTable}.
+   */
+  protected void withTable(String[] tableNames, ThrowingRunnable action) throws Exception {
+    try {
+      action.run();
+    } finally {
+      for (String tableName : tableNames) {
+        spark.sql(String.format("DROP TABLE IF EXISTS %s", tableName));
       }
     }
   }

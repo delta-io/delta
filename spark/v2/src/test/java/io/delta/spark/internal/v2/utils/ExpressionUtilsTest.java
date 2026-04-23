@@ -22,7 +22,9 @@ import io.delta.kernel.expressions.Literal;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.kernel.types.*;
 import java.math.BigDecimal;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 import org.apache.spark.sql.connector.expressions.FieldReference;
@@ -270,6 +272,28 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testAlwaysTrueFilter() {
+    Filter filter = new org.apache.spark.sql.sources.AlwaysTrue();
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "AlwaysTrue should be converted");
+    assertFalse(result.isPartial());
+    assertEquals("ALWAYS_TRUE", result.get().getName());
+  }
+
+  @Test
+  public void testAlwaysFalseFilter() {
+    Filter filter = new org.apache.spark.sql.sources.AlwaysFalse();
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(filter);
+
+    assertTrue(result.isPresent(), "AlwaysFalse should be converted");
+    assertFalse(result.isPartial());
+    assertEquals("ALWAYS_FALSE", result.get().getName());
+  }
+
+  @Test
   public void testUnsupportedFilter() {
     // Create an unsupported filter (StringContains is not implemented in our conversion method)
     Filter unsupportedFilter = new StringContains("col1", "test");
@@ -447,6 +471,22 @@ public class ExpressionUtilsTest {
         expectedDataType,
         literal.getDataType(),
         "DataType should match expected type for " + typeName);
+  }
+
+  @Test
+  public void testConvertValueToKernelLiteral_DecimalWithScaleExceedingPrecision() {
+    // BigDecimal("0.00") has precision=1, scale=2 which violates precision >= scale.
+    // The conversion should normalize precision to max(precision, scale + 1).
+    BigDecimal bd = new BigDecimal("0.00");
+    assertEquals(1, bd.precision(), "Precondition: precision of 0.00 should be 1");
+    assertEquals(2, bd.scale(), "Precondition: scale of 0.00 should be 2");
+
+    Optional<Literal> result = ExpressionUtils.convertValueToKernelLiteral(bd);
+    assertTrue(result.isPresent(), "BigDecimal 0.00 should be convertible");
+
+    Literal literal = result.get();
+    // Normalized precision should be max(1, 2+1) = 3
+    assertEquals(new DecimalType(3, 2), literal.getDataType());
   }
 
   @Test
@@ -853,6 +893,31 @@ public class ExpressionUtilsTest {
   }
 
   @Test
+  public void testDecimalPartialPushDownInAndFilter() {
+    // AND(price > 99.999, price < 200.00) where left has scale=3 exceeding column's scale=2.
+    // Only the right side should be pushed down (partial pushdown).
+    GreaterThan left = new GreaterThan("price", new BigDecimal("99.999"));
+    LessThan right = new LessThan("price", new BigDecimal("200.00"));
+    org.apache.spark.sql.sources.And andFilter = new org.apache.spark.sql.sources.And(left, right);
+
+    ExpressionUtils.ConvertedPredicate result =
+        ExpressionUtils.convertSparkFilterToKernelPredicate(andFilter, decimalSchema);
+
+    assertTrue(result.isPresent(), "AND filter should partially push down the valid side");
+    assertTrue(result.isPartial(), "Result should be marked as partial conversion");
+    // Only the right side (price < 200.00) should be pushed, not a compound AND
+    Predicate pred = result.get();
+    assertNotEquals(
+        "AND",
+        pred.getName(),
+        "Left side (price > 99.999) should be dropped, not pushed as compound AND");
+    assertEquals("<", pred.getName());
+    Literal literal = (Literal) pred.getChildren().get(1);
+    assertEquals(new DecimalType(7, 2), literal.getDataType());
+    assertEquals(new BigDecimal("200.00"), literal.getValue());
+  }
+
+  @Test
   public void testDecimalLiteralInCompoundFilter() {
     // AND(price >= 100.00, price <= 200.00) with Decimal(7,2) column
     GreaterThanOrEqual left = new GreaterThanOrEqual("price", new BigDecimal("100.00"));
@@ -939,6 +1004,26 @@ public class ExpressionUtilsTest {
           literal.getDataType(),
           expectedOps[i] + " should widen decimal to column type");
     }
+  }
+
+  @Test
+  public void testClassifyFilterWithNullSchemaMatchesTwoArgOverload() {
+    // Directly validates that classifyFilter(filter, partitionColumns, null) produces
+    // the same result as the 2-arg classifyFilter(filter, partitionColumns).
+    Set<String> partitionColumns = new HashSet<>();
+    partitionColumns.add("dep_id");
+
+    EqualTo filter = new EqualTo("price", new BigDecimal("100.00"));
+
+    ExpressionUtils.FilterClassificationResult resultTwoArg =
+        ExpressionUtils.classifyFilter(filter, partitionColumns);
+    ExpressionUtils.FilterClassificationResult resultThreeArg =
+        ExpressionUtils.classifyFilter(filter, partitionColumns, null);
+
+    assertEquals(resultTwoArg.isKernelSupported, resultThreeArg.isKernelSupported);
+    assertEquals(resultTwoArg.isPartialConversion, resultThreeArg.isPartialConversion);
+    assertEquals(resultTwoArg.isDataFilter, resultThreeArg.isDataFilter);
+    assertEquals(resultTwoArg.kernelPredicate, resultThreeArg.kernelPredicate);
   }
 
   @Test

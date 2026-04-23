@@ -20,7 +20,10 @@ import java.io.{File, FileNotFoundException}
 import java.util.concurrent.atomic.AtomicInteger
 
 // scalastyle:off import.ordering.noEmptyLine
+import org.apache.spark.sql.delta.DeltaOptions
+import org.apache.spark.sql.delta.DeltaTestUtils.BOOLEAN_DOMAIN
 import org.apache.spark.sql.delta.actions.{Action, TableFeatureProtocolUtils}
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.cdc.CDCReader
 import org.apache.spark.sql.delta.coordinatedcommits.{CatalogOwnedTableUtils, CatalogOwnedTestBaseSuite}
 import org.apache.spark.sql.delta.files.TahoeLogFileIndex
@@ -37,6 +40,8 @@ import org.apache.spark.SparkException
 import org.apache.spark.scheduler.{SparkListener, SparkListenerJobStart}
 import org.apache.spark.sql._
 import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
+import org.apache.spark.sql.connector.catalog.TableCatalog
 import org.apache.spark.sql.catalyst.expressions.InSet
 import org.apache.spark.sql.catalyst.expressions.Literal.TrueLiteral
 import org.apache.spark.sql.catalyst.plans.logical.Filter
@@ -641,6 +646,68 @@ class DeltaSuite extends QueryTest
           .save(dir.toString)
 
         checkAnswer(data, Seq(2, 4, 6).toDF().withColumn("is_odd", $"value" % 2 =!= 0))
+      }
+    }
+  }
+
+  Seq(true, false).foreach { enableDeleteSubquery =>
+    test("replaceWhere blocks subquery regardless of subquery flag value" +
+        s" - enableDeleteSubquery=$enableDeleteSubquery") {
+      withSQLConf(
+          DeltaSQLConf.ALLOW_EXISTS_SUBQUERY_IN_DELETE.key ->
+          enableDeleteSubquery.toString) {
+        withTempDir { dir =>
+          Seq(1, 2, 3, 4).toDF("value")
+            .withColumn("is_odd", $"value" % 2 =!= 0)
+            .write
+            .format("delta")
+            .partitionBy("is_odd")
+            .save(dir.toString)
+
+          val viewName = "replaceWhereSubquerySource"
+          withView(viewName) {
+            spark.read.format("delta").load(dir.toString)
+              .where("is_odd = true")
+              .withColumnRenamed("value", "srcValue")
+              .createTempView(viewName)
+
+            // EXISTS subquery should be rejected regardless of the subquery flag
+            checkError(
+              exception = intercept[DeltaAnalysisException] {
+                Seq(5).toDF("value")
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                    s"EXISTS (SELECT 1 FROM $viewName WHERE value = srcValue)")
+                  .save(dir.toString)
+              },
+              condition = "DELTA_UNSUPPORTED_SUBQUERY",
+              sqlState = Some("0AKDC"),
+              parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+              matchPVals = true
+            )
+
+            // IN subquery should be rejected regardless of the subquery flag
+            checkError(
+              exception = intercept[DeltaAnalysisException] {
+                Seq(5).toDF("value")
+                  .withColumn("is_odd", $"value" % 2 =!= 0)
+                  .write
+                  .format("delta")
+                  .mode("overwrite")
+                  .option(DeltaOptions.REPLACE_WHERE_OPTION,
+                    s"value IN (SELECT srcValue FROM $viewName)")
+                  .save(dir.toString)
+              },
+              condition = "DELTA_UNSUPPORTED_SUBQUERY",
+              sqlState = Some("0AKDC"),
+              parameters = Map("operation" -> "DELETE", "cond" -> ".*"),
+              matchPVals = true
+            )
+          }
+        }
       }
     }
   }
@@ -3042,6 +3109,56 @@ class DeltaSuite extends QueryTest
     // Not properly supported: ambiguous without special handling for escaping.
     assert(parseTableAndAlias("'store sales'") === "'store" -> Some("sales'"))
   }
+
+  test("DeltaTableV2.properties() filters fs.* storage properties injected by catalogs") {
+    withTempDir { dir =>
+      spark.range(1).write.format("delta").save(dir.getAbsolutePath)
+
+      val tablePath = new Path(dir.toURI)
+
+      // Simulate catalog (e.g., Unity Catalog) injecting fs.* credentials and metadata
+      // into CatalogTable.storage.properties at table-load time.
+      val injectedFsProps = Map(
+        "fs.s3a.fake-endpoint" -> "s3.us-west-2.amazonaws.com",
+        "fs.unitycatalog.uri" -> "https://uc.example.com",
+        "fs.unitycatalog.auth.fake-token" -> "dapi_secret_token"
+      )
+      val otherStorageProps = Map(
+        "nonFsProp" -> "visible_value",
+        "path" -> dir.getAbsolutePath
+      )
+      val allStorageProps = injectedFsProps ++ otherStorageProps
+
+      val catalogTable = CatalogTable(
+        identifier = TableIdentifier("test_fs_filter"),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat(
+          locationUri = Some(dir.toURI),
+          inputFormat = None,
+          outputFormat = None,
+          serde = None,
+          compressed = false,
+          properties = allStorageProps
+        ),
+        schema = new StructType().add("id", "long"),
+        provider = Some("delta")
+      )
+
+      val deltaTable = DeltaTableV2(spark, tablePath, Some(catalogTable))
+      val v2Props = deltaTable.properties()
+
+      injectedFsProps.keys.foreach { fsKey =>
+        assert(!v2Props.containsKey(TableCatalog.OPTION_PREFIX + fsKey),
+          s"DeltaTableV2.properties() should hide '${TableCatalog.OPTION_PREFIX}$fsKey'")
+      }
+      injectedFsProps.keys.foreach { fsKey =>
+        assert(!v2Props.containsKey(fsKey),
+          s"DeltaTableV2.properties() should also hide '$fsKey'")
+      }
+      assert(v2Props.get(TableCatalog.OPTION_PREFIX + "nonFsProp") === "visible_value",
+        "Non-fs storage properties should remain visible in DeltaTableV2.properties()")
+    }
+  }
 }
 
 
@@ -3301,6 +3418,132 @@ class DeltaNameColumnMappingSuite extends DeltaSuite
            |""".stripMargin)
       checkAnswer(spark.read.load(dir.toString),
         insertedDF.filter(col("id") >= 6).union(otherDF))
+    }
+  }
+
+  for (useNullIntolerantEqualityWithDPO <- BOOLEAN_DOMAIN) {
+    test(s"useNullIntolerantEqualityWithDPO=$useNullIntolerantEqualityWithDPO " +
+        "in Dynamic Partition Overwrite") {
+      withTempDir { tempDir =>
+        Seq[(Option[Int], Option[Int], String)](
+            (None, None, "target"),
+            (Some(1), None, "target"),
+            (Some(1), Some(2), "target"),
+            (Some(1), Some(3), "target"))
+          .toDF("part1", "part2", "row_origin")
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("append")
+          .save(tempDir.getCanonicalPath)
+
+        Seq[(Option[Int], Option[Int], String)](
+            (None, None, "source"),
+            (Some(1), None, "source"),
+            (None, Some(1), "source"),
+            (Some(1), Some(2), "source"),
+            (Some(2), Some(3), "source"))
+          .toDF("part1", "part2", "row_origin")
+          .write
+          .format("delta")
+          .partitionBy("part1", "part2")
+          .mode("overwrite")
+          .option(DeltaOptions.PARTITION_OVERWRITE_MODE_OPTION, "dynamic")
+          .option(DeltaOptions.USE_NULL_INTOLERANT_EQUALITY_WITH_DPO,
+            useNullIntolerantEqualityWithDPO.toString)
+          .save(tempDir.getCanonicalPath)
+
+        // When this option is set to true, partitions that contain null values are inserted,
+        // not overwritten.
+        if (useNullIntolerantEqualityWithDPO) {
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.toString),
+            Row(null, null, "source") ::
+              Row(null, null, "target") ::
+              Row(1, null, "source") ::
+              Row(1, null, "target") ::
+              Row(null, 1, "source") ::
+              Row(1, 2, "source") ::
+              Row(1, 3, "target") ::
+              Row(2, 3, "source") ::
+              Nil
+          )
+        } else {
+          checkAnswer(
+            spark.read.format("delta").load(tempDir.toString),
+            Row(null, null, "source") ::
+              Row(1, null, "source") ::
+              Row(null, 1, "source") ::
+              Row(1, 2, "source") ::
+              Row(1, 3, "target") ::
+              Row(2, 3, "source") ::
+              Nil
+          )
+        }
+      }
+    }
+  }
+
+  for (insertReplaceCriteriaType <- Seq("replaceOn", "replaceUsing")) {
+    test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 save API") {
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTempDir { tempDir =>
+          checkError(
+            intercept[DeltaAnalysisException] {
+              spark.range(100).select("id").write.format("delta")
+                .mode("overwrite")
+                // For replaceOn: 'true' is a matching condition.
+                // For replaceUsing: 'true' is a matching column.
+                .option(insertReplaceCriteriaType, "true")
+                .save(tempDir.toString)
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType))
+        }
+      }
+    }
+
+    test(s"$insertReplaceCriteriaType option is not yet supported with DFv1 insertInto") {
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTable("target") {
+          sql("CREATE TABLE target (id bigint, data string) USING delta")
+          val df = Seq((1L, "a"), (2L, "b"), (3L, "c")).toDF("id", "data")
+          checkError(
+            intercept[DeltaAnalysisException] {
+              df.write.format("delta")
+                .mode("overwrite")
+                .option(insertReplaceCriteriaType, "true")
+                .insertInto("target")
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType))
+        }
+      }
+    }
+
+    test(s"$insertReplaceCriteriaType option is not yet supported via saveAsTable") {
+      withSQLConf(
+          DeltaSQLConf.REPLACE_ON_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false",
+          DeltaSQLConf.REPLACE_USING_OPTION_IN_DATAFRAME_WRITER_ENABLED.key -> "false") {
+        withTable("target") {
+          checkError(
+            intercept[DeltaAnalysisException] {
+              spark.range(10).write.format("delta")
+                .option(insertReplaceCriteriaType, "true")
+                .saveAsTable("target")
+            },
+            condition = "DELTA_OPERATION_NOT_ALLOWED",
+            sqlState = "0AKDC",
+            parameters = Map("operation" -> insertReplaceCriteriaType)
+          )
+        }
+      }
     }
   }
 }

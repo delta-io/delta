@@ -117,6 +117,15 @@ object InMemoryUCClient {
   object TableData {
     def afterCreate(): TableData = new TableData(0, ArrayBuffer.empty[Commit])
   }
+
+  /** Record of arguments passed to {@code finalizeCreate}. */
+  case class FinalizeCreateRecord(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String])
 }
 
 /**
@@ -204,7 +213,37 @@ class InMemoryUCClient(ucMetastoreId: String) extends UCClient {
     new GetCommitsResponse(filteredCommits.asJava, tableData.getMaxRatifiedVersion)
   }
 
+  /** Captured arguments from the last {@code finalizeCreate} call, for test assertions. */
+  private var lastFinalizeCreateRecord: Option[InMemoryUCClient.FinalizeCreateRecord] = None
+
+  private[unitycatalog] def getLastFinalizeCreateRecord
+      : Option[InMemoryUCClient.FinalizeCreateRecord] =
+    lastFinalizeCreateRecord
+
+  override def finalizeCreate(
+      tableName: String,
+      catalogName: String,
+      schemaName: String,
+      storageLocation: String,
+      columns: java.util.List[UCClient.ColumnDef],
+      properties: java.util.Map[String, String]): Unit = {
+    forceThrowInFinalizeCreateMethod()
+    lastFinalizeCreateRecord = Some(InMemoryUCClient.FinalizeCreateRecord(
+      tableName,
+      catalogName,
+      schemaName,
+      storageLocation,
+      columns,
+      properties))
+    val fqn = s"$catalogName.$schemaName.$tableName"
+    Option(tables.putIfAbsent(fqn, TableData.afterCreate()))
+      .foreach(_ => throw new IllegalArgumentException(s"$fqn already exists"))
+  }
+
   override def close(): Unit = {}
+
+  /** Can be overridden to force an exception in finalizeCreate. */
+  protected def forceThrowInFinalizeCreateMethod(): Unit = {}
 
   /** Visible for testing. Can be overridden to force an exception in commit method. */
   protected def forceThrowInCommitMethod(): Unit = {}

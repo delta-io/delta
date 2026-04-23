@@ -859,7 +859,17 @@ trait MergeIntoSchemaEvolutionBaseExistingColumnTests extends MergeIntoSchemaEvo
     confs = Seq(SQLConf.CASE_SENSITIVE.key -> "false")
   )
 
-  // TODO: Add a test for case-sensitive insert and column not in target
+  testEvolution("case-sensitive insert, column not in target")(
+    targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),
+    sourceData = Seq((1, 1, "extra1"), (2, 2, "extra2")).toDF("key", "value", "EXTRA"),
+    clauses = insert("(key, value, EXTRA) VALUES (s.key, s.value, s.EXTRA)") :: Nil,
+    // In case-sensitive mode, EXTRA is a new column distinct from any lowercase variant.
+    expected = ((0, 0, null) +: (1, 10, null) +: (3, 30, null) +: (2, 2, "extra2") +: Nil)
+      .asInstanceOf[List[(Integer, Integer, String)]]
+      .toDF("key", "value", "EXTRA"),
+    expectErrorWithoutEvolutionContains = "cannot resolve EXTRA in INSERT clause",
+    confs = Seq(SQLConf.CASE_SENSITIVE.key -> "true")
+  )
 
   testEvolution("case-sensitive insert, column not in source")(
     targetData = Seq((0, 0), (1, 10), (3, 30)).toDF("key", "value"),

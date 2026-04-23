@@ -1645,10 +1645,10 @@ trait DeltaErrorsSuiteBase
     }
     {
       val e = intercept[DeltaAnalysisException] {
-        throw DeltaErrors.foundDuplicateColumnsException("integer", "col1")
+        throw DeltaErrors.foundDuplicateColumnsException("METADATA_UPDATE", "col1")
       }
-      checkError(e, "DELTA_DUPLICATE_COLUMNS_FOUND", "42711",
-        Map("coltype" -> "integer", "duplicateCols" -> "col1"))
+      checkError(e, "DELTA_DUPLICATE_COLUMNS_FOUND.METADATA_UPDATE", "42711",
+        Map("duplicateCols" -> "col1"))
     }
     {
       val e = intercept[DeltaAnalysisException] {
@@ -2325,7 +2325,7 @@ trait DeltaErrorsSuiteBase
       }
       checkError(e, "DELTA_SOURCE_TABLE_IGNORE_CHANGES", "0A000", Map(
         "version" -> "10",
-        "file" -> "removedFile",
+        "changeInfo" -> "removedFile",
         "dataPath" -> "tablePath"
       ))
     }
@@ -2392,7 +2392,7 @@ trait DeltaErrorsSuiteBase
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.metadataAbsentForExistingCatalogTable("tblName", "file://path/to/table")
       }
-      checkError(e, "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE", "XXKDS", Map(
+      checkError(e, "DELTA_METADATA_ABSENT_EXISTING_CATALOG_TABLE", "42K03", Map(
         "tableName" -> "tblName",
         "tablePath" -> "file://path/to/table",
         "tableNameForDropCmd" -> "tblName"

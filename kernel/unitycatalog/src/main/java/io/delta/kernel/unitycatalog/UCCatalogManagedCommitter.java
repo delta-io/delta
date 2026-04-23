@@ -59,18 +59,39 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   protected final UCClient ucClient;
   protected final String ucTableId;
   protected final Path tablePath;
+  private final Optional<UCTableIdentifier> ucTableIdentifier;
 
   /**
-   * Creates a new UCCatalogManagedCommitter for the specified Unity Catalog-managed Delta table.
+   * Creates a committer for an existing Unity Catalog-managed Delta table ({@code version >= 1}
+   * writes).
    *
    * @param ucClient the Unity Catalog client to use for commit operations
    * @param ucTableId the unique Unity Catalog table identifier
    * @param tablePath the path to the Delta table in the underlying storage system
    */
   public UCCatalogManagedCommitter(UCClient ucClient, String ucTableId, String tablePath) {
+    this(ucClient, ucTableId, tablePath, Optional.empty());
+  }
+
+  /**
+   * Creates a committer for a new Unity Catalog-managed Delta table (CREATE TABLE). The provided
+   * {@link UCTableIdentifier} enables automatic table finalization in UC after writing the
+   * version-0 delta file.
+   */
+  public UCCatalogManagedCommitter(
+      UCClient ucClient, String ucTableId, String tablePath, UCTableIdentifier ucTableIdentifier) {
+    this(ucClient, ucTableId, tablePath, Optional.of(requireNonNull(ucTableIdentifier)));
+  }
+
+  private UCCatalogManagedCommitter(
+      UCClient ucClient,
+      String ucTableId,
+      String tablePath,
+      Optional<UCTableIdentifier> ucTableIdentifier) {
     this.ucClient = requireNonNull(ucClient, "ucClient is null");
     this.ucTableId = requireNonNull(ucTableId, "ucTableId is null");
     this.tablePath = new Path(requireNonNull(tablePath, "tablePath is null"));
+    this.ucTableIdentifier = requireNonNull(ucTableIdentifier);
   }
 
   /////////////////
@@ -179,12 +200,10 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   ///////////////////////////
 
   /**
-   * Handles CATALOG_CREATE by writing the published delta file for version 0.
-   *
-   * <p>Note that this assumes that the table is being created within a staging location, and that
-   * the Connector will post-commit inform UC of this 000.json file.
+   * Handles CATALOG_CREATE by writing the published delta file for version 0. If {@link
+   * UCTableIdentifier} is present (set via 4-arg constructor), also finalizes the table in Unity
+   * Catalog. When absent, finalization is skipped — the caller is expected to handle it externally.
    */
-  // TODO: [delta-io/delta#5118] If UC changes CREATE semantics, update logic here.
   private CommitResponse createImpl(
       Engine engine,
       CloseableIterator<Row> finalizedActions,
@@ -199,6 +218,15 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
     final FileStatus kernelPublishedDeltaFileStatus =
         writeDeltaFile(
             engine, finalizedActions, commitMetadata.getPublishedDeltaFilePath(), metricsCollector);
+
+    // Finalize table creation in UC when UCTableIdentifier is present.
+    // When absent, the caller handles finalization externally (e.g., Flink's staging table flow).
+    if (ucTableIdentifier.isPresent()) {
+      finalizeTableInCatalog(commitMetadata);
+    } else {
+      logger.info(
+          "[{}] Skipping kernel-managed finalization (no UCTableIdentifier provided)", ucTableId);
+    }
 
     return new CommitResponse(
         ParsedPublishedDeltaData.forFileStatus(kernelPublishedDeltaFileStatus));
@@ -291,6 +319,37 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   ////////////////////
   // Helper methods //
   ////////////////////
+
+  /**
+   * Finalizes table creation by calling the UC createTable API, promoting the staging table to a
+   * registered table. Extracts all necessary properties from the {@link CommitMetadata}.
+   */
+  private void finalizeTableInCatalog(CommitMetadata commitMetadata) throws CommitFailedException {
+    final UCTableIdentifier tableIdentifier = ucTableIdentifier.get();
+    final Map<String, String> ucProps = UnityCatalogUtils.getPropertiesForCreate(commitMetadata);
+    final List<UCClient.ColumnDef> columns =
+        UnityCatalogUtils.toColumnDefs(commitMetadata.getEffectiveMetadata().getSchema());
+
+    try {
+      logger.info("[{}] Finalizing table creation in Unity Catalog", ucTableId);
+      ucClient.finalizeCreate(
+          tableIdentifier.getTableName(),
+          tableIdentifier.getCatalogName(),
+          tableIdentifier.getSchemaName(),
+          tablePath.toUri().toString(),
+          columns,
+          ucProps);
+      logger.info(
+          "[{}] Finalized table creation in Unity Catalog as {}.{}.{}",
+          ucTableId,
+          tableIdentifier.getCatalogName(),
+          tableIdentifier.getSchemaName(),
+          tableIdentifier.getTableName());
+    } catch (io.delta.storage.commit.CommitFailedException e) {
+      logger.warn("[{}] Failed to finalize table creation in Unity Catalog", ucTableId, e);
+      throw storageCFEtoKernelCFE(e);
+    }
+  }
 
   private String normalize(Path path) {
     return path.toUri().normalize().toString();

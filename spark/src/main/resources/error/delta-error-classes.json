@@ -892,6 +892,12 @@
     ],
     "sqlState" : "XXKDS"
   },
+  "DELTA_DFV2_CREATE_REPLACE_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "DataFrame Writer V2 create()/replace()/createOrReplace() cannot be used with the `replaceOn` or `replaceUsing` option for Delta tables."
+    ],
+    "sqlState" : "42000"
+  },
   "DELTA_DOMAIN_METADATA_NOT_SUPPORTED" : {
     "message" : [
       "Detected DomainMetadata action(s) for domains <domainNames>, but DomainMetadataTableFeature is not enabled."
@@ -913,8 +919,70 @@
   },
   "DELTA_DUPLICATE_COLUMNS_FOUND" : {
     "message" : [
-      "Found duplicate column(s) <coltype>: <duplicateCols>"
+      "Found duplicate column(s): <duplicateCols>."
     ],
+    "subClass" : {
+      "ADDING_COLUMNS" : {
+        "message" : [
+          "The duplicate was found while adding columns."
+        ]
+      },
+      "CLUSTER_BY" : {
+        "message" : [
+          "The duplicate was found in CLUSTER BY."
+        ]
+      },
+      "CONVERT_TO_DELTA" : {
+        "message" : [
+          "The duplicate was found during conversion to Delta."
+        ]
+      },
+      "DATA" : {
+        "message" : [
+          "The duplicate was found in the data being saved."
+        ]
+      },
+      "EXISTING_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the existing table schema."
+        ]
+      },
+      "METADATA_UPDATE" : {
+        "message" : [
+          "The duplicate was found in the metadata update."
+        ]
+      },
+      "PARTITION_COLUMNS" : {
+        "message" : [
+          "The duplicate was found in the partition columns."
+        ]
+      },
+      "PARTITION_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the partition schema."
+        ]
+      },
+      "READ_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the schema of the data being read."
+        ]
+      },
+      "REPLACING_COLUMNS" : {
+        "message" : [
+          "The duplicate was found while replacing columns."
+        ]
+      },
+      "SPECIFIED_COLUMNS" : {
+        "message" : [
+          "The duplicate was found in the specified columns."
+        ]
+      },
+      "TABLE_SCHEMA" : {
+        "message" : [
+          "The duplicate was found in the table schema."
+        ]
+      }
+    },
     "sqlState" : "42711"
   },
   "DELTA_DUPLICATE_COLUMNS_ON_INSERT" : {
@@ -953,6 +1021,12 @@
       "Dynamic partition overwrite mode is specified by session config or write options, but it is disabled by `delta.dynamicPartitionOverwrite.enabled=false`."
     ],
     "sqlState" : "0A000"
+  },
+  "DELTA_DYNAMIC_PARTITION_OVERWRITE_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "Dynamic partition overwrite is incompatible with the `replaceOn`/`replaceUsing` option."
+    ],
+    "sqlState" : "42613"
   },
   "DELTA_EMPTY_DATA" : {
     "message" : [
@@ -1434,6 +1508,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_INCOMPATIBLE_DATAFRAME_OPTIONS" : {
+    "message" : [
+      "The `<firstDeltaOption>` option cannot be used with the `<secondDeltaOption>` option for Delta tables."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_INCONSISTENT_LOGSTORE_CONFS" : {
     "message" : [
       "(<setKeys>) cannot be set to different values. Please only set one of them, or set them to the same value."
@@ -1490,6 +1570,18 @@
       "Column <columnName> is not specified in INSERT"
     ],
     "sqlState" : "42802"
+  },
+  "DELTA_INSERT_REPLACE_ON_AMBIGUOUS_COLUMNS_IN_CONDITION" : {
+    "message" : [
+      "Column(s) <columnNames> are ambiguous in the condition of INSERT REPLACE ON. Consider specifying an alias for these columns."
+    ],
+    "sqlState" : "42702"
+  },
+  "DELTA_INSERT_REPLACE_ON_UNRESOLVED_COLUMNS_IN_CONDITION" : {
+    "message" : [
+      "Column(s) <columnNames> cannot be resolved in the condition of INSERT REPLACE ON."
+    ],
+    "sqlState" : "42703"
   },
   "DELTA_INVALID_AUTO_COMPACT_TYPE" : {
     "message" : [
@@ -1794,7 +1886,7 @@
       "The table <tableName> already exists in the catalog but no metadata could be found for the table at the path <tablePath>.",
       "Did you manually delete files from the _delta_log directory? If so, then you should be able to recreate it as follows. First, drop the table by running `DROP TABLE <tableNameForDropCmd>`. Then, recreate it by running the current command again."
     ],
-    "sqlState" : "XXKDS"
+    "sqlState" : "42K03"
   },
   "DELTA_METADATA_CHANGED" : {
     "message" : [
@@ -2188,6 +2280,12 @@
     ],
     "sqlState" : "42601"
   },
+  "DELTA_OVERWRITE_BY_FILTER_INCOMPATIBLE_REPLACE_ON_OR_USING" : {
+    "message" : [
+      "Overwrite by filter is incompatible with the `replaceOn`/`replaceUsing` option."
+    ],
+    "sqlState" : "42613"
+  },
   "DELTA_OVERWRITE_SCHEMA_WITH_DYNAMIC_PARTITION_OVERWRITE" : {
     "message" : [
       "'overwriteSchema' cannot be used in dynamic partition overwrite mode."
@@ -2322,6 +2420,13 @@
       "<file>"
     ],
     "sqlState" : "XXKDS"
+  },
+  "DELTA_REPLACE_ON_OR_USING_TABLE_CONSTRAINT_VIOLATION" : {
+    "message" : [
+      "Written data violates a table constraint during REPLACE ON/USING '<replaceExpression>'.",
+      "<invariantViolationMessage>"
+    ],
+    "sqlState" : "44000"
   },
   "DELTA_REPLACE_WHERE_IN_OVERWRITE" : {
     "message" : [
@@ -2480,7 +2585,7 @@
   },
   "DELTA_SOURCE_TABLE_IGNORE_CHANGES" : {
     "message" : [
-      "Detected a data update (for example <file>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
+      "Detected a data update (for example <changeInfo>) in the source table at version <version>. This is currently not supported. If this is going to happen regularly and you are okay to skip changes, set the option 'skipChangeCommits' to 'true'. If you would like the data update to be reflected, please restart this query with a fresh checkpoint directory. The source table can be found at path <dataPath>."
     ],
     "sqlState" : "0A000"
   },
@@ -3368,6 +3473,12 @@
     ],
     "sqlState" : "42605"
   },
+  "INSERT_REPLACE_USING_DISALLOW_MISALIGNED_COLUMNS" : {
+    "message" : [
+      "INSERT REPLACE USING has misaligned columns: <misalignedReplaceUsingCols>. The replaceUsing columns must be at the same ordinal position in both the table and the source query."
+    ],
+    "sqlState" : "42802"
+  },
   "RESERVED_CDC_COLUMNS_ON_WRITE" : {
     "message" : [
       "",
@@ -3377,6 +3488,12 @@
       "<config> to false."
     ],
     "sqlState" : "42939"
+  },
+  "UNRESOLVED_INSERT_REPLACE_USING_COLUMN" : {
+    "message" : [
+      "Column <colName> cannot be resolved in <relationType>. Did you mean one of the following? [<suggestion>]."
+    ],
+    "sqlState" : "42703"
   },
   "WRONG_COLUMN_DEFAULTS_FOR_DELTA_ALTER_TABLE_ADD_COLUMN_NOT_SUPPORTED" : {
     "message" : [

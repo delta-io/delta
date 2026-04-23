@@ -51,8 +51,9 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "basic",
     "initial snapshot ends at base index of next version",
     "new commits arrive after stream initialization - with explicit startingVersion",
-    "SC-11561: can consume new data without update",
+    "can consume new data without update",
     "Delta sources don't write offsets with null json",
+    "reading from partitioned table succeeds during restart",
 
     // === Schema Evolution ===
     "add column: restarting with new DataFrame should recover",
@@ -69,9 +70,25 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
 
     // === Read options ===
     "excludeRegex works and doesn't mess up offsets across restarts - parquet version",
-    "streaming with ignoreDeletes = true skips delete-only commits",
-    "streaming with ignoreDeletes = true still fails on change commits",
-    "streaming with skipChangeCommits = true skips both delete and change commits",
+    "read options [ignoreDeletes]: ignores delete, rejects change",
+    "read options [skipChangeCommits]: ignores delete, skips change",
+    "read options [ignoreChanges]: ignores delete, includes change AddFiles",
+    "read options [ignoreFileDeletion] (deprecated): equivalent to ignoreChanges",
+    "read options [ignoreDeletes, ignoreChanges]: equivalent to ignoreChanges",
+    "read options [ignoreChanges, skipChangeCommits]: equivalent to skipChangeCommits",
+    "read options [ignoreDeletes, skipChangeCommits]: equivalent to skipChangeCommits",
+    "read options [ignoreDeletes, ignoreChanges, skipChangeCommits]: " +
+      "equivalent to skipChangeCommits",
+
+    // === Commit/Checkpoint file missing detection ===
+    "incremental: first commit file missing, fails",
+    "incremental: commit file gap between versions, fails",
+    "incremental: first commit file missing, failOnDataLoss=false succeeds",
+    "initial snapshot: commit file missing but checkpoint intact, succeeds",
+    "initial snapshot: both checkpoint and commit file missing, fails",
+    "initial snapshot: log retention deletes old checkpoint and commit files mid-stream," +
+      " restart fails",
+    "streaming processes 100 sequential single-value commits and contains all values 0 to 99",
 
     // ========== startingVersion option tests ==========
     "startingVersion",
@@ -99,7 +116,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "maxBytesPerTrigger: max bytes and max files together",
     "Trigger.AvailableNow with an empty table",
     "Rate limited Delta source advances with non-data inserts",
-    "ES-445863: delta source should not hang or reprocess data when using AvailableNow",
+    "delta source should not hang or reprocess data when using AvailableNow",
     "startingVersion should work with rate time",
     "maxFilesPerTrigger: metadata checkpoint",
     "maxBytesPerTrigger: metadata checkpoint",
@@ -107,7 +124,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // ========== Error handling tests ==========
     "streaming query should fail when table is deleted and recreated with new id",
     "deltaSourceIgnoreDeleteError contains removeFile, version, tablePath",
-    "deltaSourceIgnoreChangesError contains removeFile, version, tablePath",
+    "deltaSourceIgnoreChangesError contains changeInfo, version, tablePath",
     "excludeRegex throws good error on bad regex pattern",
 
     // ========== Misc tests ==========
@@ -131,10 +148,12 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     "type widening: restarting with stale DataFrame should recover",
 
     // === Data Loss Detection ===
-    "fail on data loss - starting from missing files",
-    "fail on data loss - gaps of files",
-    "fail on data loss - starting from missing files with option off",
-    "fail on data loss - gaps of files with option off",
+    // V2 only tolerates missing start versions with failOnDataLoss=false; mid-log gaps still
+    // throw InvalidTableException because non-contiguous versions are not a log-retention scenario.
+    "incremental: commit file gap between versions, failOnDataLoss=false succeeds",
+    // Kernel cannot reconstruct snapshot without checkpoint file (_last_checkpoint still
+    // points to deleted checkpoint). V1 falls back to delta files; Kernel does not.
+    "initial snapshot: checkpoint missing but all commit files intact, succeeds",
 
     // === Misc ===
     // TODO(#5900): fix exception mismatch

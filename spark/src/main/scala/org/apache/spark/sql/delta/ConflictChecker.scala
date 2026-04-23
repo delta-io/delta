@@ -32,6 +32,7 @@ import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.delta.util.DeltaSparkPlanUtils.CheckDeterministicOptions
 import org.apache.spark.sql.delta.util.FileNames
 import io.delta.storage.commit.UpdatedActions
+import io.delta.storage.commit.uniform.UniformMetadata
 import org.apache.hadoop.fs.FileStatus
 
 import org.apache.spark.internal.{MDC, MessageWithContext}
@@ -66,7 +67,9 @@ private[delta] case class CurrentTransactionInfo(
     val readRowIdHighWatermark: Long,
     val catalogTable: Option[CatalogTable],
     val domainMetadata: Seq[DomainMetadata],
-    val op: DeltaOperations.Operation) {
+    val op: DeltaOperations.Operation
+    , val convertedIcebergMetadata: Option[UniformMetadata] = None
+ ) {
 
   /**
    * Final actions to commit - including the [[CommitInfo]] which should always come first so we can

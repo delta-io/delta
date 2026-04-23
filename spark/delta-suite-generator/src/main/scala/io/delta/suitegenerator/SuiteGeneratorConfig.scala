@@ -148,6 +148,8 @@ object SuiteGeneratorConfig {
     val DELETE_SCALA = DimensionMixin("DeleteScala", alias = Some("Scala"))
     val DELETE_SQL = DimensionMixin("DeleteSQL", alias = Some("SQL"))
     val DELETE_WITH_DVS = DimensionMixin("DeleteSQLWithDeletionVectors", alias = Some("DV"))
+    val V2_IN_MEMORY_TABLE_MERGE =
+      DimensionMixin("MergeIntoSuiteInMemoryTestTable", alias = Some("InMemoryTable"))
   }
 
   private object Tests {
@@ -225,6 +227,15 @@ object SuiteGeneratorConfig {
           List(
             List(Dims.MERGE_SCALA)
           )
+        ),
+        TestConfig(
+          List(
+            "MergeIntoBasicTests",
+            "MergeIntoAnalysisExceptionTests",
+            "MergeIntoNotMatchedBySourceSuite",
+            "MergeIntoUnlimitedMergeClausesTests"
+          ),
+          List(List(Dims.MERGE_SQL, Dims.V2_IN_MEMORY_TABLE_MERGE, Dims.NAME_BASED))
         ),
         TestConfig(
           "MergeCDCTests" :: "MergeIntoDVsTests" :: Tests.MERGE_SQL ::: Tests.MERGE_BASE,
@@ -321,13 +332,13 @@ object SuiteGeneratorConfig {
       ),
       testConfigs = List(
         TestConfig(
-          "DeleteScalaTests" :: Tests.DELETE_BASE,
+          "DeleteScalaTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SCALA)
           )
         ),
         TestConfig(
-          "DeleteCDCTests" :: "DeleteSQLTests" :: Tests.DELETE_BASE,
+          "DeleteCDCTests" :: "DeleteCDCTableWithDVsTests" :: "DeleteSQLTests" :: "DeleteSubqueryExistsTests" :: Tests.DELETE_BASE,
           List(
             List(Dims.DELETE_SQL, Dims.NAME_BASED),
             List(Dims.DELETE_SQL, Dims.PATH_BASED, Dims.COLUMN_MAPPING.asOptional),

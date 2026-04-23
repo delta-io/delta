@@ -32,7 +32,9 @@ class VerifyVersionCommand(install):
 with open("python/README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-install_requires_arg = ['pyspark>=4.0.1', 'importlib_metadata>=1.0.0']
+# Upper bounds: last known good versions before 2026-03-10 (the canonical date for uv_exclude_newer)
+# pyspark 4.1.1 (2026-01-09), importlib_metadata 8.7.1 (2025-12-21)
+install_requires_arg = ['pyspark>=4.0.1,<=4.1.1', 'importlib_metadata>=1.0.0,<=8.7.1']
 python_requires_arg = '>=3.10'
 
 setup(
