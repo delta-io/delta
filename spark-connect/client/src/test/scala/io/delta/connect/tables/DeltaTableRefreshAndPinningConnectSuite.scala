@@ -168,10 +168,38 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       // Same as classic without column mapping: resolves to new empty table
       checkAnswer(spark.sql("SELECT * FROM v"), Seq.empty)
+    }
+  }
+
+  test("[1] connect scenario 4: temp view after DROP and recreate table " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      spark.table("t").filter("salary < 999").createOrReplaceTempView("v")
+      checkAnswer(spark.sql("SELECT * FROM v"), Row(1, 100))
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+
+      // Column IDs changed, so reading the view should fail.
+      // In Connect, Delta errors are wrapped in SparkException via gRPC.
+      val caught = try {
+        spark.sql("SELECT * FROM v").collect()
+        false
+      } catch {
+        case e: Exception =>
+          assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
+            e.getMessage.contains("schema"))
+          true
+      }
+      assert(caught, "Expected exception for column mapping schema change")
     }
   }
 
@@ -260,7 +288,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
     }
@@ -339,9 +367,8 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df1 = spark.table("t")
 
       writerSql("DROP TABLE t")
-      writerSession.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
       val df2 = spark.table("t")
 
@@ -454,9 +481,8 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(df, Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql(
-        """CREATE TABLE t (id INT, salary INT) USING delta
-          |TBLPROPERTIES ('delta.columnMapping.mode' = 'name')""".stripMargin)
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
       // In Connect, df re-analyzes to the new empty table
       checkAnswer(df, Seq.empty)
@@ -521,7 +547,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
-  test("[5] connect scenario 2: session write invalidates cache") {
+  test("[5] connect scenario 2: session write then external write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -529,11 +555,16 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
-      writerSql("INSERT INTO t VALUES (2, 200)")
+      // Session write invalidates the cache
+      spark.sql("INSERT INTO t VALUES (2, 200)")
 
+      // External writer adds (3, 300)
+      writerSql("INSERT INTO t VALUES (3, 300)")
+
+      // Both session and external writes are visible
       checkAnswer(
         spark.sql("SELECT * FROM t ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
+        Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
 
       spark.sql("UNCACHE TABLE t")
     }
@@ -567,7 +598,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM t"), Row(1, 100))
 
       writerSql("DROP TABLE t")
-      writerSession.sql("CREATE TABLE t (id INT, salary INT) USING delta")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
       checkAnswer(spark.sql("SELECT * FROM t"), Seq.empty)
 
