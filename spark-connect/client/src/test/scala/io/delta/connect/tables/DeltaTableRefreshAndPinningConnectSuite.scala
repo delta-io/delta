@@ -761,10 +761,10 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM cached_6b"), Row(1, 100))
 
-      // True external write via filesystem — server's DeltaLog not updated
+      // True external write via filesystem -- server's DeltaLog not updated
       writeExternalCommitViaFilesystem(path, Seq((2, 200)))
 
-      // Doc says: (1,100) only — CACHE TABLE pins data against external writes.
+      // Doc says: (1,100) only -- CACHE TABLE pins data against external writes.
       // The server's DeltaTableV2.lazy val snapshot is pinned and CacheManager
       // matches the cached plan.
       checkAnswer(spark.sql("SELECT * FROM cached_6b"), Row(1, 100))
@@ -788,7 +788,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       // True external write via filesystem
       writeExternalCommitViaFilesystem(path, Seq((3, 300)))
 
-      // Doc says: (1,100),(2,200) — session write visible, external not.
+      // Doc says: (1,100),(2,200) -- session write visible, external not.
       // After session write invalidates the cache, the next query re-analyzes.
       // The server's DeltaLog was updated by the session write but not the
       // external filesystem write.
@@ -813,7 +813,7 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       // since we can't easily write Metadata actions from the client)
       writeExternalCommitViaFilesystem(path, Seq((2, 200)))
 
-      // External write not visible — cache pins data
+      // External write not visible -- cache pins data
       checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6d")

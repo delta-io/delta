@@ -145,7 +145,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
    * The session catalog's DeltaTableV2 and its lazy val snapshot are NOT
    * updated. The DeltaLog.currentSnapshot is NOT updated (the commit
    * bypasses DeltaLog.commit()). This means:
-   * - CacheManager plan matching still uses the old snapshot → cache hit
+   * - CacheManager plan matching still uses the old snapshot -> cache hit
    * - deltaLog.update(stalenessAcceptable=true) respects stalenessLimit
    */
   protected def writeExternalCommit(
@@ -919,7 +919,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // External write bypassing the session catalog
       writeExternalCommit("t", Seq((2, 200)).toDF("id", "salary"))
 
-      // Doc says: (1,100) only — cache pins data against external writes
+      // Doc says: (1,100) only -- cache pins data against external writes
       checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
 
       sql("UNCACHE TABLE IF EXISTS t")
@@ -940,7 +940,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
       // External write bypassing the session catalog
       writeExternalCommit("t", Seq((3, 300)).toDF("id", "salary"))
 
-      // Doc says: (1,100),(2,200) — session write visible, external not
+      // Doc says: (1,100),(2,200) -- session write visible, external not
       checkAnswer(
         sql("SELECT * FROM t ORDER BY id"),
         Seq(Row(1, 100), Row(2, 200)))
@@ -974,7 +974,7 @@ trait DeltaTableRefreshAndPinningSuiteBase
 
       // With stalenessLimit=0: deltaLog.update() lists filesystem, discovers
       //   the schema change. New schema in analyzed plan doesn't match cached
-      //   plan → cache miss → fresh data visible.
+      //   plan -> cache miss -> fresh data visible.
       //   Matches doc: schema changes break table state pinning.
       //
       // With stalenessLimit>0: stale snapshot returned, cache holds.
@@ -1260,8 +1260,10 @@ trait DeltaTableRefreshAndPinningSuiteBase
       DeltaLog.clearCache()
 
       // External writer drops (deletes the log) and recreates
+      // scalastyle:off deltahadoopconfiguration
       val fs = new org.apache.hadoop.fs.Path(path).getFileSystem(
         spark.sessionState.newHadoopConf())
+      // scalastyle:on deltahadoopconfiguration
       fs.delete(new org.apache.hadoop.fs.Path(path), true)
       Seq.empty[(Int, Int)].toDF("id", "salary").write.format("delta").save(path)
       DeltaLog.clearCache()
