@@ -770,6 +770,11 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM cached_6b"), Row(1, 100))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6b")
+
+      // After uncaching, fresh query discovers external write (stalenessLimit=0).
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -797,6 +802,13 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
         Seq(Row(1, 100), Row(2, 200)))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6c")
+
+      // After uncaching, fresh query discovers all data including external write.
+      // The session INSERT updated server's DeltaLog, and UNCACHE triggers
+      // a deltaLog.update() that discovers the external commit.
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200), Row(3, 300)))
     }
   }
 
@@ -817,6 +829,11 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6d")
+
+      // After uncaching, fresh query discovers external write (stalenessLimit=0).
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 
@@ -845,6 +862,13 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
         Seq(Row(1, 100), Row(2, 200)))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6e")
+
+      // After uncaching, fresh query discovers all data including external write.
+      // The session ALTER TABLE updated server's DeltaLog, and UNCACHE triggers
+      // a deltaLog.update() that discovers the external commit.
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100), Row(2, 200)))
     }
   }
 }

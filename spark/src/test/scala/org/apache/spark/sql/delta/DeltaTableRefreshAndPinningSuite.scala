@@ -939,6 +939,17 @@ trait DeltaTableRefreshAndPinningSuiteBase
       }
 
       sql("UNCACHE TABLE IF EXISTS t")
+
+      // After uncaching, fresh query calls deltaLog.update() which discovers
+      // the external commit when stalenessLimit=0 (forces filesystem listing).
+      // With high stalenessLimit, the stale snapshot is returned unchanged.
+      if (stalenessLimitMs == 0L) {
+        checkAnswer(
+          sql("SELECT * FROM t ORDER BY id"),
+          Seq(Row(1, 100, null), Row(2, 200, -1)))
+      } else {
+        checkAnswer(sql("SELECT * FROM t"), Row(1, 100))
+      }
     }
   }
 
@@ -973,6 +984,14 @@ trait DeltaTableRefreshAndPinningSuiteBase
       }
 
       sql("UNCACHE TABLE IF EXISTS t")
+
+      // After uncaching, fresh query discovers all data including external write.
+      // The session ALTER TABLE updated DeltaLog.currentSnapshot, and
+      // UNCACHE TABLE's table resolution triggers a deltaLog.update() that
+      // discovers the external commit regardless of stalenessLimit.
+      checkAnswer(
+        sql("SELECT * FROM t ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 }
