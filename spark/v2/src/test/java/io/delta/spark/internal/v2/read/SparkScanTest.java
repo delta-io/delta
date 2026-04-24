@@ -604,7 +604,9 @@ public class SparkScanTest extends DeltaV2TestBase {
 
   @Test
   public void testNumRowsAfterRuntimeFiltering() throws Exception {
-    // city=hz matches 2 partitions: (date=20180520, city=hz) and (date=20180718, city=hz)
+    // Runtime partition filtering invalidates the cached totalRows: per-file row counts are
+    // not retained (to avoid O(n) memory on every scan), so numRows() returns empty after
+    // filtering rather than a recomputed value.
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
@@ -617,14 +619,16 @@ public class SparkScanTest extends DeltaV2TestBase {
 
           scan.filter(new Predicate[] {cityPredicate}); // city=hz
 
-          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
-          assertEquals(
-              2L, scan.estimateStatistics().numRows().getAsLong(), "2 rows after city=hz filter");
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "numRows should be empty after runtime filtering invalidates row count");
         });
   }
 
   @Test
-  public void testNumRowsZeroAfterFilteringOutAllFiles() throws Exception {
+  public void testNumRowsEmptyAfterFilteringOutAllFiles() throws Exception {
+    // Same reasoning as testNumRowsAfterRuntimeFiltering: runtime filtering invalidates the
+    // cached totalRows regardless of how many files remain.
     withSQLConf(
         "spark.sql.cbo.planStats.enabled",
         "true",
@@ -634,11 +638,9 @@ public class SparkScanTest extends DeltaV2TestBase {
 
           scan.filter(new Predicate[] {negativeCityPredicate}); // city=zz doesn't exist
 
-          assertTrue(scan.estimateStatistics().numRows().isPresent(), "numRows should be present");
-          assertEquals(
-              0L,
-              scan.estimateStatistics().numRows().getAsLong(),
-              "0 rows after filtering out all files");
+          assertFalse(
+              scan.estimateStatistics().numRows().isPresent(),
+              "numRows should be empty after runtime filtering (even when all files filtered)");
         });
   }
 
@@ -1155,7 +1157,7 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Should have numRows from per-file stats (not stale catalog stats)
+          // numRows comes from catalog stats (per-file parsing is skipped when catalog has it)
           assertTrue(stats.numRows().isPresent(), "numRows should be present with CBO enabled");
           assertEquals(2L, stats.numRows().getAsLong(), "numRows should be 2");
 
@@ -1181,25 +1183,25 @@ public class SparkScanTest extends DeltaV2TestBase {
   }
 
   @Test
-  public void testPerFileNumRowsPrefersOverStaleCatalogStats(@TempDir File tempDir)
-      throws Exception {
-    // Verifies that per-file numRows (from AddFile.numRecords) takes precedence over stale catalog
-    // stats (from ANALYZE TABLE). Catalog stats are a point-in-time snapshot and not adjusted for
-    // partition pruning; per-file stats are always up-to-date.
+  public void testCatalogNumRowsPreferredOverPerFile(@TempDir File tempDir) throws Exception {
+    // Verifies that catalog numRows (from ANALYZE TABLE) is preferred over per-file numRows
+    // when both are available. This lets us skip per-file stats JSON parsing during planning,
+    // trading off freshness for planning cost. If the catalog value is stale, the user is
+    // expected to re-run ANALYZE TABLE.
     String path = tempDir.getAbsolutePath();
-    String tblName = "stats_per_file_wins";
+    String tblName = "stats_catalog_wins";
     spark.sql(
         String.format(
             "CREATE TABLE %s (id INT, name STRING) USING delta LOCATION '%s'", tblName, path));
     spark.sql(String.format("INSERT INTO %s VALUES (1, 'a'), (2, 'b')", tblName));
 
-    // Inject stale catalog stats claiming 999 rows (simulating stats collected before a deletion)
-    CatalogStatistics staleCatalogStats =
+    // Inject catalog stats claiming 999 rows (distinguishable from the actual per-file count of 2)
+    CatalogStatistics catalogStats =
         new CatalogStatistics(
             scala.math.BigInt.apply(1024L),
-            scala.Option.apply(scala.math.BigInt.apply(999L)), // stale — actual count is 2
+            scala.Option.apply(scala.math.BigInt.apply(999L)),
             buildColStatsMap(new String[] {}, new CatalogColumnStat[] {}));
-    CatalogTable catalogTable = injectCatalogStats(tblName, staleCatalogStats);
+    CatalogTable catalogTable = injectCatalogStats(tblName, catalogStats);
 
     withSQLConf(
         "spark.sql.cbo.enabled",
@@ -1213,12 +1215,12 @@ public class SparkScanTest extends DeltaV2TestBase {
           SparkScan scan = (SparkScan) builder.build();
           Statistics stats = scan.estimateStatistics();
 
-          // Per-file stats show 2 rows; the stale catalog claim of 999 should be ignored.
+          // Catalog numRows wins; per-file parsing is skipped entirely.
           assertTrue(stats.numRows().isPresent(), "numRows should be present");
           assertEquals(
-              2L,
+              999L,
               stats.numRows().getAsLong(),
-              "numRows should be 2 from per-file stats, not 999 from stale catalog");
+              "numRows should come from catalog (999), not per-file (2)");
         });
   }
 

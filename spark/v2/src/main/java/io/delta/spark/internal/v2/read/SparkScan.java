@@ -113,11 +113,9 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private List<PartitionedFile> partitionedFiles = new ArrayList<>();
   private long totalBytes = 0L;
   private long totalRows = 0L;
-  // true iff every AddFile in the scan had numRecords in its stats JSON
+  // true iff every AddFile in the scan had numRecords in its stats JSON AND no runtime
+  // partition filter has been applied (runtime filtering invalidates the cached totalRows).
   private boolean rowCountKnown = false;
-  // per-file row counts, keyed by filePath; populated during planning for use after runtime
-  // filtering
-  private Map<String, Long> fileRowCounts = new HashMap<>();
   // Estimated size in bytes accounting for column projection, used for query optimizer cost
   // estimation
   private long estimatedSizeInBytes = 0L;
@@ -279,13 +277,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
         @Override
         public OptionalLong numRows() {
-          // Prefer per-file row count (sum of AddFile.numRecords) when available: it is
-          // partition-pruning-aware and always up-to-date. Fall back to catalog stats
-          // (from ANALYZE TABLE) only when per-file stats are unavailable.
-          if (rowCountKnown) {
-            return OptionalLong.of(totalRows);
+          // Prefer catalog stats when available: ANALYZE TABLE counts are typically fresh
+          // enough for the optimizer, and using them lets us skip per-file stats JSON parsing
+          // during planning. Fall back to per-file row count only when the catalog lacks it.
+          if (stats.numRows().isPresent()) {
+            return stats.numRows();
           }
-          return stats.numRows();
+          return rowCountKnown ? OptionalLong.of(totalRows) : OptionalLong.empty();
         }
 
         @Override
@@ -423,16 +421,20 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     // TODO: Promote getScanFiles(Engine, boolean includeStats) to the public Scan interface to
     // avoid coupling to the kernel-internal ScanImpl class. Until that API is available, this
     // instanceof check is the only way to request per-file statistics from the kernel.
+    //
+    // Only parse stats JSON when all of:
+    //  - the optimizer will use numRows (CBO or planStats enabled), matching V1's behavior
+    //    (LogicalRelation.computeStats())
+    //  - the catalog does not already provide numRows (otherwise catalog value is preferred in
+    //    estimateStatistics(), so per-file parsing would be wasted work)
+    //  - the kernel scan is ScanImpl (the only path that supports includeStats)
+    final boolean includeStats =
+        kernelScan instanceof ScanImpl && isRowStatsEnabled() && !catalogHasNumRows();
     final Iterator<FilteredColumnarBatch> scanFileBatches;
-    if (kernelScan instanceof ScanImpl && isRowStatsEnabled()) {
-      // Only parse stats JSON when the optimizer will use numRows (CBO or planStats enabled),
-      // matching V1's behavior (LogicalRelation.computeStats()) and avoiding unnecessary per-file
-      // stats JSON parsing cost on every scan.
+    if (includeStats) {
       scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
       rowCountKnown = true; // assume all files have stats; set to false on first miss
     } else {
-      // Stats will not be collected: either kernel scan is not ScanImpl, or CBO/planStats is
-      // disabled. numRows() will return OptionalLong.empty().
       rowCountKnown = false;
       scanFileBatches = kernelScan.getScanFiles(tableEngine);
     }
@@ -459,13 +461,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
             Optional<Long> numRecords = addFile.getNumRecords();
             if (numRecords.isPresent()) {
               totalRows += numRecords.get();
-              fileRowCounts.put(partitionedFile.filePath().toString(), numRecords.get());
             } else {
               // This file has no numRecords — row count is unknowable for the whole scan.
               // Clear partial state and stop accumulating for all subsequent files.
               rowCountKnown = false;
               totalRows = 0;
-              fileRowCounts.clear();
             }
           }
         }
@@ -514,28 +514,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         this.totalBytes =
             runtimeFilteredPartitionedFiles.stream().mapToLong(PartitionedFile::fileSize).sum();
         this.estimatedSizeInBytes = computeEstimatedSizeWithColumnProjection(this.totalBytes);
-        if (rowCountKnown) {
-          long newTotalRows = 0L;
-          for (PartitionedFile pf : runtimeFilteredPartitionedFiles) {
-            Long count = fileRowCounts.get(pf.filePath().toString());
-            if (count == null) {
-              // rowCountKnown=true guarantees every AddFile had numRecords in its stats JSON.
-              // A missing entry indicates a logic bug in planScanFiles().
-              throw new IllegalStateException(
-                  "Missing row count for file: "
-                      + pf.filePath()
-                      + ". This is a bug: when rowCountKnown=true every file must have an"
-                      + " entry in fileRowCounts.");
-            }
-            newTotalRows += count;
-          }
-          this.totalRows = newTotalRows;
-          // fileRowCounts is no longer needed: partitionedFiles has been replaced with the
-          // filtered subset, and totalRows has been recomputed from it. Runtime filtering
-          // is applied at most once (partitionedFiles is overwritten, not accumulated), so
-          // this map will not be consulted again.
-          fileRowCounts.clear();
-        }
+        // Per-file row counts are not retained, so we cannot recompute totalRows over the
+        // filtered subset. Invalidate rowCountKnown so numRows() returns OptionalLong.empty()
+        // rather than a stale pre-filter count. Retaining per-file counts just for this case
+        // would cost O(n) memory on every scan; the trade-off is losing numRows after runtime
+        // partition filtering fires.
+        rowCountKnown = false;
+        totalRows = 0L;
       }
     }
   }
@@ -607,6 +592,11 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
    */
   private boolean isRowStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
+  }
+
+  /** Returns whether the catalog-provided statistics include a numRows value. */
+  private boolean catalogHasNumRows() {
+    return catalogStats.isPresent() && catalogStats.get().numRows().isPresent();
   }
 
   /**
