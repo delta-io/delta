@@ -809,13 +809,13 @@ Global / ensurePinnedUnityCatalog := {
     val home = file(sys.props("user.home"))
     // Check both layouts: a restored sbt cache can pre-populate ivy alone, leaving m2 empty -
     // checking only ivy would silently skip the slow publish and break mvn-based consumers.
-    val canary = home / ".ivy2" / "local" / "io.unitycatalog" /
+    val ivy2Canary = home / ".ivy2" / "local" / "io.unitycatalog" /
       "unitycatalog-client" / unityCatalogVersion / "ivys" / "ivy.xml"
     val m2Canary = home / ".m2" / "repository" / "io" / "unitycatalog" /
       "unitycatalog-client" / unityCatalogVersion /
       s"unitycatalog-client-$unityCatalogVersion.pom"
-    if (!canary.exists || !m2Canary.exists) {
-      publishPinnedUnityCatalog(log, canary)
+    if (!ivy2Canary.exists || !m2Canary.exists) {
+      publishPinnedUnityCatalog(log, ivy2Canary)
     }
   }
 }
