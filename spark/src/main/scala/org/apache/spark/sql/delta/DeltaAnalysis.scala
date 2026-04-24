@@ -598,8 +598,7 @@ class DeltaAnalysis(session: SparkSession)
             u
         }
 
-
-    case merge: MergeIntoTable if merge.childrenResolved =>
+    case merge: MergeIntoTable if merge.childrenResolved && !merge.schemaEvolutionEnabled =>
       val matchedActions = merge.matchedActions.map {
         case update: UpdateAction =>
           DeltaMergeIntoMatchedUpdateClause(
@@ -654,9 +653,7 @@ class DeltaAnalysis(session: SparkSession)
           merge.sourceTable,
           merge.mergeCondition,
           matchedActions ++ notMatchedActions ++ notMatchedBySourceActions,
-          // TODO: We are waiting for Spark to support the SQL "WITH SCHEMA EVOLUTION" syntax.
-          // After that this argument will be `merge.withSchemaEvolution`.
-          withSchemaEvolution = false
+          merge.withSchemaEvolution
         )
 
         ResolveDeltaMergeInto.resolveReferencesAndSchema(deltaMerge, conf)(

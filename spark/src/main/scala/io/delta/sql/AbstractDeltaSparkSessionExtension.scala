@@ -49,6 +49,11 @@ class AbstractDeltaSparkSessionExtension extends (SparkSessionExtensions => Unit
     extensions.injectParser { (_, parser) =>
       new DeltaSqlParser(parser)
     }
+    // We want this rule to run before resolution so that ResolveSchemaEvolution in Spark correctly
+    // sees when schema evolution is enabled.
+    extensions.injectHintResolutionRule { session =>
+      new SetDSv2SchemaEvolutionShims(session)
+    }
     extensions.injectResolutionRule { session =>
       ResolveDeltaPathTable(session)
     }

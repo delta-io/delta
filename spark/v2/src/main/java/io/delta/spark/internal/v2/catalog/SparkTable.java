@@ -65,7 +65,8 @@ public class SparkTable implements Table, SupportsRead, SupportsWrite, SupportsM
           EnumSet.of(
               TableCapability.BATCH_READ,
               TableCapability.MICRO_BATCH_READ,
-              TableCapability.BATCH_WRITE));
+              TableCapability.BATCH_WRITE,
+              TableCapability.AUTOMATIC_SCHEMA_EVOLUTION));
 
   private final Identifier identifier;
   private final String tablePath;
