@@ -124,6 +124,76 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  /**
+   * Simulates a true external schema change + data write by writing both a
+   * Metadata action (with an added column) and an AddFile action directly to
+   * the filesystem, bypassing the server's DeltaLog entirely.
+   *
+   * This is the Connect equivalent of the classic suite's
+   * writeExternalCommit(..., newMetadata = Some(...)) for scenario 6d.
+   */
+  protected def writeExternalSchemaChangeCommitViaFilesystem(
+      tablePath: String,
+      data: Seq[(Int, Int, Int)]): Unit = {
+    val deltaLogDir = new File(tablePath, "_delta_log")
+    val commitFiles = deltaLogDir.listFiles().filter(_.getName.endsWith(".json"))
+    val currentVersion = commitFiles.map(f =>
+      f.getName.stripSuffix(".json").toLong).max
+
+    // Read existing metadata to extract the table id
+    val metadataLine = commitFiles.sortBy(_.getName).flatMap { f =>
+      new String(Files.readAllBytes(f.toPath), StandardCharsets.UTF_8)
+        .split("\n").filter(_.contains("\"metaData\""))
+    }.lastOption.getOrElse(
+      throw new RuntimeException("No metaData action found in commit files"))
+    val idRegex = """"id"\s*:\s*"([^"]+)"""".r
+    val tableId = idRegex.findFirstMatchIn(metadataLine).map(_.group(1)).getOrElse(
+      throw new RuntimeException("Could not extract table id from metadata"))
+
+    val tempDir = Files.createTempDirectory("ext-schema-write").toFile
+    try {
+      val session = spark
+      import session.implicits._
+      data.toDF("id", "salary", "new_column").coalesce(1)
+        .write.parquet(s"${tempDir.getAbsolutePath}/out")
+      val parquetFile = new File(tempDir, "out").listFiles()
+        .filter(_.getName.endsWith(".parquet")).head
+      val targetName = s"ext-schema-v${currentVersion + 1}.snappy.parquet"
+      Files.copy(
+        parquetFile.toPath,
+        Paths.get(tablePath).resolve(targetName))
+
+      // New schema with added new_column (escaped for embedding in JSON string)
+      val schemaJson =
+        """{"type":"struct","fields":[""" +
+        """{"name":"id","type":"integer","nullable":true,"metadata":{}},""" +
+        """{"name":"salary","type":"integer","nullable":true,"metadata":{}},""" +
+        """{"name":"new_column","type":"integer","nullable":true,"metadata":{}}]}"""
+      val escapedSchema = schemaJson.replace("\"", "\\\"")
+
+      val metadataActionJson =
+        s"""{"metaData":{"id":"$tableId","name":null,"description":null,""" +
+        s""""format":{"provider":"parquet","options":{}},""" +
+        s""""schemaString":"$escapedSchema",""" +
+        s""""partitionColumns":[],"configuration":{},"createdTime":${System.currentTimeMillis()}}}"""
+
+      val addFileJson =
+        s"""{"add":{"path":"$targetName","partitionValues":{},"size":${parquetFile.length()},""" +
+        s""""modificationTime":${System.currentTimeMillis()},"dataChange":true}}"""
+
+      val commitFile = new File(deltaLogDir,
+        f"${currentVersion + 1}%020d.json")
+      Files.write(
+        commitFile.toPath,
+        s"$metadataActionJson\n$addFileJson".getBytes(StandardCharsets.UTF_8))
+    } finally {
+      tempDir.listFiles().foreach(d =>
+        if (d.isDirectory) d.listFiles().foreach(_.delete()))
+      tempDir.listFiles().foreach(_.delete())
+      tempDir.delete()
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Section [1]: Temp views with stored plans (Connect behavior)
   // Temp views created from Dataset capture the plan. In Connect, they behave
@@ -821,19 +891,23 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
 
-      // True external write via filesystem (data only, no schema change
-      // since we can't easily write Metadata actions from the client)
-      writeExternalCommitViaFilesystem(path, Seq((2, 200)))
+      // External schema change + data write via filesystem, bypassing
+      // the server's DeltaLog entirely (writes both Metadata and AddFile actions)
+      writeExternalSchemaChangeCommitViaFilesystem(path, Seq((2, 200, -1)))
 
-      // External write not visible -- cache pins data
-      checkAnswer(spark.sql("SELECT * FROM cached_6d"), Row(1, 100))
+      // Schema change breaks plan-shape match in CacheManager.
+      // deltaLog.update() (stalenessLimit=0) discovers the new schema,
+      // so the cache is effectively invalidated and fresh data is returned.
+      checkAnswer(
+        spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
 
       spark.sql("UNCACHE TABLE IF EXISTS cached_6d")
 
-      // After uncaching, fresh query discovers external write (stalenessLimit=0).
+      // After uncaching, fresh query sees all data with new schema.
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
+        Seq(Row(1, 100, null), Row(2, 200, -1)))
     }
   }
 
@@ -866,9 +940,10 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       // After uncaching, fresh query discovers all data including external write.
       // The session ALTER TABLE updated server's DeltaLog, and UNCACHE triggers
       // a deltaLog.update() that discovers the external commit.
+      // new_column is null because the external write only has (id, salary) data.
       checkAnswer(
         spark.sql(s"SELECT * FROM delta.`$path` ORDER BY id"),
-        Seq(Row(1, 100), Row(2, 200)))
+        Seq(Row(1, 100, null), Row(2, 200, null)))
     }
   }
 }
