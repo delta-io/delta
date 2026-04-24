@@ -933,4 +933,18 @@ class VariantDataSkippingStatsSuite
     }
     // scalastyle:on nonascii
   }
+
+  test("Spark 4.0: variant stats are not collected even when shredding is forced") {
+    assume(org.apache.spark.SPARK_VERSION.startsWith("4.0"))
+    withSQLConf(
+      SQLConf.VARIANT_FORCE_SHREDDING_SCHEMA_FOR_TEST.key -> "a LONG",
+      "spark.sql.variant.writeShredding.enabled" -> "true",
+      "spark.sql.variant.inferShreddingSchema" -> "false") {
+      val json = createVariantTableAndExtractStats(
+        "select to_variant_object(named_struct('a', id)) as v from range(3)")
+      implicit val formats = DefaultFormats
+      assert((json \ "minValues" \ "v") == JNothing)
+      assert((json \ "maxValues" \ "v") == JNothing)
+    }
+  }
 }
