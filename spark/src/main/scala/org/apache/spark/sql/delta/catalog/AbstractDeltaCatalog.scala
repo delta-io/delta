@@ -78,7 +78,8 @@ class DeltaCatalogV1 extends AbstractDeltaCatalog
 class AbstractDeltaCatalog extends DelegatingCatalogExtension
   with StagingTableCatalog
   with SupportsPathIdentifier
-  with DeltaLogging {
+  with DeltaLogging
+  with AbstractDeltaCatalogShims {
 
 
   val spark = SparkSession.active
