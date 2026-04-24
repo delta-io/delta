@@ -50,7 +50,8 @@ trait DeltaSQLCommandTest extends SharedSparkSession {
     val expectedMessage = "For input string: \"" + invalidValue + "\""
     assert(
       Set("_LEGACY_ERROR_TEMP_2045", "UNSUPPORTED_TABLE_CHANGE").contains(errorClass),
-      s"Unexpected error class $errorClass with parameters ${sparkThrowable.getMessageParameters()}")
+      s"Unexpected error class $errorClass with parameters " +
+        s"${sparkThrowable.getMessageParameters()}")
     assert(sparkThrowable.getMessageParameters().get("message") == expectedMessage)
   }
 }
