@@ -78,6 +78,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y make build-essential libssl-dev zlib1g-dev libbz2-dev libreadline-dev libsqlite3-dev wget curl llvm libncurses5-dev libncursesw5-dev xz-utils tk-dev libffi-dev liblzma-dev python3-openssl git
           sudo apt install libedit-dev
+      # `publishM2` and `++ <scala>` both resolve every project's deps, which includes
+      # sparkUnityCatalog; publish the pinned UC build locally before sbt runs.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run Delta Spark Local Publishing and Examples Compilation
         # examples/scala/build.sbt will compile against the local Delta release version (e.g. 3.2.0-SNAPSHOT).
         # Thus, we need to publishM2 first so those jars are locally accessible.

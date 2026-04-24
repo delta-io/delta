@@ -74,6 +74,10 @@ jobs:
             ~/.ivy2
             ~/.cache/coursier
           key: delta-sbt-cache-spark${{ matrix.spark_version }}-scala${{ matrix.scala }}
+      # Delta's sparkUnityCatalog module (part of sparkGroup) depends on APIs that are only in
+      # unreleased UC. Publish the pinned UC build locally before sbt tries to resolve it.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Scala structured logging style check
         run: |
           if [ -f ./dev/spark_structured_logging_style.py ]; then

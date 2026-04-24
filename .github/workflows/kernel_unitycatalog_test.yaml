@@ -33,6 +33,10 @@ jobs:
         with:
           distribution: "zulu"
           java-version: "17"
+      # kernelUnityCatalog depends on unreleased UC APIs; publish the pinned UC build locally before
+      # sbt tries to resolve the dependency.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run Unity tests with coverage
         run: |
           ./build/sbt "++ ${{ env.SCALA_VERSION }}" clean coverage kernelUnityCatalog/test coverageAggregate coverageOff -v

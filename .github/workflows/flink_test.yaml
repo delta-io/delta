@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Point SBT to our cache directories for consistency
+  # Point SBT to our cache directories for consistency.
   SBT_OPTS: "-Dsbt.coursier.home-dir=/home/runner/.cache/coursier -Dsbt.ivy.home=/home/runner/.ivy2"
 
 jobs:
@@ -64,6 +64,10 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      # flink has unitycatalog-client as a compile-scope dep and flink tests exercise UC.
+      # Publish the pinned UC build locally before sbt runs.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run unit tests
         run: |
           build/sbt flinkGroup/test
