@@ -98,10 +98,13 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
-  // Stored as Sets so equals/hashCode are order-independent: the filters are AND-ed at
-  // evaluation time, so list order has no semantic meaning.
-  private final Set<Predicate> pushedToKernelFilters;
-  private final Set<Filter> dataFilters;
+  private final Predicate[] pushedToKernelFilters;
+  private final Filter[] dataFilters;
+  // Derived Sets used only for equals/hashCode: filters are AND-ed at evaluation time,
+  // so list order has no semantic meaning and two scans with the same filter set in
+  // different orders should compare equal.
+  private final Set<Predicate> pushedToKernelFiltersSet;
+  private final Set<Filter> dataFiltersSet;
   private final io.delta.kernel.Scan kernelScan;
   private final Optional<Statistics> catalogStats;
   private final Configuration hadoopConf;
@@ -128,8 +131,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
       StructType dataSchema,
       StructType partitionSchema,
       StructType readDataSchema,
-      Set<Predicate> pushedToKernelFilters,
-      Set<Filter> dataFilters,
+      Predicate[] pushedToKernelFilters,
+      Filter[] dataFilters,
       io.delta.kernel.Scan kernelScan,
       Optional<Statistics> catalogStats,
       CaseInsensitiveStringMap options) {
@@ -140,8 +143,10 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     this.partitionSchema = Objects.requireNonNull(partitionSchema, "partitionSchema is null");
     this.readDataSchema = Objects.requireNonNull(readDataSchema, "readDataSchema is null");
     this.pushedToKernelFilters =
-        pushedToKernelFilters == null ? Set.of() : Set.copyOf(pushedToKernelFilters);
-    this.dataFilters = dataFilters == null ? Set.of() : Set.copyOf(dataFilters);
+        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
+    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
+    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
     this.kernelScan = Objects.requireNonNull(kernelScan, "kernelScan is null");
     this.catalogStats = Objects.requireNonNull(catalogStats, "catalogStats is null");
     this.options = Objects.requireNonNull(options, "options is null");
@@ -239,21 +244,21 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
-        dataFilters.toArray(new Filter[0]),
+        dataFilters,
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }
 
   @Override
   public String description() {
-    // Sort by toString so the EXPLAIN output is deterministic: the Set backing the filter fields
-    // (Set.copyOf) uses salted hashing, so iteration order otherwise varies across JVM runs.
+    // Sort by toString so EXPLAIN output is canonical and matches equals semantics:
+    // filters are AND-ed at evaluation time, so list order has no meaning.
     final String pushed =
-        pushedToKernelFilters.stream()
+        Arrays.stream(pushedToKernelFilters)
             .map(Object::toString)
             .sorted()
             .collect(Collectors.joining(", "));
     final String data =
-        dataFilters.stream().map(Object::toString).sorted().collect(Collectors.joining(", "));
+        Arrays.stream(dataFilters).map(Object::toString).sorted().collect(Collectors.joining(", "));
     return String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data);
   }
 
@@ -593,8 +598,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         && Objects.equals(dataSchema, that.dataSchema)
         && Objects.equals(partitionSchema, that.partitionSchema)
         && Objects.equals(readDataSchema, that.readDataSchema)
-        && Objects.equals(pushedToKernelFilters, that.pushedToKernelFilters)
-        && Objects.equals(dataFilters, that.dataFilters)
+        && Objects.equals(pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(dataFiltersSet, that.dataFiltersSet)
         // ignoring kernelScan because it is derived from Snapshot which is created from tablePath,
         // with pushed down filters that are also recorded in `pushedToKernelFilters`
         && Objects.equals(options, that.options)
@@ -613,8 +618,8 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         readDataSchema,
         options,
         appliedRuntimePredicates,
-        pushedToKernelFilters,
-        dataFilters);
+        pushedToKernelFiltersSet,
+        dataFiltersSet);
   }
 
   /**

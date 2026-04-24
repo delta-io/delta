@@ -173,8 +173,8 @@ public class SparkScanBuilder
         dataSchema,
         partitionSchema,
         requiredDataSchema,
-        Set.copyOf(Arrays.asList(pushedKernelPredicates)),
-        Set.copyOf(Arrays.asList(dataFilters)),
+        pushedKernelPredicates,
+        dataFilters,
         kernelScanBuilder.build(),
         catalogStats,
         options);

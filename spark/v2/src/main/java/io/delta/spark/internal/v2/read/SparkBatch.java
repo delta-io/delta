@@ -19,6 +19,7 @@ import io.delta.kernel.Snapshot;
 import io.delta.kernel.expressions.Predicate;
 import io.delta.spark.internal.v2.utils.PartitionUtils;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -40,9 +41,12 @@ public class SparkBatch implements Batch {
   private final StructType readDataSchema;
   private final StructType dataSchema;
   private final StructType partitionSchema;
-  // Stored as Sets so equals/hashCode are order-independent (filters are AND-ed at eval time).
-  private final Set<Predicate> pushedToKernelFilters;
-  private final Set<Filter> dataFilters;
+  private final Predicate[] pushedToKernelFilters;
+  private final Filter[] dataFilters;
+  // Derived Sets used only for equals/hashCode: filters are AND-ed at eval time,
+  // so list order has no semantic meaning.
+  private final Set<Predicate> pushedToKernelFiltersSet;
+  private final Set<Filter> dataFiltersSet;
   private final Configuration hadoopConf;
   private final SQLConf sqlConf;
   private final long totalBytes;
@@ -55,8 +59,8 @@ public class SparkBatch implements Batch {
       StructType partitionSchema,
       StructType readDataSchema,
       List<PartitionedFile> partitionedFiles,
-      Set<Predicate> pushedToKernelFilters,
-      Set<Filter> dataFilters,
+      Predicate[] pushedToKernelFilters,
+      Filter[] dataFilters,
       long totalBytes,
       scala.collection.immutable.Map<String, String> scalaOptions,
       Configuration hadoopConf) {
@@ -69,8 +73,10 @@ public class SparkBatch implements Batch {
         java.util.Collections.unmodifiableList(
             new ArrayList<>(Objects.requireNonNull(partitionedFiles, "partitionedFiles is null")));
     this.pushedToKernelFilters =
-        pushedToKernelFilters == null ? Set.of() : Set.copyOf(pushedToKernelFilters);
-    this.dataFilters = dataFilters == null ? Set.of() : Set.copyOf(dataFilters);
+        pushedToKernelFilters == null ? new Predicate[0] : pushedToKernelFilters.clone();
+    this.dataFilters = dataFilters == null ? new Filter[0] : dataFilters.clone();
+    this.pushedToKernelFiltersSet = Set.copyOf(Arrays.asList(this.pushedToKernelFilters));
+    this.dataFiltersSet = Set.copyOf(Arrays.asList(this.dataFilters));
     this.totalBytes = totalBytes;
     this.scalaOptions = Objects.requireNonNull(scalaOptions, "scalaOptions is null");
     this.hadoopConf = Objects.requireNonNull(hadoopConf, "hadoopConf is null");
@@ -97,7 +103,7 @@ public class SparkBatch implements Batch {
         dataSchema,
         partitionSchema,
         readDataSchema,
-        dataFilters.toArray(new Filter[0]),
+        dataFilters,
         scalaOptions,
         hadoopConf,
         sqlConf);
@@ -113,8 +119,8 @@ public class SparkBatch implements Batch {
         && Objects.equals(this.readDataSchema, that.readDataSchema)
         && Objects.equals(this.dataSchema, that.dataSchema)
         && Objects.equals(this.partitionSchema, that.partitionSchema)
-        && Objects.equals(this.pushedToKernelFilters, that.pushedToKernelFilters)
-        && Objects.equals(this.dataFilters, that.dataFilters)
+        && Objects.equals(this.pushedToKernelFiltersSet, that.pushedToKernelFiltersSet)
+        && Objects.equals(this.dataFiltersSet, that.dataFiltersSet)
         && partitionedFiles.size() == that.partitionedFiles.size();
   }
 
@@ -125,8 +131,8 @@ public class SparkBatch implements Batch {
         readDataSchema,
         dataSchema,
         partitionSchema,
-        pushedToKernelFilters,
-        dataFilters,
+        pushedToKernelFiltersSet,
+        dataFiltersSet,
         partitionedFiles.size());
   }
 }
