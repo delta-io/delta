@@ -598,7 +598,7 @@ class DeltaAnalysis(session: SparkSession)
             u
         }
 
-    case merge: MergeIntoTable if merge.childrenResolved && !merge.schemaEvolutionEnabled =>
+    case merge: MergeIntoTable if merge.childrenResolved =>
       val matchedActions = merge.matchedActions.map {
         case update: UpdateAction =>
           DeltaMergeIntoMatchedUpdateClause(
