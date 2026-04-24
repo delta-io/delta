@@ -1,5 +1,5 @@
 /*
- * Copyright (2021) The Delta Lake Project Authors.
+ * Copyright (2025) The Delta Lake Project Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -46,7 +46,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     )
   }
 
-  private lazy val shouldPassTests = Set(
+  override protected def shouldPassTests: Set[String] = Set(
     // ========== Core streaming tests ==========
     "basic",
     "initial snapshot ends at base index of next version",
@@ -135,7 +135,7 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
       "non-data operations"
   )
 
-  private lazy val shouldFailTests = Set(
+  override protected def shouldFailTests: Set[String] = Set(
     // === Null Type Column Handling ===
     "streaming delta source should not drop null columns",
     "streaming delta source should drop null columns without feature flag",
@@ -172,15 +172,4 @@ class DeltaV2SourceSuite extends DeltaSourceSuite with V2ForceTest {
     // Calls deltaSource.createSource() directly
     "createSource should create source with empty or matching table schema provided"
   )
-
-  override protected def shouldFail(testName: String): Boolean = {
-    val inPassList = shouldPassTests.contains(testName)
-    val inFailList = shouldFailTests.contains(testName)
-
-    assert(inPassList || inFailList, s"Test '$testName' not in shouldPassTests or shouldFailTests")
-    assert(!(inPassList && inFailList),
-      s"Test '$testName' in both shouldPassTests and shouldFailTests")
-
-    inFailList
-  }
 }
