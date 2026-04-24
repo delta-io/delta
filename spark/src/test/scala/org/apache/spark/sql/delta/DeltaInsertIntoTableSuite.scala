@@ -1078,13 +1078,19 @@ class DeltaColumnDefaultsInsertSuite extends InsertIntoSQLOnlyTests with DeltaSQ
            |$tblPropertiesAllowDefaults
         """.stripMargin)
       val currentCatalog = spark.sessionState.catalogManager.currentCatalog.name()
+      val stringTypeSql =
+        if (org.apache.spark.SPARK_VERSION.startsWith("4.2")) {
+          "STRING COLLATE UTF8_BINARY"
+        } else {
+          "STRING"
+        }
       QueryTest.checkAnswer(sql("SHOW CREATE TABLE T"),
         Seq(
           Row(
             s"""CREATE TABLE ${currentCatalog}.default.T (
                |  a BIGINT,
                |  b BIGINT DEFAULT 42,
-               |  c STRING DEFAULT 'abc, "def"' COMMENT 'comment')
+               |  c $stringTypeSql DEFAULT 'abc, "def"' COMMENT 'comment')
                |USING parquet
                |COMMENT 'This is a comment'
                |TBLPROPERTIES (
