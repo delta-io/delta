@@ -23,7 +23,12 @@ import org.apache.hadoop.fs.Path
 
 import org.apache.spark.sql.SaveMode
 import org.apache.spark.sql.catalyst.TableIdentifier
-import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, CatalogUtils}
+import org.apache.spark.sql.catalyst.catalog.{
+  CatalogStorageFormat,
+  CatalogTable,
+  CatalogTableType,
+  CatalogUtils
+}
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, V1Table}
 import org.apache.spark.sql.delta.{
   CatalogOwnedTableFeature,
@@ -52,6 +57,8 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
     val targetProvider = targetProperties.get(TableCatalog.PROP_PROVIDER)
 
     sourceTable match {
+      case source: DeltaTableV2 =>
+        createDeltaTableLike(ident, source, targetProperties)
       case source: V1Table if shouldCreateDeltaTableLike(source.catalogTable, targetProvider) =>
         createDeltaTableLike(ident, source.catalogTable, targetProperties)
       case _ =>
@@ -64,6 +71,25 @@ trait AbstractDeltaCatalogShims { self: AbstractDeltaCatalog =>
       targetProvider: Option[String]): Boolean = {
     DeltaSourceUtils.isDeltaTable(sourceTable.provider) ||
       targetProvider.exists(DeltaSourceUtils.isDeltaDataSourceName)
+  }
+
+  private def createDeltaTableLike(
+      ident: Identifier,
+      sourceTable: DeltaTableV2,
+      targetProperties: Map[String, String]): Table = {
+    val sourceCatalogTable = sourceTable.catalogTable.getOrElse {
+      val sourceMetadata = sourceTable.initialSnapshot.metadata
+      new CatalogTable(
+        identifier = TableIdentifier(sourceTable.path.getName),
+        tableType = CatalogTableType.EXTERNAL,
+        storage = CatalogStorageFormat.empty.copy(locationUri = Some(sourceTable.path.toUri)),
+        schema = sourceMetadata.schema,
+        properties = sourceMetadata.configuration,
+        partitionColumnNames = sourceMetadata.partitionColumns,
+        provider = Some("delta"),
+        comment = Option(sourceMetadata.description))
+    }
+    createDeltaTableLike(ident, sourceCatalogTable, targetProperties)
   }
 
   private def createDeltaTableLike(
