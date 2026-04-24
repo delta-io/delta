@@ -20,7 +20,8 @@ import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.mapreduce.TaskAttemptContext
 
 import org.apache.spark.internal.io.FileCommitProtocol
-import org.apache.spark.sql.delta.shims.VariantStatsHookShims
+import org.apache.spark.sql.delta.DeltaConfigs
+import org.apache.spark.sql.delta.shims.VariantShreddingShims
 import org.apache.spark.sql.execution.datasources.{DynamicPartitionDataConcurrentWriter, DynamicPartitionDataSingleWriter, EmptyDirectoryDataWriter, FileFormatDataWriter, FileFormatWriter, SingleDirectoryDataWriter, WriteJobDescription}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
@@ -33,11 +34,17 @@ trait VariantStatsReleaseCurrentWriter { self: FileFormatDataWriter =>
       try {
         currentWriter.close()
         val conf = SQLConf.get
-        VariantStatsHookShims.extractAndInjectVariantStats(
-          currentWriter,
-          statsTrackers,
-          parquetRebaseModeInRead = conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString,
-          hadoopConf = deltaHadoopConf)
+        val enableVariantShredding =
+          deltaHadoopConf.getBoolean(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key, false)
+        val writeShreddingEnabled =
+          conf.getConfString("spark.sql.variant.writeShredding.enabled", "true").toBoolean
+        if (enableVariantShredding && writeShreddingEnabled) {
+          VariantShreddingShims.extractAndInjectVariantStats(
+            currentWriter,
+            statsTrackers,
+            parquetRebaseModeInRead = conf.getConf(SQLConf.PARQUET_REBASE_MODE_IN_READ).toString,
+            hadoopConf = deltaHadoopConf)
+        }
         statsTrackers.foreach(_.closeFile(currentWriter.path()))
       } finally {
         currentWriter = null
