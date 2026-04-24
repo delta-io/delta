@@ -20,12 +20,13 @@ import java.io.File
 import java.net.URI
 import java.nio.file.{Files, Path}
 
+import org.apache.spark.sql.delta.catalog.InMemorySparkTable
+
 import org.apache.spark.SparkConf
 import org.apache.spark.sql.{QueryTest, Row}
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.connector.catalog.{Identifier, TableCatalog}
-import org.apache.spark.sql.delta.catalog.{InMemoryDeltaCatalog, InMemorySparkTable}
-import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
+import org.apache.spark.sql.test.SharedSparkSession
 
 /**
  * Tests that DML operations can be executed through the DSv2 code path using
@@ -36,48 +37,9 @@ import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
  * 2. Subsequent table loads return [[InMemorySparkTable]] (supports V2 DML)
  * 3. DML operations flow through Spark's V2 execution path
  */
-class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
-
-  override protected def sparkConf: SparkConf = super.sparkConf
-    .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
-
-  override protected def withTable(tableNames: String*)(f: => Unit): Unit = {
-    try {
-      super.withTable(tableNames: _*) {
-        f
-        tableNames.foreach(assertNoParquetFiles)
-      }
-    } finally {
-      for (tableName <- tableNames) {
-        assert(!InMemoryDeltaCatalog.contains(tableName))
-      }
-    }
-  }
-
-  /**
-   * Asserts that no physical parquet data files exist under the table's location.
-   * This validates that DML operations went through the in-memory V2 path and
-   * did not fall back to the V1 connector (which would write actual parquet files).
-   */
-  private def assertNoParquetFiles(tableName: String): Unit = {
-    val catalogTable = spark.sessionState.catalog.getTableMetadata(
-      TableIdentifier(tableName))
-    val dataPath = new File(new URI(catalogTable.location.toString))
-    if (dataPath.exists()) {
-      val stream = Files.walk(dataPath.toPath)
-      try {
-        val parquetFiles = stream
-          .filter(Files.isRegularFile(_))
-          .filter(_.toString.endsWith(".parquet"))
-          .toArray.map(_.asInstanceOf[Path].toString).toSeq
-        assert(parquetFiles.isEmpty,
-          s"Physical parquet files found under '$dataPath' while V2 in-memory mode is enabled. " +
-          s"DML may have fallen back to V1. Files: $parquetFiles")
-      } finally {
-        stream.close()
-      }
-    }
-  }
+class V2DmlInMemoryTableSuite
+    extends DeltaSQLInMemoryTestUtils
+    with SharedSparkSession {
 
   test("catalog returns InMemorySparkTable when InMemoryDeltaCatalog is configured") {
     val tableName = "v2_dml_test_catalog"
@@ -98,7 +60,7 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       sql(s"CREATE TABLE $tableName (id LONG, value STRING) USING delta")
 
       sql(s"INSERT INTO $tableName VALUES (1, 'a'), (2, 'b')")
-      checkAnswer(
+      QueryTest.checkAnswer(
         sql(s"SELECT id, value FROM $tableName ORDER BY id"),
         Seq(Row(1L, "a"), Row(2L, "b")))
     }
@@ -111,7 +73,7 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
 
       sql(s"INSERT INTO $tableName VALUES (1, 'a'), (2, 'b')")
       sql(s"INSERT OVERWRITE $tableName VALUES (3, 'c')")
-      checkAnswer(
+      QueryTest.checkAnswer(
         sql(s"SELECT id, value FROM $tableName ORDER BY id"),
         Seq(Row(3L, "c")))
     }
@@ -124,7 +86,7 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       sql(s"INSERT INTO $tableName VALUES (1, 'a'), (2, 'b'), (3, 'c')")
 
       sql(s"DELETE FROM $tableName WHERE pk = 2")
-      checkAnswer(
+      QueryTest.checkAnswer(
         sql(s"SELECT pk, value FROM $tableName ORDER BY pk"),
         Seq(Row(1, "a"), Row(3, "c")))
     }
@@ -137,7 +99,7 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
       sql(s"INSERT INTO $tableName VALUES (1, 'a'), (2, 'b'), (3, 'c')")
 
       sql(s"UPDATE $tableName SET value = 'updated' WHERE pk >= 2")
-      checkAnswer(
+      QueryTest.checkAnswer(
         sql(s"SELECT pk, value FROM $tableName ORDER BY pk"),
         Seq(Row(1, "a"), Row(2, "updated"), Row(3, "updated")))
     }
@@ -161,10 +123,14 @@ class V2DmlInMemoryTableSuite extends QueryTest with DeltaSQLCommandTest {
              |WHEN NOT MATCHED THEN INSERT (pk, value) VALUES (s.pk, s.value)
              |""".stripMargin)
 
-        checkAnswer(
+        QueryTest.checkAnswer(
           sql(s"SELECT pk, value FROM $targetTable ORDER BY pk"),
           Seq(Row(1, "updated"), Row(2, "b"), Row(3, "c")))
       }
     }
+  }
+
+  test("should just throw, but is DSv2Incompatible", DSv2Incompatible("explicit skip")) {
+    assert(false, "this test should have been skipped")
   }
 }

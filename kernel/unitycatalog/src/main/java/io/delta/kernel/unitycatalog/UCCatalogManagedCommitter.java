@@ -62,7 +62,8 @@ public class UCCatalogManagedCommitter implements Committer, CatalogCommitter {
   private final Optional<UCTableIdentifier> ucTableIdentifier;
 
   /**
-   * Creates a committer for an existing Unity Catalog-managed Delta table (version >= 1 writes).
+   * Creates a committer for an existing Unity Catalog-managed Delta table ({@code version >= 1}
+   * writes).
    *
    * @param ucClient the Unity Catalog client to use for commit operations
    * @param ucTableId the unique Unity Catalog table identifier

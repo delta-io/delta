@@ -18,6 +18,7 @@ package io.delta.spark.internal.v2.read;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_FEATURE;
 import static io.delta.kernel.internal.tablefeatures.TableFeatures.TYPE_WIDENING_RW_PREVIEW_FEATURE;
 
+import com.google.common.annotations.VisibleForTesting;
 import io.delta.kernel.CommitActions;
 import io.delta.kernel.CommitRange;
 import io.delta.kernel.Scan;
@@ -83,12 +84,14 @@ import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import scala.Function2;
 import scala.Option;
 import scala.Some;
 import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
+import scala.runtime.AbstractFunction2;
 import scala.util.matching.Regex;
 
 // TODO(#5318): Use DeltaErrors error framework for consistent error handling.
@@ -116,6 +119,15 @@ public class SparkMicroBatchStream
                   DeltaAction.METADATA,
                   DeltaAction.CDC,
                   DeltaAction.COMMITINFO)));
+
+  /**
+   * Max attempts to resolve the start version when failOnDataLoss=false. Attempt 1 is the initial
+   * try with the user's startVersion (surfaces the StartVersionNotFoundException that triggers the
+   * failOnDataLoss check). Attempt 2 retries with the earliest available version to recover when
+   * failOnDataLoss=false. Attempt 3 guards against a concurrent log-retention prune in the tiny
+   * window between attempt 2's exception and its retry.
+   */
+  private static final int FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS = 3;
 
   private final Engine engine;
   private final DeltaSnapshotManager snapshotManager;
@@ -260,7 +272,15 @@ public class SparkMicroBatchStream
             DeltaStreamUtils.SchemaReadOptions$.MODULE$.fromSparkSession(
                 spark, isStreamingFromColumnMappingTable, isTypeWideningSupportedInProtocol),
             "schemaReadOptions is null");
-    validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    boolean shouldValidateSchemaOnRestart =
+        (Boolean)
+            spark
+                .sessionState()
+                .conf()
+                .getConf(DeltaSQLConf.STREAMING_SCHEMA_VALIDATION_ON_RESTART());
+    if (shouldValidateSchemaOnRestart) {
+      validateSchemaCompatibilityOnStartup(dataSchema, partitionSchema, readSchemaAtSourceInit);
+    }
   }
 
   @Override
@@ -931,13 +951,34 @@ public class SparkMicroBatchStream
       }
     }
 
-    CommitRange commitRange;
-    try {
-      commitRange = snapshotManager.getTableChanges(engine, startVersion, endVersionOpt);
-    } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
-      // If the requested version range doesn't exist (e.g., we're asking for version 6 when
-      // the table only has versions 0-5).
-      return Utils.toCloseableIterator(Collections.emptyIterator());
+    // Start commit may be missing (e.g. due to log retention). When failOnDataLoss=false, skip
+    // to the earliest available version. Mid-log gaps still throw regardless of failOnDataLoss —
+    // stricter than DSv1.
+    CommitRange commitRange = null;
+    long earliestVersionToFetch = startVersion;
+    for (int attempt = 1; attempt <= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS; attempt++) {
+      try {
+        commitRange =
+            snapshotManager.getTableChanges(engine, earliestVersionToFetch, endVersionOpt);
+        break;
+      } catch (io.delta.kernel.exceptions.StartVersionNotFoundException e) {
+        if (options.failOnDataLoss()
+            || !e.getEarliestAvailableVersion().isPresent()
+            || attempt >= FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS) {
+          throw e;
+        }
+        earliestVersionToFetch = e.getEarliestAvailableVersion().get();
+        logger.warn(
+            "Start version commit {} no longer exists for table {} (attempt {}/{}). "
+                + "Skipping to earliest available version {} because failOnDataLoss is false.",
+            startVersion,
+            tablePath,
+            attempt,
+            FAIL_ON_DATA_LOSS_FALSE_MAX_ATTEMPTS,
+            earliestVersionToFetch);
+      } catch (io.delta.kernel.exceptions.CommitRangeNotFoundException e) {
+        return Utils.toCloseableIterator(Collections.emptyIterator());
+      }
     }
 
     // Use getCommitActionsFromRangeUnsafe instead of CommitRange.getCommitActions() because:
@@ -1335,8 +1376,8 @@ public class SparkMicroBatchStream
   /**
    * Check read-incompatible schema changes during stream (re)start so we could fail fast.
    *
-   * <p>This is called ONCE during the first latestOffset call to catch edge cases that normal
-   * per-commit validation (checkReadIncompatibleSchemaChanges) misses.
+   * <p>This is called ONCE during the first latestOffset call to catch cases that normal per-commit
+   * validation (checkReadIncompatibleSchemaChanges) misses.
    *
    * <p><b>Why needed?</b> Normal validation only checks commits with metadata actions. If a stream
    * starts at version 1 with the latest version is version 3 and there is a schema change at
@@ -1426,7 +1467,8 @@ public class SparkMicroBatchStream
    * @param partitionSchema partition columns from analysis time
    * @param snapshotSchema full table schema from the latest snapshot at stream start
    */
-  private void validateSchemaCompatibilityOnStartup(
+  @VisibleForTesting
+  static void validateSchemaCompatibilityOnStartup(
       StructType dataSchema, StructType partitionSchema, StructType snapshotSchema) {
     // Reconstruct the full analysis-time table schema from dataSchema + partitionSchema.
     // StructType is immutable — add() returns a new instance without modifying the original.
@@ -1434,11 +1476,37 @@ public class SparkMicroBatchStream
     for (StructField field : partitionSchema.fields()) {
       querySchema = querySchema.add(field);
     }
-
-    // Compare the structural schema of the analysis-time schema and snapshot schema.
-    if (!DataType.equalsStructurally(querySchema, snapshotSchema, /* ignoreNullability */ false)) {
+    // Sort both sides so a partition column declared in the middle of the table doesn't
+    // trip the check.
+    StructType sortedQuery = sortFieldsByName(querySchema);
+    StructType sortedSnapshot = sortFieldsByName(snapshotSchema);
+    // equalsStructurally checks types + nullability but ignores field names;
+    // equalsStructurallyByName checks names but ignores types/nullability.
+    boolean typesAndNullabilityMatch =
+        DataType.equalsStructurally(sortedQuery, sortedSnapshot, /* ignoreNullability= */ false);
+    boolean namesMatch =
+        DataType.equalsStructurallyByName(sortedQuery, sortedSnapshot, CASE_INSENSITIVE_RESOLVER);
+    if (!typesAndNullabilityMatch || !namesMatch) {
       throw DeltaErrors.streamingSchemaMismatchOnRestart(querySchema, snapshotSchema);
     }
+  }
+
+  private static final Function2<String, String, Object> CASE_INSENSITIVE_RESOLVER =
+      new AbstractFunction2<String, String, Object>() {
+        @Override
+        public Object apply(String a, String b) {
+          return a.equalsIgnoreCase(b);
+        }
+      };
+
+  private static StructType sortFieldsByName(StructType schema) {
+    StructField[] fields = Arrays.copyOf(schema.fields(), schema.fields().length);
+    Arrays.sort(fields, Comparator.comparing(StructField::name));
+    StructType result = new StructType();
+    for (StructField f : fields) {
+      result = result.add(f);
+    }
+    return result;
   }
 
   /**
