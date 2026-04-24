@@ -18,4 +18,4 @@
 # Do not edit manually - edit version.sbt instead and run:
 #   build/sbt sparkV1/generatePythonVersion
 
-__version__ = "4.2.0"
+__version__ = "4.3.0"

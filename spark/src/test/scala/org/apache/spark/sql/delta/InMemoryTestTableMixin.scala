@@ -16,9 +16,16 @@
 
 package org.apache.spark.sql.delta
 
-import org.apache.spark.SparkConf
 import org.apache.spark.sql.delta.catalog.InMemoryDeltaCatalog
+import org.apache.spark.SparkConf
 import org.apache.spark.sql.test.SharedSparkSession
+
+/**
+ * Tag for tests that access Delta internals (e.g., DeltaLog, physical scans, usage logs)
+ * and are therefore incompatible with the DSv2 InMemoryTable test path.
+ * Tests tagged with this are automatically skipped when [[InMemoryTestTableMixin]] is active.
+ */
+case class DSv2Incompatible(reason: String) extends org.scalatest.Tag("DSv2Incompatible")
 
 /**
  * Mixin trait that configures the session catalog to use [[InMemoryDeltaCatalog]],
@@ -27,4 +34,16 @@ import org.apache.spark.sql.test.SharedSparkSession
 trait InMemoryTestTableMixin extends SharedSparkSession {
   override protected def sparkConf: SparkConf = super.sparkConf
     .set("spark.sql.catalog.spark_catalog", classOf[InMemoryDeltaCatalog].getName)
+
+  override protected def test
+      (testName: String, testTags: org.scalatest.Tag*)
+      (testFun: => Any)
+      (implicit pos: org.scalactic.source.Position): Unit = {
+    testTags.collectFirst { case t: DSv2Incompatible => t.reason } match {
+      case Some(reason) =>
+        ignore(testName + s" (DSv2Incompatible: $reason)", testTags: _*)(testFun)
+      case None =>
+        super.test(testName, testTags: _*)(testFun)
+    }
+  }
 }
