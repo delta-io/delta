@@ -24,6 +24,7 @@ import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.IcebergMetadata;
 import io.delta.storage.commit.uniform.UniformMetadata;
+import io.delta.storage.uc.UCDeltaClient;
 import io.unitycatalog.client.ApiClient;
 import io.unitycatalog.client.ApiClientBuilder;
 import io.unitycatalog.client.ApiException;
@@ -31,6 +32,10 @@ import io.unitycatalog.client.api.DeltaCommitsApi;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.delta.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.delta.model.CredentialOperation;
+import io.unitycatalog.client.delta.model.CredentialsResponse;
+import io.unitycatalog.client.delta.model.LoadTableResponse;
 import io.unitycatalog.client.model.DeltaCommit;
 import io.unitycatalog.client.model.DeltaCommitInfo;
 import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
@@ -62,6 +67,8 @@ import java.util.*;
  *   <li>Retrieving metastore information</li>
  *   <li>Committing changes to Delta tables</li>
  *   <li>Fetching unbackfilled commit histories</li>
+ *   <li>Loading table metadata through the Delta REST Catalog API</li>
+ *   <li>Getting table credentials through the Delta REST Catalog API</li>
  * </ul>
  *
  * <p>All requests are authenticated using a TokenProvider that generates Bearer tokens dynamically.
@@ -82,11 +89,15 @@ import java.util.*;
  * @see GetCommitsResponse
  * @see TokenProvider
  */
-public class UCTokenBasedRestClient implements UCClient {
+public class UCTokenBasedRestClient implements UCDeltaClient {
 
+  private final ApiClient apiClient;
+  private final boolean supportsDeltaRestCatalog;
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
+  private io.unitycatalog.client.delta.api.TablesApi deltaTablesApi;
+  private TemporaryCredentialsApi deltaTemporaryCredentialsApi;
 
   // HTTP status codes for error handling
   private static final int HTTP_BAD_REQUEST = 400;
@@ -122,10 +133,45 @@ public class UCTokenBasedRestClient implements UCClient {
       }
     });
 
-    ApiClient apiClient = builder.build();
+    this.apiClient = builder.build();
+    this.supportsDeltaRestCatalog = true;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
+    this.deltaTablesApi = new io.unitycatalog.client.delta.api.TablesApi(apiClient);
+    this.deltaTemporaryCredentialsApi = new TemporaryCredentialsApi(apiClient);
+  }
+
+  /**
+   * Builds a client around an existing UC {@link ApiClient} and enables the DRC tables API.
+   */
+  public UCTokenBasedRestClient(ApiClient apiClient) {
+    this(apiClient, true);
+  }
+
+  /**
+   * Builds a client around an existing UC {@link ApiClient}.
+   *
+   * <p>If {@code supportsDeltaRestCatalog} is true, {@link #loadTable} and
+   * {@link #getTableCredentials} use the Delta REST Catalog APIs. Otherwise
+   * {@code loadTable} falls back to the legacy UC tables API and
+   * {@code getTableCredentials} is unsupported.
+   */
+  public UCTokenBasedRestClient(
+      ApiClient apiClient,
+      boolean supportsDeltaRestCatalog) {
+    Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.apiClient = apiClient;
+    this.supportsDeltaRestCatalog = supportsDeltaRestCatalog;
+    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
+    this.metastoresApi = new MetastoresApi(apiClient);
+    this.tablesApi = new TablesApi(apiClient);
+    this.deltaTablesApi = supportsDeltaRestCatalog
+        ? new io.unitycatalog.client.delta.api.TablesApi(apiClient)
+        : null;
+    this.deltaTemporaryCredentialsApi = supportsDeltaRestCatalog
+        ? new TemporaryCredentialsApi(apiClient)
+        : null;
   }
 
   /**
@@ -228,6 +274,89 @@ public class UCTokenBasedRestClient implements UCClient {
     }
   }
 
+  /**
+   * Loads one table from Unity Catalog.
+   *
+   * <p>This uses the DRC tables API when available. Otherwise it uses the legacy UC tables API
+   * and converts that response to the DRC response model so callers see one response shape.
+   */
+  @Override
+  public LoadTableResponse loadTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    ensureOpen();
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(table, "table must not be null.");
+
+    if (!supportsDeltaRestCatalog) {
+      try {
+        return UCLegacyLoadTableAdapter.loadTableViaLegacyApi(tablesApi, catalog, schema, table);
+      } catch (ApiException e) {
+        throw new IOException(
+            String.format(
+                "Failed to load table %s.%s.%s via legacy UC API (HTTP %s): %s",
+                catalog,
+                schema,
+                table,
+                e.getCode(),
+                e.getResponseBody()),
+            e);
+      }
+    } else {
+      try {
+        return deltaTablesApi.loadTable(catalog, schema, table);
+      } catch (ApiException e) {
+        throw new IOException(
+            String.format(
+                "Failed to load table %s.%s.%s via DRC (HTTP %s): %s",
+                catalog,
+                schema,
+                table,
+                e.getCode(),
+                e.getResponseBody()),
+            e);
+      }
+    }
+  }
+
+  /**
+   * Gets temporary credentials for one table through the DRC credentials API.
+   *
+   * <p>This method is only supported when this client has the DRC tables API.
+   */
+  @Override
+  public CredentialsResponse getTableCredentials(
+      CredentialOperation operation,
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    ensureOpen();
+    if (!supportsDeltaRestCatalog) {
+      throw new UnsupportedOperationException(
+          "Legacy UC table credential vending is unsupported by this client.");
+    }
+    Objects.requireNonNull(operation, "operation must not be null.");
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(table, "table must not be null.");
+
+    try {
+      return deltaTemporaryCredentialsApi.getTableCredentials(operation, catalog, schema, table);
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format(
+              "Failed to get table credentials for %s.%s.%s (HTTP %s): %s",
+              catalog,
+              schema,
+              table,
+              e.getCode(),
+              e.getResponseBody()),
+          e);
+    }
+  }
+
   @Override
   public void close() throws IOException {
     // Nulling out the API instances makes them eligible for GC. Once garbage collected,
@@ -235,6 +364,8 @@ public class UCTokenBasedRestClient implements UCClient {
     this.deltaCommitsApi = null;
     this.metastoresApi = null;
     this.tablesApi = null;
+    this.deltaTablesApi = null;
+    this.deltaTemporaryCredentialsApi = null;
   }
 
   /**

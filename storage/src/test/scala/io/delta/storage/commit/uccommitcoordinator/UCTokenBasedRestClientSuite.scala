@@ -25,7 +25,9 @@ import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.{Commit, CommitFailedException}
 import io.delta.storage.commit.actions.AbstractMetadata
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
+import io.unitycatalog.client.ApiClientBuilder
 import io.unitycatalog.client.auth.TokenProvider
+import io.unitycatalog.client.delta.model
 
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
@@ -45,6 +47,9 @@ class UCTokenBasedRestClientSuite
   private var serverUri: String = _
   private var metastoreHandler: HttpExchange => Unit = _
   private var commitsHandler: HttpExchange => Unit = _
+  private var legacyTablesHandler: HttpExchange => Unit = _
+  private var drcTablesHandler: HttpExchange => Unit = _
+  private var drcCredentialsHandler: HttpExchange => Unit = _
   private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
@@ -63,6 +68,21 @@ class UCTokenBasedRestClientSuite
       }
       exchange.close()
     })
+    server.createContext("/api/2.1/unity-catalog/tables", exchange => {
+      if (legacyTablesHandler != null) legacyTablesHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/catalogs", exchange => {
+      if (exchange.getRequestURI.getPath.endsWith("/credentials")) {
+        if (drcCredentialsHandler != null) drcCredentialsHandler(exchange)
+        else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      } else {
+        if (drcTablesHandler != null) drcTablesHandler(exchange)
+        else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      }
+      exchange.close()
+    })
     server.start()
     serverUri = s"http://localhost:${server.getAddress.getPort}"
   }
@@ -72,6 +92,9 @@ class UCTokenBasedRestClientSuite
   override def beforeEach(): Unit = {
     metastoreHandler = null
     commitsHandler = null
+    legacyTablesHandler = null
+    drcTablesHandler = null
+    drcCredentialsHandler = null
   }
 
   private def readRequestBody(exchange: HttpExchange): String = {
@@ -96,8 +119,21 @@ class UCTokenBasedRestClientSuite
   private def createClient(): UCTokenBasedRestClient =
     new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap())
 
+  private def createLegacyClient(): UCTokenBasedRestClient = {
+    val apiClient = ApiClientBuilder.create()
+      .uri(serverUri)
+      .tokenProvider(createTokenProvider())
+      .build()
+    new UCTokenBasedRestClient(apiClient, false)
+  }
+
   private def withClient(fn: UCTokenBasedRestClient => Unit): Unit = {
     val client = createClient()
+    try fn(client) finally client.close()
+  }
+
+  private def withLegacyClient(fn: UCTokenBasedRestClient => Unit): Unit = {
+    val client = createLegacyClient()
     try fn(client) finally client.close()
   }
 
@@ -147,6 +183,224 @@ class UCTokenBasedRestClientSuite
     metastoreHandler = exchange => sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, "{}")
     withClient { client =>
       intercept[java.io.IOException] { client.getMetastoreId() }
+    }
+  }
+
+  test("loadTable falls back to legacy UC API and converts metadata") {
+    legacyTablesHandler = exchange => {
+      assert(exchange.getRequestMethod === "GET")
+      sendJson(
+        exchange,
+        HttpStatus.SC_OK,
+        """{
+          |  "name": "tbl",
+          |  "catalog_name": "main",
+          |  "schema_name": "default",
+          |  "table_id": "11111111-1111-1111-1111-111111111111",
+          |  "table_type": "MANAGED",
+          |  "data_source_format": "DELTA",
+          |  "storage_location": "s3://bucket/path/to/table",
+          |  "created_at": 10,
+          |  "updated_at": 11,
+          |  "properties": {"delta.appendOnly":"true"},
+          |  "columns": [
+          |    {
+          |      "name":"payload",
+          |      "nullable":false,
+          |      "position":0,
+          |      "type_json":"{\"name\":\"payload\",\"type\":{\"type\":\"struct\",\"fields\":[{\"name\":\"tags\",\"type\":{\"type\":\"array\",\"elementType\":\"string\",\"containsNull\":true},\"nullable\":true,\"metadata\":{\"comment\":\"nested tags\"}}]},\"nullable\":false,\"metadata\":{}}"
+          |    },
+          |    {"name":"value","type_text":"string","type_json":"{\"name\":\"value\",\"type\":\"string\",\"nullable\":true,\"metadata\":{}}","nullable":true,"position":1},
+          |    {"name":"region","type_text":"string","type_json":"{\"name\":\"region\",\"type\":\"string\",\"nullable\":false,\"metadata\":{}}","nullable":false,"position":2,"partition_index":1},
+          |    {"name":"date","type_text":"date","type_json":"{\"name\":\"date\",\"type\":\"date\",\"nullable\":false,\"metadata\":{}}","nullable":false,"position":3,"partition_index":0}
+          |  ]
+          |}""".stripMargin)
+    }
+
+    withLegacyClient { client =>
+      val response = client.loadTable("main", "default", "tbl")
+      val metadata = response.getMetadata
+      val payloadField = metadata.getColumns.getFields.get(0)
+      val payloadType = payloadField.getType.asInstanceOf[model.StructType]
+      val nestedField = payloadType.getFields.get(0)
+      val nestedType = nestedField.getType.asInstanceOf[model.ArrayType]
+
+      assert(metadata.getLocation === "s3://bucket/path/to/table")
+      assert(metadata.getPartitionColumns === java.util.Arrays.asList("date", "region"))
+      assert(metadata.getProperties.get("delta.appendOnly") === "true")
+      assert(metadata.getColumns.getFields.size() === 4)
+      assert(payloadField.getName === "payload")
+      assert(!payloadField.getNullable)
+      assert(metadata.getColumns.getFields.get(2).getName === "region")
+      assert(!metadata.getColumns.getFields.get(2).getNullable)
+      assert(nestedField.getName === "tags")
+      assert(nestedField.getMetadata.get("comment") === "nested tags")
+      assert(nestedType.getElementType.isInstanceOf[model.PrimitiveType])
+      assert(nestedType.getContainsNull)
+      assert(
+        nestedType.getElementType.asInstanceOf[model.PrimitiveType].getType === "string")
+    }
+  }
+
+  test("loadTable uses the DRC endpoint when available") {
+    legacyTablesHandler = _ => fail("loadTable should not call the legacy UC tables API")
+    drcTablesHandler = exchange => {
+      assert(exchange.getRequestMethod === "GET")
+      assert(
+        exchange.getRequestURI.getPath ===
+          "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables/tbl")
+      sendJson(
+        exchange,
+        HttpStatus.SC_OK,
+        """{
+          |  "metadata": {
+          |    "etag": "etag-1",
+          |    "data-source-format": "DELTA",
+          |    "table-type": "MANAGED",
+          |    "table-uuid": "11111111-1111-1111-1111-111111111111",
+          |    "location": "s3://bucket/path/to/table",
+          |    "created-time": 10,
+          |    "updated-time": 11,
+          |    "securable-type": "TABLE",
+          |    "columns": {
+          |      "type": "struct",
+          |      "fields": [
+          |        {"name": "id", "type": "long", "nullable": false, "metadata": {}}
+          |      ]
+          |    },
+          |    "partition-columns": [],
+          |    "properties": {"delta.appendOnly": "true"}
+          |  },
+          |  "commits": [
+          |    {"version": 7, "file-name": "7.json", "file-size": 100, "timestamp": 1000,
+          |      "file-modification-timestamp": 1001}
+          |  ]
+          |}""".stripMargin)
+    }
+
+    withClient { client =>
+      val response = client.loadTable("main", "default", "tbl")
+      assert(response.getMetadata.getEtag === "etag-1")
+      assert(response.getMetadata.getLocation === "s3://bucket/path/to/table")
+      assert(response.getMetadata.getDataSourceFormat === model.DataSourceFormat.DELTA)
+      assert(response.getMetadata.getColumns.getFields.size() === 1)
+      assert(response.getCommits.size() === 1)
+      assert(response.getCommits.get(0).getVersion === 7L)
+    }
+  }
+
+  test("loadTable includes table identity in DRC error messages") {
+    drcTablesHandler = exchange => {
+      sendJson(exchange, HttpStatus.SC_FORBIDDEN, """{"error":"denied"}""")
+    }
+
+    withClient { client =>
+      val e = intercept[java.io.IOException] {
+        client.loadTable("main", "default", "tbl")
+      }
+      assert(e.getMessage.contains("main.default.tbl"))
+      assert(e.getMessage.contains("HTTP 403"))
+    }
+  }
+
+  test("loadTable validates required parameters") {
+    withClient { client =>
+      intercept[NullPointerException] {
+        client.loadTable(null, "default", "tbl")
+      }
+      intercept[NullPointerException] {
+        client.loadTable("main", null, "tbl")
+      }
+      intercept[NullPointerException] {
+        client.loadTable("main", "default", null)
+      }
+    }
+  }
+
+  test("getTableCredentials returns DRC credentials") {
+    drcCredentialsHandler = exchange => {
+      assert(exchange.getRequestMethod === "GET")
+      assert(
+        exchange.getRequestURI.getPath ===
+          "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables/tbl/credentials")
+      assert(exchange.getRequestURI.getQuery === "operation=READ")
+      sendJson(
+        exchange,
+        HttpStatus.SC_OK,
+        """{
+          |  "storage-credentials": [
+          |    {
+          |      "prefix": "s3://bucket/path/to/table",
+          |      "operation": "READ",
+          |      "config": {
+          |        "s3.access-key-id": "ak",
+          |        "s3.secret-access-key": "sk",
+          |        "s3.session-token": "st"
+          |      },
+          |      "expiration-time-ms": 123
+          |    }
+          |  ]
+          |}""".stripMargin)
+    }
+
+    withClient { client =>
+      val response =
+        client.getTableCredentials(model.CredentialOperation.READ, "main", "default", "tbl")
+      assert(response.getStorageCredentials.size() === 1)
+      assert(response.getStorageCredentials.get(0).getPrefix === "s3://bucket/path/to/table")
+      assert(response.getStorageCredentials.get(0).getConfig.get("s3.access-key-id") === "ak")
+    }
+  }
+
+  test("getTableCredentials validates required parameters") {
+    withClient { client =>
+      intercept[NullPointerException] {
+        client.getTableCredentials(null, "main", "default", "tbl")
+      }
+      intercept[NullPointerException] {
+        client.getTableCredentials(model.CredentialOperation.READ, null, "default", "tbl")
+      }
+      intercept[NullPointerException] {
+        client.getTableCredentials(model.CredentialOperation.READ, "main", null, "tbl")
+      }
+      intercept[NullPointerException] {
+        client.getTableCredentials(model.CredentialOperation.READ, "main", "default", null)
+      }
+    }
+  }
+
+  test("getTableCredentials is unsupported without the DRC API") {
+    withLegacyClient { client =>
+      intercept[UnsupportedOperationException] {
+        client.getTableCredentials(model.CredentialOperation.READ, "main", "default", "tbl")
+      }
+    }
+  }
+
+  test("getTableCredentials includes table identity in DRC error messages") {
+    drcCredentialsHandler = exchange => {
+      sendJson(exchange, HttpStatus.SC_FORBIDDEN, """{"error":"denied"}""")
+    }
+
+    withClient { client =>
+      val e = intercept[java.io.IOException] {
+        client.getTableCredentials(model.CredentialOperation.READ, "main", "default", "tbl")
+      }
+      assert(e.getMessage.contains("main.default.tbl"))
+      assert(e.getMessage.contains("HTTP 403"))
+      assert(e.getMessage.contains("denied"))
+    }
+  }
+
+  test("loadTable and getTableCredentials fail after close") {
+    val client = createClient()
+    client.close()
+
+    intercept[IllegalStateException] {
+      client.loadTable("main", "default", "tbl")
+    }
+    intercept[IllegalStateException] {
+      client.getTableCredentials(model.CredentialOperation.READ, "main", "default", "tbl")
     }
   }
 
