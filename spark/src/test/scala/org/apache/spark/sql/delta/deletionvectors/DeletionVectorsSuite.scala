@@ -931,8 +931,11 @@ class DeletionVectorsWithPredicatePushdownSuite extends DeletionVectorsSuite {
   }
 
   override def afterAll(): Unit = {
-    super.afterAll()
-    sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+    try {
+      sql(s"DROP TABLE IF EXISTS $multiRowgroupTable")
+    } finally {
+      super.afterAll()
+    }
   }
 
   private def testPredicatePushDown(

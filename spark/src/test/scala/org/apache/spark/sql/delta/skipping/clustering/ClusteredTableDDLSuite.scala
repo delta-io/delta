@@ -233,7 +233,9 @@ trait ClusteredTableCreateOrReplaceDDLSuiteBase extends QueryTest
             // ensure that datatype validation behaves consistently between the two.
             if (clause == "REPLACE") {
               sql("DROP TABLE IF EXISTS dstTbl")
-              sql(s"CREATE TABLE dstTbl LIKE srcTbl LOCATION '${tmpDir.getAbsolutePath}'")
+              sql(
+                s"CREATE TABLE dstTbl LIKE srcTbl USING DELTA " +
+                  s"LOCATION '${tmpDir.getAbsolutePath}'")
             }
 
             Seq(
