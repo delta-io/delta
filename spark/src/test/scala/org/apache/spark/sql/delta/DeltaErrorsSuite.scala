@@ -2271,6 +2271,13 @@ trait DeltaErrorsSuiteBase
       checkError(e, "DELTA_MERGE_MISSING_WHEN", "42601", Map.empty[String, String])
     }
     {
+      val e = intercept[DeltaAnalysisException] {
+        throw DeltaErrors.mergeIntoEmptySchemaTarget()
+      }
+      checkError(e, "DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET", "428GU",
+        Map.empty[String, String])
+    }
+    {
       val e = intercept[DeltaIllegalStateException] {
         throw DeltaErrors.unrecognizedFileAction("invalidAction", "invalidClass")
       }
