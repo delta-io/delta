@@ -27,11 +27,11 @@ import org.apache.spark.sql.catalyst.catalog.{CatalogTable, CatalogTableType, Ca
 import org.apache.spark.sql.connector.catalog.{Identifier, Table, TableCatalog, TableInfo, V1Table}
 import org.apache.spark.sql.delta.{
   CatalogOwnedTableFeature,
-  DeltaTableV2,
   MaterializedRowCommitVersion,
   MaterializedRowId
 }
 import org.apache.spark.sql.delta.actions.TableFeatureProtocolUtils
+import org.apache.spark.sql.delta.catalog.DeltaTableV2
 import org.apache.spark.sql.delta.commands.{CreateDeltaTableCommand, TableCreationModes}
 import org.apache.spark.sql.delta.coordinatedcommits.{
   CatalogOwnedTableUtils,
