@@ -327,6 +327,13 @@ class TableFeaturesSuite extends AnyFunSuite {
       }
   })
 
+  test("catalogManaged requires both inCommitTimestamp and vacuumProtocolCheck") {
+    val catalogManagedFeature = TableFeatures.CATALOG_MANAGED_RW_FEATURE
+    val required = catalogManagedFeature.requiredFeatures().asScala
+    assert(required.map(_.featureName()) ==
+      Set("inCommitTimestamp", "vacuumProtocolCheck"))
+  }
+
   /////////////////////////////////////////////////////////////////////////////////////////////////
   // Tests for validateKernelCanReadTheTable and validateKernelCanWriteToTable                   //
   /////////////////////////////////////////////////////////////////////////////////////////////////
