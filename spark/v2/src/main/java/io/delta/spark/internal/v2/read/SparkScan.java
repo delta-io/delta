@@ -260,13 +260,19 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   @Override
   public Statistics estimateStatistics() {
     ensurePlanned();
+    // Capture mutable scan state as final locals so the returned Statistics object reflects a
+    // consistent snapshot. A subsequent filter() call mutates rowCountKnown and totalRows
+    // (see ensurePlanned(runtimePredicates)), and we don't want those mutations to leak into a
+    // Statistics instance the caller is still holding.
     final long plannedBytes = estimatedSizeInBytes;
+    final boolean rowCountKnownSnapshot = rowCountKnown;
+    final long totalRowsSnapshot = totalRows;
 
     // When catalog stats are available and CBO is enabled, combine table-level stats
     // (for columnStats) with planned file stats (for sizeInBytes and numRows).
     // This mirrors V1's LogicalRelation.computeStats() which gates column stats on
     // conf.cboEnabled || conf.planStatsEnabled.
-    if (isRowStatsEnabled() && catalogStats.isPresent()) {
+    if (arePlanStatsEnabled() && catalogStats.isPresent()) {
       final Statistics stats = catalogStats.get();
       return new Statistics() {
         @Override
@@ -283,7 +289,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
           if (stats.numRows().isPresent()) {
             return stats.numRows();
           }
-          return rowCountKnown ? OptionalLong.of(totalRows) : OptionalLong.empty();
+          return rowCountKnownSnapshot ? OptionalLong.of(totalRowsSnapshot) : OptionalLong.empty();
         }
 
         @Override
@@ -304,7 +310,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
 
       @Override
       public OptionalLong numRows() {
-        return rowCountKnown ? OptionalLong.of(totalRows) : OptionalLong.empty();
+        return rowCountKnownSnapshot ? OptionalLong.of(totalRowsSnapshot) : OptionalLong.empty();
       }
     };
   }
@@ -429,7 +435,7 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
     //    estimateStatistics(), so per-file parsing would be wasted work)
     //  - the kernel scan is ScanImpl (the only path that supports includeStats)
     final boolean includeStats =
-        kernelScan instanceof ScanImpl && isRowStatsEnabled() && !catalogHasNumRows();
+        kernelScan instanceof ScanImpl && arePlanStatsEnabled() && !catalogHasNumRows();
     final Iterator<FilteredColumnarBatch> scanFileBatches;
     if (includeStats) {
       scanFileBatches = ((ScanImpl) kernelScan).getScanFiles(tableEngine, true /* includeStats */);
@@ -583,14 +589,24 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
   }
 
   /**
-   * Returns whether row count statistics should be collected and reported.
+   * Returns whether plan-time statistics should be collected and reported. Matches V1 behavior:
+   * {@code LogicalRelation.computeStats()} only surfaces stats when {@code spark.sql.cbo.enabled}
+   * or {@code spark.sql.cbo.planStats.enabled} is true.
    *
-   * <p>Matches V1 behavior: {@code LogicalRelation.computeStats()} only reports numRows when {@code
-   * spark.sql.cbo.enabled} or {@code spark.sql.cbo.planStats.enabled} is true. This gating avoids
-   * the cost of per-file stats JSON parsing on every scan when the optimizer would not use the
-   * statistics anyway.
+   * <p>Despite the row-count-flavored framing in V1, this gate controls multiple things in the V2
+   * scan path:
+   *
+   * <ul>
+   *   <li>whether {@code numRows()} is reported in {@link #estimateStatistics()}
+   *   <li>whether the catalog-stats branch is entered (which also governs {@code columnStats}
+   *       propagation from the catalog)
+   *   <li>whether per-file stats JSON is parsed in {@link #planScanFiles()} (gated together with
+   *       {@code !catalogHasNumRows()} to avoid wasted parsing when the catalog already has it)
+   * </ul>
+   *
+   * Future readers touching any of these paths should treat this helper as load-bearing.
    */
-  private boolean isRowStatsEnabled() {
+  private boolean arePlanStatsEnabled() {
     return sqlConf.cboEnabled() || sqlConf.planStatsEnabled();
   }
 
