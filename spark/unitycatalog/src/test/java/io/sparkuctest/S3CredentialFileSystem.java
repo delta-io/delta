@@ -151,13 +151,22 @@ public class S3CredentialFileSystem extends RawLocalFileSystem {
     if (provider != null) return provider;
     String clazz = conf.get(S3A_CREDENTIALS_PROVIDER);
     if (clazz == null) return null;
-    try {
-      provider =
-          (AwsCredentialsProvider)
-              Class.forName(clazz).getConstructor(Configuration.class).newInstance(conf);
-    } catch (Exception e) {
-      throw new RuntimeException("Failed to instantiate credential provider: " + clazz, e);
+    for (String providerClass : clazz.split(",")) {
+      String trimmed = providerClass.trim();
+      if (trimmed.isEmpty()) continue;
+      try {
+        provider =
+            (AwsCredentialsProvider)
+                Class.forName(trimmed).getConstructor(Configuration.class).newInstance(conf);
+        return provider;
+      } catch (ClassCastException ignored) {
+        // Hadoop accepts provider chains; this fake only validates AWS SDK providers.
+      } catch (ReflectiveOperationException e) {
+        if (trimmed.startsWith("io.unitycatalog.")) {
+          throw new RuntimeException("Failed to instantiate credential provider: " + trimmed, e);
+        }
+      }
     }
-    return provider;
+    return null;
   }
 }
