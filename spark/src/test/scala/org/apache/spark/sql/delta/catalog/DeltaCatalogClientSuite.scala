@@ -106,6 +106,30 @@ class DeltaCatalogClientSuite
     assert(error.getMessage.contains("no storage credentials"))
   }
 
+  test("loadTable uses renewable credential provider properties for S3 by default") {
+    handler = exchange => exchange.getRequestURI.getPath match {
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/tables/tbl" =>
+        sendJson(exchange, 200, loadTableResponseJson("s3://bucket/table"))
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/tables/tbl/credentials" =>
+        credentialRequestCount += 1
+        sendJson(exchange, 200, s3CredentialsResponseJson)
+      case path =>
+        fail(s"Unexpected DRC request path: $path")
+    }
+
+    val properties = loadWithDeltaRestCatalog().catalogTable.storage.properties
+
+    assert(credentialRequestCount === 1)
+    assert(properties("fs.s3a.aws.credentials.provider") ===
+      "io.unitycatalog.client.storage.AwsVendedTokenProvider")
+    assert(properties("fs.unitycatalog.table.id") ===
+      "11111111-1111-1111-1111-111111111111")
+    assert(properties("fs.unitycatalog.table.operation") === "READ")
+    assert(properties("fs.s3a.init.access.key") === "fakeAccessKey")
+    assert(properties("option.fs.s3a.aws.credentials.provider") ===
+      "io.unitycatalog.client.storage.AwsVendedTokenProvider")
+  }
+
   private def loadWithDeltaRestCatalog(): V1Table = {
     withSQLConf(
       "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
@@ -143,6 +167,22 @@ class DeltaCatalogClientSuite
        |  },
        |  "commits": []
        |}""".stripMargin
+
+  private def s3CredentialsResponseJson: String =
+    """{
+      |  "storage-credentials": [
+      |    {
+      |      "prefix": "s3://bucket/table",
+      |      "operation": "READ",
+      |      "config": {
+      |        "s3.access-key-id": "fakeAccessKey",
+      |        "s3.secret-access-key": "fakeSecretKey",
+      |        "s3.session-token": "fakeSessionToken"
+      |      },
+      |      "expiration-time-ms": 1700000000000
+      |    }
+      |  ]
+      |}""".stripMargin
 
   private def sendJson(exchange: HttpExchange, status: Int, body: String): Unit = {
     val bytes = body.getBytes(StandardCharsets.UTF_8)

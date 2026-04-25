@@ -15,17 +15,16 @@
 # Rip those out, keep the generic clone/publish flow.
 #
 # What this does:
-#   Publishes UC (client/server/spark jars) into ~/.ivy2/local at coordinate
-#   <UC_BASE_VERSION>-<7-char sha>, e.g. 0.5.0-SNAPSHOT-3b45d34. Idempotent: when the canonical
-#   Ivy artifact already exists for the target coordinate, the slow sbt publish is skipped.
+#   Publishes UC (client/server/spark jars) into ~/.ivy2/local at coordinate UC_BASE_VERSION,
+#   e.g. 0.5.0-SNAPSHOT. Idempotent: when the canonical Ivy artifact already exists for the
+#   target coordinate, the slow sbt publish is skipped.
 #
 #   `--print-version` short-circuits before any filesystem work and just echoes the coordinate
 #   that would be published. That's how build.sbt discovers the version string in pinned mode.
 #
 # Why local publish:
-#   Delta master depends on UC APIs that aren't in any released UC yet. Encoding the pinned SHA
-#   in the Ivy coordinate means a pin bump changes the coordinate even when UC's version.sbt
-#   didn't move, so stale jars from a previous pin can't resolve silently.
+#   Delta master depends on UC APIs that aren't in any released UC yet. Until UC publishes those
+#   APIs, this script builds the pinned UC revision into the local Maven/Ivy caches.
 #
 # How to invoke:
 #   The first `build/sbt` that touches sparkUnityCatalog or kernelUnityCatalog calls this script
@@ -55,8 +54,8 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------------------------
 # The pin. Bump both lines together if UC's version.sbt changed at the new SHA. build.sbt's
-# `unityCatalogVersion` is obtained by running this script with `--print-version`, so these two
-# values are the single source of truth.
+# `unityCatalogVersion` is obtained by running this script with `--print-version`, so
+# UC_BASE_VERSION is the single source of truth for the local snapshot coordinate.
 UC_PIN_SHA=e3ab24e815b16a7614ff32044cf51067ef7ad16b
 UC_BASE_VERSION=0.5.0-SNAPSHOT
 # ---------------------------------------------------------------------------------------------
@@ -73,14 +72,7 @@ if [[ "$UC_REF" != "main" && "$UC_REF" != "$UC_PIN_SHA" ]]; then
   exit 1
 fi
 
-# 7-char suffix for the Ivy coordinate. The pinned SHA gets abbreviated to git's default length;
-# the string `main` passes through as-is, yielding coordinates like `0.5.0-SNAPSHOT-main`.
-if [[ "$UC_REF" == "main" ]]; then
-  UC_REF_SHORT="main"
-else
-  UC_REF_SHORT="${UC_REF:0:7}"
-fi
-UC_VERSION="$UC_BASE_VERSION-$UC_REF_SHORT"
+UC_VERSION="$UC_BASE_VERSION"
 
 # --print-version: discover the coordinate without doing any work. build.sbt uses this at load
 # time to populate `unityCatalogVersion`.
@@ -155,8 +147,8 @@ if [[ "$ACTUAL_BASE" != "$UC_BASE_VERSION" ]]; then
   exit 1
 fi
 
-# Override version.sbt via sbt `set` so every publish* command uses the composed <base>-<sha>
-# coordinate. Applied as a persistent setting so it sticks across the two sbt invocations below.
+# Override version.sbt via sbt `set` so every publish* command uses the local snapshot coordinate.
+# Applied as a persistent setting so it sticks across the two sbt invocations below.
 SET_VERSION_CMD="set ThisBuild / version := \"$UC_VERSION\""
 
 echo ">>> Building and publishing UC client + server to local Maven repo"

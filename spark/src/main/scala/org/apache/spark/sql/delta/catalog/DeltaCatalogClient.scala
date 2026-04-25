@@ -34,6 +34,14 @@ import io.unitycatalog.client.delta.model.{
   StorageCredential,
   TableType => DeltaTableType
 }
+import io.unitycatalog.client.model.{
+  AwsCredentials,
+  AzureUserDelegationSAS,
+  GcpOauthToken,
+  TableOperation => UCTableOperation,
+  TemporaryCredentials
+}
+import io.unitycatalog.client.storage.CredPropsUtil
 
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
@@ -46,7 +54,8 @@ import org.apache.spark.sql.delta.sources.DeltaSourceUtils
 private class DeltaCatalogClient private (
     private val ucDeltaClient: Option[UCDeltaClient],
     delegate: TableCatalog,
-    catalogName: String) {
+    catalogName: String,
+    credentialContext: Option[DeltaCatalogClient.CredentialContext]) {
 
   import DeltaCatalogClient._
 
@@ -119,9 +128,7 @@ private class DeltaCatalogClient private (
       partitionColumnNames = Option(metadata.getPartitionColumns)
         .map(_.asScala.toSeq)
         .getOrElse(Nil),
-      properties = Option(metadata.getProperties)
-        .map(_.asScala.toMap)
-        .getOrElse(Map.empty))
+      properties = metadataProperties(metadata))
   }
 
   private def toStorageProperties(
@@ -137,7 +144,7 @@ private class DeltaCatalogClient private (
           s"Delta REST returned no storage credentials for cloud location ${metadata.getLocation}.")
       } else {
         selectStorageCredential(metadata.getLocation, storageCredentials)
-          .map(storageCredentialToProperties)
+          .map(storageCredentialToProperties(metadata, _, locationScheme))
           .map(withOptionPrefix)
           .getOrElse {
             throw new IllegalArgumentException(
@@ -178,46 +185,83 @@ private class DeltaCatalogClient private (
   }
 
   private def storageCredentialToProperties(
-      credential: StorageCredential): Map[String, String] = {
+      metadata: io.unitycatalog.client.delta.model.TableMetadata,
+      credential: StorageCredential,
+      locationScheme: String): Map[String, String] = {
+    val context = credentialContext.getOrElse {
+      throw new IllegalStateException("Delta REST credential context is not initialized.")
+    }
+    CredPropsUtil.createTableCredProps(
+      context.renewCredentialEnabled,
+      context.credScopedFsEnabled,
+      metadataProperties(metadata).asJava,
+      locationScheme,
+      context.uri,
+      context.tokenProvider,
+      metadata.getTableUuid.toString,
+      UCTableOperation.READ,
+      toTemporaryCredentials(credential)).asScala.toMap
+  }
+
+  private def toTemporaryCredentials(credential: StorageCredential): TemporaryCredentials = {
     val config = credential.getConfig
     if (config == null) {
       throw new IllegalArgumentException(
         s"Delta REST storage credential for prefix ${credential.getPrefix} is missing config.")
     } else if (config.getS3AccessKeyId != null || config.getS3SecretAccessKey != null ||
         config.getS3SessionToken != null) {
-      if (config.getS3AccessKeyId == null || config.getS3SecretAccessKey == null) {
+      if (config.getS3AccessKeyId == null || config.getS3SecretAccessKey == null ||
+          config.getS3SessionToken == null) {
         throw new IllegalArgumentException(
           s"Delta REST S3 credential for prefix ${credential.getPrefix} is incomplete.")
       }
-      Map(
-        "fs.s3a.path.style.access" -> "true",
-        "fs.s3.impl.disable.cache" -> "true",
-        "fs.s3a.impl.disable.cache" -> "true",
-        "fs.s3a.access.key" -> config.getS3AccessKeyId,
-        "fs.s3a.secret.key" -> config.getS3SecretAccessKey
-      ) ++ Option(config.getS3SessionToken).map("fs.s3a.session.token" -> _)
+      withExpiration(
+        credential,
+        new TemporaryCredentials()
+          .awsTempCredentials(new AwsCredentials()
+            .accessKeyId(config.getS3AccessKeyId)
+            .secretAccessKey(config.getS3SecretAccessKey)
+            .sessionToken(config.getS3SessionToken)))
     } else if (config.getAzureSasToken != null) {
-      Map(
-        "fs.azure.account.auth.type" -> "SAS",
-        "fs.azure.account.hns.enabled" -> "true",
-        "fs.abfs.impl.disable.cache" -> "true",
-        "fs.abfss.impl.disable.cache" -> "true",
-        "fs.azure.sas.fixed.token" -> config.getAzureSasToken)
+      withExpiration(
+        credential,
+        new TemporaryCredentials()
+          .azureUserDelegationSas(new AzureUserDelegationSAS()
+            .sasToken(config.getAzureSasToken)))
     } else if (config.getGcsOauthToken != null) {
-      Map(
-        "fs.gs.create.items.conflict.check.enable" -> "true",
-        "fs.gs.impl.disable.cache" -> "true",
-        "fs.gs.auth.access.token.credential" -> config.getGcsOauthToken
-      ) ++ Option(credential.getExpirationTimeMs)
-        .map("fs.gs.auth.access.token.expiration" -> _.toString)
+      withExpiration(
+        credential,
+        new TemporaryCredentials()
+          .gcpOauthToken(new GcpOauthToken()
+            .oauthToken(config.getGcsOauthToken)))
     } else {
       throw new IllegalArgumentException(
         s"Unsupported Delta REST storage credential config for prefix ${credential.getPrefix}.")
     }
   }
+
+  private def withExpiration(
+      credential: StorageCredential,
+      temporaryCredentials: TemporaryCredentials): TemporaryCredentials = {
+    Option(credential.getExpirationTimeMs).foreach(temporaryCredentials.expirationTime)
+    temporaryCredentials
+  }
+
+  private def metadataProperties(
+      metadata: io.unitycatalog.client.delta.model.TableMetadata): Map[String, String] = {
+    Option(metadata.getProperties)
+      .map(_.asScala.toMap)
+      .getOrElse(Map.empty)
+  }
 }
 
 private object DeltaCatalogClient {
+  private case class CredentialContext(
+      uri: String,
+      tokenProvider: TokenProvider,
+      renewCredentialEnabled: Boolean,
+      credScopedFsEnabled: Boolean)
+
   private val CloudSchemes = Set("s3", "s3a", "gs", "abfs", "abfss")
 
   private def isCloudScheme(scheme: String): Boolean = {
@@ -227,7 +271,7 @@ private object DeltaCatalogClient {
   def apply(delegatePlugin: CatalogPlugin, spark: SparkSession): DeltaCatalogClient = {
     val delegate = delegatePlugin.asInstanceOf[TableCatalog]
     val catalogName = delegatePlugin.name()
-    val ucDeltaClient = if (spark.conf
+    val (ucDeltaClient, credentialContext) = if (spark.conf
         .get(s"spark.sql.catalog.$catalogName.deltaRestApi.enabled", "false")
         .toBoolean) {
       val (_, uri, authConfig) = UCCommitCoordinatorBuilder.getCatalogConfigs(spark)
@@ -239,13 +283,21 @@ private object DeltaCatalogClient {
             s"DRC is enabled for catalog $catalogName, but its Unity Catalog configuration " +
               "is missing or incomplete.")
         }
-      Some(new UCTokenBasedRestClient(
+      val tokenProvider = TokenProvider.create(authConfig.asJava)
+      (Some(new UCTokenBasedRestClient(
         uri,
-        TokenProvider.create(authConfig.asJava),
-        Collections.emptyMap()))
+        tokenProvider,
+        Collections.emptyMap())),
+        Some(CredentialContext(
+          uri,
+          tokenProvider,
+          spark.conf.get(s"spark.sql.catalog.$catalogName.renewCredential.enabled", "true")
+            .toBoolean,
+          spark.conf.get(s"spark.sql.catalog.$catalogName.credScopedFs.enabled", "false")
+            .toBoolean)))
     } else {
-      None
+      (None, None)
     }
-    new DeltaCatalogClient(ucDeltaClient, delegate, catalogName)
+    new DeltaCatalogClient(ucDeltaClient, delegate, catalogName, credentialContext)
   }
 }

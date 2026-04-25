@@ -735,10 +735,10 @@ lazy val contribs = (project in file("contribs"))
 //     like any other dependency.
 //
 //  3. Pinned mode (default): leave `unityCatalogReleaseVersion = None`. The version string
-//     comes from `setup_unitycatalog_main.sh --print-version`, which encodes both the pinned
-//     UC main SHA and UC's declared base version; the script is the single source of truth.
-//     The same script (without the flag) publishes the matching jars to ~/.ivy2/local when
-//     `ensurePinnedUnityCatalog` decides they're missing.
+//     comes from `setup_unitycatalog_main.sh --print-version`, which returns UC's snapshot
+//     base version; the script is the single source of truth. The same script (without the
+//     flag) publishes the matching jars to ~/.ivy2/local when `ensurePinnedUnityCatalog`
+//     decides they're missing.
 //
 // Override with -DunityCatalogVersion=<anything> for ad-hoc experiments.
 val unityCatalogReleaseVersion: Option[String] = None
