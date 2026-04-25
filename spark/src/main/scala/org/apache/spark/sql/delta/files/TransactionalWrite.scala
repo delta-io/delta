@@ -34,6 +34,7 @@ import org.apache.spark.sql.delta.stats.{
   StatisticsCollection,
   StatsCollectionUtils
 }
+import org.apache.spark.sql.delta.util.TableParquetVersionOption
 import org.apache.spark.sql.util.ScalaExtensions._
 import org.apache.hadoop.fs.Path
 
@@ -475,16 +476,21 @@ trait TransactionalWrite extends DeltaLogging { self: OptimisticTransactionImpl 
         protocol.isFeatureSupported(MaterializePartitionColumnsTableFeature)
       // Retain only a minimal selection of Spark writer options to avoid any potential
       // compatibility issues
-      val options = (writeOptions match {
+      val filteredOptions = (writeOptions match {
         case None => Map.empty[String, String]
         case Some(writeOptions) =>
           writeOptions.options.filterKeys { key =>
             key.equalsIgnoreCase(DeltaOptions.MAX_RECORDS_PER_FILE) ||
-              key.equalsIgnoreCase(DeltaOptions.COMPRESSION)
+              key.equalsIgnoreCase(DeltaOptions.COMPRESSION) ||
+              key.equalsIgnoreCase(DeltaOptions.PARQUET_VERSION) ||
+              key.equalsIgnoreCase(DeltaOptions.PARQUET_OUTPUT_TIMESTAMP_TYPE)
           }.toMap
-      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString) ++
+      }) + (DeltaOptions.WRITE_PARTITION_COLUMNS -> writePartitionColumns.toString)
+      val options = filteredOptions ++
         VariantShreddingShims.getVariantInferShreddingSchemaOptions(
-          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata))
+          DeltaConfigs.ENABLE_VARIANT_SHREDDING.fromMetaData(metadata)) ++
+        TableParquetVersionOption.getWriterOptions(spark, filteredOptions,
+          metadata.configuration)
 
       try {
         DeltaFileFormatWriter.write(
