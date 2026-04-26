@@ -397,7 +397,99 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
           dataSkippingPredicate(
             "<=",
             Seq(nestedCol(s"$MIN.b"), literal(7)),
-            Set(nestedCol(s"$MIN.b")))))))
+            Set(nestedCol(s"$MIN.b")))))),
+      // STARTS_WITH: col STARTS_WITH 'abc' => max.col >= 'abc'
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          literal("abc"),
+          Optional.empty[CollationIdentifier]),
+        Some(dataSkippingPredicate(
+          ">=",
+          Seq(nestedCol(s"$MAX.a"), literal("abc")),
+          Set(nestedCol(s"$MAX.a"))))),
+      // STARTS_WITH: non-string column => None (only string columns supported)
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          literal("abc"),
+          Optional.empty[CollationIdentifier]),
+        None),
+      // STARTS_WITH: both sides are columns => None (not eligible)
+      (
+        new StructType()
+          .add("a", StringType.STRING)
+          .add("b", StringType.STRING),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          col("b"),
+          Optional.empty[CollationIdentifier]),
+        None),
+      // STARTS_WITH: literal STARTS_WITH column => None (not commutative)
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(
+          "STARTS_WITH",
+          literal("abc"),
+          col("a"),
+          Optional.empty[CollationIdentifier]),
+        None),
+      // NOT STARTS_WITH: NOT(a STARTS_WITH 'abc') => min.a < 'abc' OR max.a >= 'abd'
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "STARTS_WITH",
+            col("a"),
+            literal("abc"),
+            Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          "OR",
+          dataSkippingPredicate(
+            "<",
+            Seq(nestedCol(s"$MIN.a"), literal("abc")),
+            Set(nestedCol(s"$MIN.a"))),
+          dataSkippingPredicate(
+            ">=",
+            Seq(nestedCol(s"$MAX.a"), literal("abd")),
+            Set(nestedCol(s"$MAX.a")))))),
+      // NOT STARTS_WITH with MAX_CODE_POINT prefix => one-sided: min.a < '\uDBFF\uDFFF'
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "STARTS_WITH",
+            col("a"),
+            literal("\uDBFF\uDFFF"),
+            Optional.empty[CollationIdentifier])),
+        Some(dataSkippingPredicate(
+          "<",
+          Seq(nestedCol(s"$MIN.a"), literal("\uDBFF\uDFFF")),
+          Set(nestedCol(s"$MIN.a"))))),
+      // NOT STARTS_WITH with non-string column => None
+      (
+        new StructType()
+          .add("a", IntegerType.INTEGER),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "STARTS_WITH",
+            col("a"),
+            literal("abc"),
+            Optional.empty[CollationIdentifier])),
+        None))
 
     testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
       val dataSkippingPredicateOpt =
@@ -546,7 +638,39 @@ class DataSkippingUtilsSuite extends AnyFunSuite with TestUtils {
             Seq(minA, literal(1)),
             utf8Lcase,
             Set(minA)))
-        }))
+        }),
+      // STARTS_WITH with non-UTF8_BINARY collation => None (only UTF8_BINARY supported)
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          literal("abc"),
+          Optional.of(utf8Lcase)),
+        None),
+      // STARTS_WITH with collation without version => None
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        createPredicate(
+          "STARTS_WITH",
+          col("a"),
+          literal("abc"),
+          Optional.of(CollationIdentifier.fromString("SPARK.UTF8_LCASE"))),
+        None),
+      // NOT STARTS_WITH with non-UTF8_BINARY collation => None
+      (
+        new StructType()
+          .add("a", StringType.STRING),
+        new Predicate(
+          "NOT",
+          createPredicate(
+            "STARTS_WITH",
+            col("a"),
+            literal("abc"),
+            Optional.of(utf8Lcase))),
+        None))
 
     testCases.foreach { case (schema, predicate, expectedDataSkippingPredicateOpt) =>
       val dataSkippingPredicateOpt =
