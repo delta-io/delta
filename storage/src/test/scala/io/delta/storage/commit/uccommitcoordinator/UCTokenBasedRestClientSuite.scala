@@ -45,6 +45,9 @@ class UCTokenBasedRestClientSuite
   private var serverUri: String = _
   private var metastoreHandler: HttpExchange => Unit = _
   private var commitsHandler: HttpExchange => Unit = _
+  private var deltaConfigHandler: HttpExchange => Unit = _
+  private var deltaTablesHandler: HttpExchange => Unit = _
+  private var legacyTablesHandler: HttpExchange => Unit = _
   private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
@@ -63,6 +66,21 @@ class UCTokenBasedRestClientSuite
       }
       exchange.close()
     })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/config", exchange => {
+      if (deltaConfigHandler != null) deltaConfigHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
+    server.createContext("/api/2.1/unity-catalog/delta/v1/catalogs", exchange => {
+      if (deltaTablesHandler != null) deltaTablesHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
+    server.createContext("/api/2.1/unity-catalog/tables", exchange => {
+      if (legacyTablesHandler != null) legacyTablesHandler(exchange)
+      else sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+      exchange.close()
+    })
     server.start()
     serverUri = s"http://localhost:${server.getAddress.getPort}"
   }
@@ -72,6 +90,9 @@ class UCTokenBasedRestClientSuite
   override def beforeEach(): Unit = {
     metastoreHandler = null
     commitsHandler = null
+    deltaConfigHandler = null
+    deltaTablesHandler = null
+    legacyTablesHandler = null
   }
 
   private def readRequestBody(exchange: HttpExchange): String = {
@@ -123,6 +144,58 @@ class UCTokenBasedRestClientSuite
     new UniformMetadata(
       new IcebergMetadata("s3://bucket/metadata/v1.json", 42L, "2025-01-04T03:13:11.423Z"))
 
+  private def loadTableResponseJson: String =
+    """{
+      |  "metadata": {
+      |    "name": "tbl",
+      |    "catalog-name": "main",
+      |    "schema-name": "default",
+      |    "table-type": "MANAGED",
+      |    "data-source-format": "DELTA",
+      |    "table-uuid": "11111111-1111-1111-1111-111111111111",
+      |    "location": "file:/tmp/uc/table",
+      |    "created-at": 10,
+      |    "updated-at": 11,
+      |    "columns": {
+      |      "type": "struct",
+      |      "fields": [
+      |        {
+      |          "name": "id",
+      |          "type": "long",
+      |          "nullable": false,
+      |          "metadata": {}
+      |        }
+      |      ]
+      |    },
+      |    "partition-columns": [],
+      |    "properties": {}
+      |  },
+      |  "commits": []
+      |}""".stripMargin
+
+  private def legacyGetTableResponseJson: String =
+    """{
+      |  "name": "tbl",
+      |  "catalog_name": "main",
+      |  "schema_name": "default",
+      |  "table_type": "MANAGED",
+      |  "data_source_format": "DELTA",
+      |  "table_id": "11111111-1111-1111-1111-111111111111",
+      |  "storage_location": "file:/tmp/uc/table",
+      |  "created_at": 10,
+      |  "updated_at": 11,
+      |  "columns": [
+      |    {
+      |      "name": "id",
+      |      "type_text": "long",
+      |      "type_json": "{\"name\":\"id\",\"type\":\"long\",\"nullable\":false,\"metadata\":{}}",
+      |      "nullable": false,
+      |      "position": 0
+      |    }
+      |  ],
+      |  "properties": {}
+      |}""".stripMargin
+
   // Constructor tests
   test("constructor validates required parameters") {
     intercept[NullPointerException] {
@@ -147,6 +220,54 @@ class UCTokenBasedRestClientSuite
     metastoreHandler = exchange => sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, "{}")
     withClient { client =>
       intercept[java.io.IOException] { client.getMetastoreId() }
+    }
+  }
+
+  test("catalog-aware constructor uses Delta REST Catalog loadTable when config lists endpoint") {
+    deltaConfigHandler = exchange => {
+      assert(exchange.getRequestURI.getQuery.contains("catalog=main"))
+      assert(exchange.getRequestURI.getQuery.contains("protocol-versions=1.0"))
+      sendJson(exchange, HttpStatus.SC_OK,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    deltaTablesHandler = exchange => {
+      assert(exchange.getRequestURI.getPath ===
+        "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables/tbl")
+      sendJson(exchange, HttpStatus.SC_OK, loadTableResponseJson)
+    }
+    legacyTablesHandler = exchange => fail(s"Unexpected legacy request: ${exchange.getRequestURI}")
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      assert(client.loadTable("main", "default", "tbl").getMetadata.getLocation ===
+        "file:/tmp/uc/table")
+    } finally {
+      client.close()
+    }
+  }
+
+  test("catalog-aware constructor falls back to legacy loadTable when config is unavailable") {
+    deltaConfigHandler = exchange => sendJson(exchange, HttpStatus.SC_NOT_FOUND, "{}")
+    deltaTablesHandler = exchange =>
+      fail(s"Unexpected Delta REST Catalog request: ${exchange.getRequestURI}")
+    legacyTablesHandler = exchange => {
+      assert(exchange.getRequestURI.getPath === "/api/2.1/unity-catalog/tables/main.default.tbl")
+      sendJson(exchange, HttpStatus.SC_OK, legacyGetTableResponseJson)
+    }
+
+    val client =
+      new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
+    try {
+      assert(client.loadTable("main", "default", "tbl").getMetadata.getLocation ===
+        "file:/tmp/uc/table")
+    } finally {
+      client.close()
     }
   }
 

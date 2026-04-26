@@ -32,7 +32,9 @@ import io.unitycatalog.client.api.DeltaCommitsApi;
 import io.unitycatalog.client.api.MetastoresApi;
 import io.unitycatalog.client.api.TablesApi;
 import io.unitycatalog.client.auth.TokenProvider;
+import io.unitycatalog.client.delta.api.ConfigurationApi;
 import io.unitycatalog.client.delta.api.TemporaryCredentialsApi;
+import io.unitycatalog.client.delta.model.CatalogConfig;
 import io.unitycatalog.client.delta.model.CredentialOperation;
 import io.unitycatalog.client.delta.model.CredentialsResponse;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
@@ -91,6 +93,7 @@ import java.util.*;
  */
 public class UCTokenBasedRestClient implements UCDeltaClient {
 
+  private final boolean supportsDeltaRestCatalog;
   private DeltaCommitsApi deltaCommitsApi;
   private MetastoresApi metastoresApi;
   private TablesApi tablesApi;
@@ -102,6 +105,9 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
   private static final int HTTP_NOT_FOUND = 404;
   private static final int HTTP_CONFLICT = 409;
   private static final int HTTP_TOO_MANY_REQUESTS = 429;
+  private static final String DELTA_REST_PROTOCOL_VERSION = "1.0";
+  private static final String LOAD_TABLE_ENDPOINT =
+      "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}";
 
   /**
    * Constructs a new UCTokenBasedRestClient with the specified base URI, TokenProvider,
@@ -114,6 +120,32 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
    *                    registered for User-Agent telemetry. May be empty.
    */
   public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions) {
+    this(buildApiClient(baseUri, tokenProvider, appVersions), true);
+  }
+
+  /**
+   * Constructs a new UCTokenBasedRestClient and probes whether the catalog supports Delta REST
+   * Catalog table APIs.
+   *
+   * <p>When the config endpoint is absent or does not list loadTable, {@link #loadTable} uses the
+   * legacy UC tables API. Delta REST Catalog-only operations continue to fail loudly.
+   */
+  public UCTokenBasedRestClient(
+      String baseUri,
+      TokenProvider tokenProvider,
+      Map<String, String> appVersions,
+      String catalog) {
+    this(buildApiClient(baseUri, tokenProvider, appVersions), catalog);
+  }
+
+  private UCTokenBasedRestClient(ApiClient apiClient, String catalog) {
+    this(apiClient, supportsDeltaRestCatalog(apiClient, catalog));
+  }
+
+  private static ApiClient buildApiClient(
       String baseUri,
       TokenProvider tokenProvider,
       Map<String, String> appVersions) {
@@ -131,12 +163,30 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
       }
     });
 
-    ApiClient apiClient = builder.build();
-    this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
-    this.metastoresApi = new MetastoresApi(apiClient);
-    this.tablesApi = new TablesApi(apiClient);
-    this.deltaTablesApi = new io.unitycatalog.client.delta.api.TablesApi(apiClient);
-    this.deltaTemporaryCredentialsApi = new TemporaryCredentialsApi(apiClient);
+    return builder.build();
+  }
+
+  private static boolean supportsDeltaRestCatalog(ApiClient apiClient, String catalog) {
+    Objects.requireNonNull(apiClient, "apiClient must not be null");
+    Objects.requireNonNull(catalog, "catalog must not be null");
+    try {
+      CatalogConfig config =
+          new ConfigurationApi(apiClient).getConfig(catalog, DELTA_REST_PROTOCOL_VERSION);
+      return config != null &&
+          config.getEndpoints() != null &&
+          config.getEndpoints().contains(LOAD_TABLE_ENDPOINT);
+    } catch (ApiException e) {
+      if (e.getCode() == HTTP_NOT_FOUND) {
+        return false;
+      }
+      throw new IllegalArgumentException(
+          String.format(
+              "Failed to determine Delta REST Catalog support for catalog %s (HTTP %s): %s",
+              catalog,
+              e.getCode(),
+              e.getResponseBody()),
+          e);
+    }
   }
 
   /**
@@ -144,12 +194,31 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
    * tables API.
    */
   public UCTokenBasedRestClient(ApiClient apiClient) {
+    this(apiClient, true);
+  }
+
+  /**
+   * Builds a client around an existing UC {@link ApiClient}.
+   *
+   * <p>If {@code supportsDeltaRestCatalog} is true, {@link #loadTable} and
+   * {@link #getTableCredentials} use the Delta REST Catalog APIs. Otherwise
+   * {@code loadTable} falls back to the legacy UC tables API and
+   * {@code getTableCredentials} is unsupported.
+   */
+  public UCTokenBasedRestClient(
+      ApiClient apiClient,
+      boolean supportsDeltaRestCatalog) {
     Objects.requireNonNull(apiClient, "apiClient must not be null");
+    this.supportsDeltaRestCatalog = supportsDeltaRestCatalog;
     this.deltaCommitsApi = new DeltaCommitsApi(apiClient);
     this.metastoresApi = new MetastoresApi(apiClient);
     this.tablesApi = new TablesApi(apiClient);
-    this.deltaTablesApi = new io.unitycatalog.client.delta.api.TablesApi(apiClient);
-    this.deltaTemporaryCredentialsApi = new TemporaryCredentialsApi(apiClient);
+    this.deltaTablesApi = supportsDeltaRestCatalog
+        ? new io.unitycatalog.client.delta.api.TablesApi(apiClient)
+        : null;
+    this.deltaTemporaryCredentialsApi = supportsDeltaRestCatalog
+        ? new TemporaryCredentialsApi(apiClient)
+        : null;
   }
 
   /**
@@ -158,6 +227,13 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
   private void ensureOpen() {
     if (deltaCommitsApi == null || metastoresApi == null || tablesApi == null) {
       throw new IllegalStateException("UCTokenBasedRestClient has been closed.");
+    }
+  }
+
+  private void ensureDeltaRestCatalogSupported(String operation) {
+    ensureOpen();
+    if (!supportsDeltaRestCatalog) {
+      throw new UnsupportedOperationException(operation + " requires Delta REST Catalog support.");
     }
   }
 
@@ -255,7 +331,9 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
   /**
    * Loads one table from Unity Catalog.
    *
-   * <p>This uses the Delta REST Catalog tables API.
+   * <p>This uses the Delta REST Catalog tables API when available. Otherwise it uses the legacy UC
+   * tables API and converts that response to the Delta REST Catalog response model so callers see
+   * one response shape.
    */
   @Override
   public LoadTableResponse loadTable(
@@ -267,23 +345,41 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
     Objects.requireNonNull(schema, "schema must not be null.");
     Objects.requireNonNull(table, "table must not be null.");
 
-    try {
-      return deltaTablesApi.loadTable(catalog, schema, table);
-    } catch (ApiException e) {
-      throw new IOException(
-          String.format(
-              "Failed to load table %s.%s.%s via Delta REST Catalog (HTTP %s): %s",
-              catalog,
-              schema,
-              table,
-              e.getCode(),
-              e.getResponseBody()),
-          e);
+    if (!supportsDeltaRestCatalog) {
+      try {
+        return UCLegacyLoadTableAdapter.loadTableViaLegacyApi(tablesApi, catalog, schema, table);
+      } catch (ApiException e) {
+        throw new IOException(
+            String.format(
+                "Failed to load table %s.%s.%s via legacy UC API (HTTP %s): %s",
+                catalog,
+                schema,
+                table,
+                e.getCode(),
+                e.getResponseBody()),
+            e);
+      }
+    } else {
+      try {
+        return deltaTablesApi.loadTable(catalog, schema, table);
+      } catch (ApiException e) {
+        throw new IOException(
+            String.format(
+                "Failed to load table %s.%s.%s via Delta REST Catalog (HTTP %s): %s",
+                catalog,
+                schema,
+                table,
+                e.getCode(),
+                e.getResponseBody()),
+            e);
+      }
     }
   }
 
   /**
    * Gets temporary credentials for one table through the Delta REST Catalog credentials API.
+   *
+   * <p>This method is only supported when this client has the Delta REST Catalog tables API.
    */
   @Override
   public CredentialsResponse getTableCredentials(
@@ -291,7 +387,7 @@ public class UCTokenBasedRestClient implements UCDeltaClient {
       String catalog,
       String schema,
       String table) throws IOException {
-    ensureOpen();
+    ensureDeltaRestCatalogSupported("getTableCredentials");
     Objects.requireNonNull(operation, "operation must not be null.");
     Objects.requireNonNull(catalog, "catalog must not be null.");
     Objects.requireNonNull(schema, "schema must not be null.");
