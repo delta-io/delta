@@ -25,6 +25,7 @@ import org.apache.spark.sql.connector.catalog.Identifier;
 import org.apache.spark.sql.connector.read.Batch;
 import org.apache.spark.sql.sources.EqualTo;
 import org.apache.spark.sql.sources.Filter;
+import org.apache.spark.sql.sources.GreaterThan;
 import org.apache.spark.sql.util.CaseInsensitiveStringMap;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -98,6 +99,28 @@ public class SparkBatchTest extends DeltaV2TestBase {
 
     SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
     builder2.pushFilters(new Filter[] {dateEq, cityEq});
+    Batch batch2 = ((SparkScan) builder2.build()).toBatch();
+
+    assertEquals(batch1, batch2);
+    assertEquals(batch1.hashCode(), batch2.hashCode());
+  }
+
+  @Test
+  public void testEqualsWithDataFiltersInDifferentOrder() {
+    // city/date are partition columns, so the test above only exercises pushedToKernelFiltersSet.
+    // name and cnt are data columns (per the partitioned table schema), so per
+    // ExpressionUtils.classifyFilter these filters have isDataFilter=true and flow into
+    // SparkScan.dataFilters / SparkBatch.dataFilters, exercising the dataFiltersSet branch of
+    // equals/hashCode.
+    Filter nameEq = new EqualTo("name", "x");
+    Filter cntGt = new GreaterThan("cnt", 10);
+
+    SparkScanBuilder builder1 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder1.pushFilters(new Filter[] {nameEq, cntGt});
+    Batch batch1 = ((SparkScan) builder1.build()).toBatch();
+
+    SparkScanBuilder builder2 = (SparkScanBuilder) table.newScanBuilder(options);
+    builder2.pushFilters(new Filter[] {cntGt, nameEq});
     Batch batch2 = ((SparkScan) builder2.build()).toBatch();
 
     assertEquals(batch1, batch2);
