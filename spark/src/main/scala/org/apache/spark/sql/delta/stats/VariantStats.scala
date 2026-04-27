@@ -169,7 +169,7 @@ class VariantStatsData(
       for ((leafPath, stats) <- leafPathStatistics) {
         val leafPathType = leafPathTypes(leafPath)
         // canonicalize path string
-        val pathString = VariantStatsUtils.normalizedJsonPathFromShreddedPath(leafPath)
+        val pathString = VariantStatsUtils.normalizedJsonPath(leafPath)
         def addKey(path: String): Int = {
           val id = vb.addKey(path)
           fields.add(new VariantBuilder.FieldEntry(path, id, vb.getWritePos))
@@ -510,39 +510,18 @@ object VariantStatsUtils {
     }
   }
 
-  def normalizedJsonPathFromShreddedPath(path: Seq[String]): String = {
-    /*
-    The path will always have `typed_value` at every alternate location like:
-    "typed_value", "<root_field>", "typed_value", "<l1_field>", "typed_value", "<l2_field>", ...
-
-    This needs to be translated into $['<root_field>']['<l1_field>']['<l2_field>']...
-
-    The field names must be escaped properly
-     */
-    path.zipWithIndex.foreach {
-      case (field, index) if index % 2 == 0 =>
-        if (field != "typed_value") {
-          throw new IllegalStateException(s"Expected field `typed_value` but found `$field`")
-        }
-      case _ =>
-    }
-    val fieldNames = path.zipWithIndex.filter(_._2 % 2 == 1).map(_._1)
-    normalizedJsonPath(fieldNames)
-  }
-
-  // RFC 9535-style JSON path: escapes single-quote, backslash, and control chars below 0x20.
-  private[stats] def normalizedJsonPath(fieldNames: Seq[String]): String = {
-    val sb = new StringBuilder("$")
-    fieldNames.foreach { field =>
-      sb.append("['")
-      sb.append(escapeJsonField(field))
-      sb.append("']")
-    }
-    sb.toString
-  }
-
-  val maxControlCharacter = 0x20
-
+  /**
+   * Escapes a field name for use in a JSON path according to RFC-9535.
+   *
+   * This function handles escaping of problematic characters in JSON path field names:
+   * - Control characters (< 0x20) are escaped as \\uXXXX
+   * - Single quotes (0x27) are escaped as \'
+   * - Backslashes (0x5C) are escaped as \\
+   * - Special escape sequences: \b, \f, \n, \r, \t
+   *
+   * @param fieldName the field name to escape
+   * @return the escaped field name, or the original if no escaping is needed
+   */
   def escapeJsonField(fieldName: String): String = {
     if (fieldName == null || fieldName.isEmpty) {
       return fieldName
@@ -580,4 +559,29 @@ object VariantStatsUtils {
 
     buffer.toString
   }
+
+  def normalizedJsonPath(path: Seq[String]): String = {
+    /*
+    The path will always have `typed_value` at every alternate location like:
+    "typed_value", "<root_field>", "typed_value", "<l1_field>", "typed_value", "<l2_field>", ...
+
+    This needs to be translated into $['<root_field>']['<l1_field>']['<l2_field>']...
+
+    The field names must be escaped properly
+     */
+    path.zipWithIndex.foreach {
+      case (field, index) if index % 2 == 0 =>
+        if (field != "typed_value") {
+          throw new IllegalStateException(s"Expected field `typed_value` but found `$field`")
+        }
+      case _ =>
+    }
+    val fieldNames = path.zipWithIndex.filter(_._2 % 2 == 1).map(_._1)
+
+    val escapedFields = fieldNames.map(escapeJsonField)
+    val pathParts = escapedFields.map(field => s"['$field']")
+    "$" + pathParts.mkString
+  }
+
+  val maxControlCharacter = 0x20
 }
