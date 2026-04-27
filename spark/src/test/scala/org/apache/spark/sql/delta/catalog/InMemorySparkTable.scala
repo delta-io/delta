@@ -18,6 +18,8 @@ package org.apache.spark.sql.delta.catalog
 
 import java.util
 
+import org.apache.spark.sql.delta.SparkTableShims
+
 import org.apache.spark.sql.connector.catalog.{InMemoryRowLevelOperationTable, TableCapability}
 import org.apache.spark.sql.connector.expressions.Transform
 import org.apache.spark.sql.sources.Filter
@@ -37,11 +39,11 @@ class InMemorySparkTable(
   extends InMemoryRowLevelOperationTable(
     name, schema, partitioning, properties) {
 
-    override def capabilities(): util.Set[TableCapability] = {
-      val caps = new util.HashSet[TableCapability](super.capabilities())
-      caps.add(TableCapability.AUTOMATIC_SCHEMA_EVOLUTION)
-      caps
-    }
+  override def capabilities(): util.Set[TableCapability] = {
+    val caps = new util.HashSet[TableCapability](super.capabilities())
+    SparkTableShims.schemaEvolutionCapability.foreach(caps.add)
+    caps
+  }
 
   // Force DELETE to go through the SupportsRowLevelOperations path instead of
   // the SupportsDeleteV2.deleteWhere path inherited from InMemoryTable, which
