@@ -98,7 +98,7 @@ object InMemoryDeltaCatalog {
       case t: InMemorySparkTable =>
         val newTable = new InMemorySparkTable(
           ident.name(), newSchema, t.partitioning, javaProps)
-        newTable.alterTableWithData(t.data, newSchema)
+        InMemorySparkTableShims.migrateData(newTable, t.data, newSchema)
         newTable
       case _ => throw new IllegalArgumentException(
         s"Expected InMemorySparkTable but got ${table.getClass.getName}")

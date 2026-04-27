@@ -14,15 +14,19 @@
  * limitations under the License.
  */
 
-package org.apache.spark.sql.delta
+package org.apache.spark.sql.delta.catalog
 
-import org.apache.spark.sql.connector.catalog.TableCapability
+import org.apache.spark.sql.connector.catalog.BufferedRows
+import org.apache.spark.sql.types.StructType
 
-/**
- * Shim to build [[SparkTable]] against different Spark versions.
- * This is the shim for the latest version - Spark 4.2.
- */
-object SparkTableShims {
-  val schemaEvolutionCapability: Option[TableCapability] =
-    Some(TableCapability.AUTOMATIC_SCHEMA_EVOLUTION)
+/** Shim for [[InMemorySparkTable]] - exposes APIs that differ between Spark versions. */
+object InMemorySparkTableShims {
+  // [[InMemoryBaseTable.alterTableWithData]] is not available in Spark 4.0.
+  def migrateData(
+      table: InMemorySparkTable,
+      data: Array[BufferedRows],
+      newSchema: StructType): Unit = {
+    throw new UnsupportedOperationException(
+      "Schema evolution on InMemorySparkTable is not supported on Spark 4.0")
+  }
 }
