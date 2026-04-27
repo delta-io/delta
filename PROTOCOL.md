@@ -187,7 +187,7 @@ This example represents a table after [metadata cleanup](#metadata-cleanup) has 
 Data files can be stored in the root directory of the table or in any non-hidden subdirectory (i.e., one whose name does not start with an `_`).
 By default, the reference implementation stores data files in directories that are named based on the partition values for data in that file (i.e. `part1=value1/part2=value2/...`).
 This directory format is only used to follow existing conventions and is not required by the protocol.
-Actual partition values for a file must be read from the transaction log.
+Actual partition values for a file must be read from the transaction log, even if they are present in the data file itself.
 
 ### Deletion Vector Files
 Deletion Vector (DV) files are stored in the root directory of the table alongside the data files. A DV file contains one or more serialised DV, each describing the set of *invalidated* (or "soft deleted") rows for a particular data file it is associated with.
@@ -2574,7 +2574,7 @@ maxValues | A value that is equal to the largest valid value[^1] present in the 
 
 ## Partition Value Serialization
 
-Partition values are stored as strings, using the following formats. An empty string for any type translates to a `null` partition value.
+Partition values are stored as strings in actions, using the following formats. An empty string for any type translates to a `null` partition value.
 
 Type | Serialization Format
 -|-
@@ -2591,6 +2591,8 @@ Note: A timestamp value in a partition value may be stored in one of the followi
 2. Adjusted to UTC and stored in ISO8601 format.
 
 It is highly recommended that modern writers adjust the timestamp to UTC and store the timestamp in ISO8601 format as outlined in 2.
+
+In addition to being stored in actions, partition values could also be present in data files. Some writer features (eg. [Iceberg Compatibility V1](#iceberg-compatibility-v1)) require the presence of partition values in data files.
 
 ## Schema Serialization Format
 
