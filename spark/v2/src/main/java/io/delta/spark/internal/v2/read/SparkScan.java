@@ -244,21 +244,18 @@ public class SparkScan implements Scan, SupportsReportStatistics, SupportsRuntim
         dataSchema,
         partitionSchema,
         readDataSchema,
-        dataFilters,
+        dataFilters != null ? dataFilters : new Filter[0],
         scalaOptions != null ? scalaOptions : scala.collection.immutable.Map$.MODULE$.empty());
   }
 
   @Override
   public String description() {
-    // Sort by toString so EXPLAIN output is canonical and matches equals semantics:
-    // filters are AND-ed at evaluation time, so list order has no meaning.
     final String pushed =
         Arrays.stream(pushedToKernelFilters)
             .map(Object::toString)
-            .sorted()
             .collect(Collectors.joining(", "));
     final String data =
-        Arrays.stream(dataFilters).map(Object::toString).sorted().collect(Collectors.joining(", "));
+        Arrays.stream(dataFilters).map(Object::toString).collect(Collectors.joining(", "));
     return String.format(Locale.ROOT, "PushedFilters: [%s], DataFilters: [%s]", pushed, data);
   }
 
