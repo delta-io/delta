@@ -69,6 +69,11 @@ jobs:
           else
             echo "❌ Cache MISS - will download dependencies"
           fi
+      # run-tests.py invokes sbt with `++ 2.13.16`, which triggers cross-version dependency resolution
+      # across every project (including kernelUnityCatalog). Publish the pinned UC build locally first
+      # so that resolution doesn't miss.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
       - name: Run unit tests
         run: |
           python run-tests.py --group kernel --coverage --shard ${{ matrix.shard }}
@@ -87,8 +92,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
-      # Run integration tests with JDK 11, as they have no Spark dependency
-      - name: install java
+      # The integration test itself runs on JDK 11 (no Spark dependency), but UC's sbt build needs
+      # JDK 17, so we install 17 first, publish UC, then switch the active JDK to 11 for the actual
+      # test run.
+      - name: install java 17 for UC build
+        uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
+        with:
+          distribution: "zulu"
+          java-version: "17"
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+      - name: install java 11 for integration test
         uses: actions/setup-java@17f84c3641ba7b8f6deff6309fc4c864478f5d62 # v3.14.1
         with:
           distribution: "zulu"

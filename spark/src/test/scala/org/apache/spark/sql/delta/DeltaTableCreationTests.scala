@@ -1931,8 +1931,16 @@ class DeltaTableCreationSuite
     def getDeltaLog: DeltaLog =
       DeltaLog.forTable(spark, TableIdentifier(emptyTableName))
 
+    // Cleanup
+    def resetTable(): Unit = {
+      sql(s"DROP TABLE IF EXISTS $emptyTableName")
+      Utils.deleteRecursively(
+        new File(spark.sessionState.catalog.defaultTablePath(TableIdentifier(emptyTableName))))
+    }
+
     // create using SQL API
     withTable(emptyTableName) {
+      resetTable()
       sql(s"CREATE TABLE $emptyTableName USING delta")
       assert(getDeltaLog.snapshot.schema.isEmpty)
       f
@@ -1943,6 +1951,7 @@ class DeltaTableCreationSuite
 
     // create using Delta table API (creates v1 table)
     withTable(emptyTableName) {
+      resetTable()
       io.delta.tables.DeltaTable
         .create(spark)
         .tableName(emptyTableName)
@@ -2149,7 +2158,7 @@ class DeltaTableCreationSuite
                  |""".stripMargin)
           }
         } catch {
-            case _: AssertionError | _: SparkException =>
+          case _: AssertionError | _: SparkException | _: DeltaAnalysisException =>
         }
       }
 

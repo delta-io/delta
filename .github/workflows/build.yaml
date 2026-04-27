@@ -37,6 +37,12 @@ jobs:
             ~/.cache/coursier
           key: delta-sbt-cache-cross-spark
 
+      # publishM2 compiles every aggregated project, including storage, which has
+      # unitycatalog-client as a compile-scope dependency. Publish the pinned UC build locally
+      # first so Delta compiles against the UC APIs it actually targets.
+      - name: Set up pinned Unity Catalog
+        uses: ./.github/actions/setup-unitycatalog
+
       - name: Run cross-Spark build test
         run: python project/tests/test_cross_spark_publish.py
 

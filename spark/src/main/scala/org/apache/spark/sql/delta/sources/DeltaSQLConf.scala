@@ -1013,6 +1013,18 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
       .booleanConf
       .createWithDefault(true)
 
+  val DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET_CHECK_ENABLED =
+    buildConf("merge.emptySchemaTargetCheck.enabled")
+      .internal()
+      .doc(
+        """
+          |When enabled, MERGE INTO a Delta table with an empty schema fails with a user-facing
+          |DELTA_MERGE_INTO_EMPTY_SCHEMA_TARGET error unless schema evolution is enabled. When
+          |disabled, the legacy behavior is preserved (Assertion is thrown during resolution).
+          |""".stripMargin)
+      .booleanConf
+      .createWithDefault(true)
+
   val MERGE_INSERT_ONLY_ENABLED =
     buildConf("merge.optimizeInsertOnlyMerge.enabled")
       .internal()
