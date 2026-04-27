@@ -139,6 +139,12 @@ case class MaxVariantStats(child: Expression) extends VariantStatsExpression(chi
  *
  * This class acts as a memoizer which aims to prevent the whole parquet footer from being parsed
  * for each shredded variant column.
+ *
+ * `dateRebaseFunc` and `timestampRebaseFunc` rebase date and timestamp values from the calendar
+ * in which the parquet file was written (potentially the legacy Julian calendar for files
+ * produced by older Spark versions) into Spark's Proleptic Gregorian calendar. The mode is
+ * derived from the parquet file's key/value metadata and the
+ * `spark.sql.parquet.datetimeRebaseModeInRead` SQL conf.
  */
 class VariantStatsData(
   leafPathStatisticsSuperset: mutable.HashMap[Seq[String], Statistics[_]],

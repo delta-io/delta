@@ -28,12 +28,18 @@ import org.apache.spark.sql.execution.datasources.{DataSourceUtils, OutputWriter
 import org.apache.spark.sql.execution.datasources.parquet.ParquetFooterReader
 import org.apache.spark.sql.internal.SQLConf
 
+/**
+ * Shim for variant shredding configs to handle API changes between Spark versions.
+ * Spark 4.1 supports shredded writes, and by extension the collection of variant stats.
+ */
 object VariantShreddingShims {
   def getVariantInferShreddingSchemaOptions(enableVariantShredding: Boolean)
     : Map[String, String] = {
     Map(SQLConf.VARIANT_INFER_SHREDDING_SCHEMA.key -> enableVariantShredding.toString)
   }
 
+  // Extract variant stats from the parquet footer of a written file and inject data into the
+  // variant stats collection expressions.
   def extractAndInjectVariantStats(
       writer: OutputWriter,
       trackers: Seq[WriteTaskStatsTracker],

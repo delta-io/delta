@@ -20,9 +20,14 @@ import org.apache.hadoop.conf.Configuration
 
 import org.apache.spark.sql.execution.datasources.{OutputWriter, WriteTaskStatsTracker}
 
+/**
+ * Shim for variant shredding configs to handle API changes between Spark versions.
+ * Spark 4.0 does not have support for variant shredding/stats.
+ */
 object VariantShreddingShims {
   def getVariantInferShreddingSchemaOptions(enableVariantShredding: Boolean)
     : Map[String, String] = {
+    // In Spark 4.0, VARIANT_INFER_SHREDDING_SCHEMA does not exist, so return empty map
     Map.empty[String, String]
   }
 
