@@ -654,6 +654,26 @@ class VariantDataSkippingStatsSuite
     }
   }
 
+  test("parse footer conf disables variant stats") {
+    assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
+    withSQLConf(
+      DeltaSQLConf.PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS.key -> "false") {
+      val json = createVariantTableAndExtractStats(
+        s"""select
+           |  to_variant_object(named_struct(
+           |    'int_field', id, 'str_field', cast(id as string)
+           |  )) as v,
+           |  id
+           |  from range(3)""".stripMargin
+      )
+      implicit val formats = DefaultFormats
+      assert((json \ "minValues" \ "id").extract[Long] == 0L)
+      assert((json \ "maxValues" \ "id").extract[Long] == 2L)
+      assert((json \ "minValues" \ "v") == JNothing)
+      assert((json \ "maxValues" \ "v") == JNothing)
+    }
+  }
+
   test("extreme values") {
     assume(!org.apache.spark.SPARK_VERSION.startsWith("4.0"))
     withSQLConf(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT.key -> "11") {

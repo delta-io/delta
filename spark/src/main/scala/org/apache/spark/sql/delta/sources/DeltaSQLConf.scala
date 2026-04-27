@@ -3136,9 +3136,19 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
     .internal()
     .doc(
       """
-        | If enabled, Spark writes to Delta could collect data skipping stats for Variant
-        | columns. Currently, this config is used to ensure that new checkpoints preserve previous
-        | Variant stats."""
+        | If enabled, Variant columns are allowed to be in the stats schema. This means that
+        | variant stats collection would be allowed and variant stats would be preserved during
+        | checkpointing and state reconstruction."""
+        .stripMargin)
+    .booleanConf
+    .createWithDefault(true)
+
+  val PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS =
+    buildConf("variantShredding.parseFooterForStats")
+    .internal()
+    .doc(
+      """
+        | If enabled, re-read written parquet file to compute variant stats from the footer."""
         .stripMargin)
     .booleanConf
     .createWithDefault(true)

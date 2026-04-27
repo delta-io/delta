@@ -22,6 +22,7 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext
 import org.apache.spark.internal.io.FileCommitProtocol
 import org.apache.spark.sql.delta.DeltaConfigs
 import org.apache.spark.sql.delta.shims.VariantShreddingShims
+import org.apache.spark.sql.delta.sources.DeltaSQLConf
 import org.apache.spark.sql.execution.datasources.{DynamicPartitionDataConcurrentWriter, DynamicPartitionDataSingleWriter, EmptyDirectoryDataWriter, FileFormatDataWriter, FileFormatWriter, SingleDirectoryDataWriter, WriteJobDescription}
 import org.apache.spark.sql.execution.metric.SQLMetric
 import org.apache.spark.sql.internal.SQLConf
@@ -38,7 +39,9 @@ trait VariantStatsReleaseCurrentWriter { self: FileFormatDataWriter =>
           deltaHadoopConf.getBoolean(DeltaConfigs.ENABLE_VARIANT_SHREDDING.key, false)
         val writeShreddingEnabled =
           conf.getConfString("spark.sql.variant.writeShredding.enabled", "true").toBoolean
-        if (enableVariantShredding && writeShreddingEnabled) {
+        val parseFooterForVariantStats =
+          conf.getConf(DeltaSQLConf.PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS)
+        if (enableVariantShredding && writeShreddingEnabled && parseFooterForVariantStats) {
           VariantShreddingShims.extractAndInjectVariantStats(
             currentWriter,
             statsTrackers,
