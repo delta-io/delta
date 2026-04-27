@@ -465,6 +465,9 @@ object VariantStatsData {
           val leafPath = typedValuePath.init
           val valuePath = leafPath :+ "value"
           val valueColumn = columns.get(valuePath)
+          // If the companion `value` column is not present, `valueNullCount` would be zero and
+          // therefore, the column would not be selected for selected for stats collection because
+          // the `value` field should be all-null for it to be selected for stats collection.
           val valueNullCount = valueColumn.map(_.getStatistics.getNumNulls).getOrElse(0)
           val leafStats = typedValueColumn.getStatistics
           if (leafPathValidity.contains(leafPath)) {
