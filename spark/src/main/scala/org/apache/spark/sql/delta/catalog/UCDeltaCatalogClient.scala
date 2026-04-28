@@ -118,6 +118,18 @@ private class UCDeltaCatalogClient private (
                 stagingLocation.getScheme,
                 schemaName,
                 tableName)))
+          case (CatalogTableType.EXTERNAL, Some(externalLocation))
+              if isCloudScheme(externalLocation.getScheme) =>
+            val locationText = externalLocation.toString
+            // External create must write the initial _delta_log, so READ fallback would be wrong.
+            Some(PreparedUCDeltaRestCatalogApiCreate(
+              location = externalLocation,
+              tableProperties = Map.empty,
+              storageProperties = buildHadoopCredentialPropertiesForPath(
+                locationText,
+                externalLocation.getScheme,
+                PathOperation.PATH_CREATE_TABLE,
+                credentialContext)))
           case _ =>
             None
         }
@@ -340,7 +352,11 @@ private[catalog] object UCDeltaCatalogClient {
     selectedUCDeltaRestCatalogApiConfigForPathCredentials(spark)
       .map { context =>
         try {
-          buildHadoopCredentialPropertiesForPath(location, locationScheme, context)
+          buildHadoopCredentialPropertiesForPath(
+            location,
+            locationScheme,
+            PathOperation.PATH_READ,
+            context)
         } catch {
           case e: ApiException if e.getCode == 404 =>
             Map.empty[String, String]
@@ -414,6 +430,7 @@ private[catalog] object UCDeltaCatalogClient {
   private def buildHadoopCredentialPropertiesForPath(
       location: String,
       locationScheme: String,
+      pathOperation: PathOperation,
       credentialContext: UCDeltaRestCatalogApiCredentialContext): Map[String, String] = {
     UCCredentialHadoopConfs.builder(
         credentialContext.uri,
@@ -423,9 +440,22 @@ private[catalog] object UCDeltaCatalogClient {
       .enableCredentialRenewal(credentialContext.renewCredentialEnabled)
       .enableCredentialScopedFs(credentialContext.credScopedFsEnabled)
       .hadoopConf(credentialContext.hadoopConf)
-      .buildForPath(location, PathOperation.PATH_READ)
+      .buildForPath(location, pathOperation)
       .asScala
       .toMap
+  }
+
+  private def buildHadoopCredentialPropertiesForPath(
+      location: String,
+      locationScheme: String,
+      pathOperation: PathOperation,
+      credentialContext: Option[UCDeltaRestCatalogApiCredentialContext]): Map[String, String] = {
+    val context = credentialContext.getOrElse {
+      throw new IllegalStateException(
+        "UC Delta Rest Catalog API credential context is missing for cloud path location " +
+          s"$location.")
+    }
+    buildHadoopCredentialPropertiesForPath(location, locationScheme, pathOperation, context)
   }
 
   private def toTableProperties(staging: StagingTableResponse): Map[String, String] = {

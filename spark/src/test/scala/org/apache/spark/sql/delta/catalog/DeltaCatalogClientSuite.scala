@@ -774,6 +774,47 @@ class DeltaCatalogClientSuite
     }
   }
 
+  test("prepareCreateTable uses temporary path credentials for external cloud tables") {
+    val location = "s3://bucket/external/tbl"
+    configHandler = exchange => {
+      assert(queryParams(exchange)("catalog") === "uc")
+      sendJson(exchange, 200,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials",
+          |    "GET /v1/temporary-path-credentials"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    pathCredentialsHandler = exchange => {
+      credentialRequestCount += 1
+      assert(exchange.getRequestMethod === "POST")
+      assertJsonContains(exchange, Seq(
+        s""""url":"$location"""",
+        """"operation":"PATH_CREATE_TABLE""""))
+      sendJson(exchange, 200, s3TemporaryCredentialsResponseJson())
+    }
+
+    val prepared = withUCDeltaRestCatalogApi { catalog =>
+      catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.EXTERNAL,
+        location = Some(java.net.URI.create(location))).get
+    }
+
+    assert(credentialRequestCount === 1)
+    assert(prepared.location.toString === location)
+    assert(prepared.tableProperties.isEmpty)
+    assert(prepared.storageProperties(S3ACredentialsProviderKey) ===
+      AwsVendedTokenProviderClass)
+    assert(prepared.storageProperties(UCCredentialsTypeKey) === UCCredentialsTypePathValue)
+    assert(prepared.storageProperties(UCPathOperationKey) ===
+      "PATH_CREATE_TABLE")
+    assert(prepared.storageProperties(UCPathKey) === location)
+  }
+
   private def loadWithUCDeltaRestCatalogApi(): V1Table = {
     withUCDeltaRestCatalogApi { catalog =>
       catalog.loadTable(Identifier.of(Array("default"), "tbl")).get.asInstanceOf[V1Table]
