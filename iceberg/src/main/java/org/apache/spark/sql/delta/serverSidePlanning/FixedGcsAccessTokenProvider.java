@@ -17,6 +17,7 @@
 package org.apache.spark.sql.delta.serverSidePlanning;
 
 import com.google.cloud.hadoop.util.AccessTokenProvider;
+import java.time.Instant;
 import org.apache.hadoop.conf.Configuration;
 
 /**
@@ -60,7 +61,7 @@ public class FixedGcsAccessTokenProvider implements AccessTokenProvider {
       expirationMs = System.currentTimeMillis() + FALLBACK_EXPIRATION_MS;
     }
 
-    return new AccessTokenProvider.AccessToken(token, expirationMs);
+    return new AccessTokenProvider.AccessToken(token, Instant.ofEpochMilli(expirationMs));
   }
 
   @Override
