@@ -37,20 +37,13 @@ import org.apache.spark.sql.catalyst.{InternalRow, TableIdentifier}
 import org.apache.spark.sql.execution.streaming.Offset
 import org.apache.spark.sql.functions.lit
 import org.apache.spark.sql.streaming.{StreamingQueryException, Trigger}
-import org.apache.spark.sql.types.{StringType, StructType}
+import org.apache.spark.sql.types.{IntegerType, LongType, StringType, StructType}
 import org.apache.spark.util.Utils
 
 trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
   with DeltaSourceSuiteBase with DeltaColumnMappingSelectedTestMixin with DeltaSQLCommandTest {
 
-  override protected def runOnlyTests: Seq[String] = Seq(
-    "schema log initialization with additive schema changes",
-    "detect incompatible schema change while streaming",
-    "trigger.Once with deferred commit should work",
-    "trigger.AvailableNow should work",
-    "consecutive schema evolutions",
-    "latestOffset should not progress before schema evolved"
-  )
+  override protected def runAllTests: Boolean = true
 
   override protected def sparkConf: SparkConf = {
     val conf = super.sparkConf
@@ -844,12 +837,18 @@ trait StreamingSchemaEvolutionSuiteBase extends ColumnMappingStreamingTestUtils
 
   test("identity columns shouldn't cause schema mismatches") {
     withTable("source") {
-      executeDml(
-        s"""
-          |CREATE TABLE source (key INT, id LONG GENERATED ALWAYS AS IDENTITY)
-          |USING DELTA
-        """.stripMargin
-      )
+      io.delta.tables.DeltaTable.create(spark)
+        .tableName("source")
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder(spark, "key")
+            .dataType(IntegerType)
+            .build())
+        .addColumn(
+          io.delta.tables.DeltaTable.columnBuilder(spark, "id")
+            .dataType(LongType)
+            .generatedAlwaysAsIdentity()
+            .build())
+        .execute()
 
       val deltaLog = DeltaLog.forTable(spark, TableIdentifier("source"))
       deltaLog.update()

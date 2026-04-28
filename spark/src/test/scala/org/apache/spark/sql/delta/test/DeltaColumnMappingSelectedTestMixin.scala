@@ -49,6 +49,11 @@ trait DeltaColumnMappingSelectedTestMixin extends SparkFunSuite
       testTags: Tag*)(testFun: => Any)(implicit pos: Position): Unit = {
     require(!runAllTests || runOnlyTests.isEmpty,
       "If `runAllTests` is true then `runOnlyTests` must be empty")
+    require(
+      runAllTests ||
+        (runOnlyTests.contains(testName) ^ skipTests.contains(testName)),
+      s"If `runAllTests` is false, test '$testName' must be in either `runOnlyTests` or " +
+        s"`skipTests`, but not both")
 
     if ((runAllTests || runOnlyTests.contains(testName)) && !skipTests.contains(testName)) {
       super.test(s"$testName - column mapping $columnMappingMode mode", testTags: _*) {
