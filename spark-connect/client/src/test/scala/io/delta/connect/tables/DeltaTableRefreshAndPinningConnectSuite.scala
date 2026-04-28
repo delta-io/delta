@@ -738,6 +738,129 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  // Section [3] continued: SQL JOIN tests.
+  // SQL queries are analyzed in one go on the server, so PLAN_ID_TAG loss
+  // does not apply. These verify the design doc's expected data directly.
+
+  test("[3] connect scenario 1 (SQL JOIN): join after write") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      writerSql("INSERT INTO t VALUES (2, 200)")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, " +
+          "t2.id AS id2, t2.salary AS salary2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+        Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
+    }
+  }
+
+  test("[3] connect scenario 2 (SQL JOIN): join after ADD COLUMN") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, t1.new_column AS nc1, " +
+          "t2.id AS id2, t2.salary AS salary2, t2.new_column AS nc2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+        Seq(Row(1, 100, null, 1, 100, null), Row(2, 200, -1, 2, 200, -1)))
+    }
+  }
+
+  test("[3] connect scenario 3 (SQL JOIN): join after DROP COLUMN (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t2.id AS id2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+        Seq(Row(1, 1)))
+    }
+  }
+
+  test("[3] connect scenario 4 (SQL JOIN): join after DROP/recreate (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, " +
+          "t2.id AS id2, t2.salary AS salary2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id"),
+        Seq.empty)
+    }
+  }
+
+  test("[3] connect scenario 4 (SQL JOIN): join after DROP/recreate (no column mapping)") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, " +
+          "t2.id AS id2, t2.salary AS salary2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id"),
+        Seq.empty)
+    }
+  }
+
+  test("[3] connect scenario 5 (SQL JOIN): join after DROP/ADD same type " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, " +
+          "t2.id AS id2, t2.salary AS salary2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+        Seq(Row(1, null, 1, null)))
+    }
+  }
+
+  test("[3] connect scenario 6 (SQL JOIN): join after DROP/ADD different type " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+
+      checkAnswer(
+        spark.sql(
+          "SELECT t1.id AS id1, t1.salary AS salary1, " +
+          "t2.id AS id2, t2.salary AS salary2 " +
+          "FROM t t1 JOIN t t2 ON t1.id = t2.id ORDER BY id1"),
+        Seq(Row(1, null, 1, null)))
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Section [4]: Version pinning and refresh in Dataset (Connect)
   // In Connect, there is no distinction between show and collect.
