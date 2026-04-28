@@ -100,11 +100,7 @@ class SuitesWriter(val outputDir: Path) {
           source"""package $PACKAGE_NAME
                    import ..${testGroup.imports}
                    ..${suites.sortBy(_.name).map(_.classDefinition)}"""
-        val srcDir = outputDir.resolve(testGroup.name)
-        if (!Files.exists(srcDir)) {
-          Files.createDirectory(srcDir)
-        }
-        val srcFile = outputDir.resolve(s"${testGroup.name}/$baseSuite.scala")
+        val srcFile = outputDir.resolve(s"${testGroup.name}$baseSuite.scala")
         val formattedSrc = Scalafmt.format(src, SCALAFMT_CONFIG).get
         writeFile(srcFile, formattedSrc)
       }
@@ -119,7 +115,7 @@ class SuitesWriter(val outputDir: Path) {
   }
 
   def conclude(): Unit = {
-    val additionalFiles = Files.walk(outputDir)
+    val additionalFiles = Files.list(outputDir)
       .iterator()
       .asScala
       .filterNot(allFiles.contains)
