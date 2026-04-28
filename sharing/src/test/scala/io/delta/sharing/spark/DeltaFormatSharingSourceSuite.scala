@@ -2599,7 +2599,8 @@ class DeltaFormatSharingSourceSuite
           assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
           val firstCall = streamingCalls.head
           assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_PARQUET),
-            s"Expected PARQUET for priming getBatch with both-legacy offsets but got ${firstCall._3}")
+            s"Expected PARQUET for priming getBatch with both-legacy offsets but got " +
+            s"${firstCall._3}")
         }
       }
     }
