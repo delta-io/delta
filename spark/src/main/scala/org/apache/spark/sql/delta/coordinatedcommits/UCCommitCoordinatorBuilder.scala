@@ -23,7 +23,7 @@ import scala.collection.JavaConverters._
 import scala.util.control.NonFatal
 
 import io.delta.storage.commit.CommitCoordinatorClient
-import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
+import io.delta.storage.commit.uccommitcoordinator.{ClientProvider, UCClient, UCCommitCoordinatorClient, UCTokenBasedRestClient}
 
 import org.apache.spark.sql.delta.logging.DeltaLogKeys
 import org.apache.spark.sql.delta.metering.DeltaLogging
@@ -83,14 +83,44 @@ object UCCommitCoordinatorBuilder
   override def buildForCatalog(
       spark: SparkSession,
       catalogName: String): CommitCoordinatorClient = {
-    val client = getCatalogConfigs(spark).find(_._1 == catalogName) match {
+    // Try to get a shared UCDeltaClient via ClientProvider (AbstractDeltaCatalog)
+    val sharedClient: UCClient = try {
+      val catalogPlugin = spark.sessionState.catalogManager.catalog(catalogName)
+      catalogPlugin match {
+        case provider: ClientProvider =>
+          val deltaClient = provider.getUCDeltaClient()
+          if (deltaClient != null) deltaClient
+          else createLegacyClient(spark, catalogName)
+        case _ =>
+          // Catalog doesn't implement ClientProvider — check if delegate does
+          try {
+            val delegateMethod = catalogPlugin.getClass.getMethod("delegate")
+            delegateMethod.invoke(catalogPlugin) match {
+              case provider: ClientProvider =>
+                val deltaClient = provider.getUCDeltaClient()
+                if (deltaClient != null) deltaClient
+                else createLegacyClient(spark, catalogName)
+              case _ => createLegacyClient(spark, catalogName)
+            }
+          } catch {
+            case _: NoSuchMethodException => createLegacyClient(spark, catalogName)
+          }
+      }
+    } catch {
+      case _: Exception => createLegacyClient(spark, catalogName)
+    }
+    val conf = Map.empty[String, String]
+    new UCCommitCoordinatorClient(conf.asJava, sharedClient)
+  }
+
+  private def createLegacyClient(
+      spark: SparkSession, catalogName: String): UCClient = {
+    getCatalogConfigs(spark).find(_._1 == catalogName) match {
       case Some((_, uri, authConfig)) => ucClientFactory.createUCClient(uri, authConfig)
       case None =>
         throw new IllegalArgumentException(
           s"Catalog $catalogName not found in the provided SparkSession configurations.")
     }
-    val conf = Map.empty[String, String]
-    new UCCommitCoordinatorClient(conf.asJava, client)
   }
 
   /**
