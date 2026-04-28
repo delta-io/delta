@@ -166,13 +166,14 @@ public class StatsSchemaHelper {
         logicalToPhysicalColumnAndDataType.entrySet().stream()
             .collect(
                 Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._1 // map to just the column
+                    e -> normalizeColumn(e.getKey()), e -> e.getValue()._1 // map to just the column
                     ));
     this.logicalToDataType =
         logicalToPhysicalColumnAndDataType.entrySet().stream()
             .collect(
                 Collectors.toMap(
-                    Map.Entry::getKey, e -> e.getValue()._2 // map to just the data type
+                    e -> normalizeColumn(e.getKey()),
+                    e -> e.getValue()._2 // map to just the data type
                     ));
   }
 
@@ -213,7 +214,7 @@ public class StatsSchemaHelper {
         column,
         collationIdentifier.isPresent() ? (" for collation " + collationIdentifier) : "",
         dataSchema);
-    DataType dataType = logicalToDataType.get(column);
+    DataType dataType = logicalToDataType.get(normalizeColumn(column));
     Column maxColumn = getStatsColumn(column, MAX, collationIdentifier);
 
     // If this is a column of type Timestamp or TimestampNTZ
@@ -254,8 +255,8 @@ public class StatsSchemaHelper {
    * column exists, is a leaf column, and is of a skipping-eligible data-type.
    */
   public boolean isSkippingEligibleMinMaxColumn(Column column) {
-    return logicalToDataType.containsKey(column)
-        && isSkippingEligibleDataType(logicalToDataType.get(column));
+    return logicalToDataType.containsKey(normalizeColumn(column))
+        && isSkippingEligibleDataType(logicalToDataType.get(normalizeColumn(column)));
   }
 
   /**
@@ -263,7 +264,7 @@ public class StatsSchemaHelper {
    * the column exists and is a leaf column as we only collect stats for leaf columns.
    */
   public boolean isSkippingEligibleNullCountColumn(Column column) {
-    return logicalToPhysicalColumn.containsKey(column);
+    return logicalToPhysicalColumn.containsKey(normalizeColumn(column));
   }
 
   //////////////////////////////////////////////////////////////////////////////////
@@ -390,11 +391,11 @@ public class StatsSchemaHelper {
   private Column getStatsColumn(
       Column column, String statType, Optional<CollationIdentifier> collationIdentifier) {
     checkArgument(
-        logicalToPhysicalColumn.containsKey(column),
+        logicalToPhysicalColumn.containsKey(normalizeColumn(column)),
         "%s is not a valid leaf column for data schema: %s",
         column,
         dataSchema);
-    Column physicalColumn = logicalToPhysicalColumn.get(column);
+    Column physicalColumn = logicalToPhysicalColumn.get(normalizeColumn(column));
     // Use binary stats if collation is not specified or if it is the default Spark collation.
     if (collationIdentifier.isPresent()
         && collationIdentifier.get() != CollationIdentifier.SPARK_UTF8_BINARY) {
@@ -460,5 +461,13 @@ public class StatsSchemaHelper {
     newNames[0] = preElem;
     System.arraycopy(arr, 0, newNames, 1, arr.length);
     return newNames;
+  }
+
+  /** Returns a copy of the column with all name parts lowercased, for case insensitive lookups. */
+  private static Column normalizeColumn(final Column column) {
+    String[] newNames =
+        Arrays.stream(column.getNames()).map(String::toLowerCase).toArray(String[]::new);
+
+    return new Column(newNames);
   }
 }
