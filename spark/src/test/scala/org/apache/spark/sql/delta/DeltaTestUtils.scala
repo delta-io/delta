@@ -834,6 +834,8 @@ trait DeltaDMLInMemoryTestUtils
     extends DeltaDMLTestUtils
     with DeltaSQLInMemoryTestUtils {
 
+  protected def v2ErrorConditionMapping: Map[String, String] = Map.empty
+
   /**
    * Appends [[df]] into the test table.
    */
@@ -849,6 +851,29 @@ trait DeltaDMLInMemoryTestUtils
     }
     df.writeTo(tableSQLIdentifier).append()
     assertNoParquetFiles(tableSQLIdentifier)
+  }
+
+  override def checkError(
+      exception: SparkThrowable,
+      condition: String,
+      sqlState: Option[String] = None,
+      parameters: Map[String, String] = Map.empty,
+      matchPVals: Boolean = false,
+      queryContext: Array[ExpectedContext] = Array.empty): Unit = {
+    v2ErrorConditionMapping.get(condition) match {
+      case Some(v2Condition) =>
+        assert(exception.getCondition == v2Condition,
+          s"Expected V2 condition '$v2Condition' (mapped from '$condition'), " +
+            s"got '${exception.getCondition}'")
+      case None =>
+        super.checkError(
+          exception = exception,
+          condition = condition,
+          sqlState = sqlState,
+          parameters = parameters,
+          matchPVals = matchPVals,
+          queryContext = queryContext)
+    }
   }
 }
 

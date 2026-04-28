@@ -758,20 +758,35 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         writeOptions = sqlWriteOptions
       }
       expandTableProps(props, writeOptions, conf)
+
+      // When using [[InMemorySparkTable]] we should bypass the physical Delta write, and write
+      // only into the `InMemorySparkTable`.
+      val (deltaWriteQuery, inMemoryWriteQuery) = {
+        if (Utils.isTesting && conf.getConf(DeltaSQLConf.V2_DML_TEST_IN_MEMORY_TABLE)) {
+          (None, asSelectQuery)
+        } else {
+          (asSelectQuery, None)
+        }
+      }
+
+      def createTable(): Unit = {
+        createDeltaTable(
+          ident,
+          schema,
+          partitions,
+          props,
+          writeOptions,
+          deltaWriteQuery,
+          operation
+        )
+      }
       if (isUnityCatalog) {
         // Unity Catalog callers may still send the deprecated `ucTableId` property key.
         // Normalize it here to the canonical `io.unitycatalog.tableId` key before create/replace.
         translateUCTableIdProperty(props)
       }
-      createDeltaTable(
-        ident,
-        schema,
-        partitions,
-        props,
-        writeOptions,
-        asSelectQuery,
-        operation
-      )
+      createTable()
+      inMemoryWriteQuery.foreach(_.writeTo(ident.quoted).append())
     }
 
     override def name(): String = ident.name()
