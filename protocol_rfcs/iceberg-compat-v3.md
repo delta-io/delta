@@ -32,7 +32,7 @@ When this feature is supported and enabled, writers must:
   - Materialized Row ID column must use field ID 2147483540
   - Materialized Row Commit Version column must use field ID 2147483539
 - Require that the nested `element` field of ArrayTypes and the nested `key` and `value` fields of MapTypes be assigned 32 bit integer identifiers. The requirement to ID allocation is the same as that in IcebergCompatV2.
-- Require that IcebergCompatV1 and IcebergCompatV2 are not active on the table
+- Require that IcebergCompatV1 and IcebergCompatV2 are not enabled on the table
 - Require that partition column values be materialized when writing Parquet data files
 - Require that all new `AddFile`s committed to the table have the `numRecords` statistic populated in their `stats` field
 - Require writing timestamp columns as int64
