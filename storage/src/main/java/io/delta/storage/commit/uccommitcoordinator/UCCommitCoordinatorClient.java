@@ -53,6 +53,14 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
   public UCCommitCoordinatorClient(Map<String, String> conf, UCClient ucClient) {
     this.conf = conf;
     this.ucClient = ucClient;
+    this.ucDeltaClient = null;
+  }
+
+  public UCCommitCoordinatorClient(
+      Map<String, String> conf, UCClient ucClient, UCDeltaClient ucDeltaClient) {
+    this.conf = conf;
+    this.ucClient = ucClient;
+    this.ucDeltaClient = ucDeltaClient;
   }
 
   /**
@@ -148,6 +156,9 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
 
   /** Configuration map containing settings for the coordinator client. */
   public final Map<String, String> conf;
+
+  /** Optional DRC client. When present, commit/getCommits route through it. */
+  private final UCDeltaClient ucDeltaClient;
 
   /**
    * Runs a task asynchronously using the backfillThreadPool.
@@ -449,22 +460,33 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
     int transientErrorRetryCount = 0;
     while (transientErrorRetryCount <= MAX_RETRIES_ON_TRANSIENT_ERROR) {
       try {
-        commitToUC(
-          tableDesc,
-          logPath,
-          Optional.of(commitFile),
-          Optional.of(commitVersion),
-          Optional.of(commitTimestamp),
-          Optional.of(lastKnownBackfilledVersion.get()),
-          catalogTrackedInfo,
-          disown,
-          updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewMetadata()),
-          updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
-            Optional.empty() :
-            Optional.of(updatedActions.getNewProtocol())
-        );
+        if (ucDeltaClient != null) {
+          ucDeltaClient.commit(
+            tableId,
+            CoordinatedCommitsUtils.getTablePath(logPath).toUri(),
+            Optional.of(new Commit(commitVersion, commitFile, commitTimestamp)),
+            Optional.of(lastKnownBackfilledVersion.get()),
+            disown,
+            updatedActions
+          );
+        } else {
+          commitToUC(
+            tableDesc,
+            logPath,
+            Optional.of(commitFile),
+            Optional.of(commitVersion),
+            Optional.of(commitTimestamp),
+            Optional.of(lastKnownBackfilledVersion.get()),
+            catalogTrackedInfo,
+            disown,
+            updatedActions.getNewMetadata() == updatedActions.getOldMetadata() || !SHOULD_PASS_METADATA_TO_UC ?
+              Optional.empty() :
+              Optional.of(updatedActions.getNewMetadata()),
+            updatedActions.getNewProtocol() == updatedActions.getOldProtocol() ?
+              Optional.empty() :
+              Optional.of(updatedActions.getNewProtocol())
+          );
+        }
         break;
       } catch (CommitFailedException cfe) {
         if (transientErrorRetryCount > 0 && cfe.getConflict() && cfe.getRetryable() &&
@@ -830,6 +852,13 @@ public class UCCommitCoordinatorClient implements CommitCoordinatorClient {
       Optional<Long> startVersion,
       Optional<Long> endVersion) {
     try {
+      if (ucDeltaClient != null) {
+        return ucDeltaClient.getCommits(
+          extractUCTableId(tableDesc),
+          CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),
+          startVersion,
+          endVersion);
+      }
       return ucClient.getCommits(
         extractUCTableId(tableDesc),
         CoordinatedCommitsUtils.getTablePath(tableDesc.getLogPath()).toUri(),

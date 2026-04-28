@@ -80,7 +80,7 @@ case class CreateDeltaTableCommand(
     override val output: Seq[Attribute] = Nil,
     protocol: Option[Protocol] = None,
     override val allowCatalogManaged: Boolean = false,
-    createTableFunc: Option[CatalogTable => Unit] = None)
+    createTableFunc: Option[(CatalogTable, Snapshot) => Unit] = None)
   extends LeafRunnableCommand
   with DeltaCommand
   with DeltaLogging
