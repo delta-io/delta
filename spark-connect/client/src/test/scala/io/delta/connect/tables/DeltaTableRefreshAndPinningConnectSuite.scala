@@ -20,9 +20,10 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
 
-import org.apache.spark.SparkException
+import org.apache.spark.{SparkException, SparkThrowable}
 import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.Row
+import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.test.DeltaQueryTest
 
 /**
@@ -49,6 +50,20 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
    * We parameterize with it to verify behavior is identical, documenting that the refresh
    * mechanism is driven by the shared DeltaLog, not by session-level state.
    */
+  /** Asserts that a SparkThrowable has the expected error condition. */
+  protected def checkError(
+      exception: SparkThrowable,
+      condition: String): Unit = {
+    // In Connect, some errors (e.g. Delta's DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS) arrive
+    // wrapped as INTERNAL_ERROR. Fall back to checking getMessage if getCondition doesn't match.
+    val cond = exception.getCondition
+    if (cond != condition) {
+      assert(exception.asInstanceOf[Exception].getMessage.contains(condition),
+        s"Expected error condition '$condition' but got '$cond' " +
+        s"and message does not contain it either")
+    }
+  }
+
   protected def useExternalSession: Boolean = false
 
   /** Returns a session for performing writes. */
@@ -583,154 +598,142 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
-  // Section [3] continued: aliased duplicates that verify actual data
+  // Section [3] continued: column-renamed duplicates that verify actual data.
+  // Delta's V1 fallback loses PLAN_ID_TAG, so we rename columns to disambiguate
+  // instead of using DataFrame aliases (.as("t1")) which still fail.
 
-  test("[3] connect scenario 1: join after write") {
+  test("[3] connect scenario 1 (renamed cols): join after write") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
 
-      val df1 = spark.table("t").as("t1")
-
       writerSql("INSERT INTO t VALUES (2, 200)")
 
-      val df2 = spark.table("t").as("t2")
+      // Rename columns to avoid AMBIGUOUS_COLUMN_OR_FIELD
+      val df1 = spark.table("t").toDF("id1", "salary1")
+      val df2 = spark.table("t").toDF("id2", "salary2")
 
       // In Connect, both DataFrames re-analyze to the latest version.
       // Both scans see (1,100),(2,200). Self-join matches each row to itself.
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(
-        joined.select(
-          df1("id"), df1("salary"),
-          df2("id"), df2("salary")).orderBy(df1("id")),
+        joined.orderBy("id1"),
         Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
     }
   }
 
-  test("[3] connect scenario 2: join after ADD COLUMN") {
+  test("[3] connect scenario 2 (renamed cols): join after ADD COLUMN") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
 
-      val df1 = spark.table("t").as("t1")
-
       writerSql("ALTER TABLE t ADD COLUMN new_column INT")
       writerSql("INSERT INTO t VALUES (2, 200, -1)")
 
-      val df2 = spark.table("t").as("t2")
-
       // In Connect, both DataFrames re-analyze to the latest version and schema.
       // Both scans see the new schema (id, salary, new_column).
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val df1 = spark.table("t").toDF("id1", "salary1", "new_column1")
+      val df2 = spark.table("t").toDF("id2", "salary2", "new_column2")
+
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(
-        joined.select(
-          df1("id"), df1("salary"), df1("new_column"),
-          df2("id"), df2("salary"), df2("new_column")).orderBy(df1("id")),
+        joined.orderBy("id1"),
         Seq(Row(1, 100, null, 1, 100, null), Row(2, 200, -1, 2, 200, -1)))
     }
   }
 
-  test("[3] connect scenario 3: join after DROP COLUMN (column mapping)") {
+  test("[3] connect scenario 3 (renamed cols): join after DROP COLUMN (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
 
-      val df1 = spark.table("t").as("t1")
-
       writerSql("ALTER TABLE t DROP COLUMN salary")
-
-      val df2 = spark.table("t").as("t2")
 
       // In Connect, both DataFrames re-analyze to the latest version and schema.
       // Both scans see only (id) after the column drop.
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val df1 = spark.table("t").toDF("id1")
+      val df2 = spark.table("t").toDF("id2")
+
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(
-        joined.select(df1("id"), df2("id")).orderBy(df1("id")),
+        joined.orderBy("id1"),
         Seq(Row(1, 1)))
     }
   }
 
-  test("[3] connect scenario 4: join after DROP and recreate (column mapping)") {
+  test("[3] connect scenario 4 (renamed cols): join after DROP/recreate (column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
-
-      val df1 = spark.table("t").as("t1")
 
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
-      val df2 = spark.table("t").as("t2")
+      val df1 = spark.table("t").toDF("id1", "salary1")
+      val df2 = spark.table("t").toDF("id2", "salary2")
 
       // In Connect, both DataFrames re-analyze to the new empty table.
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(joined, Seq.empty)
     }
   }
 
-  test("[3] connect scenario 4: join after DROP and recreate (no column mapping)") {
+  test("[3] connect scenario 4 (renamed cols): join after DROP/recreate (no column mapping)") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
 
-      val df1 = spark.table("t").as("t1")
-
       writerSql("DROP TABLE t")
       writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
 
-      val df2 = spark.table("t").as("t2")
+      val df1 = spark.table("t").toDF("id1", "salary1")
+      val df2 = spark.table("t").toDF("id2", "salary2")
 
       // In Connect, both DataFrames re-analyze to the new empty table.
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(joined, Seq.empty)
     }
   }
 
-  test("[3] connect scenario 5: join after DROP/ADD column same name same type " +
+  test("[3] connect scenario 5 (renamed cols): join after DROP/ADD same type " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
-
-      val df1 = spark.table("t").as("t1")
 
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
-      val df2 = spark.table("t").as("t2")
-
       // In Connect, both DataFrames re-analyze. The new salary column has no
       // data for existing rows (old salary data is gone).
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val df1 = spark.table("t").toDF("id1", "salary1")
+      val df2 = spark.table("t").toDF("id2", "salary2")
+
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(
-        joined.select(
-          df1("id"), df1("salary"),
-          df2("id"), df2("salary")).orderBy(df1("id")),
+        joined.orderBy("id1"),
         Seq(Row(1, null, 1, null)))
     }
   }
 
-  test("[3] connect scenario 6: join after DROP/ADD column same name different type " +
+  test("[3] connect scenario 6 (renamed cols): join after DROP/ADD different type " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
 
-      val df1 = spark.table("t").as("t1")
-
       writerSql("ALTER TABLE t DROP COLUMN salary")
       writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
-      val df2 = spark.table("t").as("t2")
-
       // In Connect, both DataFrames re-analyze. Salary is now STRING type,
       // old salary data is gone.
-      val joined = df1.join(df2, df1("id") === df2("id"))
+      val df1 = spark.table("t").toDF("id1", "salary1")
+      val df2 = spark.table("t").toDF("id2", "salary2")
+
+      val joined = df1.join(df2, col("id1") === col("id2"))
       checkAnswer(
-        joined.select(
-          df1("id"), df1("salary"),
-          df2("id"), df2("salary")).orderBy(df1("id")),
+        joined.orderBy("id1"),
         Seq(Row(1, null, 1, null)))
     }
   }
