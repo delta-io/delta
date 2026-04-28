@@ -2472,6 +2472,120 @@ class DeltaColumnMappingSuite extends QueryTest
     }
   }
 
+  testColumnMapping(
+    "drop nested field from struct preserves parent and sibling IDs") { mode =>
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      sql(
+        s"""CREATE TABLE delta.`$tablePath` (
+           |  id INT,
+           |  info STRUCT<name: STRING, age: INT>
+           |) USING delta
+           |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '$mode')
+           |""".stripMargin)
+      sql(s"INSERT INTO delta.`$tablePath` VALUES (1, struct('Alice', 30))")
+
+      checkAnswer(
+        sql(s"SELECT id, info.name, info.age FROM delta.`$tablePath`"),
+        Row(1, "Alice", 30))
+
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val schemaBefore = deltaLog.update().metadata.schema
+      val infoFieldBefore = schemaBefore("info")
+      val infoIdBefore = DeltaColumnMapping.getColumnId(infoFieldBefore)
+      val infoPhysicalBefore = DeltaColumnMapping.getPhysicalName(infoFieldBefore)
+      val innerBefore = infoFieldBefore.dataType.asInstanceOf[StructType]
+      val ageIdBefore = DeltaColumnMapping.getColumnId(innerBefore("age"))
+      val agePhysicalBefore = DeltaColumnMapping.getPhysicalName(innerBefore("age"))
+      val maxIdBefore = DeltaColumnMapping.findMaxColumnId(schemaBefore)
+
+      sql(s"ALTER TABLE delta.`$tablePath` DROP COLUMN info.name")
+
+      val schemaAfter = deltaLog.update().metadata.schema
+      val infoFieldAfter = schemaAfter("info")
+      val innerAfter = infoFieldAfter.dataType.asInstanceOf[StructType]
+
+      // Parent struct ID and physical name unchanged
+      assert(DeltaColumnMapping.getColumnId(infoFieldAfter) === infoIdBefore)
+      assert(DeltaColumnMapping.getPhysicalName(infoFieldAfter) === infoPhysicalBefore)
+      // Sibling field age unchanged
+      assert(DeltaColumnMapping.getColumnId(innerAfter("age")) === ageIdBefore)
+      assert(DeltaColumnMapping.getPhysicalName(innerAfter("age")) === agePhysicalBefore)
+      // maxColumnId unchanged (no new columns added)
+      assert(DeltaColumnMapping.findMaxColumnId(schemaAfter) === maxIdBefore)
+      // Struct now has only 1 field
+      assert(innerAfter.fields.length === 1)
+
+      // Old data: name is gone, age is intact
+      checkAnswer(
+        sql(s"SELECT id, info.age FROM delta.`$tablePath`"),
+        Row(1, 30))
+    }
+  }
+
+  testColumnMapping(
+    "add nested field to struct preserves parent and existing field IDs") { mode =>
+    withTempDir { dir =>
+      val tablePath = dir.getCanonicalPath
+      sql(
+        s"""CREATE TABLE delta.`$tablePath` (
+           |  id INT,
+           |  info STRUCT<name: STRING, age: INT>
+           |) USING delta
+           |TBLPROPERTIES ('${DeltaConfigs.COLUMN_MAPPING_MODE.key}' = '$mode')
+           |""".stripMargin)
+      sql(s"INSERT INTO delta.`$tablePath` VALUES (1, struct('Alice', 30))")
+
+      checkAnswer(
+        sql(s"SELECT id, info.name, info.age FROM delta.`$tablePath`"),
+        Row(1, "Alice", 30))
+
+      val deltaLog = DeltaLog.forTable(spark, tablePath)
+      val schemaBefore = deltaLog.update().metadata.schema
+      val infoFieldBefore = schemaBefore("info")
+      val infoIdBefore = DeltaColumnMapping.getColumnId(infoFieldBefore)
+      val infoPhysicalBefore = DeltaColumnMapping.getPhysicalName(infoFieldBefore)
+      val innerBefore = infoFieldBefore.dataType.asInstanceOf[StructType]
+      val nameIdBefore = DeltaColumnMapping.getColumnId(innerBefore("name"))
+      val namePhysicalBefore = DeltaColumnMapping.getPhysicalName(innerBefore("name"))
+      val ageIdBefore = DeltaColumnMapping.getColumnId(innerBefore("age"))
+      val agePhysicalBefore = DeltaColumnMapping.getPhysicalName(innerBefore("age"))
+      val maxIdBefore = DeltaColumnMapping.findMaxColumnId(schemaBefore)
+
+      sql(s"ALTER TABLE delta.`$tablePath` ADD COLUMN (info.email STRING)")
+
+      val schemaAfter = deltaLog.update().metadata.schema
+      val infoFieldAfter = schemaAfter("info")
+      val innerAfter = infoFieldAfter.dataType.asInstanceOf[StructType]
+
+      // Parent struct ID and physical name unchanged
+      assert(DeltaColumnMapping.getColumnId(infoFieldAfter) === infoIdBefore)
+      assert(DeltaColumnMapping.getPhysicalName(infoFieldAfter) === infoPhysicalBefore)
+      // Existing fields unchanged
+      assert(DeltaColumnMapping.getColumnId(innerAfter("name")) === nameIdBefore)
+      assert(DeltaColumnMapping.getPhysicalName(innerAfter("name")) === namePhysicalBefore)
+      assert(DeltaColumnMapping.getColumnId(innerAfter("age")) === ageIdBefore)
+      assert(DeltaColumnMapping.getPhysicalName(innerAfter("age")) === agePhysicalBefore)
+      // New field gets fresh ID
+      val emailField = innerAfter("email")
+      assert(DeltaColumnMapping.getColumnId(emailField) > maxIdBefore)
+      // Struct now has 3 fields
+      assert(innerAfter.fields.length === 3)
+
+      // Old data: name and age intact, email is NULL
+      checkAnswer(
+        sql(s"SELECT id, info.name, info.age, info.email FROM delta.`$tablePath`"),
+        Row(1, "Alice", 30, null))
+
+      // Insert new data with all 3 fields
+      sql(s"INSERT INTO delta.`$tablePath` " +
+        "VALUES (2, struct('Bob', 25, 'bob@test.com'))")
+      checkAnswer(
+        sql(s"SELECT id, info.name, info.age, info.email FROM delta.`$tablePath` ORDER BY id"),
+        Seq(Row(1, "Alice", 30, null), Row(2, "Bob", 25, "bob@test.com")))
+    }
+  }
+
   test("unit test physical name assigning is case-insensitive") {
     val schema = new StructType()
       .add("A", IntegerType)
