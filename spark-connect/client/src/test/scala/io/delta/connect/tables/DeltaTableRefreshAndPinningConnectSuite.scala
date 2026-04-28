@@ -20,6 +20,8 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
 
+import org.apache.spark.SparkException
+import org.apache.spark.sql.AnalysisException
 import org.apache.spark.sql.Row
 import org.apache.spark.sql.test.DeltaQueryTest
 
@@ -246,11 +248,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t DROP COLUMN salary")
 
       // Same as classic: column mapping schema change throws
-      val e = intercept[Exception] {
-        spark.sql("SELECT * FROM v").collect()
-      }
-      assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
-        e.getMessage.contains("schema"))
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+      )
     }
   }
 
@@ -270,17 +273,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t ALTER COLUMN salary TYPE BIGINT")
 
       // Same as classic: type change is detected as incompatible schema change.
-      // In Connect, Delta errors are wrapped in SparkException via gRPC.
-      val caught = try {
-        spark.sql("SELECT * FROM v").collect()
-        false
-      } catch {
-        case e: Exception =>
-          assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
-            e.getMessage.contains("schema"))
-          true
-      }
-      assert(caught, "Expected exception for type widening schema change")
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+      )
     }
   }
 
@@ -314,17 +312,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
         "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
 
       // Column IDs changed, so reading the view should fail.
-      // In Connect, Delta errors are wrapped in SparkException via gRPC.
-      val caught = try {
-        spark.sql("SELECT * FROM v").collect()
-        false
-      } catch {
-        case e: Exception =>
-          assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
-            e.getMessage.contains("schema"))
-          true
-      }
-      assert(caught, "Expected exception for column mapping schema change")
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+      )
     }
   }
 
@@ -341,11 +334,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t ADD COLUMN salary INT")
 
       // Same as classic: column mapping schema change (column IDs changed) throws
-      val e = intercept[Exception] {
-        spark.sql("SELECT * FROM v").collect()
-      }
-      assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
-        e.getMessage.contains("schema"))
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+      )
     }
   }
 
@@ -362,11 +356,12 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       writerSql("ALTER TABLE t ADD COLUMN salary STRING")
 
       // Same as classic: column mapping schema change throws
-      val e = intercept[Exception] {
-        spark.sql("SELECT * FROM v").collect()
-      }
-      assert(e.getMessage.contains("DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS") ||
-        e.getMessage.contains("schema"))
+      checkError(
+        exception = intercept[SparkException] {
+          spark.sql("SELECT * FROM v").collect()
+        },
+        condition = "DELTA_SCHEMA_CHANGE_SINCE_ANALYSIS"
+      )
     }
   }
 
@@ -421,10 +416,16 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
   // ---------------------------------------------------------------------------
   // Section [3]: Incrementally constructed queries (Connect)
-  // In Connect, Dataset is re-analyzed on each execution.
+  // In Connect, Dataset is re-analyzed on each execution, so both df1 and df2
+  // resolve to the latest table state (effectively a self-join).
+  //
+  // Without aliases, the join throws AMBIGUOUS_COLUMN_OR_FIELD because Delta's
+  // V1 fallback (FallbackToV1DeltaRelation) loses PLAN_ID_TAG, preventing
+  // Connect's plan-based column disambiguation. The aliased duplicates below
+  // verify the actual data.
   // ---------------------------------------------------------------------------
 
-  test("[3] connect scenario 1: join after write") {
+  test("[3] connect scenario 1 (no alias): self-join after write throws") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -435,19 +436,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       val df2 = spark.table("t")
 
-      // Follow the exact pattern from the design doc:
-      // val joined = df1.join(df2, df1("id") === df2("id"))
-      // In Connect, both DataFrames re-analyze to the same table, so
-      // df1("id") === df2("id") becomes a trivially true self-join predicate.
-      // The result has AMBIGUOUS_COLUMN_OR_FIELD on collect because both sides
-      // produce identical column names.
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
     }
   }
 
-  test("[3] connect scenario 2: join after ADD COLUMN") {
+  test("[3] connect scenario 2 (no alias): self-join after ADD COLUMN throws") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -460,12 +459,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
     }
   }
 
-  test("[3] connect scenario 3: join after DROP COLUMN (column mapping)") {
+  test("[3] connect scenario 3 (no alias): self-join after DROP COLUMN throws " +
+      "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -476,15 +480,18 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       val df2 = spark.table("t")
 
-      // After DROP COLUMN, table only has "id". The join condition
-      // df1("id") === df2("id") is a self-join on a single-column table.
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
     }
   }
 
-  test("[3] connect scenario 4: join after DROP and recreate (column mapping)") {
+  test("[3] connect scenario 4 (no alias): self-join after DROP/recreate throws " +
+      "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
       insertInitialData("t")
@@ -498,12 +505,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
     }
   }
 
-  test("[3] connect scenario 4: join after DROP and recreate (no column mapping)") {
+  test("[3] connect scenario 4 (no alias): self-join after DROP/recreate throws " +
+      "(no column mapping)") {
     withTable("t") {
       createSimpleTable("t")
       insertInitialData("t")
@@ -515,15 +527,17 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
 
       val df2 = spark.table("t")
 
-      // In Connect, both DataFrames re-analyze. Without column mapping,
-      // the new empty table is resolved by both.
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
     }
   }
 
-  test("[3] connect scenario 5: join after DROP/ADD column same name same type " +
+  test("[3] connect scenario 5 (no alias): self-join after DROP/ADD same type throws " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -537,12 +551,16 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
     }
   }
 
-  test("[3] connect scenario 6: join after DROP/ADD column same name different type " +
+  test("[3] connect scenario 6 (no alias): self-join after DROP/ADD different type throws " +
       "(column mapping)") {
     withTable("t") {
       createColumnMappingTable("t")
@@ -556,8 +574,164 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
       val df2 = spark.table("t")
 
       val joined = df1.join(df2, df1("id") === df2("id"))
-      val caught = try { joined.collect(); false } catch { case _: Exception => true }
-      assert(caught, "Expected AMBIGUOUS_COLUMN_OR_FIELD for Connect self-join")
+      checkError(
+        exception = intercept[AnalysisException] {
+          joined.collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  // Section [3] continued: aliased duplicates that verify actual data
+
+  test("[3] connect scenario 1: join after write") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("INSERT INTO t VALUES (2, 200)")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze to the latest version.
+      // Both scans see (1,100),(2,200). Self-join matches each row to itself.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(
+        joined.select(
+          df1("id"), df1("salary"),
+          df2("id"), df2("salary")).orderBy(df1("id")),
+        Seq(Row(1, 100, 1, 100), Row(2, 200, 2, 200)))
+    }
+  }
+
+  test("[3] connect scenario 2: join after ADD COLUMN") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze to the latest version and schema.
+      // Both scans see the new schema (id, salary, new_column).
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(
+        joined.select(
+          df1("id"), df1("salary"), df1("new_column"),
+          df2("id"), df2("salary"), df2("new_column")).orderBy(df1("id")),
+        Seq(Row(1, 100, null, 1, 100, null), Row(2, 200, -1, 2, 200, -1)))
+    }
+  }
+
+  test("[3] connect scenario 3: join after DROP COLUMN (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze to the latest version and schema.
+      // Both scans see only (id) after the column drop.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(
+        joined.select(df1("id"), df2("id")).orderBy(df1("id")),
+        Seq(Row(1, 1)))
+    }
+  }
+
+  test("[3] connect scenario 4: join after DROP and recreate (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze to the new empty table.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(joined, Seq.empty)
+    }
+  }
+
+  test("[3] connect scenario 4: join after DROP and recreate (no column mapping)") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze to the new empty table.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(joined, Seq.empty)
+    }
+  }
+
+  test("[3] connect scenario 5: join after DROP/ADD column same name same type " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze. The new salary column has no
+      // data for existing rows (old salary data is gone).
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(
+        joined.select(
+          df1("id"), df1("salary"),
+          df2("id"), df2("salary")).orderBy(df1("id")),
+        Seq(Row(1, null, 1, null)))
+    }
+  }
+
+  test("[3] connect scenario 6: join after DROP/ADD column same name different type " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      val df1 = spark.table("t").as("t1")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+
+      val df2 = spark.table("t").as("t2")
+
+      // In Connect, both DataFrames re-analyze. Salary is now STRING type,
+      // old salary data is gone.
+      val joined = df1.join(df2, df1("id") === df2("id"))
+      checkAnswer(
+        joined.select(
+          df1("id"), df1("salary"),
+          df2("id"), df2("salary")).orderBy(df1("id")),
+        Seq(Row(1, null, 1, null)))
     }
   }
 
