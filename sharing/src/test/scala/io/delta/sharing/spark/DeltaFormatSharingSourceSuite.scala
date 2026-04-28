@@ -2394,7 +2394,7 @@ class DeltaFormatSharingSourceSuite
           assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
           streamingCalls.foreach { case (_, queryType, fileIdHash) =>
             assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_DELTA),
-              s"Expected SHA256 for boundary legacy offset but got $fileIdHash in $queryType")
+              s"Expected DELTA for boundary legacy offset but got $fileIdHash in $queryType")
           }
         }
       }
