@@ -230,7 +230,8 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       val tableCommitCoordinatorClient = createTableCommitCoordinatorClient(log)
       writeCommitZero(logPath)
 
-      val icebergMetadata = new IcebergMetadata("s3://bucket/metadata/v1.json", 1L, "2025-01-01")
+      val icebergMetadata = new IcebergMetadata(
+        "s3://bucket/metadata/v1.json", 1L, "2025-01-01", Optional.of(0L))
       val uniformMetadata = new UniformMetadata(icebergMetadata)
       val catalogTrackedInfo = new CatalogTrackedInfo(Optional.of(uniformMetadata))
       val commitInfo = CommitInfo
@@ -251,6 +252,29 @@ class UCCommitCoordinatorClientSuite extends UCCommitCoordinatorClientSuiteBase
       assert(storedIceberg.getMetadataLocation == "s3://bucket/metadata/v1.json")
       assert(storedIceberg.getConvertedDeltaVersion == 1L)
       assert(storedIceberg.getConvertedDeltaTimestamp == "2025-01-01")
+      assert(storedIceberg.getBaseConvertedDeltaVersion.isPresent)
+      assert(storedIceberg.getBaseConvertedDeltaVersion.get == 0L)
+
+      // Verify that a commit without baseConvertedDeltaVersion stores an empty Optional
+      val icebergMetadataNoBase =
+        new IcebergMetadata("s3://bucket/metadata/v2.json", 2L, "2025-01-02")
+      val uniformMetadataNoBase = new UniformMetadata(icebergMetadataNoBase)
+      val catalogTrackedInfoNoBase = new CatalogTrackedInfo(Optional.of(uniformMetadataNoBase))
+      val commitInfo2 = CommitInfo
+        .empty(version = Some(2)).withTimestamp(2).copy(inCommitTimestamp = Some(2))
+      val updatedActions2 = getUpdatedActionsForNonZerothCommit(commitInfo2)
+      tableCommitCoordinatorClient.commit(
+        2L,
+        Iterator(commitInfo2.json),
+        updatedActions2,
+        tableIdentifierOpt = None,
+        catalogTrackedInfoNoBase)
+      waitForBackfill(2, tableCommitCoordinatorClient)
+
+      val stored2 = ucCommitCoordinator.getUniformMetadata(tableUUID.toString)
+      assert(stored2.isDefined)
+      val storedIceberg2 = stored2.get.getIcebergMetadata.get
+      assert(storedIceberg2.getBaseConvertedDeltaVersion.isEmpty)
     }
   }
 
