@@ -26,7 +26,7 @@ import io.delta.storage.commit.{Commit, CommitFailedException, GetCommitsRespons
 import io.delta.storage.commit.actions.{AbstractMetadata, AbstractProtocol}
 import io.delta.storage.commit.uniform.{IcebergMetadata, UniformMetadata}
 import io.unitycatalog.client.auth.TokenProvider
-import io.unitycatalog.client.delta.model.CredentialOperation
+import io.unitycatalog.client.delta.model.{CreateTableRequest, CredentialOperation}
 
 import org.apache.hadoop.fs.{FileStatus, Path}
 import org.apache.http.HttpStatus
@@ -385,6 +385,15 @@ class UCTokenBasedRestClientSuite
       }
       assert(credentialsError.getMessage ===
         "getTableCredentials requires UC Delta Rest Catalog API support.")
+      val stagingError = intercept[UnsupportedOperationException] {
+        client.createStagingTable("main", "default", "tbl")
+      }
+      assert(stagingError.getMessage ===
+        "createStagingTable requires UC Delta Rest Catalog API support.")
+      val createError = intercept[UnsupportedOperationException] {
+        client.createTable("main", "default", new CreateTableRequest().name("tbl"))
+      }
+      assert(createError.getMessage === "createTable requires UC Delta Rest Catalog API support.")
     } finally {
       client.close()
     }
@@ -435,6 +444,100 @@ class UCTokenBasedRestClientSuite
     }
     assert(e.getMessage.contains("Failed to determine UC Delta Rest Catalog API support"))
     assert(e.getMessage.contains("HTTP 500"))
+  }
+
+  test("createStagingTable and createTable call UC Delta Rest Catalog API endpoints") {
+    var sawStagingCreate = false
+    var sawTableCreate = false
+    deltaTablesHandler = exchange => {
+      assert(exchange.getRequestMethod === "POST")
+      exchange.getRequestURI.getPath match {
+        case "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/staging-tables" =>
+          sawStagingCreate = true
+          val body = objectMapper.readTree(readRequestBody(exchange))
+          assert(body.get("name").asText === "tbl")
+          sendJson(exchange, HttpStatus.SC_OK,
+            """{
+              |  "table-id": "22222222-2222-2222-2222-222222222222",
+              |  "table-type": "MANAGED",
+              |  "location": "s3://bucket/path/to/table",
+              |  "storage-credentials": [],
+              |  "required-protocol": {
+              |    "min-reader-version": 1,
+              |    "min-writer-version": 2
+              |  },
+              |  "required-properties": {
+              |    "delta.feature.catalogManaged": "supported"
+              |  }
+              |}""".stripMargin)
+        case "/api/2.1/unity-catalog/delta/v1/catalogs/main/schemas/default/tables" =>
+          sawTableCreate = true
+          val body = objectMapper.readTree(readRequestBody(exchange))
+          assert(body.get("name").asText === "tbl")
+          sendJson(exchange, HttpStatus.SC_OK, loadTableResponseJson)
+        case path =>
+          fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+      }
+    }
+
+    withClient { client =>
+      val staging = client.createStagingTable("main", "default", "tbl")
+      assert(staging.getTableId.toString === "22222222-2222-2222-2222-222222222222")
+      assert(staging.getLocation === "s3://bucket/path/to/table")
+
+      val created = client.createTable("main", "default", new CreateTableRequest().name("tbl"))
+      assert(created.getMetadata.getLocation === "file:/tmp/uc/table")
+    }
+    assert(sawStagingCreate)
+    assert(sawTableCreate)
+  }
+
+  test("createStagingTable and createTable wrap HTTP errors") {
+    deltaTablesHandler = exchange =>
+      sendJson(exchange, HttpStatus.SC_INTERNAL_SERVER_ERROR, """{"error":"boom"}""")
+
+    withClient { client =>
+      val stagingError = intercept[java.io.IOException] {
+        client.createStagingTable("main", "default", "tbl")
+      }
+      assert(stagingError.getMessage.contains(
+        "Failed to create staging table main.default.tbl via UC Delta Rest Catalog API (HTTP 500)"))
+
+      val createError = intercept[java.io.IOException] {
+        client.createTable("main", "default", new CreateTableRequest().name("tbl"))
+      }
+      assert(createError.getMessage.contains(
+        "Failed to create table main.default.tbl via UC Delta Rest Catalog API (HTTP 500)"))
+
+      val unnamedCreateError = intercept[java.io.IOException] {
+        client.createTable("main", "default", new CreateTableRequest())
+      }
+      assert(unnamedCreateError.getMessage.contains(
+        "Failed to create table main.default.<unknown> via UC Delta Rest Catalog API (HTTP 500)"))
+    }
+  }
+
+  test("createStagingTable and createTable validate required parameters") {
+    withClient { client =>
+      intercept[NullPointerException] {
+        client.createStagingTable(null, "default", "tbl")
+      }
+      intercept[NullPointerException] {
+        client.createStagingTable("main", null, "tbl")
+      }
+      intercept[NullPointerException] {
+        client.createStagingTable("main", "default", null)
+      }
+      intercept[NullPointerException] {
+        client.createTable(null, "default", new CreateTableRequest().name("tbl"))
+      }
+      intercept[NullPointerException] {
+        client.createTable("main", null, new CreateTableRequest().name("tbl"))
+      }
+      intercept[NullPointerException] {
+        client.createTable("main", "default", null)
+      }
+    }
   }
 
   // commit tests

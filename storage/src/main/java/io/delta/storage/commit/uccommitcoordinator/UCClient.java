@@ -22,9 +22,11 @@ import io.delta.storage.commit.GetCommitsResponse;
 import io.delta.storage.commit.actions.AbstractMetadata;
 import io.delta.storage.commit.actions.AbstractProtocol;
 import io.delta.storage.commit.uniform.UniformMetadata;
+import io.unitycatalog.client.delta.model.CreateTableRequest;
 import io.unitycatalog.client.delta.model.CredentialOperation;
 import io.unitycatalog.client.delta.model.CredentialsResponse;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.StagingTableResponse;
 
 import java.io.IOException;
 import java.net.URI;
@@ -223,6 +225,27 @@ public interface UCClient extends AutoCloseable {
       CredentialOperation operation) throws IOException {
     throw new UnsupportedOperationException(
         "getTemporaryPathCredentials requires UC Delta temporary path credentials support.");
+  }
+
+  /**
+   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default StagingTableResponse createStagingTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    throw new UnsupportedOperationException(
+        "createStagingTable requires UC Delta Rest Catalog API support.");
+  }
+
+  /**
+   * Finalizes a staged Delta table in Unity Catalog through the UC Delta Rest Catalog API.
+   */
+  default LoadTableResponse createTable(
+      String catalog,
+      String schema,
+      CreateTableRequest request) throws IOException {
+    throw new UnsupportedOperationException("createTable requires UC Delta Rest Catalog API support.");
   }
 
   /**

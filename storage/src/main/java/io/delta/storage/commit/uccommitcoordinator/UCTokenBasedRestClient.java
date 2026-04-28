@@ -34,9 +34,12 @@ import io.unitycatalog.client.auth.TokenProvider;
 import io.unitycatalog.client.delta.api.ConfigurationApi;
 import io.unitycatalog.client.delta.api.TemporaryCredentialsApi;
 import io.unitycatalog.client.delta.model.CatalogConfig;
+import io.unitycatalog.client.delta.model.CreateStagingTableRequest;
+import io.unitycatalog.client.delta.model.CreateTableRequest;
 import io.unitycatalog.client.delta.model.CredentialOperation;
 import io.unitycatalog.client.delta.model.CredentialsResponse;
 import io.unitycatalog.client.delta.model.LoadTableResponse;
+import io.unitycatalog.client.delta.model.StagingTableResponse;
 import io.unitycatalog.client.model.DeltaCommit;
 import io.unitycatalog.client.model.DeltaCommitInfo;
 import io.unitycatalog.client.model.DeltaCommitMetadataProperties;
@@ -367,6 +370,66 @@ public class UCTokenBasedRestClient implements UCClient {
             String.format("Unexpected getCommits failure (HTTP %s): due to: %s", statusCode,
                 responseBody), e);
       }
+    }
+  }
+
+  /**
+   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API tables API.
+   */
+  @Override
+  public StagingTableResponse createStagingTable(
+      String catalog,
+      String schema,
+      String table) throws IOException {
+    ensureDeltaRestCatalogSupported("createStagingTable");
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(table, "table must not be null.");
+
+    try {
+      return deltaTablesApi.createStagingTable(
+          catalog,
+          schema,
+          new CreateStagingTableRequest().name(table));
+    } catch (ApiException e) {
+      throw new IOException(
+          String.format(
+              "Failed to create staging table %s.%s.%s via UC Delta Rest Catalog API (HTTP %s): %s",
+              catalog,
+              schema,
+              table,
+              e.getCode(),
+              e.getResponseBody()),
+          e);
+    }
+  }
+
+  /**
+   * Finalizes a Delta table in Unity Catalog through the UC Delta Rest Catalog API tables API.
+   */
+  @Override
+  public LoadTableResponse createTable(
+      String catalog,
+      String schema,
+      CreateTableRequest request) throws IOException {
+    ensureDeltaRestCatalogSupported("createTable");
+    Objects.requireNonNull(catalog, "catalog must not be null.");
+    Objects.requireNonNull(schema, "schema must not be null.");
+    Objects.requireNonNull(request, "request must not be null.");
+
+    try {
+      return deltaTablesApi.createTable(catalog, schema, request);
+    } catch (ApiException e) {
+      String table = request.getName() != null ? request.getName() : "<unknown>";
+      throw new IOException(
+          String.format(
+              "Failed to create table %s.%s.%s via UC Delta Rest Catalog API (HTTP %s): %s",
+              catalog,
+              schema,
+              table,
+              e.getCode(),
+              e.getResponseBody()),
+          e);
     }
   }
 
