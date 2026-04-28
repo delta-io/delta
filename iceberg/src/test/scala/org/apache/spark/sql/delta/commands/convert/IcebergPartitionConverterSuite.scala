@@ -22,6 +22,7 @@ import java.util.{List => JList}
 
 import scala.collection.JavaConverters._
 
+import org.apache.spark.sql.delta.DeltaColumnMapping
 import shadedForDelta.org.apache.iceberg.{PartitionData, PartitionSpec, Schema}
 import shadedForDelta.org.apache.iceberg.transforms._
 import shadedForDelta.org.apache.iceberg.types.Conversions
@@ -112,5 +113,46 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
     assertResult("Map(pname1 -> 2005-01-17, " +
       "pname2 -> 2026-09-21 18:26:54.9, pname3 -> 2026-09-21 18:26:54.9)")(
       partitionConverter.toDelta(partData).toString)
+  }
+
+  test("identity partition with distinct field name uses partition field id") {
+    val icebergSchema = new Schema(
+      1,
+      Seq(
+        NestedField.required(1, "id", LongType.get),
+        NestedField.required(4, "org_id", StringType.get)
+      ).asJava)
+
+    val partSpec = PartitionSpec
+      .builderFor(icebergSchema)
+      .identity("org_id", "org_id_identity")
+      .build()
+
+    val partitionField = partSpec.fields().get(0)
+    assert(partitionField.name() == "org_id_identity")
+    assert(partitionField.sourceId() == 4)
+    assert(partitionField.fieldId() != 4)
+
+    val fields =
+      IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
+    assert(fields.length == 1)
+    assert(fields.head.name == "org_id_identity")
+    assert(DeltaColumnMapping.getColumnId(fields.head) == partitionField.fieldId())
+  }
+
+  test("identity partition field name matches source column uses source field id") {
+    val icebergSchema = new Schema(
+      1,
+      Seq(
+        NestedField.required(1, "id", LongType.get),
+        NestedField.required(4, "org_id", StringType.get)
+      ).asJava)
+
+    val partSpec = PartitionSpec.builderFor(icebergSchema).identity("org_id").build()
+    val fields =
+      IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
+    assert(fields.length == 1)
+    assert(fields.head.name == "org_id")
+    assert(DeltaColumnMapping.getColumnId(fields.head) == 4)
   }
 }
