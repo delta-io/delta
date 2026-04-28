@@ -2345,6 +2345,11 @@ class DeltaColumnMappingSuite extends QueryTest
            |""".stripMargin)
       sql(s"INSERT INTO delta.`$tablePath` VALUES (1, struct('Alice', 30))")
 
+      // Verify initial data before schema changes
+      checkAnswer(
+        sql(s"SELECT id, user.name, user.age FROM delta.`$tablePath`"),
+        Row(1, "Alice", 30))
+
       val deltaLog = DeltaLog.forTable(spark, tablePath)
       val metadataBefore = deltaLog.update().metadata
       val schemaBefore = metadataBefore.schema
