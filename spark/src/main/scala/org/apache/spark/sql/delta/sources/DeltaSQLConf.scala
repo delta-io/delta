@@ -3151,7 +3151,7 @@ trait DeltaSQLConfBase extends DeltaSQLConfUtils {
         | If enabled, re-read written parquet file to compute variant stats from the footer."""
         .stripMargin)
     .booleanConf
-    .createWithDefault(true)
+    .createWithDefault(false)
 
   val DELTA_STATS_LIMIT_PER_VARIANT =
     buildConf("stats.limitPerVariant")
