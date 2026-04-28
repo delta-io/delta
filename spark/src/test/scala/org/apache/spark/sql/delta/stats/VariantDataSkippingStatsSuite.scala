@@ -58,6 +58,7 @@ class VariantDataSkippingStatsSuite
     spark.conf.set(SQLConf.VARIANT_ALLOW_READING_SHREDDED.key, "true")
     spark.conf.set(DeltaSQLConf.COLLECT_VARIANT_DATA_SKIPPING_STATS.key, "true")
     spark.conf.set(DeltaSQLConf.DELTA_STATS_LIMIT_PER_VARIANT.key, "10")
+    spark.conf.set(DeltaSQLConf.PARSE_FOOTER_FOR_VARIANT_DATA_SKIPPING_STATS.key, "true")
   }
 
   /**
