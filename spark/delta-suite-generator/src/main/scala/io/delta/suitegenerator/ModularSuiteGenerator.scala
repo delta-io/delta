@@ -92,7 +92,7 @@ object ModularSuiteGenerator {
             } yield accValue :+ traitWithAlias)
         }
         .filterNot(dimTraits => SuiteGeneratorConfig.isExcluded(baseSuite, dimTraits.map(_._1)))
-        .map(dimTraits => generateCode(baseSuite, dimTraits))
+        .map(dimTraits => generateCode(testGroup, baseSuite, dimTraits))
 
       suitesWriter.writeGeneratedSuitesOfGroup(suites.flatten, testGroup)
     }
@@ -143,6 +143,7 @@ object ModularSuiteGenerator {
   private lazy val BASE32 = new Base32()
 
   private def generateCode(
+      testGroup: TestGroup,
       baseSuite: String,
       mixinsAndAliases: List[(String, String)]): TestSuite = {
     val allMixins = SuiteGeneratorConfig
