@@ -376,9 +376,9 @@ case class DeltaFormatSharingSource(
     if (!autoResolve) {
       None
     } else if (useMd5) {
-      Some(DeltaSharingRestClient.FILEIDHASH_MD5)
+      Some(DeltaSharingRestClient.FILEIDHASH_PARQUET)
     } else {
-      Some(DeltaSharingRestClient.FILEIDHASH_SHA256)
+      Some(DeltaSharingRestClient.FILEIDHASH_DELTA)
     }
   }
 
