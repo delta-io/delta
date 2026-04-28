@@ -598,6 +598,133 @@ trait DeltaTableRefreshAndPinningConnectSuiteBase
     }
   }
 
+  // Section [3] continued: SQL JOIN without column aliases.
+  // The SQL equivalent of df1.join(df2, df1("id") === df2("id")) also throws
+  // AMBIGUOUS_COLUMN_OR_FIELD because the output has duplicate column names.
+
+  test("[3] connect scenario 1 (SQL JOIN no alias): self-join after write throws") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      writerSql("INSERT INTO t VALUES (2, 200)")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  test("[3] connect scenario 2 (SQL JOIN no alias): self-join after ADD COLUMN throws") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t ADD COLUMN new_column INT")
+      writerSql("INSERT INTO t VALUES (2, 200, -1)")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  test("[3] connect scenario 3 (SQL JOIN no alias): self-join after DROP COLUMN throws " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  test("[3] connect scenario 4 (SQL JOIN no alias): self-join after DROP/recreate throws " +
+      "(column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta " +
+        "TBLPROPERTIES ('delta.columnMapping.mode' = 'name')")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  test("[3] connect scenario 4 (SQL JOIN no alias): self-join after DROP/recreate throws " +
+      "(no column mapping)") {
+    withTable("t") {
+      createSimpleTable("t")
+      insertInitialData("t")
+
+      writerSql("DROP TABLE t")
+      writerSql("CREATE TABLE t (id INT, salary INT) USING delta")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  test("[3] connect scenario 5 (SQL JOIN no alias): self-join after DROP/ADD same type " +
+      "throws (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary INT")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
+  test("[3] connect scenario 6 (SQL JOIN no alias): self-join after DROP/ADD different " +
+      "type throws (column mapping)") {
+    withTable("t") {
+      createColumnMappingTable("t")
+      insertInitialData("t")
+
+      writerSql("ALTER TABLE t DROP COLUMN salary")
+      writerSql("ALTER TABLE t ADD COLUMN salary STRING")
+
+      checkError(
+        exception = intercept[AnalysisException] {
+          spark.sql("SELECT * FROM t t1 JOIN t t2 ON t1.id = t2.id").collect()
+        },
+        condition = "AMBIGUOUS_COLUMN_OR_FIELD"
+      )
+    }
+  }
+
   // Section [3] continued: column-renamed duplicates that verify actual data.
   // Delta's V1 fallback loses PLAN_ID_TAG, so we rename columns to disambiguate
   // instead of using DataFrame aliases (.as("t1")) which still fail.
