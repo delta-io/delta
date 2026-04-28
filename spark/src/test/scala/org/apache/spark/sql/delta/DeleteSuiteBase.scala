@@ -846,3 +846,6 @@ trait DeleteSubqueryExistsTests extends DeleteSubqueryBaseMixin {
       expected = (2, "b") :: (3, "c") :: Nil)
   }
 }
+
+trait DeleteSuiteInMemoryTestTableMixin
+    extends DeltaDMLInMemoryTestUtils

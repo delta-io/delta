@@ -32,6 +32,12 @@ import org.apache.spark.sql.delta._
 import org.apache.spark.sql.delta.cdc._
 import org.apache.spark.sql.delta.rowid._
 
+class DeleteSubqueryExistsSQLNameBasedInMemoryTableSuite
+  extends DeleteSubqueryExistsTests
+  with DeleteSQLMixin
+  with DeltaDMLTestUtilsNameBased
+  with DeleteSuiteInMemoryTestTableMixin
+
 class DeleteSubqueryExistsSQLNameBasedSuite
   extends DeleteSubqueryExistsTests
   with DeleteSQLMixin
