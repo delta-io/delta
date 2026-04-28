@@ -118,7 +118,10 @@ object IcebergPartitionUtil {
   }
 
   def getPartitionFields(
-      partSpec: PartitionSpec, schema: Schema, castTimeType: Boolean): Seq[StructField] = {
+      partSpec: PartitionSpec,
+      schema: Schema,
+      castTimeType: Boolean,
+      caseSensitive: Boolean = true): Seq[StructField] = {
     // Skip removed partition fields due to partition evolution.
     partSpec.fields.asScala.toSeq.collect {
       case partField if !partField.transform().isInstanceOf[VoidTransform[_]] &&
@@ -135,9 +138,25 @@ object IcebergPartitionUtil {
           // table has a binary type partition column
           case _: Identity[_] if sourceType.typeId() != TypeID.BINARY =>
             // copy id only for identity transform because source id will be the converted column id
-            // ids for other columns will be assigned later automatically during schema evolution
-            metadataBuilder
-              .putLong(DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY, sourceField.fieldId())
+            // ids for other columns will be assigned later automatically during schema evolution.
+            // When Iceberg uses a distinct partition field name (e.g. identity("org_id",
+            // "org_id_identity")), Delta must use the Iceberg partition field id instead,
+            // which Iceberg assigns uniquely in the partition spec.
+            val partitionNameMatchesSourceColumn =
+              if (caseSensitive) {
+                partField.name() == sourceColumnName
+              } else {
+                partField.name().equalsIgnoreCase(sourceColumnName)
+              }
+            val deltaColumnMappingId =
+              if (partitionNameMatchesSourceColumn) {
+                sourceField.fieldId()
+              } else {
+                partField.fieldId()
+              }
+            metadataBuilder.putLong(
+              DeltaColumnMapping.COLUMN_MAPPING_METADATA_ID_KEY,
+              deltaColumnMappingId.toLong)
             ("", TypeUtil.visit(sourceType, new TypeToSparkTypeWithCustomCast(castTimeType)))
 
           case Timestamps.MICROS_TO_YEAR | Dates.YEAR =>
