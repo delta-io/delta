@@ -2474,6 +2474,15 @@ trait DeltaErrorsBase
       Array(key, value))
   }
 
+  def invalidProtocolVersionForUpgrade(
+      versionType: String,
+      requestedVersion: Int,
+      supportedVersions: Seq[Int]): Throwable = {
+    new DeltaIllegalArgumentException(
+      errorClass = "DELTA_INVALID_PROTOCOL_VERSION_FOR_UPGRADE",
+      Array(versionType, requestedVersion.toString, supportedVersions.sorted.mkString(", ")))
+  }
+
   def protocolChangedException(
       conflictingCommit: Option[CommitInfo]): io.delta.exceptions.ProtocolChangedException = {
     val additionalInfo = conflictingCommit.map { v =>

@@ -1736,6 +1736,12 @@
     ],
     "sqlState" : "KD004"
   },
+  "DELTA_INVALID_PROTOCOL_VERSION_FOR_UPGRADE" : {
+    "message" : [
+      "Protocol <versionType> version <requestedVersion> is not supported. Supported versions are: <supportedVersions>. Use one of the supported versions when calling upgradeTableProtocol or setting delta.min<versionType>Version."
+    ],
+    "sqlState" : "KD004"
+  },
   "DELTA_INVALID_PROTOCOL_VERSION" : {
     "message" : [
       "Unsupported Delta protocol version: table \"<tableNameOrPath>\" requires reader version <readerRequired> and writer version <writerRequired>, but Delta Lake \"<deltaVersion>\" supports reader versions <supportedReaders> and writer versions <supportedWriters>. Please upgrade to a newer release."
