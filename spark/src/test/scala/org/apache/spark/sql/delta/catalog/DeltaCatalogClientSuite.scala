@@ -17,11 +17,12 @@
 package org.apache.spark.sql.delta.catalog
 
 import java.io.IOException
-import java.net.{InetSocketAddress, URLDecoder}
+import java.net.{InetSocketAddress, URI, URLDecoder}
 import java.nio.charset.StandardCharsets
 
 import scala.collection.JavaConverters._
 
+import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import com.sun.net.httpserver.{HttpExchange, HttpServer}
 import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import org.apache.hadoop.fs.Path
@@ -29,6 +30,8 @@ import org.apache.hadoop.fs.Path
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach}
 
 import org.apache.spark.sql.QueryTest
+import org.apache.spark.sql.catalyst.TableIdentifier
+import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType}
 import org.apache.spark.sql.connector.catalog.{
   Identifier,
   Table,
@@ -38,8 +41,10 @@ import org.apache.spark.sql.connector.catalog.{
 }
 import org.apache.spark.sql.delta.catalog.credentials.UCDeltaRestCatalogApiCredentialConf
 import org.apache.spark.sql.delta.catalog.credentials.storage.AwsVendedTokenProvider
+import org.apache.spark.sql.delta.{CatalogOwnedTableFeature, DeltaLog, DummySnapshot}
+import org.apache.spark.sql.delta.actions.{Metadata, Protocol}
 import org.apache.spark.sql.delta.test.DeltaSQLCommandTest
-import org.apache.spark.sql.types.StructType
+import org.apache.spark.sql.types.{ArrayType, IntegerType, LongType, StringType, StructType}
 import org.apache.spark.sql.util.CaseInsensitiveStringMap
 
 class DeltaCatalogClientSuite
@@ -54,6 +59,7 @@ class DeltaCatalogClientSuite
   private var handler: HttpExchange => Unit = _
   private var pathCredentialsHandler: HttpExchange => Unit = _
   private var credentialRequestCount: Int = _
+  private val objectMapper = new ObjectMapper()
 
   override def beforeAll(): Unit = {
     super.beforeAll()
@@ -396,6 +402,273 @@ class DeltaCatalogClientSuite
     }
   }
 
+  test("prepareCreateTable uses UC Delta Rest Catalog API staging response for managed tables") {
+    handler = exchange => exchange.getRequestURI.getPath match {
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/staging-tables" =>
+        sendJson(exchange, 200,
+          """{
+            |  "table-id": "11111111-1111-1111-1111-111111111111",
+            |  "table-type": "MANAGED",
+            |  "location": "s3://bucket/table",
+            |  "storage-credentials": [
+            |    {
+            |      "prefix": "s3://bucket/table",
+            |      "operation": "READ_WRITE",
+            |      "config": {
+            |        "s3.access-key-id": "ak",
+            |        "s3.secret-access-key": "sk",
+            |        "s3.session-token": "st"
+            |      }
+            |    }
+            |  ],
+            |  "required-protocol": {
+            |    "min-reader-version": 3,
+            |    "min-writer-version": 7,
+            |    "reader-features": ["catalogManaged"],
+            |    "writer-features": ["catalogManaged"]
+            |  },
+            |  "required-properties": {
+            |    "delta.enableDeletionVectors": "true",
+            |    "io.unitycatalog.tableId": "11111111-1111-1111-1111-111111111111"
+            |  }
+            |}""".stripMargin)
+      case path =>
+        fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+    }
+
+    val prepared = withUCDeltaRestCatalogApi { catalog =>
+      catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.MANAGED,
+        location = None).get
+    }
+
+    assert(prepared.location.toString === "s3://bucket/table")
+    assert(prepared.tableProperties(TableCatalog.PROP_IS_MANAGED_LOCATION) === "true")
+    assert(prepared.tableProperties("delta.feature.catalogManaged") === "supported")
+    assert(prepared.tableProperties("delta.enableDeletionVectors") === "true")
+    assert(prepared.tableProperties("io.unitycatalog.tableId") ===
+      "11111111-1111-1111-1111-111111111111")
+    assert(prepared.storageProperties("fs.s3a.access.key") === "ak")
+  }
+
+  test("prepareCreateTable allows local managed staging without credentials") {
+    handler = exchange => exchange.getRequestURI.getPath match {
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/staging-tables" =>
+        sendJson(exchange, 200,
+          """{
+            |  "table-id": "11111111-1111-1111-1111-111111111111",
+            |  "table-type": "MANAGED",
+            |  "location": "/tmp/uc-managed-tables/default/tbl",
+            |  "storage-credentials": [],
+            |  "required-properties": {}
+            |}""".stripMargin)
+      case path =>
+        fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+    }
+
+    val prepared = withUCDeltaRestCatalogApi { catalog =>
+      catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.MANAGED,
+        location = None).get
+    }
+
+    assert(prepared.location.toString === "/tmp/uc-managed-tables/default/tbl")
+    assert(prepared.storageProperties.isEmpty)
+  }
+
+  test("prepareCreateTable does not intercept unsupported create shapes") {
+    handler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API request path: ${exchange.getRequestURI.getPath}")
+
+    withUCDeltaRestCatalogApi { catalog =>
+      assert(catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.MANAGED,
+        location = Some(new URI("file:/tmp/user-location"))).isEmpty)
+      assert(catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.EXTERNAL,
+        location = None).isEmpty)
+      assert(catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.EXTERNAL,
+        location = Some(new URI("file:/tmp/external"))).isEmpty)
+      assert(catalog.prepareCreateTable(
+        Identifier.of(Array("nested", "default"), "tbl"),
+        CatalogTableType.MANAGED,
+        location = None).isEmpty)
+    }
+  }
+
+  test("prepareCreateTable returns None when UC Delta Rest Catalog API is disabled") {
+    handler = exchange =>
+      fail(s"Unexpected UC Delta Rest Catalog API request path: ${exchange.getRequestURI.getPath}")
+
+    withSQLConf(
+      "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+      "spark.sql.catalog.uc.uri" -> serverUri,
+      "spark.sql.catalog.uc.token" -> "mock-token") {
+      val catalog = DeltaCatalogClient(new TestDelegateCatalog, spark)
+      assert(catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.MANAGED,
+        location = None).isEmpty)
+    }
+
+  }
+
+  test("prepareCreateTable propagates staging errors and rejects table id mismatches") {
+    handler = exchange => exchange.getRequestURI.getPath match {
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/staging-tables" =>
+        sendJson(exchange, 500, """{"error_code":"INTERNAL_ERROR"}""")
+      case path =>
+        fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+    }
+
+    val stagingError = intercept[IOException] {
+      withUCDeltaRestCatalogApi { catalog =>
+        catalog.prepareCreateTable(
+          Identifier.of(Array("default"), "tbl"),
+          CatalogTableType.MANAGED,
+          location = None)
+      }
+    }
+    assert(stagingError.getMessage.contains("Failed to create staging table"))
+    assert(stagingError.getMessage.contains("HTTP 500"))
+
+    handler = exchange => exchange.getRequestURI.getPath match {
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/staging-tables" =>
+        sendJson(exchange, 200,
+          """{
+            |  "table-id": "11111111-1111-1111-1111-111111111111",
+            |  "table-type": "MANAGED",
+            |  "location": "/tmp/uc-managed-tables/default/tbl",
+            |  "storage-credentials": [],
+            |  "required-properties": {
+            |    "io.unitycatalog.tableId": "22222222-2222-2222-2222-222222222222"
+            |  }
+            |}""".stripMargin)
+      case path =>
+        fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+    }
+
+    val tableIdError = intercept[IllegalArgumentException] {
+      withUCDeltaRestCatalogApi { catalog =>
+        catalog.prepareCreateTable(
+          Identifier.of(Array("default"), "tbl"),
+          CatalogTableType.MANAGED,
+          location = None)
+      }
+    }
+    assert(tableIdError.getMessage.contains("does not match"))
+    assert(tableIdError.getMessage.contains("io.unitycatalog.tableId"))
+  }
+
+  test("createTable fails when called without a prepared UC Delta Rest Catalog API create") {
+    val error = intercept[IllegalStateException] {
+      withSQLConf(
+        "spark.sql.catalog.uc" -> "io.unitycatalog.spark.UCSingleCatalog",
+        "spark.sql.catalog.uc.uri" -> serverUri,
+        "spark.sql.catalog.uc.token" -> "mock-token") {
+        val catalog = DeltaCatalogClient(new TestDelegateCatalog, spark)
+        catalog.createTable(Identifier.of(Array("default"), "tbl"), null, null)
+      }
+    }
+
+    assert(error.getMessage.contains("UC Delta Rest Catalog API createTable is not available"))
+  }
+
+  test("createTable posts Delta metadata to the expected UC namespace") {
+    var requestJson: JsonNode = null
+    var expectedLocation: String = null
+    val tableLocation = "file:/tmp/uc-created-table"
+    handler = exchange => exchange.getRequestURI.getPath match {
+      case "/api/2.1/unity-catalog/delta/v1/catalogs/uc/schemas/default/tables" =>
+        assert(exchange.getRequestMethod === "POST")
+        requestJson = objectMapper.readTree(readRequestBody(exchange))
+        sendJson(exchange, 200, loadTableResponseJson(tableLocation))
+      case path =>
+        fail(s"Unexpected UC Delta Rest Catalog API request path: $path")
+    }
+
+    withTempDir { dir =>
+      val schema = new StructType()
+        .add("id", LongType)
+        .add("payload", new StructType()
+          .add("name", StringType, nullable = true)
+          .add("scores", ArrayType(IntegerType)))
+        .add("p", StringType)
+      val metadata = Metadata(
+        schemaString = schema.json,
+        partitionColumns = Seq("p"),
+        configuration = Map("user.prop" -> "kept"))
+      val tablePath = new Path(dir.getCanonicalPath)
+      expectedLocation = dir.toURI.toString
+      val snapshot = new DummySnapshot(
+        new Path(tablePath, "_delta_log"),
+        DeltaLog.forTable(spark, tablePath),
+        metadata,
+        Some(Protocol.forTableFeature(CatalogOwnedTableFeature)))
+      val table = CatalogTable(
+        identifier = TableIdentifier("tbl", Some("default"), Some("uc")),
+        tableType = CatalogTableType.MANAGED,
+        storage = CatalogStorageFormat.empty.copy(locationUri = Some(dir.toURI)),
+        schema = schema,
+        provider = Some("delta"),
+        partitionColumnNames = Seq("p"),
+        properties = Map(
+          TableCatalog.PROP_PROVIDER -> "delta",
+          TableCatalog.PROP_COMMENT -> "ignored-property-comment",
+          TableCatalog.PROP_LOCATION -> "ignored-location",
+          TableCatalog.PROP_IS_MANAGED_LOCATION -> "true",
+          "path" -> "ignored-path",
+          "option.path" -> "ignored-option-path"),
+        comment = Some("table comment"))
+
+      withUCDeltaRestCatalogApi { catalog =>
+        catalog.createTable(Identifier.of(Array("default"), "tbl"), table, snapshot)
+      }
+    }
+
+    assert(requestJson.get("name").asText === "tbl")
+    assert(requestJson.get("location").asText === expectedLocation)
+    assert(requestJson.get("table-type").asText === "MANAGED")
+    assert(requestJson.get("data-source-format").asText === "DELTA")
+    assert(requestJson.get("comment").asText === "table comment")
+
+    val protocol = requestJson.get("protocol")
+    assert(protocol.get("min-reader-version").asInt === 3)
+    assert(protocol.get("min-writer-version").asInt === 7)
+    assert(protocol.get("reader-features").elements().asScala.map(_.asText).toSeq ===
+      Seq("catalogManaged", "vacuumProtocolCheck"))
+    assert(protocol.get("writer-features").elements().asScala.map(_.asText).toSeq ===
+      Seq("catalogManaged", "inCommitTimestamp", "vacuumProtocolCheck"))
+
+    assert(requestJson.get("partition-columns").elements().asScala.map(_.asText).toSeq === Seq("p"))
+
+    val fields = requestJson.get("columns").get("fields")
+    assert(fields.size() === 3)
+    assert(fields.get(0).get("name").asText === "id")
+    assert(deltaTypeName(fields.get(0).get("type")) === "long")
+    assert(fields.get(1).get("name").asText === "payload")
+    assert(deltaTypeName(fields.get(1).get("type")) === "struct")
+    assert(deltaTypeName(fields.get(1).get("type").get("fields").get(1).get("type")) === "array")
+
+    val properties = requestJson.get("properties")
+    assert(properties.get("user.prop").asText === "kept")
+    Seq(
+      TableCatalog.PROP_PROVIDER,
+      TableCatalog.PROP_COMMENT,
+      TableCatalog.PROP_LOCATION,
+      TableCatalog.PROP_IS_MANAGED_LOCATION,
+      "path",
+      "option.path").foreach { key =>
+      assert(!properties.has(key), s"CreateTableRequest should not include $key")
+    }
+  }
+
   private def loadWithUCDeltaRestCatalogApi(): V1Table = {
     withUCDeltaRestCatalogApi { catalog =>
       catalog.loadTable(Identifier.of(Array("default"), "tbl")).get.asInstanceOf[V1Table]
@@ -492,6 +765,19 @@ class DeltaCatalogClientSuite
         }
         key -> value
       }.toMap
+  }
+
+  private def readRequestBody(exchange: HttpExchange): String = {
+    val input = exchange.getRequestBody
+    try {
+      new String(input.readAllBytes(), StandardCharsets.UTF_8)
+    } finally {
+      input.close()
+    }
+  }
+
+  private def deltaTypeName(deltaType: JsonNode): String = {
+    if (deltaType.isTextual) deltaType.asText else deltaType.get("type").asText
   }
 
   private def sendJson(exchange: HttpExchange, status: Int, body: String): Unit = {

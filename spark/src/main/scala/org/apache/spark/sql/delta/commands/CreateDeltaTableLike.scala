@@ -91,14 +91,14 @@ trait CreateDeltaTableLike extends SQLConfHelper {
       snapshot: Snapshot,
       query: Option[LogicalPlan],
       didNotChangeMetadata: Boolean,
-      createTableFunc: Option[CatalogTable => Unit] = None
+      createTableFunc: Option[(CatalogTable, Snapshot) => Unit] = None
   ): Unit = {
     val cleaned = cleanupTableDefinition(spark, table, snapshot)
     operation match {
       case _ if tableByPath => // do nothing with the metastore if this is by path
       case TableCreationModes.Create =>
         if (createTableFunc.isDefined) {
-          createTableFunc.get.apply(cleaned)
+          createTableFunc.get.apply(cleaned, snapshot)
         } else {
           spark.sessionState.catalog.createTable(
             cleaned,
@@ -120,7 +120,7 @@ trait CreateDeltaTableLike extends SQLConfHelper {
           case Some(createFunc) =>
             // This is the new missing-table path where creation is delegated through the V2
             // catalog plugin (for example Unity Catalog) instead of SessionCatalog.createTable().
-            createFunc(cleaned)
+            createFunc(cleaned, snapshot)
           case None =>
             spark.sessionState.catalog.createTable(
               cleaned,

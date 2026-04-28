@@ -16,12 +16,14 @@
 
 package org.apache.spark.sql.delta.catalog
 
-import java.util.{List => JList, Map => JMap}
+import java.util.{Collections, List => JList, Map => JMap}
 
 import scala.collection.JavaConverters._
 
+import com.fasterxml.jackson.core.`type`.TypeReference
 import io.unitycatalog.client.delta.model
 
+import org.apache.spark.sql.delta.util.JsonUtils
 import org.apache.spark.sql.types.{
   ArrayType,
   DataType,
@@ -34,9 +36,51 @@ import org.apache.spark.sql.types.{
 }
 
 private[catalog] object UCDeltaRestCatalogApiSchemaConverter {
+  private val MetadataMapType = new TypeReference[JMap[String, Object]] {}
 
   def toSparkType(schema: model.StructType): StructType = {
     StructType(schema.getFields.asScala.map(toSparkField).toSeq)
+  }
+
+  def toDeltaType(schema: StructType): model.StructType = {
+    new model.StructType()
+      .fields(schema.fields.map(toDeltaField).toSeq.asJava)
+  }
+
+  private def toDeltaField(field: StructField): model.StructField = {
+    new model.StructField()
+      .name(field.name)
+      .`type`(toDeltaType(field.dataType))
+      .nullable(field.nullable)
+      .metadata(toDeltaMetadata(field.metadata))
+  }
+
+  private def toDeltaType(dataType: DataType): model.DeltaType = dataType match {
+    case struct: StructType =>
+      toDeltaType(struct)
+    case ArrayType(elementType, containsNull) =>
+      new model.ArrayType()
+        .elementType(toDeltaType(elementType))
+        .containsNull(containsNull)
+    case MapType(keyType, valueType, valueContainsNull) =>
+      new model.MapType()
+        .keyType(toDeltaType(keyType))
+        .valueType(toDeltaType(valueType))
+        .valueContainsNull(valueContainsNull)
+    case decimal: DecimalType =>
+      new model.DecimalType()
+        .precision(decimal.precision)
+        .scale(decimal.scale)
+    case primitive =>
+      new model.PrimitiveType().`type`(primitive.typeName)
+  }
+
+  private def toDeltaMetadata(metadata: Metadata): JMap[String, Object] = {
+    if (metadata == null || metadata.isEmpty) {
+      Collections.emptyMap()
+    } else {
+      JsonUtils.mapper.readValue(metadata.json, MetadataMapType)
+    }
   }
 
   private def toSparkField(field: model.StructField): StructField = {

@@ -380,7 +380,7 @@ class DeltaCreateTableLikeSuite extends QueryTest
             snapshot,
             query = None,
             didNotChangeMetadata = true,
-            createTableFunc = Some((_: CatalogTable) => {
+            createTableFunc = Some((_: CatalogTable, _: Snapshot) => {
               createCallbackCalls += 1
             }))
         }

@@ -22,14 +22,20 @@ import java.util.Locale
 
 import scala.collection.JavaConverters._
 
+import io.delta.storage.commit.uccommitcoordinator.UCCommitCoordinatorClient.UC_TABLE_ID_KEY
 import io.delta.storage.commit.uccommitcoordinator.{UCClient, UCTokenBasedRestClient}
 import io.unitycatalog.client.ApiException
 import io.unitycatalog.client.auth.TokenProvider
 import io.unitycatalog.client.delta.model.{
+  CreateTableRequest,
   CredentialOperation,
   CredentialsResponse,
+  DataSourceFormat => DeltaDataSourceFormat,
+  DeltaProtocol => UCDeltaRestCatalogApiProtocol,
   StorageCredential,
   StorageCredentialConfig,
+  StagingTableResponse,
+  StagingTableResponseRequiredProtocol,
   TableType => DeltaTableType
 }
 import io.unitycatalog.client.model.{
@@ -46,7 +52,9 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.catalyst.analysis.NoSuchTableException
 import org.apache.spark.sql.catalyst.TableIdentifier
 import org.apache.spark.sql.catalyst.catalog.{CatalogStorageFormat, CatalogTable, CatalogTableType, CatalogUtils}
-import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, Table, V1Table}
+import org.apache.spark.sql.connector.catalog.{CatalogPlugin, Identifier, Table, TableCatalog, V1Table}
+import org.apache.spark.sql.delta.Snapshot
+import org.apache.spark.sql.delta.actions.Protocol
 import org.apache.spark.sql.delta.catalog.credentials.CredPropsUtil
 import org.apache.spark.sql.delta.catalog.credentials.fs.CredScopedFileSystem
 import org.apache.spark.sql.delta.coordinatedcommits.{
@@ -54,6 +62,20 @@ import org.apache.spark.sql.delta.coordinatedcommits.{
   UCTokenBasedRestClientFactory
 }
 import org.apache.spark.sql.delta.sources.DeltaSourceUtils
+
+/**
+ * Values returned by the UC Delta Rest Catalog API prepare-create step.
+ *
+ * @param location UC-chosen location where Delta should write the initial log.
+ * @param tableProperties properties added to the CatalogTable so the Delta commit uses the
+ *                        server-required protocol/features and UC table id.
+ * @param storageProperties Hadoop storage options, usually UC-vended credentials, added to the
+ *                          write options for the initial Delta commit.
+ */
+private[catalog] case class PreparedUCDeltaRestCatalogApiCreate(
+    location: URI,
+    tableProperties: Map[String, String],
+    storageProperties: Map[String, String])
 
 private class DeltaCatalogClient private (
     private val ucDeltaClient: Option[UCClient],
@@ -99,6 +121,68 @@ private class DeltaCatalogClient private (
         // UC Delta Rest Catalog API only supports catalog.schema.table identifiers for named
         // tables.
         None
+    }
+  }
+
+  /**
+   * Prepares a UC Delta Rest Catalog API-backed CREATE TABLE before Delta writes the initial log.
+   *
+   * For managed tables, this allocates a staging table in UC and returns the server-chosen
+   * location, required table properties, and any storage credentials needed for the initial
+   * commit. If the later Delta commit or UC Delta Rest Catalog API finalization fails, UC is
+   * responsible for cleaning up the orphaned staging state.
+   */
+  def prepareCreateTable(
+      ident: Identifier,
+      tableType: CatalogTableType,
+      location: Option[URI]): Option[PreparedUCDeltaRestCatalogApiCreate] = {
+    ucDeltaClient match {
+      case Some(client) if ident.namespace().length == 1 =>
+        val schemaName = ident.namespace().head
+        val tableName = ident.name()
+        (tableType, location) match {
+          case (CatalogTableType.MANAGED, None) =>
+            val staging = client.createStagingTable(catalogName, schemaName, tableName)
+            val stagingLocation = CatalogUtils.stringToURI(staging.getLocation)
+            Some(PreparedUCDeltaRestCatalogApiCreate(
+              location = stagingLocation,
+              tableProperties = toTableProperties(staging),
+              storageProperties = toCredentialProperties(
+                staging.getLocation,
+                Option(staging.getStorageCredentials).map(_.asScala.toSeq).getOrElse(Nil),
+                stagingLocation.getScheme,
+                staging.getTableId.toString)))
+          case _ =>
+            None
+        }
+      case _ =>
+        // UC Delta Rest Catalog API only supports catalog.schema.table identifiers for create.
+        None
+    }
+  }
+
+  /**
+   * Finalizes a UC Delta Rest Catalog API-backed CREATE TABLE after Delta has written the
+   * initial log.
+   *
+   * AbstractDeltaCatalog calls this only for a create that previously returned Some from
+   * prepareCreateTable, so this method treats missing UC Delta Rest Catalog API support as an
+   * internal routing error.
+   */
+  def createTable(
+      ident: Identifier,
+      table: CatalogTable,
+      snapshot: Snapshot): Unit = {
+    ucDeltaClient match {
+      case Some(client) if ident.namespace().length == 1 =>
+        client.createTable(
+          catalogName,
+          ident.namespace().head,
+          toCreateTableRequest(ident, table, snapshot))
+      case _ =>
+        // Safety net: AbstractDeltaCatalog only calls this after prepareCreateTable returned Some.
+        throw new IllegalStateException(
+          s"UC Delta Rest Catalog API createTable is not available for $ident.")
     }
   }
 
@@ -412,6 +496,83 @@ private[delta] object DeltaCatalogClient {
             s"No storage credential matched UC Delta Rest Catalog API location $location.")
         }
     }
+  }
+
+  private def toTableProperties(staging: StagingTableResponse): Map[String, String] = {
+    val stagingTableId = staging.getTableId.toString
+    val requiredProperties = Option(staging.getRequiredProperties)
+      .map(_.asScala.collect { case (key, value) if value != null => key -> value }.toMap)
+      .getOrElse(Map.empty)
+    requiredProperties.get(UC_TABLE_ID_KEY).foreach { requiredTableId =>
+      if (requiredTableId != stagingTableId) {
+        throw new IllegalArgumentException(
+          s"UC Delta Rest Catalog API staging response table id $stagingTableId does not match " +
+            s"required property $UC_TABLE_ID_KEY=$requiredTableId.")
+      }
+    }
+    // Later maps win so UC stays authoritative for table identity and managed-location markers.
+    protocolFeatureProperties(staging.getRequiredProtocol) ++
+      requiredProperties ++
+      Map(
+        TableCatalog.PROP_IS_MANAGED_LOCATION -> "true",
+        UC_TABLE_ID_KEY -> stagingTableId)
+  }
+
+  private def protocolFeatureProperties(
+      protocol: StagingTableResponseRequiredProtocol): Map[String, String] = {
+    Option(protocol).map { p =>
+      (Option(p.getReaderFeatures).map(_.asScala).getOrElse(Nil) ++
+        Option(p.getWriterFeatures).map(_.asScala).getOrElse(Nil))
+        .map(feature => s"delta.feature.$feature" -> "supported")
+        .toMap
+    }.getOrElse(Map.empty)
+  }
+
+  /**
+   * Builds the final UC Delta Rest Catalog API createTable request from the post-commit Delta
+   * state.
+   *
+   * The table supplies catalog-facing fields: name, location, table type, and comment. The
+   * committed snapshot supplies Delta-owned fields: schema, partitions, protocol, and table
+   * configuration, because the Delta log is the source of truth after the initial commit.
+   */
+  private def toCreateTableRequest(
+      ident: Identifier,
+      table: CatalogTable,
+      snapshot: Snapshot): CreateTableRequest = {
+    new CreateTableRequest()
+      .name(ident.name())
+      .location(table.storage.locationUri
+        .getOrElse {
+          throw new IllegalArgumentException(
+            "UC Delta Rest Catalog API createTable requires a location for " +
+              s"${ident.toString}.")
+        }
+        .toString)
+      .tableType(toDeltaTableType(table.tableType))
+      .dataSourceFormat(DeltaDataSourceFormat.DELTA)
+      .comment(table.comment.orNull)
+      .columns(UCDeltaRestCatalogApiSchemaConverter.toDeltaType(snapshot.schema))
+      .partitionColumns(snapshot.metadata.partitionColumns.asJava)
+      .protocol(toDeltaProtocol(snapshot.protocol))
+      .properties(snapshot.metadata.configuration.asJava)
+  }
+
+  private def toDeltaTableType(tableType: CatalogTableType): DeltaTableType = tableType match {
+    case CatalogTableType.MANAGED => DeltaTableType.MANAGED
+    case CatalogTableType.EXTERNAL => DeltaTableType.EXTERNAL
+    case other =>
+      throw new IllegalArgumentException(
+        s"Unsupported UC Delta Rest Catalog API table type: $other")
+  }
+
+  private def toDeltaProtocol(protocol: Protocol): UCDeltaRestCatalogApiProtocol = {
+    new UCDeltaRestCatalogApiProtocol()
+      .minReaderVersion(protocol.minReaderVersion)
+      .minWriterVersion(protocol.minWriterVersion)
+      // Keep wire JSON deterministic even though Protocol stores features as sets.
+      .readerFeatures(protocol.readerFeatureNames.toSeq.sorted.asJava)
+      .writerFeatures(protocol.writerFeatureNames.toSeq.sorted.asJava)
   }
 
   private def getStorageCredentials(credentials: CredentialsResponse): Seq[StorageCredential] = {

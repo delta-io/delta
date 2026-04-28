@@ -180,7 +180,6 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
         base
       }
     }
-    var locUriOpt = location.map(CatalogUtils.stringToURI)
     val existingTableOpt = getExistingTableIfExists(id, Some(ident), operation)
     // PROP_IS_MANAGED_LOCATION indicates that the table location is not user-specified but
     // system-generated. The table should be created as managed table in this case.
@@ -195,10 +194,24 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     } else {
       CatalogTableType.EXTERNAL
     }
+    // operation.isCreate covers CREATE and CREATE OR REPLACE when no existing table was found.
+    val ucDeltaApiCreate = if (isUnityCatalog && existingTableOpt.isEmpty && operation.isCreate) {
+      deltaCatalogClient.prepareCreateTable(
+        ident,
+        tableType,
+        location.map(CatalogUtils.stringToURI))
+    } else {
+      None
+    }
+    val locUriOpt = ucDeltaApiCreate.map(_.location).orElse(location.map(CatalogUtils.stringToURI))
+    val tablePropertiesWithUCDeltaApi =
+      tableProperties ++ ucDeltaApiCreate.map(_.tableProperties).getOrElse(Map.empty)
+    val writeOptionsWithUCDeltaApi =
+      writeOptions ++ ucDeltaApiCreate.map(_.storageProperties).getOrElse(Map.empty)
     val loc = locUriOpt
       .orElse(existingTableOpt.flatMap(_.storage.locationUri))
       .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
-    val storage = DataSource.buildStorageFormatFromOptions(writeOptions)
+    val storage = DataSource.buildStorageFormatFromOptions(writeOptionsWithUCDeltaApi)
       .copy(locationUri = Option(loc))
     val commentOpt = Option(allTableProperties.get("comment"))
 
@@ -211,7 +224,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       provider = Some(DeltaSourceUtils.ALT_NAME),
       partitionColumnNames = newPartitionColumns,
       bucketSpec = newBucketSpec,
-      properties = tableProperties,
+      properties = tablePropertiesWithUCDeltaApi,
       comment = commentOpt
     )
 
@@ -225,7 +238,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     val writer = sourceQuery.map { df =>
       val catalogTbl = Some(tableDesc)
       // For safety, only extract the file system options here, to create deltaLog.
-      val fileSystemOptions = writeOptions.filter { case (k, _) =>
+      val fileSystemOptions = writeOptionsWithUCDeltaApi.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
       val deltaOptions = new DeltaOptions(
@@ -279,9 +292,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       //       Before this bug is fixed, we should only call the catalog plugin API to create tables
       //       if UC is enabled to replace `V2SessionCatalog`.
       createTableFunc = Option.when(isUnityCatalog) {
-        v1Table => {
-          val t = V1Table(v1Table)
-          super.createTable(ident, t.columns(), t.partitioning, t.properties)
+        (v1Table, snapshot) => {
+          ucDeltaApiCreate match {
+            case Some(_) =>
+              deltaCatalogClient.createTable(ident, v1Table, snapshot)
+            case None =>
+              val t = V1Table(v1Table)
+              super.createTable(ident, t.columns(), t.partitioning, t.properties)
+          }
         }
       }).run(spark)
 
