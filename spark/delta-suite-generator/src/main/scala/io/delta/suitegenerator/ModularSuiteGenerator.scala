@@ -158,7 +158,8 @@ object ModularSuiteGenerator {
     var suiteName = baseSuitePrefix + mixinSuffix
 
     // Truncate the name and replace with a consistent hash if line becomes longer than the limit
-    val maxSuiteNameLength = SUITE_NAME_CHAR_LIMIT - "Suite".length
+    val maxSuiteNameLength =
+      SUITE_NAME_CHAR_LIMIT - "Suite".length - s"${testGroup.packageName}.".length
     if (suiteName.length > maxSuiteNameLength) {
       // scalastyle:off println
       println(s"WARNING: Suite name is too long, truncating and hashing to fit within the limit. " +

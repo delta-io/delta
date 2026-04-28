@@ -23,7 +23,7 @@ import org.scalatest.funsuite.AnyFunSuite
 
 class ValidateGeneratedSuites extends AnyFunSuite {
   test("Generated suites are not manually modified") {
-    // This test must be executed from the repository root for this relative path to work
+    // This test must be executed from the repository root for this relative path to work.
     val outputDir = Paths.get(ModularSuiteGenerator.OUTPUT_PATH)
     val suitesValidator = new SuitesValidator(outputDir)
     ModularSuiteGenerator.generateSuites(suitesValidator)
