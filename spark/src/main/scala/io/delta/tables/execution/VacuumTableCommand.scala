@@ -27,7 +27,7 @@ import org.apache.spark.sql.delta.commands.DeltaCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand
 import org.apache.spark.sql.delta.commands.VacuumCommand.getDeltaTable
 import org.apache.spark.sql.execution.command.{LeafRunnableCommand, RunnableCommand}
-import org.apache.spark.sql.types.StringType
+import org.apache.spark.sql.types.{LongType, StringType}
 
 /**
  * The `vacuum` command implementation for Spark SQL. Example SQL:
@@ -45,8 +45,10 @@ case class VacuumTableCommand(
     dryRun: Boolean,
     vacuumType: Option[String]) extends RunnableCommand with UnaryNode with DeltaCommand {
 
-  override val output: Seq[Attribute] =
-    Seq(AttributeReference("path", StringType, nullable = true)())
+  override val output: Seq[Attribute] = Seq(
+    AttributeReference("path", StringType, nullable = true)(),
+    AttributeReference("fileSize", LongType, nullable = true)()
+  )
 
   override protected def withNewChildInternal(newChild: LogicalPlan): LogicalPlan =
     copy(child = newChild)
