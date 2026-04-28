@@ -850,6 +850,21 @@ trait DeltaDMLInMemoryTestUtils
     df.writeTo(tableSQLIdentifier).append()
     assertNoParquetFiles(tableSQLIdentifier)
   }
+
+  /**
+   * Override errorContains to handle known error message differences between Delta V1 and DSv2.
+   * Eventually we'd want to migrate all usage of errorContains (deprecated) to checkError.
+   */
+  override protected def errorContains(errMsg: String, str: String): Unit = {
+    val mapped = str.toLowerCase(java.util.Locale.ROOT) match {
+      // Delta says "cannot resolve X in UPDATE/INSERT clause", Spark says "cannot be resolved"
+      case s if s.startsWith("cannot resolve") => "cannot be resolved"
+      // Delta says "No such struct field X in Y", Spark says "cannot be resolved"
+      case s if s.startsWith("no such struct field") => "cannot be resolved"
+      case _ => str
+    }
+    super.errorContains(errMsg, mapped)
+  }
 }
 
 trait DeltaDMLTestUtilsPathBased extends DeltaDMLTestUtils {

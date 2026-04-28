@@ -233,8 +233,10 @@ object SuiteGeneratorConfig {
             "MergeIntoBasicTests",
             "MergeIntoAnalysisExceptionTests",
             "MergeIntoNotMatchedBySourceSuite",
-            "MergeIntoUnlimitedMergeClausesTests"
-          ),
+            "MergeIntoUnlimitedMergeClausesTests",
+            "MergeIntoSchemaEvolutionCoreTests",
+            "MergeIntoSchemaEvolutionEdgeTests",
+            "MergeIntoSchemaEvolutionNotMatchedBySourceTests"),
           List(List(Dims.MERGE_SQL, Dims.V2_IN_MEMORY_TABLE_MERGE, Dims.NAME_BASED))
         ),
         TestConfig(
