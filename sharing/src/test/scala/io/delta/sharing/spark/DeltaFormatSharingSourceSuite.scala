@@ -2393,7 +2393,7 @@ class DeltaFormatSharingSourceSuite
           }
           assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
           streamingCalls.foreach { case (_, queryType, fileIdHash) =>
-            assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_SHA256),
+            assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_DELTA),
               s"Expected SHA256 for boundary legacy offset but got $fileIdHash in $queryType")
           }
         }
@@ -2488,12 +2488,12 @@ class DeltaFormatSharingSourceSuite
           // The first streaming call should use MD5 (mid-version legacy),
           // subsequent calls after transition should use SHA256.
           val firstCall = streamingCalls.head
-          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_MD5),
-            s"Expected MD5 for mid-version legacy offset but got ${firstCall._3}")
+          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_PARQUET),
+            s"Expected PARQUET for mid-version legacy offset but got ${firstCall._3}")
           if (streamingCalls.size > 1) {
             streamingCalls.tail.foreach { case (_, queryType, fileIdHash) =>
-              assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_SHA256),
-                s"Expected SHA256 after transition but got $fileIdHash in $queryType")
+              assert(fileIdHash.contains(DeltaSharingRestClient.FILEIDHASH_DELTA),
+                s"Expected DELTA after transition but got $fileIdHash in $queryType")
             }
           }
         }
@@ -2598,8 +2598,8 @@ class DeltaFormatSharingSourceSuite
           }
           assert(streamingCalls.nonEmpty, "Expected at least one streaming getFiles call")
           val firstCall = streamingCalls.head
-          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_MD5),
-            s"Expected MD5 for priming getBatch with both-legacy offsets but got ${firstCall._3}")
+          assert(firstCall._3.contains(DeltaSharingRestClient.FILEIDHASH_PARQUET),
+            s"Expected PARQUET for priming getBatch with both-legacy offsets but got ${firstCall._3}")
         }
       }
     }
@@ -2815,8 +2815,8 @@ class DeltaFormatSharingSourceSuite
     )
   }
 
-  private val MD5 = DeltaSharingRestClient.FILEIDHASH_MD5
-  private val SHA256 = DeltaSharingRestClient.FILEIDHASH_SHA256
+  private val MD5 = DeltaSharingRestClient.FILEIDHASH_PARQUET
+  private val SHA256 = DeltaSharingRestClient.FILEIDHASH_DELTA
 
   test("determineVersionAndHashFromGetBatch: all branches") {
     withTempDir { tempDir =>
