@@ -856,10 +856,12 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     "(truncated log)") {
     // _last_checkpoint=20, only deltas v20-v24 exist (no checkpoints, no files before v20)
     // Fallback finds nothing, re-lists from v0, but deltas start at v20 (table truncated)
+    // The helper returns Optional.empty() because it can't construct a valid LogSegment,
+    // so the caller throws missingCheckpoint for the originally-hinted version.
     testExpectedError[InvalidTableException](
       files = deltaFileStatuses(20L until 25L),
       lastCheckpointVersion = Optional.of(20L),
-      expectedErrorMessageContains = "Cannot compute snapshot. Missing delta file version 0.")
+      expectedErrorMessageContains = "Missing checkpoint at version 20")
   }
 
   test("getLogSegmentForVersion: valid _last_checkpoint - happy path regression guard") {
