@@ -449,7 +449,11 @@ class DeltaCatalogClientSuite
     assert(prepared.tableProperties("delta.enableDeletionVectors") === "true")
     assert(prepared.tableProperties("io.unitycatalog.tableId") ===
       "11111111-1111-1111-1111-111111111111")
-    assert(prepared.storageProperties("fs.s3a.access.key") === "ak")
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.S3A_CREDENTIALS_PROVIDER) ===
+      classOf[AwsVendedTokenProvider].getName)
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.UC_TABLE_OPERATION_KEY) ===
+      "READ_WRITE")
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.S3A_INIT_ACCESS_KEY) === "ak")
   }
 
   test("prepareCreateTable allows local managed staging without credentials") {
@@ -667,6 +671,47 @@ class DeltaCatalogClientSuite
       "option.path").foreach { key =>
       assert(!properties.has(key), s"CreateTableRequest should not include $key")
     }
+  }
+
+  test("prepareCreateTable uses temporary path credentials for external cloud tables") {
+    val location = "s3://bucket/external/tbl"
+    configHandler = exchange => {
+      assert(queryParams(exchange)("catalog") === "uc")
+      sendJson(exchange, 200,
+        """{
+          |  "endpoints": [
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}",
+          |    "GET /v1/catalogs/{catalog}/schemas/{schema}/tables/{table}/credentials",
+          |    "GET /v1/temporary-path-credentials"
+          |  ],
+          |  "protocol-version": "1.0"
+          |}""".stripMargin)
+    }
+    pathCredentialsHandler = exchange => {
+      credentialRequestCount += 1
+      assert(queryParams(exchange) === Map(
+        "location" -> location,
+        "operation" -> "READ_WRITE"))
+      sendJson(exchange, 200, s3CredentialsResponseJson(location, "READ_WRITE"))
+    }
+
+    val prepared = withUCDeltaRestCatalogApi { catalog =>
+      catalog.prepareCreateTable(
+        Identifier.of(Array("default"), "tbl"),
+        CatalogTableType.EXTERNAL,
+        location = Some(java.net.URI.create(location))).get
+    }
+
+    assert(credentialRequestCount === 1)
+    assert(prepared.location.toString === location)
+    assert(prepared.tableProperties.isEmpty)
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.S3A_CREDENTIALS_PROVIDER) ===
+      classOf[AwsVendedTokenProvider].getName)
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.UC_CREDENTIALS_TYPE_KEY) ===
+      UCDeltaRestCatalogApiCredentialConf.UC_CREDENTIALS_TYPE_PATH_VALUE)
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.UC_PATH_OPERATION_KEY) ===
+      "PATH_CREATE_TABLE")
+    assert(prepared.storageProperties(UCDeltaRestCatalogApiCredentialConf.UC_PATH_KEY) === location)
   }
 
   private def loadWithUCDeltaRestCatalogApi(): V1Table = {

@@ -374,14 +374,14 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
-   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API tables API.
+   * Creates a Delta staging table in Unity Catalog through the UC Delta Rest Catalog API.
    */
   @Override
   public StagingTableResponse createStagingTable(
       String catalog,
       String schema,
       String table) throws IOException {
-    ensureDeltaRestCatalogSupported("createStagingTable");
+    ensureUCDeltaRestCatalogApiSupported("createStagingTable");
     Objects.requireNonNull(catalog, "catalog must not be null.");
     Objects.requireNonNull(schema, "schema must not be null.");
     Objects.requireNonNull(table, "table must not be null.");
@@ -405,14 +405,14 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
-   * Finalizes a Delta table in Unity Catalog through the UC Delta Rest Catalog API tables API.
+   * Finalizes a Delta table in Unity Catalog through the UC Delta Rest Catalog API.
    */
   @Override
   public LoadTableResponse createTable(
       String catalog,
       String schema,
       CreateTableRequest request) throws IOException {
-    ensureDeltaRestCatalogSupported("createTable");
+    ensureUCDeltaRestCatalogApiSupported("createTable");
     Objects.requireNonNull(catalog, "catalog must not be null.");
     Objects.requireNonNull(schema, "schema must not be null.");
     Objects.requireNonNull(request, "request must not be null.");
@@ -497,18 +497,19 @@ public class UCTokenBasedRestClient implements UCClient {
   }
 
   /**
-   * Gets temporary credentials for one path through the UC Delta credential APIs.
+   * Gets temporary credentials for one path through the UC Delta Rest Catalog API.
    *
-   * <p>This method is only supported when the UC Delta Rest Catalog API config advertises temporary path
-   * credentials. It is used for raw path-based Delta access, not named table access.
+   * <p>This method is only supported when the UC Delta Rest Catalog API config advertises temporary
+   * path credentials. It is used for raw path-based Delta access and external table creates before
+   * the table exists in Unity Catalog; named table access should use {@link #getTableCredentials}.
    */
   @Override
   public CredentialsResponse getTemporaryPathCredentials(
-      String location,
-      CredentialOperation operation) throws IOException {
+      CredentialOperation operation,
+      String location) throws IOException {
     ensureUCDeltaRestCatalogTemporaryPathCredentialsSupported("getTemporaryPathCredentials");
-    Objects.requireNonNull(location, "location must not be null.");
     Objects.requireNonNull(operation, "operation must not be null.");
+    Objects.requireNonNull(location, "location must not be null.");
 
     try {
       return deltaTemporaryCredentialsApi.getTemporaryPathCredentials(location, operation);

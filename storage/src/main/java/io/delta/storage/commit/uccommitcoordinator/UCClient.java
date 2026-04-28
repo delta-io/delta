@@ -219,12 +219,14 @@ public interface UCClient extends AutoCloseable {
    *
    * <p>Unlike table credentials, path credentials are not scoped by catalog/schema/table because
    * raw path access such as {@code delta.`s3://bucket/table`} bypasses catalog resolution.
+   * External table creates also use this path before the table exists in Unity Catalog.
    */
   default CredentialsResponse getTemporaryPathCredentials(
-      String location,
-      CredentialOperation operation) throws IOException {
+      CredentialOperation operation,
+      String location) throws IOException {
     throw new UnsupportedOperationException(
-        "getTemporaryPathCredentials requires UC Delta temporary path credentials support.");
+        "getTemporaryPathCredentials requires UC Delta Rest Catalog API temporary path "
+            + "credentials support.");
   }
 
   /**
@@ -245,7 +247,8 @@ public interface UCClient extends AutoCloseable {
       String catalog,
       String schema,
       CreateTableRequest request) throws IOException {
-    throw new UnsupportedOperationException("createTable requires UC Delta Rest Catalog API support.");
+    throw new UnsupportedOperationException(
+        "createTable requires UC Delta Rest Catalog API support.");
   }
 
   /**

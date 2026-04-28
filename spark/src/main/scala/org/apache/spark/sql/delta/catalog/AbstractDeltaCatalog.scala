@@ -204,14 +204,14 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       None
     }
     val locUriOpt = ucDeltaApiCreate.map(_.location).orElse(location.map(CatalogUtils.stringToURI))
-    val tablePropertiesWithUCDeltaApi =
+    val tablePropertiesWithUCDeltaRestCatalogApi =
       tableProperties ++ ucDeltaApiCreate.map(_.tableProperties).getOrElse(Map.empty)
-    val writeOptionsWithUCDeltaApi =
+    val writeOptionsWithUCDeltaRestCatalogApi =
       writeOptions ++ ucDeltaApiCreate.map(_.storageProperties).getOrElse(Map.empty)
     val loc = locUriOpt
       .orElse(existingTableOpt.flatMap(_.storage.locationUri))
       .getOrElse(spark.sessionState.catalog.defaultTablePath(id))
-    val storage = DataSource.buildStorageFormatFromOptions(writeOptionsWithUCDeltaApi)
+    val storage = DataSource.buildStorageFormatFromOptions(writeOptionsWithUCDeltaRestCatalogApi)
       .copy(locationUri = Option(loc))
     val commentOpt = Option(allTableProperties.get("comment"))
 
@@ -224,7 +224,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
       provider = Some(DeltaSourceUtils.ALT_NAME),
       partitionColumnNames = newPartitionColumns,
       bucketSpec = newBucketSpec,
-      properties = tablePropertiesWithUCDeltaApi,
+      properties = tablePropertiesWithUCDeltaRestCatalogApi,
       comment = commentOpt
     )
 
@@ -238,7 +238,7 @@ class AbstractDeltaCatalog extends DelegatingCatalogExtension
     val writer = sourceQuery.map { df =>
       val catalogTbl = Some(tableDesc)
       // For safety, only extract the file system options here, to create deltaLog.
-      val fileSystemOptions = writeOptionsWithUCDeltaApi.filter { case (k, _) =>
+      val fileSystemOptions = writeOptionsWithUCDeltaRestCatalogApi.filter { case (k, _) =>
         DeltaTableUtils.validDeltaTableHadoopPrefixes.exists(k.startsWith)
       }
       val deltaOptions = new DeltaOptions(

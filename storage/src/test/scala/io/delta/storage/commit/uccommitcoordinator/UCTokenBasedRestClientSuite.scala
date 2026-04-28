@@ -327,8 +327,8 @@ class UCTokenBasedRestClientSuite
       new UCTokenBasedRestClient(serverUri, createTokenProvider(), Collections.emptyMap(), "main")
     try {
       val response = client.getTemporaryPathCredentials(
-        "s3://bucket/path/to/table",
-        CredentialOperation.READ)
+        CredentialOperation.READ,
+        "s3://bucket/path/to/table")
       assert(response.getStorageCredentials.size() === 1)
       assert(response.getStorageCredentials.get(0).getPrefix === "s3://bucket/path/to/table")
       assert(response.getStorageCredentials.get(0).getOperation === CredentialOperation.READ)
@@ -354,8 +354,8 @@ class UCTokenBasedRestClientSuite
     try {
       val e = intercept[UnsupportedOperationException] {
         client.getTemporaryPathCredentials(
-          "s3://bucket/path/to/table",
-          CredentialOperation.READ)
+          CredentialOperation.READ,
+          "s3://bucket/path/to/table")
       }
       assert(e.getMessage ===
         "getTemporaryPathCredentials requires UC Delta Rest Catalog API temporary path credentials " +

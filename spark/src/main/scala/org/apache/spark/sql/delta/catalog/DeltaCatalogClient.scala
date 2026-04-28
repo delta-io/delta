@@ -152,6 +152,21 @@ private class DeltaCatalogClient private (
                 Option(staging.getStorageCredentials).map(_.asScala.toSeq).getOrElse(Nil),
                 stagingLocation.getScheme,
                 staging.getTableId.toString)))
+          case (CatalogTableType.EXTERNAL, Some(externalLocation))
+              if isCloudScheme(externalLocation.getScheme) =>
+            val locationText = externalLocation.toString
+            // External create must write the initial _delta_log, so READ fallback would be wrong.
+            val credentials =
+              client.getTemporaryPathCredentials(CredentialOperation.READ_WRITE, locationText)
+            Some(PreparedUCDeltaRestCatalogApiCreate(
+              location = externalLocation,
+              tableProperties = Map.empty,
+              storageProperties = toPathCredentialProperties(
+                locationText,
+                getStorageCredentials(credentials),
+                externalLocation.getScheme,
+                PathOperation.PATH_CREATE_TABLE,
+                credentialContext)))
           case _ =>
             None
         }
@@ -342,8 +357,8 @@ private[delta] object DeltaCatalogClient {
           config.catalogName)
         try {
           val credentials = client.getTemporaryPathCredentials(
-            location,
-            CredentialOperation.READ)
+            CredentialOperation.READ,
+            location)
           toPathCredentialProperties(
             location,
             getStorageCredentials(credentials),
@@ -495,6 +510,30 @@ private[delta] object DeltaCatalogClient {
           throw new IllegalArgumentException(
             s"No storage credential matched UC Delta Rest Catalog API location $location.")
         }
+    }
+  }
+
+  private def toPathCredentialProperties(
+      location: String,
+      storageCredentials: Seq[StorageCredential],
+      locationScheme: String,
+      pathOperation: PathOperation,
+      credentialContext: Option[UCDeltaRestCatalogApiCredentialContext]): Map[String, String] = {
+    cloudCredentialProperties(
+      location,
+      storageCredentials,
+      locationScheme,
+      credentialContext) { (context, credential) =>
+      CredPropsUtil.createPathCredProps(
+        context.renewCredentialEnabled,
+        context.credScopedFsEnabled,
+        context.fsImplProps.asJava,
+        locationScheme.toLowerCase(Locale.ROOT),
+        context.uri,
+        context.tokenProvider,
+        location,
+        pathOperation,
+        toTemporaryCredentials(credential)).asScala.toMap
     }
   }
 
