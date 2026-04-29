@@ -148,7 +148,7 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
     val partitionField = partSpec.fields().get(0)
     assert(partitionField.name() == "org_id_identity")
     assert(partitionField.sourceId() == 4)
-    assert(partitionField.fieldId() != 4)
+    assert(partitionField.fieldId() == 1000)
 
     val partitionFields =
       IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
