@@ -727,8 +727,8 @@ lazy val contribs = (project in file("contribs"))
 //
 //  1. `-DuseDefaultUnityCatalogReleaseVersion=true`: use `defaultUnityCatalogReleaseVersion`
 //     below -- the last released UC version on Maven Central. For workflows that don't actually
-//     need DRC APIs (e.g. unidoc, lint) and want to skip the pinned UC build. Shared across
-//     workflows by reading this single constant, so bumping is a one-line change here.
+//     need UC Delta Rest Catalog API and want to skip the pinned UC build. Shared across workflows
+//     by reading this single constant, so bumping is a one-line change here.
 //
 //  2. Release mode: set `unityCatalogReleaseVersion = Some("0.5.0")` (or whatever released
 //     version the release branch ships against). sbt resolves the coordinate from Maven Central
