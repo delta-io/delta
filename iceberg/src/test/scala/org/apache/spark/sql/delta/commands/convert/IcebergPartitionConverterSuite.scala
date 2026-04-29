@@ -217,9 +217,9 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
 
     val partitionField = partSpec.fields().get(0)
     assert(icebergSchema.findField("org_id").fieldId() == 1000)
-    // Partition spec field ids are assigned independently from data column ids and may overlap
-    // (e.g. both 1000), which previously caused duplicate Delta column mapping ids.
-    assert(partitionField.fieldId() >= 1000)
+    assert(partitionField.name() == "org_id_identity")
+    assert(partitionField.sourceId() == 1000)
+    assert(partitionField.fieldId() == 1000)
 
     val partitionFields =
       IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)

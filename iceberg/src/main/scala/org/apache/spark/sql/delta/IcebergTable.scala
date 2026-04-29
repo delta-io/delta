@@ -179,7 +179,8 @@ class IcebergTable(
     val mergedPartitionSchema = DeltaColumnMapping.setPhysicalNames(
       StructType(
         IcebergPartitionUtil.getPartitionFields(
-          tablePartitionSpec, icebergTable.schema(), castTimeType)
+          tablePartitionSpec, icebergTable.schema(), castTimeType
+        )
       ),
       fieldPathToPhysicalName)
 
