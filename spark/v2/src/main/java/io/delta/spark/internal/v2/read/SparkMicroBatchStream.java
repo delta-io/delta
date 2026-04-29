@@ -1837,7 +1837,7 @@ public class SparkMicroBatchStream
 
   /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
   private static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
-    return JavaConverters.asScalaBuffer(
+    return CollectionConverters.asScala(
             files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
         .toSeq();
   }
