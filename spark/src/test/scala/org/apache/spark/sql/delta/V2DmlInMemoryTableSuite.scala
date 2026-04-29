@@ -133,4 +133,9 @@ class V2DmlInMemoryTableSuite
   test("should just throw, but is DSv2Incompatible", DSv2Incompatible("explicit skip")) {
     assert(false, "this test should have been skipped")
   }
+
+  test("should just throw, but is DSv2TemporarilyIncompatible",
+      DSv2TemporarilyIncompatible("explicit skip")) {
+    assert(false, "this test should have been skipped")
+  }
 }
