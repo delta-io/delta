@@ -112,21 +112,33 @@ class UCManagedTableSnapshotManagerSuite
       val manager = createManager(ucClient, tablePath)
 
       // Valid versions including v0 do not throw
-      manager.checkVersionExists(0L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
+      manager.checkVersionExists(
+        0L,
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
       manager.checkVersionExists(
         maxRatifiedVersion,
-        true /* mustBeRecreatable */,
-        false /* allowOutOfRange */ )
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
       manager.checkVersionExists(
         maxRatifiedVersion - 1,
-        true /* mustBeRecreatable */,
-        false /* allowOutOfRange */ )
-      manager.checkVersionExists(1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
-      manager.checkVersionExists(1L, false /* mustBeRecreatable */, false /* allowOutOfRange */ )
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
+      manager.checkVersionExists(
+        1L,
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ false)
+      manager.checkVersionExists(
+        1L,
+        /* mustBeRecreatable= */ false,
+        /* allowOutOfRange= */ false)
 
       // Out-of-bounds versions throw
       val belowLowerBound = intercept[VersionNotFoundException] {
-        manager.checkVersionExists(-1L, true /* mustBeRecreatable */, false /* allowOutOfRange */ )
+        manager.checkVersionExists(
+          -1L,
+          /* mustBeRecreatable= */ true,
+          /* allowOutOfRange= */ false)
       }
       assert(belowLowerBound.getUserVersion == -1L)
       assert(belowLowerBound.getEarliest == 0L)
@@ -135,8 +147,8 @@ class UCManagedTableSnapshotManagerSuite
       val aboveUpperBound = intercept[VersionNotFoundException] {
         manager.checkVersionExists(
           maxRatifiedVersion + 10,
-          true /* mustBeRecreatable */,
-          false /* allowOutOfRange */ )
+          /* mustBeRecreatable= */ true,
+          /* allowOutOfRange= */ false)
       }
       assert(aboveUpperBound.getUserVersion == maxRatifiedVersion + 10)
       assert(aboveUpperBound.getEarliest == 0L)
@@ -145,8 +157,8 @@ class UCManagedTableSnapshotManagerSuite
       // allowOutOfRange=true bypasses upper bound check
       manager.checkVersionExists(
         maxRatifiedVersion + 10,
-        true /* mustBeRecreatable */,
-        true /* allowOutOfRange */ )
+        /* mustBeRecreatable= */ true,
+        /* allowOutOfRange= */ true)
     }
   }
 
@@ -160,23 +172,23 @@ class UCManagedTableSnapshotManagerSuite
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           v0Ts - 1,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           -100L,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       // With canReturnEarliestCommit, returns v0
       val earliestCommit = manager.getActiveCommitAtTime(
         v0Ts - 1,
-        false /* canReturnLastCommit */,
-        true /* mustBeRecreatable */,
-        true /* canReturnEarliestCommit */ )
+        /* canReturnLastCommit= */ false,
+        /* mustBeRecreatable= */ true,
+        /* canReturnEarliestCommit= */ true)
       assert(earliestCommit.getVersion == 0L)
 
       // Exact and between-commit timestamps
@@ -184,9 +196,9 @@ class UCManagedTableSnapshotManagerSuite
         manager
           .getActiveCommitAtTime(
             ts,
-            false /* canReturnLastCommit */,
-            true /* mustBeRecreatable */,
-            false /* canReturnEarliestCommit */ )
+            /* canReturnLastCommit= */ false,
+            /* mustBeRecreatable= */ true,
+            /* canReturnEarliestCommit= */ false)
           .getVersion
 
       assert(activeVersion(v0Ts) == 0L)
@@ -199,23 +211,23 @@ class UCManagedTableSnapshotManagerSuite
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           v2Ts + 1,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       intercept[KernelException] {
         manager.getActiveCommitAtTime(
           Long.MaxValue,
-          false /* canReturnLastCommit */,
-          true /* mustBeRecreatable */,
-          false /* canReturnEarliestCommit */ )
+          /* canReturnLastCommit= */ false,
+          /* mustBeRecreatable= */ true,
+          /* canReturnEarliestCommit= */ false)
       }
       // With canReturnLastCommit, returns v2
       val lastCommit = manager.getActiveCommitAtTime(
         v2Ts + 1,
-        true /* canReturnLastCommit */,
-        true /* mustBeRecreatable */,
-        false /* canReturnEarliestCommit */ )
+        /* canReturnLastCommit= */ true,
+        /* mustBeRecreatable= */ true,
+        /* canReturnEarliestCommit= */ false)
       assert(lastCommit.getVersion == 2L)
     }
   }
@@ -226,9 +238,9 @@ class UCManagedTableSnapshotManagerSuite
 
       val active = manager.getActiveCommitAtTime(
         v0Ts - 1,
-        false /* canReturnLastCommit */,
-        false /* mustBeRecreatable */,
-        true /* canReturnEarliestCommit */ )
+        /* canReturnLastCommit= */ false,
+        /* mustBeRecreatable= */ false,
+        /* canReturnEarliestCommit= */ true)
 
       assert(active.getVersion == 0L)
     }

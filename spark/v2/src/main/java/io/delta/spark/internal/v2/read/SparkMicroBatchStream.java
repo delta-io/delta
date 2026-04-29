@@ -74,8 +74,6 @@ import org.apache.spark.sql.delta.sources.DeltaSource;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset;
 import org.apache.spark.sql.delta.sources.DeltaSourceOffset$;
 import org.apache.spark.sql.delta.sources.DeltaStreamUtils;
-import org.apache.spark.sql.execution.datasources.FilePartition;
-import org.apache.spark.sql.execution.datasources.FilePartition$;
 import org.apache.spark.sql.execution.datasources.PartitionedFile;
 import org.apache.spark.sql.internal.SQLConf;
 import org.apache.spark.sql.sources.Filter;
@@ -87,7 +85,6 @@ import org.slf4j.LoggerFactory;
 import scala.Function2;
 import scala.Option;
 import scala.Some;
-import scala.collection.JavaConverters;
 import scala.collection.immutable.Seq;
 import scala.collection.immutable.Seq$;
 import scala.jdk.javaapi.CollectionConverters;
@@ -507,14 +504,8 @@ public class SparkMicroBatchStream
       throw e;
     }
 
-    long maxSplitBytes =
-        PartitionUtils.calculateMaxSplitBytes(
-            spark, totalBytesToRead, partitionedFiles.size(), sqlConf);
-    // Partitions files into Spark FilePartitions.
-    Seq<FilePartition> filePartitions =
-        FilePartition$.MODULE$.getFilePartitions(
-            spark, JavaConverters.asScalaBuffer(partitionedFiles).toSeq(), maxSplitBytes);
-    return JavaConverters.seqAsJavaList(filePartitions).toArray(new InputPartition[0]);
+    return PartitionUtils.planInputPartitions(
+        spark, partitionedFiles, totalBytesToRead, hadoopConf, sqlConf);
   }
 
   @Override
@@ -1845,7 +1836,7 @@ public class SparkMicroBatchStream
 
   /** Converts a list of IndexedFiles to a Scala Seq of AdmittableFile for batch admission. */
   private static Seq<AdmittableFile> toScalaAdmittableSeq(List<IndexedFile> files) {
-    return JavaConverters.asScalaBuffer(
+    return CollectionConverters.asScala(
             files.stream().map(f -> (AdmittableFile) f).collect(Collectors.toList()))
         .toSeq();
   }

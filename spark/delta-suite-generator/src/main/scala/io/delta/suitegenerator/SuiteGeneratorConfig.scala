@@ -109,7 +109,7 @@ case class TestConfig(
  * @param testConfigs a list of [[TestConfig]]s that should be generated in this file.
  */
 case class TestGroup(
-    name: String,
+    packageName: String,
     imports: List[Importer],
     testConfigs: List[TestConfig]
 )
@@ -215,7 +215,7 @@ object SuiteGeneratorConfig {
   lazy val TEST_GROUPS: List[TestGroup] = List(
     // scalastyle:off line.size.limit
     TestGroup(
-      name = "MergeSuites",
+      packageName = "merge",
       imports = List(
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
@@ -281,7 +281,7 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
-      name = "UpdateSuites",
+      packageName = "update",
       imports = List(
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
@@ -324,7 +324,7 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
-      name = "DeleteSuites",
+      packageName = "delete",
       imports = List(
         importer"org.apache.spark.sql.delta._",
         importer"org.apache.spark.sql.delta.cdc._",
@@ -357,7 +357,7 @@ object SuiteGeneratorConfig {
       )
     ),
     TestGroup(
-      name = "InsertSuites",
+      packageName = "insert",
       imports = List(
         importer"org.apache.spark.sql.delta._"
       ),
