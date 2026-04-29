@@ -45,6 +45,9 @@ class InMemoryDeltaCatalog extends DeltaCatalog {
     loadTable(ident) match {
       case table: InMemorySparkTable =>
         InMemoryDeltaCatalog.applySchemaChanges(table, ident, changes.toSeq)
+        // Also propagate the change to the underlying catalog so the Delta table on disk stays in
+        // sync with the in-memory test stand-in.
+        super.alterTable(ident, changes: _*)
       case _ => super.alterTable(ident, changes: _*)
     }
   }
@@ -88,10 +91,6 @@ object InMemoryDeltaCatalog {
     val newSchema = CatalogV2Util.applySchemaChanges(
       table.schema(), changes, tableProvider = None, statementType = "ALTER TABLE")
 
-    val cacheKey = tables.entrySet().asScala
-      .find(e => e.getValue eq table)
-      .map(_.getKey)
-      .getOrElse(ident.name())
     val javaProps = new java.util.HashMap[String, String](table.properties)
     // Create the new table with the evolved schema and migrate existing data.
     val newTable = table match {
@@ -103,7 +102,7 @@ object InMemoryDeltaCatalog {
       case _ => throw new IllegalArgumentException(
         s"Expected InMemorySparkTable but got ${table.getClass.getName}")
     }
-    tables.put(cacheKey, newTable)
+    tables.put(ident.name(), newTable)
     newTable
   }
 
