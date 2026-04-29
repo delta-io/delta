@@ -16,13 +16,9 @@
 
 package org.apache.spark.sql.delta.commands.convert
 
-import java.lang.{Integer => JInt, Long => JLong}
-import java.math.BigDecimal
-import java.util.{List => JList}
-
 import scala.collection.JavaConverters._
-import scala.util.Try
 
+import org.apache.spark.SparkFunSuite
 import org.apache.spark.sql.delta.{DeltaColumnMapping, DeltaConfigs}
 import org.apache.spark.sql.delta.actions.Metadata
 import org.apache.spark.sql.types.{
@@ -31,30 +27,25 @@ import org.apache.spark.sql.types.{
 }
 import shadedForDelta.org.apache.iceberg.{PartitionData, PartitionSpec, Schema}
 import shadedForDelta.org.apache.iceberg.transforms._
-import shadedForDelta.org.apache.iceberg.types.Conversions
 import shadedForDelta.org.apache.iceberg.types.Types._
 
-import org.apache.spark.SparkFunSuite
-
 class IcebergPartitionConverterSuite extends SparkFunSuite {
-  private def assertColumnMappingValidationPasses(fields: Seq[SparkStructField]): Unit = {
+  private def assignColumnIdAndPhysicalName(fields: Seq[SparkStructField]): Metadata = {
     val schemaWithPhysicalNames =
       DeltaColumnMapping.assignPhysicalNames(
         SparkStructType(fields.toArray),
         reuseLogicalName = true)
-    val metadata = Metadata(
+    val maxFromFields = DeltaColumnMapping.findMaxColumnId(schemaWithPhysicalNames)
+    val provisionalMetadata = Metadata(
       schemaString = schemaWithPhysicalNames.json,
       configuration = Map(
         DeltaConfigs.COLUMN_MAPPING_MODE.key -> "id",
-        DeltaConfigs.COLUMN_MAPPING_MAX_ID.key ->
-          DeltaColumnMapping.findMaxColumnId(schemaWithPhysicalNames).toString))
-    val validationFailure =
-      Try(DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)).failed.toOption
-    assert(
-      validationFailure.isEmpty,
-      s"Expected checkColumnIdAndPhysicalNameAssignments to succeed, but got: " +
-        s"${validationFailure.map(_.getMessage).getOrElse("<no error message>")}"
-    )
+        DeltaConfigs.COLUMN_MAPPING_MAX_ID.key -> maxFromFields.toString))
+    DeltaColumnMapping.assignColumnIdAndPhysicalName(
+      provisionalMetadata,
+      Metadata(),
+      isChangingModeOnExistingTable = false,
+      isOverwritingSchema = false)
   }
 
   test("convert partition simple case, including empty and null") {
@@ -140,12 +131,13 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
       partitionConverter.toDelta(partData).toString)
   }
 
-  test("identity partition with distinct field name uses partition field id") {
+  test("identity partition with custom spec field: merged schema has unique column ids") {
     val icebergSchema = new Schema(
       1,
       Seq(
         NestedField.required(1, "id", LongType.get),
-        NestedField.required(4, "org_id", StringType.get)
+        NestedField.required(4, "org_id", StringType.get),
+        NestedField.required(5, "other_id", StringType.get)
       ).asJava)
 
     val partSpec = PartitionSpec
@@ -162,22 +154,31 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
       IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
     assert(partitionFields.length == 1)
     assert(partitionFields.head.name == "org_id_identity")
-    assert(DeltaColumnMapping.getColumnId(partitionFields.head) == 1000)
-    assert(DeltaColumnMapping.getColumnId(partitionFields.head) == partitionField.fieldId())
+    assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
 
     val sourceFields = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema).fields.toSeq
+    val metadata = assignColumnIdAndPhysicalName(sourceFields ++ partitionFields)
+    DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
 
-    // With the fix, the partition column gets a unique ID and validation succeeds
-    val mergedFields = sourceFields ++ partitionFields
-    assertColumnMappingValidationPasses(mergedFields)
+    val fields = metadata.schema.fields
+    assert(fields.length == 4)
+    assert(fields(0).name == "id")
+    assert(DeltaColumnMapping.getColumnId(fields(0)) == 1)
+    assert(fields(1).name == "org_id")
+    assert(DeltaColumnMapping.getColumnId(fields(1)) == 4)
+    assert(fields(2).name == "other_id")
+    assert(DeltaColumnMapping.getColumnId(fields(2)) == 5)
+    assert(fields(3).name == "org_id_identity")
+    assert(DeltaColumnMapping.getColumnId(fields(3)) == 6)
   }
 
-  test("identity partition field name matches source column uses source field id") {
+  test("identity partition field name matches source column: validate merged schema") {
     val icebergSchema = new Schema(
       1,
       Seq(
         NestedField.required(1, "id", LongType.get),
-        NestedField.required(4, "org_id", StringType.get)
+        NestedField.required(4, "org_id", StringType.get),
+        NestedField.required(5, "other_id", StringType.get)
       ).asJava)
 
     val partSpec = PartitionSpec.builderFor(icebergSchema).identity("org_id").build()
@@ -185,9 +186,58 @@ class IcebergPartitionConverterSuite extends SparkFunSuite {
       IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
     assert(partitionFields.length == 1)
     assert(partitionFields.head.name == "org_id")
-    assert(DeltaColumnMapping.getColumnId(partitionFields.head) == 4)
+    assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
 
     val sourceFields = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema).fields.toSeq
-    assertColumnMappingValidationPasses(sourceFields)
+    val metadata = assignColumnIdAndPhysicalName(sourceFields)
+    DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
+
+    val fields = metadata.schema.fields
+    assert(fields.length == 3)
+    assert(fields(0).name == "id")
+    assert(DeltaColumnMapping.getColumnId(fields(0)) == 1)
+    assert(fields(1).name == "org_id")
+    assert(DeltaColumnMapping.getColumnId(fields(1)) == 4)
+    assert(fields(2).name == "other_id")
+    assert(DeltaColumnMapping.getColumnId(fields(2)) == 5)
+  }
+
+  test("renamed identity partition with source field id 1000: no id collision after Delta assign") {
+    val icebergSchema = new Schema(
+      1,
+      Seq(
+        NestedField.required(1, "id", LongType.get),
+        NestedField.required(1000, "org_id", StringType.get)
+      ).asJava)
+
+    val partSpec = PartitionSpec
+      .builderFor(icebergSchema)
+      .identity("org_id", "org_id_identity")
+      .build()
+
+    val partitionField = partSpec.fields().get(0)
+    assert(icebergSchema.findField("org_id").fieldId() == 1000)
+    // Partition spec field ids are assigned independently from data column ids and may overlap
+    // (e.g. both 1000), which previously caused duplicate Delta column mapping ids.
+    assert(partitionField.fieldId() >= 1000)
+
+    val partitionFields =
+      IcebergPartitionUtil.getPartitionFields(partSpec, icebergSchema, castTimeType = false)
+    assert(!DeltaColumnMapping.hasColumnId(partitionFields.head))
+
+    val sourceFields = IcebergSchemaUtils.convertIcebergSchemaToSpark(icebergSchema).fields.toSeq
+    assert(DeltaColumnMapping.getColumnId(sourceFields.find(_.name == "org_id").get) == 1000)
+
+    val metadata = assignColumnIdAndPhysicalName(sourceFields ++ partitionFields)
+    DeltaColumnMapping.checkColumnIdAndPhysicalNameAssignments(metadata)
+
+    val fields = metadata.schema.fields
+    assert(fields.length == 3)
+    assert(fields(0).name == "id")
+    assert(DeltaColumnMapping.getColumnId(fields(0)) == 1)
+    assert(fields(1).name == "org_id")
+    assert(DeltaColumnMapping.getColumnId(fields(1)) == 1000)
+    assert(fields(2).name == "org_id_identity")
+    assert(DeltaColumnMapping.getColumnId(fields(2)) == 1001)
   }
 }

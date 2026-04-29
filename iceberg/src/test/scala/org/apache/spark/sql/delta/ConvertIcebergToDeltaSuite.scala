@@ -34,8 +34,10 @@ import io.delta.sql.DeltaSparkSessionExtension
 import org.apache.hadoop.fs.Path
 import org.apache.avro.file.{DataFileReader, DataFileWriter, SeekableByteArrayInput}
 import org.apache.avro.generic.{GenericDatumReader, GenericDatumWriter, GenericRecord}
-import org.apache.iceberg.{Table, TableProperties}
+import org.apache.iceberg.{PartitionSpec, Schema, Table, TableProperties}
 import org.apache.iceberg.hadoop.HadoopTables
+import org.apache.iceberg.types.Types
+import org.apache.iceberg.types.Types.NestedField
 import org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
 
 import org.apache.spark.SparkConf
@@ -1008,6 +1010,51 @@ trait ConvertIcebergToDeltaSuiteBase
         convert(s"iceberg.`$tablePath`")
       }
       assert(e.getMessage.contains("Unsupported partition transform expression"))
+    }
+  }
+
+  test("convert Iceberg renamed identity partition with high source field id") {
+    withTempDir { icebergDir =>
+      val icebergUri = "file://" + icebergDir.getCanonicalPath
+      val icebergSchema = new Schema(
+        Seq(
+          NestedField.required(1, "id", Types.LongType.get()),
+          NestedField.required(1000, "org_id", Types.StringType.get())
+        ).asJava)
+      val partSpec = PartitionSpec
+        .builderFor(icebergSchema)
+        .identity("org_id", "org_id_identity")
+        .build()
+      val tables = new HadoopTables(spark.sessionState.newHadoopConf)
+      tables.create(icebergSchema, partSpec, icebergUri)
+
+      val tbl = "local.db.iceberg_renamed_high_id_conv"
+      spark.sql(
+        s"CALL local.system.register_table('db', 'iceberg_renamed_high_id_conv', '$icebergUri')")
+      try {
+        spark.sql(s"INSERT INTO $tbl VALUES (1, 'acme')")
+
+        withTempDir { deltaDir =>
+          ConvertToDeltaCommand(
+            TableIdentifier(icebergUri, Some("iceberg")),
+            None,
+            collectStats = true,
+            Some(deltaDir.getCanonicalPath)).run(spark)
+
+          val deltaLog = DeltaLog.forTable(spark, new Path(deltaDir.getCanonicalPath))
+          val schema = deltaLog.update().schema
+          val columnIds =
+            SchemaMergingUtils.explode(schema).map(_._2).map(DeltaColumnMapping.getColumnId)
+          assert(columnIds.size == columnIds.distinct.size)
+
+          checkAnswer(
+            spark.read.format("delta").load(deltaDir.getCanonicalPath)
+              .select("id", "org_id", "org_id_identity"),
+            Row(1L, "acme", "acme") :: Nil)
+        }
+      } finally {
+        spark.sql(s"DROP TABLE IF EXISTS $tbl")
+      }
     }
   }
 }
