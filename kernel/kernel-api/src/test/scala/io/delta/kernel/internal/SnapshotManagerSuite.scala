@@ -679,22 +679,41 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
       startCheckpoint = Optional.of(30))
   }
 
-  test("getLogSegmentForVersion: corrupt _last_checkpoint refers to in range version " +
-    "but no valid checkpoint") {
-    // _last_checkpoint refers to a v1 checkpoint at version 20 that is missing
-    testExpectedError[RuntimeException](
-      deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L)),
-      lastCheckpointVersion = Optional.of(20),
-      expectedErrorMessageContains = "Missing checkpoint at version 20")
-    // _last_checkpoint refers to incomplete multi-part checkpoint at version 20 that is missing
+  test("getLogSegmentForVersion: stale _last_checkpoint refers to in range version " +
+    "but no valid checkpoint - falls back to earlier checkpoint") {
+    // Case 1: _last_checkpoint=20, checkpoint at 10 exists, no checkpoint at 20
+    // Fallback: findLastCompleteCheckpointBefore(20) finds cp(10), re-lists from v10
+    val files1 = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L))
+    val logSegment1 = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files1, Optional.of(20L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment1,
+      expectedVersion = 24,
+      expectedDeltas = deltaFileStatuses(11L until 25L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10L)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 240L)
+
+    // Case 2: _last_checkpoint=20, incomplete multi-part checkpoint at 20 (4/5 parts)
+    // Fallback: findLastCompleteCheckpointBefore(20) finds cp(10), re-lists from v10
     val corruptedCheckpointStatuses = FileNames.checkpointFileWithParts(logPath, 20, 5).asScala
       .map(p => FileStatus.of(p.toString, 10, 10))
       .take(4)
-    testExpectedError[RuntimeException](
-      files = corruptedCheckpointStatuses.toSeq ++ deltaFileStatuses(10L to 20L) ++
-        singularCheckpointFileStatuses(Seq(10L)),
-      lastCheckpointVersion = Optional.of(20),
-      expectedErrorMessageContains = "Missing checkpoint at version 20")
+    val files2 = corruptedCheckpointStatuses.toSeq ++ deltaFileStatuses(10L to 20L) ++
+      singularCheckpointFileStatuses(Seq(10L))
+    val logSegment2 = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files2, Optional.of(20L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment2,
+      expectedVersion = 20,
+      expectedDeltas = deltaFileStatuses(11L to 20L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10L)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 200L)
   }
 
   test("getLogSegmentForVersion: corrupted incomplete multi-part checkpoint with no" +
@@ -728,14 +747,138 @@ class SnapshotManagerSuite extends AnyFunSuite with MockFileSystemClientUtils {
     }
   }
 
-  test("getLogSegmentForVersion: corrupt _last_checkpoint with empty delta log") {
-    val exMsg = intercept[InvalidTableException] {
+  test("getLogSegmentForVersion: stale _last_checkpoint with empty delta log") {
+    // Fallback: findLastCompleteCheckpointBefore(1) returns empty, re-lists from v0, still empty
+    val exMsg = intercept[TableNotFoundException] {
       snapshotManager.getLogSegmentForVersion(
         createMockFSAndJsonEngineForLastCheckpoint(Seq.empty, Optional.of(1)),
         Optional.empty())
     }.getMessage
 
-    assert(exMsg.contains("Missing checkpoint at version 1"))
+    assert(exMsg.contains("No delta files found in the directory"))
+  }
+
+  /* -------- STALE _LAST_CHECKPOINT FALLBACK TESTS -------- */
+
+  test("getLogSegmentForVersion: stale _last_checkpoint beyond all existing files " +
+    "with earlier checkpoint available") {
+    // _last_checkpoint=30, files go up to version 24, checkpoint at 10
+    // Throw Site 1 (empty listing from v30) triggers fallback
+    val files = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L))
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files, Optional.of(30L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 24,
+      expectedDeltas = deltaFileStatuses(11L until 25L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10L)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 240L)
+  }
+
+  test("getLogSegmentForVersion: stale _last_checkpoint beyond all existing files " +
+    "with no earlier checkpoint") {
+    // _last_checkpoint=30, files go up to version 24, no checkpoints at all
+    // Throw Site 1 triggers fallback, fallback finds no checkpoint, re-lists from v0
+    val files = deltaFileStatuses(0L until 25L)
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files, Optional.of(30L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 24,
+      expectedDeltas = deltaFileStatuses(0L until 25L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = Seq.empty,
+      expectedCheckpointVersion = None,
+      expectedLastCommitTimestamp = 240L)
+  }
+
+  test("getLogSegmentForVersion: stale _last_checkpoint where checkpoint was deleted " +
+    "but deltas exist from that version") {
+    // _last_checkpoint=20, deltas 15-24 exist, checkpoint at 15 exists, checkpoint at 20 deleted
+    // Throw Site 2 triggers fallback, findLastCompleteCheckpointBefore(20) finds cp(15)
+    val files = deltaFileStatuses(15L until 25L) ++ singularCheckpointFileStatuses(Seq(15L))
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files, Optional.of(20L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 24,
+      expectedDeltas = deltaFileStatuses(16L until 25L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(15L)),
+      expectedCheckpointVersion = Some(15),
+      expectedLastCommitTimestamp = 240L)
+  }
+
+  // Regression guard: time-travel bypasses _last_checkpoint entirely (uses
+  // findLastCompleteCheckpointBefore instead), so the stale hint never triggers
+  // the fallback. Kept here to ensure that path remains correct.
+  test("getLogSegmentForVersion: stale _last_checkpoint with versionToLoad") {
+    // _last_checkpoint=20 (deleted), checkpoint at 10 exists, load version 15
+    // Time-travel bypasses _last_checkpoint, uses findLastCompleteCheckpointBefore(16)
+    val files = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(10L))
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files, Optional.of(20L)),
+      Optional.of(15L))
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 15,
+      expectedDeltas = deltaFileStatuses(11L to 15L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(10L)),
+      expectedCheckpointVersion = Some(10),
+      expectedLastCommitTimestamp = 150L)
+  }
+
+  test("getLogSegmentForVersion: issue #5895 - stale _last_checkpoint with all " +
+    "checkpoints deleted, JSON-only recovery") {
+    // _last_checkpoint=5 (checkpoint deleted), deltas v0-v6, no checkpoints
+    // Throw Site 2 triggers fallback, no earlier checkpoint found, re-lists from v0
+    val files = deltaFileStatuses(0L to 6L)
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files, Optional.of(5L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 6,
+      expectedDeltas = deltaFileStatuses(0L to 6L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = Seq.empty,
+      expectedCheckpointVersion = None,
+      expectedLastCommitTimestamp = 60L)
+  }
+
+  test("getLogSegmentForVersion: stale _last_checkpoint - fallback checkpoint also deleted " +
+    "(truncated log)") {
+    // _last_checkpoint=20, only deltas v20-v24 exist (no checkpoints, no files before v20)
+    // Fallback finds nothing, re-lists from v0, but deltas start at v20 (table truncated)
+    // The helper returns Optional.empty() because it can't construct a valid LogSegment,
+    // so the caller throws missingCheckpoint for the originally-hinted version.
+    testExpectedError[InvalidTableException](
+      files = deltaFileStatuses(20L until 25L),
+      lastCheckpointVersion = Optional.of(20L),
+      expectedErrorMessageContains = "Missing checkpoint at version 20")
+  }
+
+  test("getLogSegmentForVersion: valid _last_checkpoint - happy path regression guard") {
+    // _last_checkpoint=20 exists and points to a valid checkpoint
+    // Verifies the retry loop does not break the normal (no-fallback) path
+    val files = deltaFileStatuses(0L until 25L) ++ singularCheckpointFileStatuses(Seq(20L))
+    val logSegment = snapshotManager.getLogSegmentForVersion(
+      createMockFSAndJsonEngineForLastCheckpoint(files, Optional.of(20L)),
+      Optional.empty())
+    checkLogSegment(
+      logSegment,
+      expectedVersion = 24,
+      expectedDeltas = deltaFileStatuses(21L until 25L),
+      expectedCompactions = Seq.empty,
+      expectedCheckpoints = singularCheckpointFileStatuses(Seq(20L)),
+      expectedCheckpointVersion = Some(20),
+      expectedLastCommitTimestamp = 240L)
   }
 
   /* ------------------- CATALOG MANAGED TABLE TESTS ------------------ */
