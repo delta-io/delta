@@ -1049,6 +1049,8 @@ trait ConvertIcebergToDeltaSuiteBase
       assert(icebergTable.schema().findField("id").fieldId() === 1)
       assert(icebergTable.schema().findField("org_id").fieldId() === 2)
       assert(icebergTable.schema().findField("other_id").fieldId() === 3)
+      assert(icebergTable.spec().fields().get(0).fieldId() === 1000)
+      assert(icebergTable.spec().fields().get(0).sourceId() === 2)
 
       withTempDir { deltaDir =>
         ConvertToDeltaCommand(
